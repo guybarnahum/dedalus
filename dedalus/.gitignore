@@ -1,0 +1,19 @@
+# Build directories
+build/
+bin/
+lib/
+
+# Python environments
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# ML Models (Ignore large binary weights, keep configuration JSONs)
+*.engine
+*.onnx
+*.pt
+!models/*.json
+
+# OS generated files
+.DS_Store
