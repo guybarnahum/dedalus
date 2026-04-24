@@ -3,20 +3,73 @@ build/
 bin/
 lib/
 
-# Python environments
+dist/
+*.egg-info/
+.eggs/
+
+# Python bytecode and environments
 __pycache__/
 *.py[cod]
+*$py.class
+
+# Virtual environments
 .venv/
 venv/
+ENV/
+env/
+.venv*/
+pip-wheel-metadata/
+Pipfile.lock
+poetry.lock
+
+# Jupyter Notebook checkpoints
+.ipynb_checkpoints/
 
 # ML Models (Ignore large binary weights, keep configuration JSONs)
 *.engine
 *.onnx
 *.pt
+*.pth
+!.gitkeep
 !models/*.json
+
+# Logging
+*.log
+
+# Unit test / coverage
+htmlcov/
+.coverage
+.coverage.*
+.cache
+.tox/
+nosetests.xml
+coverage.xml
+*.cover
+.hypothesis/
+.pytest_cache/
+
+# IDE/editor files
+.vscode/
+.idea/
+*.sublime-project
+*.sublime-workspace
 
 # OS generated files
 .DS_Store
+Thumbs.db
+Desktop.ini
+
+# Backup files
+*.bak
+*.tmp
+*~
+
+# Miscellaneous
+.mypy_cache/
+.pyre/
+.settings/
+modules/
+site/
 
 # SSH
 *.pem
