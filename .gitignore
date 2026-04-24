@@ -18,3 +18,8 @@ venv/
 # OS generated files
 .DS_Store
 
+# SSH
+*.pem
+
+# Environment variables
+.env
