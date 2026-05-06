@@ -3,6 +3,8 @@
 # Cleanup script for Project Dedalus Simulation Environment
 #
 set -e
+# Ensure script runs from its own directory
+cd "$(dirname "$0")"
 
 # ---------------- Auto-yes handling ----------------
 AUTO_YES=""
@@ -107,10 +109,8 @@ sudo -v
 while true; do sudo -n true; sleep 60; kill -0 "$$" || exit; done 2>/dev/null &
 
 if [[ -z "$MODE" ]]; then
-  echo "Usage: ./cleanup.sh [--soft | --hard]"
-  echo "  --soft : Kills running processes and clears shared memory/build caches."
-  echo "  --hard : DANGER. Deletes downloaded frameworks (PX4, iceoryx, etc)."
-  exit 1
+  echo "⚠️  No mode specified. Defaulting to --soft reset."
+  MODE="soft"
 fi
 
 # ---------------- Phase 1: Terminate Processes ----------------
@@ -119,23 +119,24 @@ echo "🛑 Terminating Active Simulation Processes..."
 if pgrep -f "Colosseum" > /dev/null; then
    run_and_log "Kill Colosseum" pkill -9 -f "Colosseum" || true
 else
-   echo "✅ Colosseum not running."
+   printf '\r\033[K✅ Colosseum not running.\n'
 fi
 
 if pgrep -f "px4" > /dev/null; then
    run_and_log "Kill PX4 SITL" pkill -9 -f "px4" || true
 else
-   echo "✅ PX4 not running."
+   printf '\r\033[K✅ PX4 not running.\n'
 fi
 
 if pgrep -f "iox-roudi" > /dev/null; then
    run_and_log "Kill iox-roudi" pkill -9 -f "iox-roudi" || true
 else
-   echo "✅ iox-roudi not running."
+   printf '\r\033[K✅ iox-roudi not running.\n'
 fi
 
 if command -v dcv &>/dev/null; then
-   if dcv list-sessions | grep -q "dedalus-sim"; then
+   # Suppress stderr to prevent 'There are no sessions available' from leaking
+   if dcv list-sessions 2>/dev/null | grep -q "dedalus-sim"; then
       run_and_log "Close DCV Session" dcv close-session dedalus-sim || true
    fi
 fi
