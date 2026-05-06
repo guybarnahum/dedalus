@@ -14,7 +14,7 @@ set -e
 cd "$(dirname "$0")"
 
 # ---------------- Configuration ----------------
-PRELOAD_ENVS=("Blocks")
+PRELOAD_ENVS=("Blocks", "Neighborhood", "Coastline")
 S3_BUCKET="s3://dedalus-sim-assets-colosseum"
 
 # Array of base URLs to cycle through if S3 fails
