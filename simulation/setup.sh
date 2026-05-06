@@ -151,64 +151,60 @@ fi
 # ---------------- Step 3: Remote Visualization (NICE DCV) ----------------
 echo "🖥️  Configuring Remote Visualization (NICE DCV)..."
 
-# 1. Force Clean Slate (Experimental Reset)
-# Kill any zombies that might be blocking the GPU or DBus
+# 1. Clean Slate
 sudo systemctl stop dcvserver || true
 systemctl --user stop dcv-session.service || true
 sudo pkill -9 dcv-session || true
 sudo pkill -9 Xorg || true
-sudo rm -f /tmp/.X*-lock
-sudo rm -rf /tmp/.X11-unix
+sudo rm -rf /tmp/.X11-unix /tmp/.X*-lock
 
-# 2. NVIDIA L4 Display Initialization
-# Force persistence mode and re-configure the virtual display head
-run_and_log "GPU Persistence Mode" sudo nvidia-smi -pm 1
-run_and_log "Initialize X-Server for GPU" sudo nvidia-xconfig --preserve-busid --enable-all-gpus --connected-monitor=DFP-0
+# 2. Re-map NVIDIA BusID (Crucial for G6/L4)
+# We find the exact hardware address of the L4 and force Xorg to use it.
+BUS_ID=$(nvidia-smi --query-gpu=pci.bus_id --format=csv,noheader | head -n 1)
+run_and_log "Configure NVIDIA BusID" sudo nvidia-xconfig --preserve-busid --busid="$BUS_ID" --enable-all-gpus --connected-monitor=DFP-0
 
-# 3. Master Server Restart
+# 3. Persistence & Master Reset
+sudo nvidia-smi -pm 1
 run_and_log "Restart DCV Master" sudo systemctl restart dcvserver
 
-# 4. Systemd Service Recreation (Optimized for L4)
-run_and_log "Configure DCV Autostart Service" bash -c "
-  mkdir -p ~/.config/systemd/user/
-  cat << EOF > ~/.config/systemd/user/dcv-session.service
-[Unit]
-Description=NICE DCV Virtual Session for Project Dedalus
-After=network.target
+# 4. Experimental Launch: The "Forced-Wait" Strategy
+# Instead of systemd, let's try to spawn it and wait for the X-socket to appear.
+run_and_log "Initialize DCV Session" bash -c "
+  dcv create-session --type virtual --owner $USER dedalus-sim --init \"/usr/bin/startxfce4\"
+"
 
+echo -n "⏳ Verifying X11 Socket..."
+for i in {1..10}; do
+  if [ -S /tmp/.X11-unix/X0 ] || [ -S /tmp/.X11-unix/X1 ]; then
+    echo " ✅ X-SERVER ACTIVE"
+    break
+  fi
+  sleep 1
+  if [ $i -eq 10 ]; then
+    echo " ❌ X-SERVER FAILED"
+    echo "🔎 Analyzing Xorg log for hardware rejection..."
+    sudo tail -n 20 /var/log/Xorg.0.log
+  fi
+done
+
+# 5. Restore persistence via systemd ONLY if manual check passed
+if dcv list-sessions | grep -q "dedalus-sim"; then
+  run_and_log "Configure Persistence" bash -c "
+    mkdir -p ~/.config/systemd/user/
+    cat << EOF > ~/.config/systemd/user/dcv-session.service
+[Unit]
+Description=NICE DCV Virtual Session
 [Service]
 Type=oneshot
 RemainAfterExit=yes
-# Add a small delay to allow dcvserver to fully stabilize
-ExecStartPre=/usr/bin/sleep 2
-# Clean up any lingering ID registration
-ExecStartPre=/usr/bin/bash -c '/usr/bin/dcv list-sessions | grep -q \"dedalus-sim\" && /usr/bin/dcv close-session dedalus-sim || true'
-# Create the session with an explicit init script to force X-server spawn
-ExecStart=/usr/bin/dcv create-session --type virtual --owner %u dedalus-sim --init \"/usr/bin/startxfce4\"
+ExecStart=/usr/bin/dcv list-sessions | grep -q 'dedalus-sim' || /usr/bin/dcv create-session --type virtual --owner %u dedalus-sim
 ExecStop=/usr/bin/dcv close-session dedalus-sim
-
 [Install]
 WantedBy=default.target
 EOF
-"
-
-# 5. Activation & Verification Loop
-run_and_log "Activate DCV Service" bash -c "
-  sudo loginctl enable-linger $USER
-  systemctl --user daemon-reload
-  systemctl --user enable dcv-session.service
-  systemctl --user restart dcv-session.service
-"
-
-# 6. Final Health Check
-echo -n "⏳ Waiting for Windshield to stabilize..."
-sleep 5
-if dcv list-sessions | grep -q "dedalus-sim"; then
-  echo " ✅ DCV SESSION RUNNING"
-else
-  echo " ❌ DCV SESSION FAILED TO START"
-  echo "🔎 Inspecting logs for you..."
-  journalctl --user -u dcv-session.service -n 20 --no-pager
+    systemctl --user daemon-reload
+    systemctl --user enable dcv-session.service
+  "
 fi
 
 # ---------------- Step 4: Eclipse iceoryx (IPC) ----------------
