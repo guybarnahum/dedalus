@@ -51,3 +51,4 @@ dedalus/
     ├── behavior/        (Behavior Trees, Potential Fields)
     ├── safety/          (Multiplexer, Manual Override)
     └── ipc/             (Eclipse iceoryx configuration and structs)
+```

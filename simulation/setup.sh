@@ -153,16 +153,17 @@ echo "✅ Remote Visualization Stack verified."
 
 # ---------------- Step 4: Eclipse iceoryx (IPC) ----------------
 echo "⚙️  Building Eclipse iceoryx (IPC)..."
-if [ ! -d "infrastructure/iceoryx_build" ]; then
-  mkdir -p infrastructure/iceoryx_build
-  cd infrastructure/iceoryx_build
+# PATH ADJUSTMENT: infrastructure is one level up from the simulation directory
+if [ ! -d "../infrastructure/iceoryx_build" ]; then
+  mkdir -p ../infrastructure/iceoryx_build
+  cd ../infrastructure/iceoryx_build
   if [ ! -d "iceoryx" ]; then
     run_and_log "Clone iceoryx" git clone --branch v2.90.0 https://github.com/eclipse-iceoryx/iceoryx.git
   fi
   cd iceoryx
   run_and_log "Configure iceoryx CMake" cmake -Bbuild -Hiceoryx_meta -DBUILD_STRICT=OFF -DROUDI_ENVIRONMENT=ON
   run_and_log "Compile iceoryx" cmake --build build --target install --parallel "$(nproc)"
-  cd ../../../
+  cd ../../../simulation # Return to simulation directory
   echo "✅ iceoryx built and staged."
 else
   echo "✅ iceoryx build directory found. Skipping."
@@ -170,13 +171,12 @@ fi
 
 # ---------------- Step 5: PX4 SITL ----------------
 echo "✈️  Building PX4 SITL..."
-if [ ! -d "simulation/PX4-Autopilot" ]; then
-  mkdir -p simulation
-  cd simulation
+# PATH ADJUSTMENT: PX4 is now cloned directly into the current directory (simulation)
+if [ ! -d "PX4-Autopilot" ]; then
   run_and_log "Clone PX4" git clone --recursive https://github.com/PX4/PX4-Autopilot.git
   cd PX4-Autopilot
   run_and_log "Install PX4 dependencies" bash ./Tools/setup/ubuntu.sh --no-nuttx --no-sim-tools
-  cd ../../
+  cd ../
   echo "✅ PX4 source staged."
 else
   echo "✅ PX4 directory found. Skipping."
@@ -184,4 +184,4 @@ fi
 
 echo ""
 echo "✅ Setup Complete!"
-echo "   Run './simulation/sitl_runner.sh' to launch the environment."
+echo "   Run './sitl_runner.sh' to launch the environment."

@@ -47,4 +47,3 @@ To prevent hardware loss, Dedalus enforces the robotics philosophy: **Train Heav
 * **The Edge Runtime (Physical Drone):** Deterministic execution on the Jetson Orin. Deployment is handled via a hybrid approach: Docker (L4T Base) for development parity, and bare-metal `.deb` packages managed by `systemd` with A/B RootFS partition flashing for safe production OTA updates.
 * **The Training Environment (ML Factory):** High-throughput data ingestion utilizing ephemeral AWS EC2 `g5.2xlarge` Spot Instances provisioned dynamically via GitHub Actions.
 * **The Simulation Environment (CI/CD):** Hardware-free integration testing. Runs the *exact same* compiled C++ Edge binaries and TensorRT engines inside **Colosseum** (Unreal Engine physics) and **PX4 SITL**, providing automated PR gating before any code reaches the physical airframe.
-
