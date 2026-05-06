@@ -154,15 +154,16 @@ echo "✅ Remote Visualization Stack verified."
 # ---------------- Step 4: Eclipse iceoryx (IPC) ----------------
 echo "⚙️  Building Eclipse iceoryx (IPC)..."
 # PATH ADJUSTMENT: infrastructure is one level up from the simulation directory
-if [ ! -d "../infrastructure/iceoryx_build" ]; then
+if [ ! -f "../infrastructure/iceoryx_build/.installed" ]; then
   mkdir -p ../infrastructure/iceoryx_build
   cd ../infrastructure/iceoryx_build
   if [ ! -d "iceoryx" ]; then
     run_and_log "Clone iceoryx" git clone --branch v2.90.0 https://github.com/eclipse-iceoryx/iceoryx.git
   fi
   cd iceoryx
-  run_and_log "Configure iceoryx CMake" cmake -Bbuild -Hiceoryx_meta -DBUILD_STRICT=OFF -DROUDI_ENVIRONMENT=ON
+  run_and_log "Configure iceoryx CMake" cmake -Bbuild -Hiceoryx_meta -DBUILD_STRICT=OFF -DROUDI_ENVIRONMENT=OFF
   run_and_log "Compile iceoryx" cmake --build build --target install --parallel "$(nproc)"
+  touch ../.installed
   cd ../../../simulation # Return to simulation directory
   echo "✅ iceoryx built and staged."
 else
