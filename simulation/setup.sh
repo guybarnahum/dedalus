@@ -150,38 +150,53 @@ fi
 
 # ---------------- Step 3: Remote Visualization (NICE DCV) ----------------
 echo "🖥️  Configuring Remote Visualization (NICE DCV)..."
+
+# 1. Install Desktop Environment
 if ! dpkg -l | grep -q "xfce4"; then
   run_and_log "Install XFCE4 Desktop" sudo DEBIAN_FRONTEND=noninteractive apt-get install -y xfce4 xfce4-goodies dbus-x11 x11-xserver-utils
-else
-  echo "✅ XFCE4 Desktop already installed."
 fi
 
+# 2. Install DCV Server
 if ! command -v dcvserver &>/dev/null; then
-  run_and_log "Fetch NICE DCV Archive" bash -c 'wget -qO- https://d1uj6qtbmh3dt5.cloudfront.net/nice-dcv-ubuntu2204-x86_64.tgz | tar xvz -C /tmp'
-  run_and_log "Install NICE DCV Server" sudo DEBIAN_FRONTEND=noninteractive apt-get install -y /tmp/nice-dcv-*-ubuntu2204-x86_64/nice-dcv-server_*.deb /tmp/nice-dcv-*-ubuntu2204-x86_64/nice-dcv-web-viewer_*.deb
-  rm -rf /tmp/nice-dcv-*-ubuntu2204-x86_64
-  run_and_log "Enable DCV Service" sudo systemctl enable dcvserver
-  run_and_log "Start DCV Service" sudo systemctl start dcvserver
-else
-  echo "✅ NICE DCV Server already installed."
+  run_and_log "Fetch NICE DCV" bash -c 'wget -qO- https://d1uj6qtbmh3dt5.cloudfront.net/nice-dcv-ubuntu2204-x86_64.tgz | tar xvz -C /tmp'
+  run_and_log "Install DCV Server" sudo DEBIAN_FRONTEND=noninteractive apt-get install -y /tmp/nice-dcv-*-ubuntu2204-x86_64/nice-dcv-server_*.deb /tmp/nice-dcv-*-ubuntu2204-x86_64/nice-dcv-web-viewer_*.deb
+  sudo systemctl enable dcvserver
+  sudo systemctl start dcvserver
 fi
 
-if dcv list-sessions 2>/dev/null | grep -q "dedalus-sim"; then
-  echo "✅ DCV Session 'dedalus-sim' already active."
-else
-  run_and_log "Create DCV Session" dcv create-session dedalus-sim
-fi
+# 3. Enable User Linger (Required for systemd user services to run at boot)
+run_and_log "Enable User Linger" sudo loginctl enable-linger $USER
 
-DCV_BASHRC='dcv list-sessions >/dev/null 2>&1 | grep -q "dedalus-sim" || dcv create-session dedalus-sim >/dev/null 2>&1'
-if ! grep -q "# --- BEGIN PROJECT DEDALUS DCV AUTO-START ---" ~/.bashrc; then
-  echo "" >> ~/.bashrc
-  echo "# --- BEGIN PROJECT DEDALUS DCV AUTO-START ---" >> ~/.bashrc
-  echo "# Injected by simulation/setup.sh. DO NOT MODIFY." >> ~/.bashrc
-  echo "# This block ensures the NICE DCV remote desktop session is always running" >> ~/.bashrc
-  echo "# for the physics engine. Run simulation/cleanup.sh --hard to remove this." >> ~/.bashrc
-  echo "$DCV_BASHRC" >> ~/.bashrc
-  echo "# --- END PROJECT DEDALUS DCV AUTO-START ---" >> ~/.bashrc
-  echo "✅ Added DCV auto-start block to ~/.bashrc"
+# 4. Configure Systemd User Service for the Session
+run_and_log "Configure DCV Autostart Service" bash -c "
+  mkdir -p ~/.config/systemd/user/
+  cat << EOF > ~/.config/systemd/user/dcv-session.service
+[Unit]
+Description=NICE DCV Virtual Session for Project Dedalus
+After=network.target
+
+[Service]
+Type=simple
+ExecStartPre=/usr/bin/bash -c '/usr/bin/dcv list-sessions | grep -q \"dedalus-sim\" && /usr/bin/dcv close-session dedalus-sim || true'
+ExecStart=/usr/bin/dcv create-session --type virtual --owner %u dedalus-sim
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=default.target
+EOF
+"
+
+# 5. Enable and Start the Service
+run_and_log "Activate DCV Service" bash -c "
+  systemctl --user daemon-reload
+  systemctl --user enable dcv-session.service
+  systemctl --user restart dcv-session.service
+"
+
+# 6. Cleanup old .bashrc injection if it exists
+if grep -q "# --- BEGIN PROJECT DEDALUS DCV AUTO-START ---" ~/.bashrc; then
+  run_and_log "Cleanup .bashrc injection" sed -i '/# --- BEGIN PROJECT DEDALUS/,/# --- END PROJECT DEDALUS/d' ~/.bashrc
 fi
 
 # ---------------- Step 4: Eclipse iceoryx (IPC) ----------------
