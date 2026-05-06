@@ -172,6 +172,10 @@ if [[ "$MODE" == "hard" ]]; then
   run_and_log "Delete PX4 Directory" rm -rf PX4-Autopilot
   run_and_log "Delete iceoryx Build" rm -rf ../infrastructure/iceoryx_build
   run_and_log "Prune Docker Images" docker system prune -af --volumes
+  
+  if ask_yes_no "Do you also want to delete downloaded Colosseum environments (10GB+)?"; then
+     run_and_log "Delete Environments" rm -rf colosseum_environments
+  fi
 
   echo "✅ Hard reset complete. Run ./setup.sh to rebuild from scratch."
 fi

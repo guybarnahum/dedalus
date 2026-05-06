@@ -7,8 +7,15 @@
 # - Installs Remote Visualization (XFCE & NICE DCV)
 # - Fetches and builds Eclipse iceoryx (IPC)
 # - Fetches and builds PX4 SITL
+# - Pre-loads configured Colosseum Environments
 #
 set -e
+
+# ---------------- Configuration ----------------
+# Add additional environments here (e.g., "Neighborhood" "CityEnviron" "Coastline")
+PRELOAD_ENVS=("Blocks")
+S3_BUCKET="s3://dedalus-sim-assets-colosseum"
+COLOSSEUM_RELEASE_TAG="v2.0.0-beta.0"
 
 # ---------------- Auto-yes handling ----------------
 AUTO_YES=""
@@ -107,7 +114,6 @@ echo "---------------------------------------------------"
 # ---------------- Step 0: Privilege Escalation ----------------
 echo "🔐 Requesting administrative privileges..."
 sudo -v
-# Keep-alive: update timestamp until script finishes
 while true; do sudo -n true; sleep 60; kill -0 "$$" || exit; done 2>/dev/null &
 
 # ---------------- Step 1: Hardware Validation ----------------
@@ -121,22 +127,17 @@ else
   exit 1
 fi
 
-if [[ ! "$GPU_NAME" == *"NVIDIA L4"* ]] && [[ ! "$GPU_NAME" == *"A10G"* ]] && [[ ! "$GPU_NAME" == *"T4"* ]]; then
-   echo "⚠️  Warning: Expected L4, A10G, or T4 GPU. Proceeding anyway..."
-fi
-
 # ---------------- Step 2: System Dependencies ----------------
 echo "📦 Installing System Dependencies..."
 if [ ! -f /var/lib/apt/periodic/update-success-stamp ] || [ $(find /var/lib/apt/periodic/update-success-stamp -mmin +1440) ]; then
   run_and_log "Update APT cache" sudo apt-get update
 fi
 
-run_and_log "Install core tools" sudo DEBIAN_FRONTEND=noninteractive apt-get install -y build-essential cmake git wget curl ninja-build python3-pip libacl1-dev
+run_and_log "Install core tools" sudo DEBIAN_FRONTEND=noninteractive apt-get install -y build-essential cmake git wget curl ninja-build python3-pip libacl1-dev unzip
 
 if ! command -v docker &>/dev/null; then
   run_and_log "Install Docker Server" sudo apt-get install -y docker.io docker-compose-v2
   sudo usermod -aG docker "$USER"
-  echo "   ⚠️ Note: Added $USER to docker group. You may need to logout/login after setup completes."
 else
   echo "✅ Docker is already installed."
 fi
@@ -153,7 +154,6 @@ if ! command -v dcvserver &>/dev/null; then
   run_and_log "Fetch NICE DCV Archive" bash -c 'wget -qO- https://d1uj6qtbmh3dt5.cloudfront.net/nice-dcv-ubuntu2204-x86_64.tgz | tar xvz -C /tmp'
   run_and_log "Install NICE DCV Server" sudo DEBIAN_FRONTEND=noninteractive apt-get install -y /tmp/nice-dcv-*-ubuntu2204-x86_64/nice-dcv-server_*.deb /tmp/nice-dcv-*-ubuntu2204-x86_64/nice-dcv-web-viewer_*.deb
   rm -rf /tmp/nice-dcv-*-ubuntu2204-x86_64
-  
   run_and_log "Enable DCV Service" sudo systemctl enable dcvserver
   run_and_log "Start DCV Service" sudo systemctl start dcvserver
 else
@@ -212,6 +212,49 @@ else
   echo "✅ PX4 build directory found. Skipping."
 fi
 
+# ---------------- Step 6: Pre-load Environments ----------------
+echo "🌍 Pre-loading Colosseum Environments..."
+mkdir -p colosseum_environments
+
+for ENV in "${PRELOAD_ENVS[@]}"; do
+    TARGET_DIR="colosseum_environments/${ENV}_LinuxNoEditor"
+    EXE_NAME="${ENV}.sh"
+    BINARY_NAME="${ENV}.zip"
+    FALLBACK_URL="https://github.com/CodexLabsLLC/Colosseum/releases/download/${COLOSSEUM_RELEASE_TAG}/${BINARY_NAME}"
+
+    if [ ! -f "$TARGET_DIR/$EXE_NAME" ]; then
+        echo "   ⬇️  Fetching $ENV..."
+        if aws s3 cp "$S3_BUCKET/$BINARY_NAME" "/tmp/$BINARY_NAME" 2>/dev/null; then
+            echo "   ✅ Downloaded $ENV from S3."
+        else
+            echo "   ⚠️  S3 failed or unavailable. Falling back to public release..."
+            wget -q --show-progress -O "/tmp/$BINARY_NAME" "$FALLBACK_URL"
+        fi
+        
+        run_and_log "Extract & Format $ENV" bash -c "unzip -q /tmp/$BINARY_NAME -d /tmp/${ENV}_ext && mv /tmp/${ENV}_ext/LinuxNoEditor $TARGET_DIR && rm -rf /tmp/${ENV}_ext /tmp/$BINARY_NAME && chmod +x $TARGET_DIR/$EXE_NAME"
+    else
+        echo "✅ Environment '$ENV' is already pre-loaded."
+    fi
+done
+
+
 echo ""
-echo "✅ Setup Complete!"
-echo "   Run './sitl_runner.sh' to launch the environment."
+echo "=================================================================="
+echo "✅ ENVIRONMENT SETUP COMPLETE"
+echo "=================================================================="
+echo "🖥️  CONNECTING TO THE 'WINDSHIELD' (NICE DCV):"
+echo "   Unreal Engine cannot run over SSH. You must connect visually."
+echo ""
+echo "   1. Download the NICE DCV Client on your local laptop:"
+echo "      https://download.nice-dcv.com/"
+echo "   2. Set a password for your user (if you haven't already):"
+echo "      Run: sudo passwd $USER"
+echo "   3. Open the DCV Client and connect to:"
+echo "      $(curl -s ifconfig.me):8443"
+echo "   4. Log in using your Ubuntu credentials."
+echo ""
+echo "🚀 LAUNCHING THE SIMULATION:"
+echo "   Once inside the graphical desktop, open a terminal and run:"
+echo "   cd ~/dedalus/simulation && ./run.sh [EnvironmentName]"
+echo "   (Example: ./run.sh Neighborhood)"
+echo "=================================================================="
