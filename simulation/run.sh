@@ -86,10 +86,15 @@ if [ ! -f "$SIM_DIR/$EXE_NAME" ]; then
     
     echo "📦 Extracting & Formatting (This may take a minute)..."
     unzip -q "/tmp/$BINARY_NAME" -d "/tmp/${TARGET_ENV}_ext"
-    mv "/tmp/${TARGET_ENV}_ext/"* "$SIM_DIR" 2>/dev/null || mv "/tmp/${TARGET_ENV}_ext/LinuxNoEditor" "$SIM_DIR" 2>/dev/null || mv "/tmp/${TARGET_ENV}_ext" "$SIM_DIR"
+    rm -rf "$SIM_DIR"
+    mkdir -p "$SIM_DIR"
+    EXE_PATH=$(find "/tmp/${TARGET_ENV}_ext" -name "$EXE_NAME" | head -n 1)
+    BASE_DIR=$(dirname "$EXE_PATH")
+    mv "$BASE_DIR"/* "$SIM_DIR"/
     rm -rf "/tmp/${TARGET_ENV}_ext" "/tmp/$BINARY_NAME"
     chmod +x "$SIM_DIR/$EXE_NAME"
     echo "✅ Extraction complete."
+
 fi
 
 # ---------------- 3. PX4 SITL Flight Controller ----------------
