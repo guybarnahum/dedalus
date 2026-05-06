@@ -151,60 +151,64 @@ fi
 # ---------------- Step 3: Remote Visualization (NICE DCV) ----------------
 echo "🖥️  Configuring Remote Visualization (NICE DCV)..."
 
-# 1. Clean Slate
-sudo systemctl stop dcvserver || true
-systemctl --user stop dcv-session.service || true
-sudo pkill -9 dcv-session || true
-sudo pkill -9 Xorg || true
-sudo rm -rf /tmp/.X11-unix /tmp/.X*-lock
-
-# 2. Re-map NVIDIA BusID (Crucial for G6/L4)
-# We find the exact hardware address of the L4 and force Xorg to use it.
-BUS_ID=$(nvidia-smi --query-gpu=pci.bus_id --format=csv,noheader | head -n 1)
-run_and_log "Configure NVIDIA BusID" sudo nvidia-xconfig --preserve-busid --busid="$BUS_ID" --enable-all-gpus --connected-monitor=DFP-0
-
-# 3. Persistence & Master Reset
-sudo nvidia-smi -pm 1
-run_and_log "Restart DCV Master" sudo systemctl restart dcvserver
-
-# 4. Experimental Launch: The "Forced-Wait" Strategy
-# Instead of systemd, let's try to spawn it and wait for the X-socket to appear.
-run_and_log "Initialize DCV Session" bash -c "
-  dcv create-session --type virtual --owner $USER dedalus-sim --init \"/usr/bin/startxfce4\"
+# 1. Clean Slate: Kill zombies and contention
+run_and_log "Clear GPU Contention" bash -c "
+  sudo systemctl stop dcvserver || true
+  systemctl --user stop dcv-session.service || true
+  sudo pkill -9 AirSimNH || true
+  sudo pkill -9 dcv-session || true
+  sudo pkill -9 Xorg || true
+  sudo rm -rf /tmp/.X11-unix /tmp/.X*-lock
 "
 
-echo -n "⏳ Verifying X11 Socket..."
-for i in {1..10}; do
-  if [ -S /tmp/.X11-unix/X0 ] || [ -S /tmp/.X11-unix/X1 ]; then
-    echo " ✅ X-SERVER ACTIVE"
-    break
-  fi
-  sleep 1
-  if [ $i -eq 10 ]; then
-    echo " ❌ X-SERVER FAILED"
-    echo "🔎 Analyzing Xorg log for hardware rejection..."
-    sudo tail -n 20 /var/log/Xorg.0.log
-  fi
-done
+# 2. Install missing virtual session components (XDCV)
+if [ ! -f "/usr/lib/x86_64-linux-gnu/dcv/dcv-session-manager" ]; then
+  run_and_log "Install DCV & XDCV" sudo DEBIAN_FRONTEND=noninteractive apt-get install -y nice-dcv-server nice-xdcv xfce4 xfce4-goodies dbus-x11
+fi
 
-# 5. Restore persistence via systemd ONLY if manual check passed
-if dcv list-sessions | grep -q "dedalus-sim"; then
-  run_and_log "Configure Persistence" bash -c "
-    mkdir -p ~/.config/systemd/user/
-    cat << EOF > ~/.config/systemd/user/dcv-session.service
+# 3. Hardware-Software Handshake
+run_and_log "Initialize X-Server for GPU" bash -c "
+  BUS_ID=\$(nvidia-smi --query-gpu=pci.bus_id --format=csv,noheader | head -n 1)
+  sudo nvidia-xconfig --preserve-busid --busid=\"\$BUS_ID\" --enable-all-gpus --connected-monitor=DFP-0
+  sudo nvidia-smi -pm 1
+  sudo ldconfig
+"
+
+# 4. Master Reset
+run_and_log "Restart DCV Master" sudo systemctl restart dcvserver
+
+# 5. Persistent User-Level Service
+run_and_log "Configure DCV Autostart Service" bash -c "
+  sudo loginctl enable-linger \$USER
+  mkdir -p ~/.config/systemd/user/
+  cat << EOF > ~/.config/systemd/user/dcv-session.service
 [Unit]
-Description=NICE DCV Virtual Session
+Description=NICE DCV Virtual Session for Project Dedalus
+After=network.target
+
 [Service]
 Type=oneshot
 RemainAfterExit=yes
-ExecStart=/usr/bin/dcv list-sessions | grep -q 'dedalus-sim' || /usr/bin/dcv create-session --type virtual --owner %u dedalus-sim
+ExecStartPre=/usr/bin/bash -c '/usr/bin/dcv list-sessions | grep -q \"dedalus-sim\" && /usr/bin/dcv close-session dedalus-sim || true'
+ExecStart=/usr/bin/dcv create-session --type virtual --owner %u dedalus-sim --init \"/usr/bin/startxfce4\"
 ExecStop=/usr/bin/dcv close-session dedalus-sim
+
 [Install]
 WantedBy=default.target
 EOF
-    systemctl --user daemon-reload
-    systemctl --user enable dcv-session.service
-  "
+  systemctl --user daemon-reload
+  systemctl --user enable dcv-session.service
+  systemctl --user restart dcv-session.service
+"
+
+echo -n "⏳ Verifying Windshield Stabilization..."
+sleep 5
+if dcv list-sessions | grep -q "dedalus-sim"; then
+  echo " ✅ DCV SESSION RUNNING"
+else
+  echo " ❌ DCV SESSION FAILED"
+  echo "🔎 Analyzing logs..."
+  journalctl --user -u dcv-session.service -n 20 --no-pager
 fi
 
 # ---------------- Step 4: Eclipse iceoryx (IPC) ----------------
