@@ -25,21 +25,31 @@ ask_yes_no() {
   [[ $REPLY =~ ^[Yy]$ ]]
 }
 
-if tput setaf 0 >/dev/null 2>&1; then
-  COLOR_GRAY="$(tput setaf 8)"
-  COLOR_RESET="$(tput sgr0)"
-else
-  COLOR_GRAY=$'\033[90m'
-  COLOR_RESET=$'\033[0m'
-fi
+# ---------------- Global State & Traps ----------------
+SPINNER_PID=""
 
+handle_abort() {
+  if [[ -n "$SPINNER_PID" ]]; then
+    kill "$SPINNER_PID" 2>/dev/null || true
+  fi
+  tput cnorm 2>/dev/null || true
+  printf '\n\033[33m⚠️  Aborted by user. Exiting gracefully...\033[0m\n'
+  exit 130
+}
+
+trap handle_abort INT TERM
+cleanup_render() { tput cnorm 2>/dev/null || true; }
+trap cleanup_render EXIT
+
+# ---------------- UI: Run and Log ----------------
 run_and_log() {
   local log_file; log_file=$(mktemp)
   local description="$1"; shift
 
   tput civis 2>/dev/null || true
-  local prev_render=""
   local cols; cols=$(tput cols 2>/dev/null || echo 120)
+  local c_dim=$'\033[2m'
+  local c_reset=$'\033[0m'
 
   (
     frames=( '⠋ ' '⠙ ' '⠹ ' '⠸ ' '⠼ ' '⠴ ' '⠦ ' '⠧ ' '⠇ ' '⠏ ' )
@@ -47,7 +57,7 @@ run_and_log() {
     while :; do
       local last_line=""
       if [[ -s "$log_file" ]]; then
-        last_line=$(tail -n 1 "$log_file" | sed -E 's/\x1B\[[0-9;?]*[ -/]*[@-~]//g' | tr -d '\r')
+        last_line=$(tail -c 256 "$log_file" 2>/dev/null | tr '\r' '\n' | tail -n 1 | sed -E 's/\x1B\[[0-9;?]*[ -/]*[@-~]//g' | xargs)
       fi
 
       local prefix="${frames[i]}${description} : "
@@ -58,26 +68,21 @@ run_and_log() {
         last_line="${last_line:0:$available_space}"
       fi
 
-      local render="${COLOR_RESET}${prefix}${COLOR_GRAY}${last_line}${COLOR_RESET}"
-
-      if [[ "$render" != "$prev_render" ]]; then
-        printf '\r\033[K%s' "$render"
-        prev_render="$render"
-      fi
-
+      printf '\r\033[K%s%s%s%s%s' "${c_reset}" "${prefix}" "${c_dim}" "${last_line}" "${c_reset}"
       i=$(( (i+1) % ${#frames[@]} ))
-      sleep 0.2
+      sleep 0.15
     done
   ) &
-  local spinner_pid=$!
+  
+  SPINNER_PID=$!
 
   if ! "$@" >"$log_file" 2>&1; then
-    kill "$spinner_pid" &>/dev/null || true
-    wait "$spinner_pid" &>/dev/null || true
+    kill "$SPINNER_PID" &>/dev/null || true
+    wait "$SPINNER_PID" &>/dev/null || true
+    SPINNER_PID=""
     tput cnorm 2>/dev/null || true
     
-    printf '\r\033[K%s' "${COLOR_RESET}"
-    printf "❌ %s failed.\n" "$description"
+    printf '\r\033[K%s❌ %s failed.\n' "${c_reset}" "$description"
     echo "--- ERROR LOG ---"
     cat "$log_file"
     echo "--- END LOG ---"
@@ -85,20 +90,21 @@ run_and_log() {
     exit 1
   fi
 
-  kill "$spinner_pid" &>/dev/null || true
-  wait "$spinner_pid" &>/dev/null || true
+  kill "$SPINNER_PID" &>/dev/null || true
+  wait "$SPINNER_PID" &>/dev/null || true
+  SPINNER_PID=""
   tput cnorm 2>/dev/null || true
 
-  printf '\r\033[K%s' "${COLOR_RESET}"
-  printf '✅ %s\n' "$description"
+  printf '\r\033[K%s✅ %s\n' "${c_reset}" "$description"
   rm -f "$log_file"
 }
 
-cleanup_render() { tput cnorm 2>/dev/null || true; }
-trap cleanup_render EXIT INT TERM
-
 echo "🧹 Project Dedalus - Cleanup Utility"
 echo "---------------------------------------------------"
+
+# ---------------- Step 0: Privilege Escalation ----------------
+sudo -v
+while true; do sudo -n true; sleep 60; kill -0 "$$" || exit; done 2>/dev/null &
 
 if [[ -z "$MODE" ]]; then
   echo "Usage: ./cleanup.sh [--soft | --hard]"
@@ -107,35 +113,30 @@ if [[ -z "$MODE" ]]; then
   exit 1
 fi
 
-# ---------------- Phase 1: Terminate Processes (Always Runs) ----------------
+# ---------------- Phase 1: Terminate Processes ----------------
 echo "🛑 Terminating Active Simulation Processes..."
 
-# Kill Colosseum (Unreal Engine)
 if pgrep -f "Colosseum" > /dev/null; then
    run_and_log "Kill Colosseum" pkill -9 -f "Colosseum" || true
 else
    echo "✅ Colosseum not running."
 fi
 
-# Kill PX4
 if pgrep -f "px4" > /dev/null; then
    run_and_log "Kill PX4 SITL" pkill -9 -f "px4" || true
 else
    echo "✅ PX4 not running."
 fi
 
-# Kill iceoryx Router
 if pgrep -f "iox-roudi" > /dev/null; then
    run_and_log "Kill iox-roudi" pkill -9 -f "iox-roudi" || true
 else
    echo "✅ iox-roudi not running."
 fi
 
-# Stop dangling docker containers
 if command -v docker &>/dev/null; then
-  run_and_log "Stop Dedalus Docker Containers" docker stop $(docker ps -a -q --filter name=dedalus) 2>/dev/null || true
+  run_and_log "Stop Dedalus Docker Containers" bash -c 'docker stop $(docker ps -a -q --filter name=dedalus) 2>/dev/null || true'
 fi
-
 
 # ---------------- Phase 2: Soft Reset ----------------
 if [[ "$MODE" == "soft" ]]; then
@@ -146,7 +147,7 @@ if [[ "$MODE" == "soft" ]]; then
     run_and_log "Clear PX4 Build Cache" make -C simulation/PX4-Autopilot clean || true
   fi
   
-  run_and_log "Clear local CMake build artifacts" rm -rf src/build/* 2>/dev/null || true
+  run_and_log "Clear local CMake build artifacts" bash -c 'rm -rf src/build/* 2>/dev/null || true'
   
   echo "✅ Soft reset complete. Ready to rebuild."
   exit 0
