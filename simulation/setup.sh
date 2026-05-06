@@ -162,7 +162,7 @@ if [ ! -f "../infrastructure/iceoryx_build/.installed" ]; then
   fi
   cd iceoryx
   run_and_log "Configure iceoryx CMake" cmake -Bbuild -Hiceoryx_meta -DBUILD_STRICT=OFF -DROUDI_ENVIRONMENT=OFF
-  run_and_log "Compile iceoryx" cmake --build build --target install --parallel "$(nproc)"
+  run_and_log "Compile iceoryx" sudo cmake --build build --target install --parallel "$(nproc)"
   touch ../.installed
   cd ../../../simulation # Return to simulation directory
   echo "✅ iceoryx built and staged."
