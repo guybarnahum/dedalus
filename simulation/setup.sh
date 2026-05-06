@@ -252,9 +252,8 @@ for ENV in "${PRELOAD_ENVS[@]}"; do
                 fi
             done
         fi
-        
         if [ "$DOWNLOAD_SUCCESS" = true ]; then
-             run_and_log "Extract & Format $ENV" bash -c "unzip -q /tmp/$BINARY_NAME -d /tmp/${ENV}_ext && rm -rf $TARGET_DIR && mkdir -p $TARGET_DIR && EXE_PATH=\$(find /tmp/${ENV}_ext -name $EXE_NAME | head -n 1) && BASE_DIR=\$(dirname \$EXE_PATH) && mv \$BASE_DIR/* $TARGET_DIR/ && chmod +x $TARGET_DIR/$EXE_NAME && rm -rf /tmp/${ENV}_ext /tmp/$BINARY_NAME"
+             run_and_log "Extract & Format $ENV - this may take a minute" bash -c "unzip -q /tmp/$BINARY_NAME -d /tmp/${ENV}_ext && rm -rf $TARGET_DIR && mkdir -p $TARGET_DIR && EXE_PATH=\$(find /tmp/${ENV}_ext -type f -name '*.sh' | grep -v 'CrashReportClient' | head -n 1) && BASE_DIR=\$(dirname \"\$EXE_PATH\") && mv \"\$BASE_DIR\"/* $TARGET_DIR/ && chmod +x $TARGET_DIR/*.sh && rm -rf /tmp/${ENV}_ext /tmp/$BINARY_NAME"
         else
              echo "   ❌ Failed to download $ENV from all sources. Skipping."
         fi
