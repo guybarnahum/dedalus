@@ -14,14 +14,13 @@ set -e
 cd "$(dirname "$0")"
 
 # ---------------- Configuration ----------------
-PRELOAD_ENVS=("Blocks" "AirSimNH" "Coastline")
+PRELOAD_ENVS=("Blocks" "AirSimNH")
 S3_BUCKET="s3://dedalus-sim-assets-colosseum"
 
 # Array of base URLs to cycle through if S3 fails
 FALLBACK_MIRRORS=(
     "https://github.com/microsoft/AirSim/releases/download/v1.8.1-linux"
     "https://github.com/microsoft/AirSim/releases/download/v1.7.0-linux"
-    "https://sourceforge.net/projects/airsim.mirror/files/v1.8.1-windows" # SourceForge mirror as absolute last resort
 )
 
 # ---------------- Auto-yes handling ----------------
@@ -253,7 +252,21 @@ for ENV in "${PRELOAD_ENVS[@]}"; do
             done
         fi
         if [ "$DOWNLOAD_SUCCESS" = true ]; then
-             run_and_log "Extract & Format $ENV - this may take a minute" bash -c "unzip -q /tmp/$BINARY_NAME -d /tmp/${ENV}_ext && rm -rf $TARGET_DIR && mkdir -p $TARGET_DIR && EXE_PATH=\$(find /tmp/${ENV}_ext -type f -name '*.sh' | grep -v 'CrashReportClient' | head -n 1) && BASE_DIR=\$(dirname \"\$EXE_PATH\") && mv \"\$BASE_DIR\"/* $TARGET_DIR/ && chmod +x $TARGET_DIR/*.sh && rm -rf /tmp/${ENV}_ext /tmp/$BINARY_NAME"
+             run_and_log "Extract & Format $ENV" bash -c "
+                 set -e
+                 unzip -q /tmp/$BINARY_NAME -d /tmp/${ENV}_ext
+                 rm -rf $TARGET_DIR
+                 mkdir -p $TARGET_DIR
+                 EXE_PATH=\$(find /tmp/${ENV}_ext -type f -name '*.sh' | grep -v 'CrashReportClient' | head -n 1)
+                 if [ -z \"\$EXE_PATH\" ]; then
+                     echo '❌ No .sh executable found inside zip!' >&2
+                     exit 1
+                 fi
+                 BASE_DIR=\$(dirname \"\$EXE_PATH\")
+                 mv \"\$BASE_DIR\"/* $TARGET_DIR/
+                 chmod +x $TARGET_DIR/*.sh
+                 rm -rf /tmp/${ENV}_ext /tmp/$BINARY_NAME
+             "
         else
              echo "   ❌ Failed to download $ENV from all sources. Skipping."
         fi

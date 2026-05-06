@@ -18,7 +18,6 @@ SIM_DIR="colosseum_environments/${TARGET_ENV}_LinuxNoEditor"
 FALLBACK_MIRRORS=(
     "https://github.com/microsoft/AirSim/releases/download/v1.8.1-linux"
     "https://github.com/microsoft/AirSim/releases/download/v1.7.0-linux"
-    "https://sourceforge.net/projects/airsim.mirror/files/v1.8.1-windows"
 )
 
 # ---------------- Traps & Cleanup ----------------
@@ -96,6 +95,13 @@ if [ ! -d "$SIM_DIR" ]; then
     
     # Dynamically find the executable
     EXE_PATH=$(find "/tmp/${TARGET_ENV}_ext" -type f -name "*.sh" | grep -v "CrashReportClient" | head -n 1)
+    
+    if [ -z "$EXE_PATH" ]; then
+        echo "❌ CRITICAL: No .sh executable found inside downloaded zip! The archive may be corrupted or for Windows."
+        rm -rf "/tmp/${TARGET_ENV}_ext" "/tmp/$BINARY_NAME"
+        cleanup
+    fi
+    
     BASE_DIR=$(dirname "$EXE_PATH")
     mv "$BASE_DIR"/* "$SIM_DIR"/
     rm -rf "/tmp/${TARGET_ENV}_ext" "/tmp/$BINARY_NAME"
