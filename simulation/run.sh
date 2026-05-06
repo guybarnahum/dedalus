@@ -6,6 +6,32 @@
 set -e
 cd "$(dirname "$0")"
 
+# ---------------- tmux Auto-Wrapper ----------------
+# If we are not already inside a tmux session, relaunch this script inside one!
+if ! command -v tmux &>/dev/null; then
+    echo "📦 Installing 'tmux' utility..."
+    sudo apt-get update >/dev/null && sudo apt-get install -y tmux >/dev/null
+fi
+
+if [ -z "$TMUX" ]; then
+    SESSION_NAME="dedalus-sim"
+    echo "🚀 Spawning simulation in background tmux session ('$SESSION_NAME')..."
+    
+    # Clean up any lingering dead sessions
+    tmux kill-session -t "$SESSION_NAME" 2>/dev/null || true
+    
+    # Relaunch this exact script with all arguments inside a detached tmux session
+    tmux new-session -d -s "$SESSION_NAME" "$0 $*"
+    
+    echo "✅ Simulation is booting in the background!"
+    echo "   The Unreal Engine GUI will pop up on your desktop momentarily."
+    echo ""
+    echo "   -> To view live logs:  tmux attach -t $SESSION_NAME"
+    echo "   -> To exit the logs:   Press Ctrl+B, then D"
+    echo "   -> To kill the sim:    ./cleanup.sh"
+    exit 0
+fi
+
 # ---------------- Configuration ----------------
 TARGET_ENV="${1:-Blocks}"
 S3_BUCKET="s3://dedalus-sim-assets-colosseum"
@@ -23,7 +49,6 @@ FALLBACK_MIRRORS=(
 # ---------------- Traps & Cleanup ----------------
 cleanup() {
     echo -e "\n🛑 Shutting down simulation stack..."
-    # Kill any running unreal engines by finding their dynamic name
     pkill -9 -f "Linux-Shipping" || true
     pkill -9 -f "px4" || true
     pkill -9 -f "iox-roudi" || true
@@ -93,15 +118,12 @@ if [ ! -d "$SIM_DIR" ]; then
     rm -rf "$SIM_DIR"
     mkdir -p "$SIM_DIR"
     
-    # Dynamically find the executable
     EXE_PATH=$(find "/tmp/${TARGET_ENV}_ext" -type f -name "*.sh" | grep -v "CrashReportClient" | head -n 1)
-    
     if [ -z "$EXE_PATH" ]; then
         echo "❌ CRITICAL: No .sh executable found inside downloaded zip! The archive may be corrupted or for Windows."
         rm -rf "/tmp/${TARGET_ENV}_ext" "/tmp/$BINARY_NAME"
         cleanup
     fi
-    
     BASE_DIR=$(dirname "$EXE_PATH")
     mv "$BASE_DIR"/* "$SIM_DIR"/
     rm -rf "/tmp/${TARGET_ENV}_ext" "/tmp/$BINARY_NAME"
@@ -117,11 +139,19 @@ cd ../
 sleep 3
 echo "✅ PX4 daemon active."
 
-# ---------------- 4. Launch Unreal Engine Physics ----------------
-echo "🎮 Launching Colosseum Physics Engine ($TARGET_ENV)..."
-echo "⚠️  Keep this terminal open. Press Ctrl-C to safely shut down all systems."
+# ---------------- 4. Apply Colosseum Settings ----------------
+echo "⚙️  Injecting Configuration (settings.json)..."
+mkdir -p ~/Documents/AirSim
+if [ -f "settings.json" ]; then
+    cp settings.json ~/Documents/AirSim/settings.json
+    echo "✅ Settings applied."
+else
+    echo "⚠️  No settings.json found in $(pwd). Colosseum will use defaults."
+fi
 
-# Find the executable dynamically to launch it
+# ---------------- 5. Launch Unreal Engine Physics ----------------
+echo "🎮 Launching Colosseum Physics Engine ($TARGET_ENV)..."
+
 LAUNCH_EXE=$(find "$SIM_DIR" -maxdepth 1 -type f -name "*.sh" | grep -v "CrashReportClient" | head -n 1)
 
 if [ -z "$LAUNCH_EXE" ]; then
@@ -132,4 +162,5 @@ fi
 # Runs windowed so you can see the terminal and the drone simultaneously
 "$LAUNCH_EXE" -windowed -ResX=1280 -ResY=720
 
+# If the Unreal Engine GUI is closed, trigger cleanup automatically
 cleanup
