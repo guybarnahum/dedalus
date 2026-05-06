@@ -163,11 +163,13 @@ run_and_log "Clear GPU Contention" bash -c "
 
 # 2. Install missing virtual session components (XDCV)
 if [ ! -f "/usr/lib/x86_64-linux-gnu/dcv/dcv-session-manager" ]; then
-  run_and_log "Install DCV & XDCV" sudo DEBIAN_FRONTEND=noninteractive apt-get install -y nice-dcv-server nice-xdcv xfce4 xfce4-goodies dbus-x11
+  run_and_log "Fetch NICE DCV Bundle" bash -c "wget -q https://d1uj6qtbmh3dt5.cloudfront.net/nice-dcv-ubuntu2204-x86_64.tgz && tar -xf nice-dcv-ubuntu2204-x86_64.tgz"
+  run_and_log "Install DCV & XDCV" bash -c "sudo DEBIAN_FRONTEND=noninteractive apt-get install -y ./nice-dcv-2024.0-17794-ubuntu2204-x86_64/nice-dcv-server_*.deb ./nice-dcv-2024.0-17794-ubuntu2204-x86_64/nice-xdcv_*.deb xfce4 xfce4-goodies dbus-x11"
+  rm -rf nice-dcv-ubuntu2204-x86_64.tgz nice-dcv-2024.0-17794-ubuntu2204-x86_64
 fi
 
-# 3. Hardware-Software Handshake
-run_and_log "Initialize X-Server for GPU" bash -c "
+# 3. Hardware-Software Handshake (Crucial for G6/L4)
+run_and_log "Configure NVIDIA Display" bash -c "
   BUS_ID=\$(nvidia-smi --query-gpu=pci.bus_id --format=csv,noheader | head -n 1)
   sudo nvidia-xconfig --preserve-busid --busid=\"\$BUS_ID\" --enable-all-gpus --connected-monitor=DFP-0
   sudo nvidia-smi -pm 1
