@@ -16,12 +16,12 @@ cd "$(dirname "$0")"
 # ---------------- Configuration ----------------
 PRELOAD_ENVS=("Blocks")
 S3_BUCKET="s3://dedalus-sim-assets-colosseum"
-COLOSSEUM_RELEASE_TAG="v2.0.0-beta.0"
 
 # Array of base URLs to cycle through if S3 fails
 FALLBACK_MIRRORS=(
-    "https://github.com/CodexLabsLLC/Colosseum/releases/download/${COLOSSEUM_RELEASE_TAG}"
     "https://github.com/microsoft/AirSim/releases/download/v1.8.1-linux"
+    "https://github.com/microsoft/AirSim/releases/download/v1.7.0-linux"
+    "https://sourceforge.net/projects/airsim.mirror/files/v1.8.1-windows" # SourceForge mirror as absolute last resort
 )
 
 # ---------------- Auto-yes handling ----------------
