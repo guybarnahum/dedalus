@@ -150,7 +150,10 @@ else
 fi
 
 if ! command -v dcvserver &>/dev/null; then
-  run_and_log "Install NICE DCV Server" sudo DEBIAN_FRONTEND=noninteractive apt-get install -y nice-dcv-server
+  run_and_log "Fetch NICE DCV Archive" bash -c 'wget -qO- https://d1uj6qtbmh3dt5.cloudfront.net/nice-dcv-ubuntu2204-x86_64.tgz | tar xvz -C /tmp'
+  run_and_log "Install NICE DCV Server" sudo DEBIAN_FRONTEND=noninteractive apt-get install -y /tmp/nice-dcv-*-ubuntu2204-x86_64/nice-dcv-server_*.deb /tmp/nice-dcv-*-ubuntu2204-x86_64/nice-dcv-web-viewer_*.deb
+  rm -rf /tmp/nice-dcv-*-ubuntu2204-x86_64
+  
   run_and_log "Enable DCV Service" sudo systemctl enable dcvserver
   run_and_log "Start DCV Service" sudo systemctl start dcvserver
 else
