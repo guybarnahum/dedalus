@@ -43,8 +43,11 @@ run_and_log() {
   # Hide cursor
   tput civis 2>/dev/null || true
 
-  local prev_render=""
   local cols; cols=$(tput cols 2>/dev/null || echo 120)
+
+  # Hardcoded ANSI escapes for SSH reliability
+  local c_dim=$'\033[2m'
+  local c_reset=$'\033[0m'
 
   (
     frames=( '⠋ ' '⠙ ' '⠹ ' '⠸ ' '⠼ ' '⠴ ' '⠦ ' '⠧ ' '⠇ ' '⠏ ' )
@@ -52,7 +55,8 @@ run_and_log() {
     while :; do
       local last_line=""
       if [[ -s "$log_file" ]]; then
-        last_line=$(tail -n 1 "$log_file" | sed -E 's/\x1B\[[0-9;?]*[ -/]*[@-~]//g' | tr -d '\r')
+        # FIX: tail raw bytes, translate \r to \n, grab last line, strip ANSI, trim whitespace
+        last_line=$(tail -c 256 "$log_file" 2>/dev/null | tr '\r' '\n' | tail -n 1 | sed -E 's/\x1B\[[0-9;?]*[ -/]*[@-~]//g' | xargs)
       fi
 
       local prefix="${frames[i]}${description} : "
@@ -63,15 +67,11 @@ run_and_log() {
         last_line="${last_line:0:$available_space}"
       fi
 
-      local render="${COLOR_RESET}${prefix}${COLOR_GRAY}${last_line}${COLOR_RESET}"
-
-      if [[ "$render" != "$prev_render" ]]; then
-        printf '\r\033[K%s' "$render"
-        prev_render="$render"
-      fi
-
+      # Force string rendering with dimming
+      printf '\r\033[K%s%s%s%s%s' "${c_reset}" "${prefix}" "${c_dim}" "${last_line}" "${c_reset}"
+      
       i=$(( (i+1) % ${#frames[@]} ))
-      sleep 0.2
+      sleep 0.15 # Faster refresh for smoother logs
     done
   ) &
   local spinner_pid=$!
@@ -81,8 +81,7 @@ run_and_log() {
     wait "$spinner_pid" &>/dev/null || true
     tput cnorm 2>/dev/null || true
     
-    printf '\r\033[K%s' "${COLOR_RESET}"
-    printf "❌ %s failed.\n" "$description"
+    printf '\r\033[K%s❌ %s failed.\n' "${c_reset}" "$description"
     echo "--- ERROR LOG ---"
     cat "$log_file"
     echo "--- END LOG ---"
@@ -94,8 +93,7 @@ run_and_log() {
   wait "$spinner_pid" &>/dev/null || true
   tput cnorm 2>/dev/null || true
 
-  printf '\r\033[K%s' "${COLOR_RESET}"
-  printf '✅ %s\n' "$description"
+  printf '\r\033[K%s✅ %s\n' "${c_reset}" "$description"
   rm -f "$log_file"
 }
 
