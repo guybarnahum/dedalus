@@ -1,78 +1,152 @@
-# Build directories
+# -----------------------------
+# Build outputs (CMake/C++ and generic)
+# -----------------------------
 build/
+build-*/
+cmake-build-*/
+out/
+dist/
 bin/
 lib/
+lib64/
+tmp/
 
-dist/
-*.egg-info/
-.eggs/
+# CMake and native build artifacts
+CMakeCache.txt
+CMakeFiles/
+cmake_install.cmake
+install_manifest.txt
+compile_commands.json
+CTestTestfile.cmake
+Testing/
+Makefile
+*.cmake.user
+*.ninja
+.ninja_deps
+.ninja_log
 
-# Python bytecode and environments
+# Compiled objects/libraries/binaries
+*.o
+*.obj
+*.so
+*.so.*
+*.a
+*.la
+*.lo
+*.dylib
+*.dll
+*.exe
+*.out
+*.app
+*.i*
+
+# -----------------------------
+# Python
+# -----------------------------
 __pycache__/
 *.py[cod]
 *$py.class
+*.pyo
 
-# Virtual environments
 .venv/
+.venv*/
 venv/
 ENV/
 env/
-.venv*/
+
 pip-wheel-metadata/
+*.egg-info/
+.eggs/
+
+.python-version
+
+# Python tooling/cache/test
+.mypy_cache/
+.pyre/
+.ruff_cache/
+.cache/
+.tox/
+.nox/
+.hypothesis/
+.pytest_cache/
+
+htmlcov/
+.coverage
+.coverage.*
+coverage.xml
+nosetests.xml
+*.cover
+
+# Notebook
+.ipynb_checkpoints/
+
+# Keep lockfiles ignored by default for app-style repos
 Pipfile.lock
 poetry.lock
 
-# Jupyter Notebook checkpoints
-.ipynb_checkpoints/
-
-# ML Models (Ignore large binary weights, keep configuration JSONs)
+# -----------------------------
+# ML/model artifacts
+# -----------------------------
 *.engine
 *.onnx
 *.pt
 *.pth
-!.gitkeep
+
+# Keep lightweight model metadata tracked
 !models/*.json
+!.gitkeep
 
-# Logging
+# -----------------------------
+# Logs and runtime state
+# -----------------------------
 *.log
+logs/
+*.pid
+*.pid.lock
 
-# Unit test / coverage
-htmlcov/
-.coverage
-.coverage.*
-.cache
-.tox/
-nosetests.xml
-coverage.xml
-*.cover
-.hypothesis/
-.pytest_cache/
+# -----------------------------
+# Infra and local secrets
+# -----------------------------
+.env
+.env.*
+*.pem
+*.key
 
-# IDE/editor files
+# Terraform
+.terraform/
+.terraform.lock.hcl
+*.tfstate
+*.tfstate.*
+crash.log
+override.tf
+override.tf.json
+*_override.tf
+*_override.tf.json
+
+# -----------------------------
+# Editors/IDE
+# -----------------------------
 .vscode/
 .idea/
+.settings/
 *.sublime-project
 *.sublime-workspace
 
-# OS generated files
+# -----------------------------
+# OS / temporary / backup
+# -----------------------------
 .DS_Store
 Thumbs.db
 Desktop.ini
 
-# Backup files
 *.bak
 *.tmp
+*.swp
+*.swo
 *~
 
-# Miscellaneous
-.mypy_cache/
-.pyre/
-.settings/
+# -----------------------------
+# Project-specific generated paths
+# -----------------------------
 modules/
 site/
-
-# SSH
-*.pem
-
-# Environment variables
-.env
