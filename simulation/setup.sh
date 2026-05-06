@@ -163,9 +163,17 @@ run_and_log "Clear GPU Contention" bash -c "
 
 # 2. Install missing virtual session components (XDCV)
 if [ ! -f "/usr/lib/x86_64-linux-gnu/dcv/dcv-session-manager" ]; then
-  run_and_log "Fetch NICE DCV Bundle" bash -c "wget -q https://d1uj6qtbmh3dt5.cloudfront.net/nice-dcv-ubuntu2204-x86_64.tgz && tar -xf nice-dcv-ubuntu2204-x86_64.tgz"
-  run_and_log "Install DCV & XDCV" bash -c "sudo DEBIAN_FRONTEND=noninteractive apt-get install -y ./nice-dcv-2024.0-17794-ubuntu2204-x86_64/nice-dcv-server_*.deb ./nice-dcv-2024.0-17794-ubuntu2204-x86_64/nice-xdcv_*.deb xfce4 xfce4-goodies dbus-x11"
-  rm -rf nice-dcv-ubuntu2204-x86_64.tgz nice-dcv-2024.0-17794-ubuntu2204-x86_64
+  run_and_log "Fetch NICE DCV Bundle" bash -c "
+    wget -q https://d1uj6qtbmh3dt5.cloudfront.net/nice-dcv-ubuntu2204-x86_64.tgz
+    tar -xf nice-dcv-ubuntu2204-x86_64.tgz
+  "
+  run_and_log "Install DCV & XDCV" bash -c "
+    DCV_DIR=\$(ls -d nice-dcv-*-ubuntu2204-x86_64 | head -n 1)
+    sudo dpkg -i ./\$DCV_DIR/nice-dcv-server_*.deb ./\$DCV_DIR/nice-xdcv_*.deb || true
+    sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -f
+    sudo DEBIAN_FRONTEND=noninteractive apt-get install -y xfce4 xfce4-goodies dbus-x11
+  "
+  rm -rf nice-dcv-ubuntu2204-x86_64.tgz nice-dcv-*-ubuntu2204-x86_64
 fi
 
 # 3. Hardware-Software Handshake (Crucial for G6/L4)
