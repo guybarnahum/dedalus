@@ -164,10 +164,13 @@ if ! command -v dcvserver &>/dev/null; then
   sudo systemctl start dcvserver
 fi
 
-# 3. Enable User Linger (Required for systemd user services to run at boot)
+# 3. GPU/X-Server Initialization (Critical for L4 GPU instances)
+run_and_log "Initialize X-Server for GPU" sudo nvidia-xconfig --preserve-busid --enable-all-gpus --connected-monitor=DFP-0
+
+# 4. Enable User Linger (Ensures service runs without active SSH session)
 run_and_log "Enable User Linger" sudo loginctl enable-linger $USER
 
-# 4. Configure Systemd User Service for the Session
+# 5. Configure Systemd User Service (oneshot mode)
 run_and_log "Configure DCV Autostart Service" bash -c "
   mkdir -p ~/.config/systemd/user/
   cat << EOF > ~/.config/systemd/user/dcv-session.service
@@ -176,25 +179,25 @@ Description=NICE DCV Virtual Session for Project Dedalus
 After=network.target
 
 [Service]
-Type=simple
+Type=oneshot
+RemainAfterExit=yes
 ExecStartPre=/usr/bin/bash -c '/usr/bin/dcv list-sessions | grep -q \"dedalus-sim\" && /usr/bin/dcv close-session dedalus-sim || true'
 ExecStart=/usr/bin/dcv create-session --type virtual --owner %u dedalus-sim
-Restart=always
-RestartSec=5
+ExecStop=/usr/bin/dcv close-session dedalus-sim
 
 [Install]
 WantedBy=default.target
 EOF
 "
 
-# 5. Enable and Start the Service
+# 6. Activate the Service
 run_and_log "Activate DCV Service" bash -c "
   systemctl --user daemon-reload
   systemctl --user enable dcv-session.service
   systemctl --user restart dcv-session.service
 "
 
-# 6. Cleanup old .bashrc injection if it exists
+# 7. Cleanup old .bashrc logic to prevent conflicts
 if grep -q "# --- BEGIN PROJECT DEDALUS DCV AUTO-START ---" ~/.bashrc; then
   run_and_log "Cleanup .bashrc injection" sed -i '/# --- BEGIN PROJECT DEDALUS/,/# --- END PROJECT DEDALUS/d' ~/.bashrc
 fi
