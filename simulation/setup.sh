@@ -151,26 +151,24 @@ fi
 # ---------------- Step 3: Remote Visualization (NICE DCV) ----------------
 echo "🖥️  Configuring Remote Visualization (NICE DCV)..."
 
-# 1. Install Desktop Environment
-if ! dpkg -l | grep -q "xfce4"; then
-  run_and_log "Install XFCE4 Desktop" sudo DEBIAN_FRONTEND=noninteractive apt-get install -y xfce4 xfce4-goodies dbus-x11 x11-xserver-utils
-fi
+# 1. Force Clean Slate (Experimental Reset)
+# Kill any zombies that might be blocking the GPU or DBus
+sudo systemctl stop dcvserver || true
+systemctl --user stop dcv-session.service || true
+sudo pkill -9 dcv-session || true
+sudo pkill -9 Xorg || true
+sudo rm -f /tmp/.X*-lock
+sudo rm -rf /tmp/.X11-unix
 
-# 2. Install DCV Server
-if ! command -v dcvserver &>/dev/null; then
-  run_and_log "Fetch NICE DCV" bash -c 'wget -qO- https://d1uj6qtbmh3dt5.cloudfront.net/nice-dcv-ubuntu2204-x86_64.tgz | tar xvz -C /tmp'
-  run_and_log "Install DCV Server" sudo DEBIAN_FRONTEND=noninteractive apt-get install -y /tmp/nice-dcv-*-ubuntu2204-x86_64/nice-dcv-server_*.deb /tmp/nice-dcv-*-ubuntu2204-x86_64/nice-dcv-web-viewer_*.deb
-  sudo systemctl enable dcvserver
-  sudo systemctl start dcvserver
-fi
-
-# 3. GPU/X-Server Initialization (Critical for L4 GPU instances)
+# 2. NVIDIA L4 Display Initialization
+# Force persistence mode and re-configure the virtual display head
+run_and_log "GPU Persistence Mode" sudo nvidia-smi -pm 1
 run_and_log "Initialize X-Server for GPU" sudo nvidia-xconfig --preserve-busid --enable-all-gpus --connected-monitor=DFP-0
 
-# 4. Enable User Linger (Ensures service runs without active SSH session)
-run_and_log "Enable User Linger" sudo loginctl enable-linger $USER
+# 3. Master Server Restart
+run_and_log "Restart DCV Master" sudo systemctl restart dcvserver
 
-# 5. Configure Systemd User Service (oneshot mode)
+# 4. Systemd Service Recreation (Optimized for L4)
 run_and_log "Configure DCV Autostart Service" bash -c "
   mkdir -p ~/.config/systemd/user/
   cat << EOF > ~/.config/systemd/user/dcv-session.service
@@ -181,8 +179,12 @@ After=network.target
 [Service]
 Type=oneshot
 RemainAfterExit=yes
+# Add a small delay to allow dcvserver to fully stabilize
+ExecStartPre=/usr/bin/sleep 2
+# Clean up any lingering ID registration
 ExecStartPre=/usr/bin/bash -c '/usr/bin/dcv list-sessions | grep -q \"dedalus-sim\" && /usr/bin/dcv close-session dedalus-sim || true'
-ExecStart=/usr/bin/dcv create-session --type virtual --owner %u dedalus-sim
+# Create the session with an explicit init script to force X-server spawn
+ExecStart=/usr/bin/dcv create-session --type virtual --owner %u dedalus-sim --init \"/usr/bin/startxfce4\"
 ExecStop=/usr/bin/dcv close-session dedalus-sim
 
 [Install]
@@ -190,16 +192,23 @@ WantedBy=default.target
 EOF
 "
 
-# 6. Activate the Service
+# 5. Activation & Verification Loop
 run_and_log "Activate DCV Service" bash -c "
+  sudo loginctl enable-linger $USER
   systemctl --user daemon-reload
   systemctl --user enable dcv-session.service
   systemctl --user restart dcv-session.service
 "
 
-# 7. Cleanup old .bashrc logic to prevent conflicts
-if grep -q "# --- BEGIN PROJECT DEDALUS DCV AUTO-START ---" ~/.bashrc; then
-  run_and_log "Cleanup .bashrc injection" sed -i '/# --- BEGIN PROJECT DEDALUS/,/# --- END PROJECT DEDALUS/d' ~/.bashrc
+# 6. Final Health Check
+echo -n "⏳ Waiting for Windshield to stabilize..."
+sleep 5
+if dcv list-sessions | grep -q "dedalus-sim"; then
+  echo " ✅ DCV SESSION RUNNING"
+else
+  echo " ❌ DCV SESSION FAILED TO START"
+  echo "🔎 Inspecting logs for you..."
+  journalctl --user -u dcv-session.service -n 20 --no-pager
 fi
 
 # ---------------- Step 4: Eclipse iceoryx (IPC) ----------------
