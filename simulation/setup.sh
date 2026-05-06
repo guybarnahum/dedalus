@@ -132,7 +132,7 @@ if [ ! -f /var/lib/apt/periodic/update-success-stamp ] || [ $(find /var/lib/apt/
   run_and_log "Update APT cache" sudo apt-get update
 fi
 
-run_and_log "Install core tools" sudo DEBIAN_FRONTEND=noninteractive apt-get install -y build-essential cmake git wget curl ninja-build python3-pip
+run_and_log "Install core tools" sudo DEBIAN_FRONTEND=noninteractive apt-get install -y build-essential cmake git wget curl ninja-build python3-pip libacl1-dev
 
 if ! command -v docker &>/dev/null; then
   run_and_log "Install Docker Server" sudo apt-get install -y docker.io docker-compose-v2
