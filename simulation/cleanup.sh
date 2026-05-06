@@ -134,6 +134,12 @@ else
    echo "✅ iox-roudi not running."
 fi
 
+if command -v dcv &>/dev/null; then
+   if dcv list-sessions | grep -q "dedalus-sim"; then
+      run_and_log "Close DCV Session" dcv close-session dedalus-sim || true
+   fi
+fi
+
 if command -v docker &>/dev/null; then
   run_and_log "Stop Dedalus Docker Containers" bash -c 'docker stop $(docker ps -a -q --filter name=dedalus) 2>/dev/null || true'
 fi
@@ -143,12 +149,10 @@ if [[ "$MODE" == "soft" ]]; then
   echo "♻️  Performing Soft Reset..."
   run_and_log "Clear iceoryx shared memory" sudo rm -rf /dev/shm/iox*
   
-  # PATH ADJUSTMENT: PX4 is local to this directory now
   if [ -d "PX4-Autopilot" ]; then
     run_and_log "Clear PX4 Build Cache" make -C PX4-Autopilot clean || true
   fi
   
-  # PATH ADJUSTMENT: src is one level up
   run_and_log "Clear local CMake build artifacts" bash -c 'rm -rf ../src/build/* 2>/dev/null || true'
   
   echo "✅ Soft reset complete. Ready to rebuild."
@@ -164,7 +168,7 @@ if [[ "$MODE" == "hard" ]]; then
   fi
 
   echo "🗑️  Purging Heavy Frameworks..."
-  # PATH ADJUSTMENT: PX4 is local, iceoryx is one level up
+  run_and_log "Remove .bashrc DCV injection" sed -i '/# --- BEGIN PROJECT DEDALUS DCV AUTO-START ---/,/# --- END PROJECT DEDALUS DCV AUTO-START ---/d' ~/.bashrc || true
   run_and_log "Delete PX4 Directory" rm -rf PX4-Autopilot
   run_and_log "Delete iceoryx Build" rm -rf ../infrastructure/iceoryx_build
   run_and_log "Prune Docker Images" docker system prune -af --volumes

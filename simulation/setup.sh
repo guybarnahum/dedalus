@@ -3,8 +3,8 @@
 # Setup script for Project Dedalus Simulation Environment (AWS/EC2 GPU)
 # - Verifies NVIDIA L4/A10G/T4 GPU presence
 # - Esculates and maintains sudo privileges
-# - Installs core system dependencies (Docker, CMake, Ninja, build-essential)
-# - Installs Remote Visualization (XFCE)
+# - Installs core system dependencies (Docker, CMake, Ninja, build-essential, libacl1-dev)
+# - Installs Remote Visualization (XFCE & NICE DCV)
 # - Fetches and builds Eclipse iceoryx (IPC)
 # - Fetches and builds PX4 SITL
 #
@@ -59,7 +59,6 @@ run_and_log() {
     while :; do
       local last_line=""
       if [[ -s "$log_file" ]]; then
-        # Parse last 256 bytes, translate carriage returns, grab last line, strip ANSI, trim whitespace
         last_line=$(tail -c 256 "$log_file" 2>/dev/null | tr '\r' '\n' | tail -n 1 | sed -E 's/\x1B\[[0-9;?]*[ -/]*[@-~]//g' | xargs)
       fi
 
@@ -142,18 +141,42 @@ else
   echo "✅ Docker is already installed."
 fi
 
-# ---------------- Step 3: Remote Visualization ----------------
-echo "🖥️  Configuring Remote Visualization..."
+# ---------------- Step 3: Remote Visualization (NICE DCV) ----------------
+echo "🖥️  Configuring Remote Visualization (NICE DCV)..."
 if ! dpkg -l | grep -q "xfce4"; then
   run_and_log "Install XFCE4 Desktop" sudo DEBIAN_FRONTEND=noninteractive apt-get install -y xfce4 xfce4-goodies dbus-x11 x11-xserver-utils
 else
   echo "✅ XFCE4 Desktop already installed."
 fi
-echo "✅ Remote Visualization Stack verified."
+
+if ! command -v dcvserver &>/dev/null; then
+  run_and_log "Install NICE DCV Server" sudo DEBIAN_FRONTEND=noninteractive apt-get install -y nice-dcv-server
+  run_and_log "Enable DCV Service" sudo systemctl enable dcvserver
+  run_and_log "Start DCV Service" sudo systemctl start dcvserver
+else
+  echo "✅ NICE DCV Server already installed."
+fi
+
+if ! dcv list-sessions | grep -q "dedalus-sim"; then
+  run_and_log "Create DCV Session" dcv create-session dedalus-sim
+else
+  echo "✅ DCV Session 'dedalus-sim' already active."
+fi
+
+DCV_BASHRC='dcv list-sessions | grep -q "dedalus-sim" || dcv create-session dedalus-sim >/dev/null 2>&1'
+if ! grep -q "# --- BEGIN PROJECT DEDALUS DCV AUTO-START ---" ~/.bashrc; then
+  echo "" >> ~/.bashrc
+  echo "# --- BEGIN PROJECT DEDALUS DCV AUTO-START ---" >> ~/.bashrc
+  echo "# Injected by simulation/setup.sh. DO NOT MODIFY." >> ~/.bashrc
+  echo "# This block ensures the NICE DCV remote desktop session is always running" >> ~/.bashrc
+  echo "# for the physics engine. Run simulation/cleanup.sh --hard to remove this." >> ~/.bashrc
+  echo "$DCV_BASHRC" >> ~/.bashrc
+  echo "# --- END PROJECT DEDALUS DCV AUTO-START ---" >> ~/.bashrc
+  echo "✅ Added DCV auto-start block to ~/.bashrc"
+fi
 
 # ---------------- Step 4: Eclipse iceoryx (IPC) ----------------
 echo "⚙️  Building Eclipse iceoryx (IPC)..."
-# PATH ADJUSTMENT: infrastructure is one level up from the simulation directory
 if [ ! -f "../infrastructure/iceoryx_build/.installed" ]; then
   mkdir -p ../infrastructure/iceoryx_build
   cd ../infrastructure/iceoryx_build
@@ -164,7 +187,7 @@ if [ ! -f "../infrastructure/iceoryx_build/.installed" ]; then
   run_and_log "Configure iceoryx CMake" cmake -Bbuild -Hiceoryx_meta -DBUILD_STRICT=OFF -DROUDI_ENVIRONMENT=OFF
   run_and_log "Compile iceoryx" sudo cmake --build build --target install --parallel "$(nproc)"
   touch ../.installed
-  cd ../../../simulation # Return to simulation directory
+  cd ../../../simulation
   echo "✅ iceoryx built and staged."
 else
   echo "✅ iceoryx build directory found. Skipping."
@@ -172,15 +195,18 @@ fi
 
 # ---------------- Step 5: PX4 SITL ----------------
 echo "✈️  Building PX4 SITL..."
-# PATH ADJUSTMENT: PX4 is now cloned directly into the current directory (simulation)
-if [ ! -d "PX4-Autopilot" ]; then
+if [ ! -f "PX4-Autopilot/.installed" ]; then
+  if [ -d "PX4-Autopilot" ]; then
+    run_and_log "Remove broken PX4 clone" rm -rf PX4-Autopilot
+  fi
   run_and_log "Clone PX4" git clone --recursive https://github.com/PX4/PX4-Autopilot.git
   cd PX4-Autopilot
   run_and_log "Install PX4 dependencies" bash ./Tools/setup/ubuntu.sh --no-nuttx --no-sim-tools
+  touch .installed
   cd ../
   echo "✅ PX4 source staged."
 else
-  echo "✅ PX4 directory found. Skipping."
+  echo "✅ PX4 build directory found. Skipping."
 fi
 
 echo ""
