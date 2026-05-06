@@ -4,6 +4,7 @@
 # Boots IPC, PX4 Flight Controller, and the Unreal Engine Physics Sim.
 
 set -e
+cd "$(dirname "$0")"
 
 # ---------------- Configuration ----------------
 TARGET_ENV="${1:-Blocks}"
@@ -11,9 +12,14 @@ S3_BUCKET="s3://dedalus-sim-assets-colosseum"
 COLOSSEUM_RELEASE_TAG="v2.0.0-beta.0"
 
 BINARY_NAME="${TARGET_ENV}.zip"
-FALLBACK_URL="https://github.com/CodexLabsLLC/Colosseum/releases/download/${COLOSSEUM_RELEASE_TAG}/${BINARY_NAME}"
 SIM_DIR="colosseum_environments/${TARGET_ENV}_LinuxNoEditor"
 EXE_NAME="${TARGET_ENV}.sh"
+
+# Array of base URLs to cycle through if S3 fails
+FALLBACK_MIRRORS=(
+    "https://github.com/CodexLabsLLC/Colosseum/releases/download/${COLOSSEUM_RELEASE_TAG}"
+    "https://github.com/microsoft/AirSim/releases/download/v1.8.1-linux"
+)
 
 # ---------------- Traps & Cleanup ----------------
 cleanup() {
@@ -48,23 +54,39 @@ fi
 if [ ! -f "$SIM_DIR/$EXE_NAME" ]; then
     echo "📦 Environment '$TARGET_ENV' not found locally."
     mkdir -p colosseum_environments
+    DOWNLOAD_SUCCESS=false
     
+    # 1. Try S3 First
     echo "⬇️  Attempting to pull from S3 ($S3_BUCKET)..."
     if aws s3 cp "$S3_BUCKET/$BINARY_NAME" "/tmp/$BINARY_NAME" 2>/dev/null; then
         echo "✅ Downloaded from S3."
+        DOWNLOAD_SUCCESS=true
     else
-        echo "⚠️  S3 download failed. Attempting Fallback URL..."
-        if wget -q --show-progress -O "/tmp/$BINARY_NAME" "$FALLBACK_URL"; then
-            echo "✅ Downloaded from Fallback URL."
-        else
-            echo "❌ CRITICAL: All download methods failed for '$TARGET_ENV'."
-            cleanup
-        fi
+        echo "⚠️  S3 download failed. Checking fallback mirrors..."
+        
+        # 2. Cycle through fallback mirrors
+        for MIRROR in "${FALLBACK_MIRRORS[@]}"; do
+            URL="${MIRROR}/${BINARY_NAME}"
+            echo "   -> Trying $MIRROR..."
+            if wget -q --show-progress -O "/tmp/$BINARY_NAME" "$URL"; then
+                echo "✅ Downloaded from fallback mirror."
+                DOWNLOAD_SUCCESS=true
+                break
+            else
+                rm -f "/tmp/$BINARY_NAME"
+            fi
+        done
+    fi
+    
+    # Check if all downloads failed
+    if [ "$DOWNLOAD_SUCCESS" = false ]; then
+        echo "❌ CRITICAL: Failed to download '$TARGET_ENV' from all sources."
+        cleanup
     fi
     
     echo "📦 Extracting & Formatting (This may take a minute)..."
     unzip -q "/tmp/$BINARY_NAME" -d "/tmp/${TARGET_ENV}_ext"
-    mv "/tmp/${TARGET_ENV}_ext/LinuxNoEditor" "$SIM_DIR"
+    mv "/tmp/${TARGET_ENV}_ext/"* "$SIM_DIR" 2>/dev/null || mv "/tmp/${TARGET_ENV}_ext/LinuxNoEditor" "$SIM_DIR" 2>/dev/null || mv "/tmp/${TARGET_ENV}_ext" "$SIM_DIR"
     rm -rf "/tmp/${TARGET_ENV}_ext" "/tmp/$BINARY_NAME"
     chmod +x "$SIM_DIR/$EXE_NAME"
     echo "✅ Extraction complete."

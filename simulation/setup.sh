@@ -10,12 +10,19 @@
 # - Pre-loads configured Colosseum Environments
 #
 set -e
+# Ensure script runs from its own directory
+cd "$(dirname "$0")"
 
 # ---------------- Configuration ----------------
-# Add additional environments here (e.g., "Neighborhood" "CityEnviron" "Coastline")
 PRELOAD_ENVS=("Blocks")
 S3_BUCKET="s3://dedalus-sim-assets-colosseum"
 COLOSSEUM_RELEASE_TAG="v2.0.0-beta.0"
+
+# Array of base URLs to cycle through if S3 fails
+FALLBACK_MIRRORS=(
+    "https://github.com/CodexLabsLLC/Colosseum/releases/download/${COLOSSEUM_RELEASE_TAG}"
+    "https://github.com/microsoft/AirSim/releases/download/v1.8.1-linux"
+)
 
 # ---------------- Auto-yes handling ----------------
 AUTO_YES=""
@@ -160,13 +167,13 @@ else
   echo "✅ NICE DCV Server already installed."
 fi
 
-if ! dcv list-sessions | grep -q "dedalus-sim"; then
-  run_and_log "Create DCV Session" dcv create-session dedalus-sim
-else
+if dcv list-sessions 2>/dev/null | grep -q "dedalus-sim"; then
   echo "✅ DCV Session 'dedalus-sim' already active."
+else
+  run_and_log "Create DCV Session" dcv create-session dedalus-sim
 fi
 
-DCV_BASHRC='dcv list-sessions | grep -q "dedalus-sim" || dcv create-session dedalus-sim >/dev/null 2>&1'
+DCV_BASHRC='dcv list-sessions >/dev/null 2>&1 | grep -q "dedalus-sim" || dcv create-session dedalus-sim >/dev/null 2>&1'
 if ! grep -q "# --- BEGIN PROJECT DEDALUS DCV AUTO-START ---" ~/.bashrc; then
   echo "" >> ~/.bashrc
   echo "# --- BEGIN PROJECT DEDALUS DCV AUTO-START ---" >> ~/.bashrc
@@ -220,23 +227,41 @@ for ENV in "${PRELOAD_ENVS[@]}"; do
     TARGET_DIR="colosseum_environments/${ENV}_LinuxNoEditor"
     EXE_NAME="${ENV}.sh"
     BINARY_NAME="${ENV}.zip"
-    FALLBACK_URL="https://github.com/CodexLabsLLC/Colosseum/releases/download/${COLOSSEUM_RELEASE_TAG}/${BINARY_NAME}"
 
     if [ ! -f "$TARGET_DIR/$EXE_NAME" ]; then
         echo "   ⬇️  Fetching $ENV..."
+        DOWNLOAD_SUCCESS=false
+
+        # 1. Try S3 First
         if aws s3 cp "$S3_BUCKET/$BINARY_NAME" "/tmp/$BINARY_NAME" 2>/dev/null; then
             echo "   ✅ Downloaded $ENV from S3."
+            DOWNLOAD_SUCCESS=true
         else
-            echo "   ⚠️  S3 failed or unavailable. Falling back to public release..."
-            wget -q --show-progress -O "/tmp/$BINARY_NAME" "$FALLBACK_URL"
+            echo "   ⚠️  S3 failed or unavailable. Checking fallback mirrors..."
+            
+            # 2. Cycle through fallback mirrors
+            for MIRROR in "${FALLBACK_MIRRORS[@]}"; do
+                URL="${MIRROR}/${BINARY_NAME}"
+                echo "      -> Trying $MIRROR..."
+                if wget -q --show-progress -O "/tmp/$BINARY_NAME" "$URL"; then
+                    echo "   ✅ Downloaded $ENV from fallback mirror."
+                    DOWNLOAD_SUCCESS=true
+                    break
+                else
+                    rm -f "/tmp/$BINARY_NAME"
+                fi
+            done
         fi
         
-        run_and_log "Extract & Format $ENV" bash -c "unzip -q /tmp/$BINARY_NAME -d /tmp/${ENV}_ext && mv /tmp/${ENV}_ext/LinuxNoEditor $TARGET_DIR && rm -rf /tmp/${ENV}_ext /tmp/$BINARY_NAME && chmod +x $TARGET_DIR/$EXE_NAME"
+        if [ "$DOWNLOAD_SUCCESS" = true ]; then
+             run_and_log "Extract & Format $ENV" bash -c "unzip -q /tmp/$BINARY_NAME -d /tmp/${ENV}_ext && mv /tmp/${ENV}_ext/* $TARGET_DIR 2>/dev/null || mv /tmp/${ENV}_ext/LinuxNoEditor $TARGET_DIR 2>/dev/null || mv /tmp/${ENV}_ext $TARGET_DIR ; rm -rf /tmp/${ENV}_ext /tmp/$BINARY_NAME ; chmod +x $TARGET_DIR/$EXE_NAME"
+        else
+             echo "   ❌ Failed to download $ENV from all sources. Skipping."
+        fi
     else
         echo "✅ Environment '$ENV' is already pre-loaded."
     fi
 done
-
 
 echo ""
 echo "=================================================================="
