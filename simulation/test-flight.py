@@ -5,52 +5,60 @@ def run_test_flight():
     client = airsim.MultirotorClient()
     client.confirmConnection()
 
-    # Note: No setParam or setHomeLocation here. 
-    # They must be in settings.json to work.
+    # 1. Get the correct vehicle name from the server
+    vehicles = client.listVehicles()
+    if not vehicles:
+        print("❌ No vehicles found in simulation!")
+        return
+    
+    vehicle_name = vehicles[0]
+    print(f"Found vehicle: '{vehicle_name}'. Enabling control...")
 
-    client.enableApiControl(True)
+    # 2. Enable Control specifically for this name
+    client.enableApiControl(True, vehicle_name=vehicle_name)
     
     last_ts = 0
     try:
-        print("Monitoring Simulation State...")
+        print("Monitoring Telemetry (Press Ctrl+C to stop)...")
+        # We'll run a loop to see the FPS and arm status
         while True:
-            state = client.getMultirotorState()
+            # getMultirotorState is the standard method for telemetry
+            state = client.getMultirotorState(vehicle_name=vehicle_name)
             
-            # --- FPS DETECTION ---
-            # state.timestamp is in nanoseconds. 
-            # This calculates the true physics-ticking rate.
+            # FPS Calculation from Hardware Timestamps
             if last_ts > 0:
-                dt = (state.timestamp - last_ts) / 1e9
-                if dt > 0:
-                    fps = 1.0 / dt
-                    print(f"Simulation FPS: {fps:.2f} | State: {state.landed_state}", end='\r')
+                dt_seconds = (state.timestamp - last_ts) / 1e9
+                if dt_seconds > 0:
+                    fps = 1.0 / dt_seconds
+                    # 0 = Landed, 1 = Flying
+                    print(f"Sim FPS: {fps:.2f} | Landed State: {state.landed_state}", end='\r')
+            
             last_ts = state.timestamp
 
-            # --- ARMING ---
-            # 0 = Landed. With COM_ARM_WO_GPS=1 in settings.json, this will succeed.
-            if state.landed_state == 0: 
-                print("\nStatus: Landed. Attempting Arm...")
-                client.armDisarm(True)
+            # 3. Arming Logic
+            # Note: This will only work if COM_ARM_WO_GPS is set in settings.json
+            if state.landed_state == 0: # LandedState.Landed
+                print(f"\nVehicle '{vehicle_name}' is Landed. Attempting Arm...")
+                client.armDisarm(True, vehicle_name=vehicle_name)
                 break
+            
             time.sleep(0.1)
 
-        print("Status: Taking off...")
-        # If takeoffAsync fails (it requires a position lock), 
-        # use moveByVelocityAsync(0, 0, -5, 5) for a local manual climb.
-        client.takeoffAsync().join()
+        print("Taking off...")
+        # Note: If this fails, the EKF still doesn't have a position lock.
+        client.takeoffAsync(vehicle_name=vehicle_name).join()
         
-        print("Status: Hovering...")
+        print("Hovering...")
         time.sleep(5)
         
-        print("Status: Landing...")
-        client.landAsync().join()
+        client.landAsync(vehicle_name=vehicle_name).join()
 
     except Exception as e:
-        print(f"\n❌ RPC Error: {e}")
+        print(f"\n❌ Flight Command Failed: {e}")
     finally:
-        client.armDisarm(False)
-        client.enableApiControl(False)
-        print("Test Concluded.")
+        client.armDisarm(False, vehicle_name=vehicle_name)
+        client.enableApiControl(False, vehicle_name=vehicle_name)
+        print("Test concluded.")
 
 if __name__ == "__main__":
     run_test_flight()
