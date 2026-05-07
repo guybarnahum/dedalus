@@ -5,6 +5,8 @@
 ![Visualization](https://img.shields.io/badge/Display-NICE_DCV-green)
 ![Hardware](https://img.shields.io/badge/GPU-NVIDIA_L4-76B900)
 
+<img width="1446" height="833" alt="Screenshot 2026-05-07 at 1 55 20 PM" src="https://github.com/user-attachments/assets/83ebe7e1-0355-4400-9ac6-f7514c291f7c" />
+
 ## Overview
 Welcome to the Project Dedalus **Virtual Proving Ground**. 
 
