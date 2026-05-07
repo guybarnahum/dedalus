@@ -11,7 +11,13 @@
       "UseTcp": true,
       "TcpPort": 4560,
       "ControlIp": "127.0.0.1",
-      "ControlPort": 14580
+      "ControlPort": 14580,
+      "Parameters": {
+        "COM_ARM_WO_GPS": 1,
+        "NAV_RCL_ACT": 0,
+        "NAV_DLL_ACT": 0,
+        "COM_OBL_ACT": 1
+      }
     }
   }
 }
