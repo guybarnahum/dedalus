@@ -6,6 +6,31 @@
 set -e
 cd "$(dirname "$0")"
 
+# ------------ VIDEO & DISPLAY CONFIGURATION --------
+# Dynamically locate the NICE DCV session and its X11 bridge
+SESSION_NAME="dedalus-sim"
+
+# 1. Probe DCV for current display and authority file
+DCV_JSON=$(dcv describe-session "$SESSION_NAME" --json 2>/dev/null) || {
+    echo "❌ Error: DCV session '$SESSION_NAME' not found. Run setup.sh first."
+    exit 1
+}
+
+export DISPLAY=$(echo "$DCV_JSON" | grep '"x11-display"' | awk -F'"' '{print $4}')
+export XAUTHORITY=$(echo "$DCV_JSON" | grep '"x11-authority"' | awk -F'"' '{print $4}')
+
+if [[ -z "$DISPLAY" || -z "$XAUTHORITY" ]]; then
+    echo "❌ Error: Could not resolve DISPLAY or XAUTHORITY from DCV metadata."
+    exit 1
+fi
+
+# 2. Grant local permission to the X-server
+# This allows the background simulation process to talk to the DCV display
+xhost +SI:localuser:$(whoami) >/dev/null 2>&1
+
+echo "🖥️  Video Configured: Display $DISPLAY | Auth $XAUTHORITY"
+
+
 # ---------------- tmux Auto-Wrapper ----------------
 # If we are not already inside a tmux session, relaunch this script inside one!
 if ! command -v tmux &>/dev/null; then
