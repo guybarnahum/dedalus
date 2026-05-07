@@ -315,25 +315,28 @@ done
 # ----------------- PYTHON VIRTUAL ENVIRONMENT -----------------
 echo "🐍 Setting up Python Virtual Environment..."
 
-# Install system-level dependencies for Python env
 sudo apt-get update
 sudo apt-get install -y python3-venv python3-pip
 
 VENV_PATH="$HOME/dedalus/venv"
 
-# Create venv if it doesn't exist
 if [ ! -d "$VENV_PATH" ]; then
     python3 -m venv "$VENV_PATH"
 fi
 
-# Activate and install/upgrade dependencies
 source "$VENV_PATH/bin/activate"
-pip install --upgrade pip
+pip install --upgrade pip setuptools wheel
+
+# CRITICAL: Install numpy FIRST. 
+# AirSim 1.8.1 has a build-time dependency on numpy.
+echo "📦 Installing build-time dependencies..."
+pip install numpy
+
+echo "📦 Installing flight-stack dependencies..."
 pip install \
     airsim \
     pymavlink \
     msgpack-rpc-python \
-    numpy \
     pyserial
 
 echo "✅ Python environment ready at $VENV_PATH"
