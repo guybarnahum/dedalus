@@ -333,8 +333,11 @@ echo "📦 Installing build-time dependencies..."
 pip install numpy
 
 echo "📦 Installing flight-stack dependencies..."
+# The --no-build-isolation flag forces pip to use the numpy you just installed
+pip install airsim --no-build-isolation
+
+# Then install the rest normally
 pip install \
-    airsim \
     pymavlink \
     msgpack-rpc-python \
     pyserial
