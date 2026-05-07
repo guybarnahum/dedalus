@@ -82,12 +82,16 @@ fi
 
 # ---------------- 2. PX4 SITL Flight Controller ----------------
 echo "✈️  Booting PX4 SITL (Software In The Loop)..."
-cd PX4-Autopilot
-# We pipe this to the main log via the wrapper, but also keep a dedicated PX4 log
-make px4_sitl none_iris > "$LOG_DIR/px4_$TIMESTAMP.log" 2>&1 &
-cd ../
-sleep 3
-echo "✅ PX4 daemon active."
+
+PX4_LOG_ABS="$(pwd)/$LOG_DIR/px4_$TIMESTAMP.log"
+PX4_DIR_ABS="$(pwd)/PX4-Autopilot"
+
+tmux new-window -t "$SESSION_NAME" -n px4 \
+    "cd '$PX4_DIR_ABS' && make px4_sitl none_iris 2>&1 | tee '$PX4_LOG_ABS'"
+
+sleep 5
+echo "✅ PX4 daemon active. Attach with: tmux attach -t $SESSION_NAME, then Ctrl-b w → px4"
+
 
 # ---------------- 3. Apply Colosseum Settings ----------------
 echo "⚙️  Injecting Configuration (settings.json)..."
