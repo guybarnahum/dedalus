@@ -315,32 +315,21 @@ done
 # ----------------- PYTHON VIRTUAL ENVIRONMENT -----------------
 echo "🐍 Setting up Python Virtual Environment..."
 
-sudo apt-get update
-sudo apt-get install -y python3-venv python3-pip
-
-VENV_PATH="$HOME/dedalus/venv"
-
-if [ ! -d "$VENV_PATH" ]; then
-    python3 -m venv "$VENV_PATH"
-fi
-
 source "$VENV_PATH/bin/activate"
 pip install --upgrade pip setuptools wheel
 
-# CRITICAL: Install numpy FIRST. 
-# AirSim 1.8.1 has a build-time dependency on numpy.
-echo "📦 Installing build-time dependencies..."
-pip install numpy
+# 1. Install packages that AirSim's setup script 'eagerly' imports
+echo "📦 Installing build-time blockers..."
+pip install numpy msgpack-rpc-python
 
-echo "📦 Installing flight-stack dependencies..."
-# The --no-build-isolation flag forces pip to use the numpy you just installed
+# 2. Install AirSim with build isolation DISABLED
+# This forces the installer to use the numpy/msgpackrpc we just put in the venv
+echo "📦 Installing AirSim (Legacy Build Mode)..."
 pip install airsim --no-build-isolation
 
-# Then install the rest normally
-pip install \
-    pymavlink \
-    msgpack-rpc-python \
-    pyserial
+# 3. Install the remaining flight stack tools
+echo "📦 Installing remaining dependencies..."
+pip install pymavlink pyserial
 
 echo "✅ Python environment ready at $VENV_PATH"
 # --------------------------------------------------------------
