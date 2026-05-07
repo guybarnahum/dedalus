@@ -315,19 +315,33 @@ done
 # ----------------- PYTHON VIRTUAL ENVIRONMENT -----------------
 echo "🐍 Setting up Python Virtual Environment..."
 
+# 1. Define and ensure the venv exists
+VENV_PATH="$HOME/dedalus/venv"
+
+if [ ! -d "$VENV_PATH" ]; then
+    echo "📦 Creating fresh venv at $VENV_PATH..."
+    python3 -m venv "$VENV_PATH"
+fi
+
+# 2. Activate the environment using the absolute path
+# This prevents the '/bin/activate' error if the variable was previously unset
 source "$VENV_PATH/bin/activate"
+
+# 3. Upgrade core packaging tools
 pip install --upgrade pip setuptools wheel
 
-# 1. Install packages that AirSim's setup script 'eagerly' imports
+# 4. Install build-time blockers
+# AirSim 1.8.1 eagerly imports these during its own metadata generation
 echo "📦 Installing build-time blockers..."
 pip install numpy msgpack-rpc-python
 
-# 2. Install AirSim with build isolation DISABLED
-# This forces the installer to use the numpy/msgpackrpc we just put in the venv
+# 5. Install AirSim with build isolation DISABLED
+# Forces pip to use the numpy/msgpackrpc we just installed in this venv
+# instead of trying to create an isolated (and broken) temp build environment
 echo "📦 Installing AirSim (Legacy Build Mode)..."
 pip install airsim --no-build-isolation
 
-# 3. Install the remaining flight stack tools
+# 6. Install the remaining flight stack tools
 echo "📦 Installing remaining dependencies..."
 pip install pymavlink pyserial
 
