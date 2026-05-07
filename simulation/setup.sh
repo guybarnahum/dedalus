@@ -197,11 +197,11 @@ Description=NICE DCV Virtual Session for Project Dedalus
 After=network.target
 
 [Service]
-Type=oneshot
-RemainAfterExit=yes
-ExecStartPre=/usr/bin/bash -c '/usr/bin/dcv list-sessions | grep -q \"dedalus-sim\" && /usr/bin/dcv close-session dedalus-sim || true'
-ExecStart=/usr/bin/dcv create-session --type virtual --owner %u dedalus-sim --init \"/usr/bin/startxfce4\"
-ExecStop=/usr/bin/dcv close-session dedalus-sim
+Type=simple
+# Remove RemainAfterExit=yes so systemd knows when the session is actually gone
+ExecStart=/usr/bin/dcv create-session --type virtual --owner %u dedalus-sim --init "/usr/bin/startxfce4"
+Restart=on-failure
+RestartSec=5
 
 [Install]
 WantedBy=default.target
