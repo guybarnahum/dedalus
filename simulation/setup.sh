@@ -255,6 +255,13 @@ else
   echo "✅ PX4 build directory found. Skipping."
 fi
 
+echo "🔨 Verifying PX4 SITL build..."
+source "$HOME/dedalus/venv/bin/activate"
+cd PX4-Autopilot
+run_and_log "Build PX4 SITL none_iris" make px4_sitl none_iris
+cd ../
+echo "✅ PX4 SITL build verified."
+
 # ---------------- Step 6: Pre-load Environments ----------------
 echo "🌍 Pre-loading Colosseum Environments..."
 mkdir -p colosseum_environments
@@ -345,7 +352,12 @@ pip install airsim --no-build-isolation
 echo "📦 Installing remaining dependencies..."
 pip install pymavlink pyserial kconfiglib
 
-python -c "import kconfiglib" || { echo "❌ PX4 Python deps failed"; exit 1; }
+echo "🔎 Verifying PX4 Python build dependencies..."
+python -c "import menuconfig, kconfiglib" || {
+  echo "❌ PX4 Python deps failed."
+  echo "   Expected imports: menuconfig, kconfiglib"
+  exit 1
+}
 
 echo "✅ Python environment ready at $VENV_PATH"
 # --------------------------------------------------------------

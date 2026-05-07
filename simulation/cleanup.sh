@@ -9,12 +9,14 @@ cd "$(dirname "$0")"
 # ---------------- Auto-yes handling ----------------
 AUTO_YES=""
 MODE=""
+PX4_ONLY=""
 
 for arg in "$@"; do
   case "$arg" in
     --yes|-y) AUTO_YES="--yes" ;;
     --soft) MODE="soft" ;;
     --hard) MODE="hard" ;;
+    --px4) PX4_ONLY="1" ;;
     *) ;;
   esac
 done
@@ -107,6 +109,24 @@ echo "---------------------------------------------------"
 # ---------------- Step 0: Privilege Escalation ----------------
 sudo -v
 while true; do sudo -n true; sleep 60; kill -0 "$$" || exit; done 2>/dev/null &
+
+# ---------------- PX4-only reset ----------------
+if [[ -n "$PX4_ONLY" ]]; then
+  echo "✈️  Performing PX4-only reset..."
+
+  pkill -9 -f "px4" || true
+  tmux kill-session -t dedalus-sim 2>/dev/null || true
+
+  if [ -d "PX4-Autopilot" ]; then
+    run_and_log "Clear PX4 build directory" rm -rf PX4-Autopilot/build
+    run_and_log "Clear PX4 install marker" rm -f PX4-Autopilot/.installed
+  else
+    echo "⚠️  PX4-Autopilot does not exist; setup.sh will clone it."
+  fi
+
+  echo "✅ PX4 reset complete. Run: ./setup.sh --yes"
+  exit 0
+fi
 
 if [[ -z "$MODE" ]]; then
   echo "⚠️  No mode specified. Defaulting to --soft reset."

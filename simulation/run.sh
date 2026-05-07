@@ -108,20 +108,7 @@ python -c "import menuconfig, kconfiglib" 2>/dev/null || {
 }
 echo "✅ PX4 Python dependencies available."
 
-# ---------------- 4. PX4 SITL Flight Controller ----------------
-echo "✈️  Booting PX4 SITL (Software In The Loop)..."
-
-PX4_LOG_ABS="$(pwd)/$LOG_DIR/px4_$TIMESTAMP.log"
-PX4_DIR_ABS="$(pwd)/PX4-Autopilot"
-
-tmux new-window -t "$SESSION_NAME" -n px4 \
-    "cd '$PX4_DIR_ABS' && source '$VENV_PATH/bin/activate' && make px4_sitl none_iris 2>&1 | tee '$PX4_LOG_ABS'"
-
-sleep 5
-echo "✅ PX4 window started. Attach with: tmux attach -t $SESSION_NAME, then Ctrl-b w → px4"
-echo "📝 PX4 log: $PX4_LOG_ABS"
-
-# ---------------- 5. Launch Unreal Engine Physics ----------------
+# ---------------- 4. Launch Unreal Engine Physics ----------------
 echo "🎮 Launching Colosseum Physics Engine ($TARGET_ENV)..."
 LAUNCH_EXE=$(find "$SIM_DIR" -maxdepth 1 -type f -name "*.sh" | grep -v "CrashReportClient" | head -n 1)
 
@@ -130,7 +117,41 @@ if [ -z "$LAUNCH_EXE" ]; then
     cleanup
 fi
 
-# The output of this executable will flow into $SIM_LOG via the tmux 'tee'
-"$LAUNCH_EXE" -windowed -ResX=1280 -ResY=720
+"$LAUNCH_EXE" -windowed -ResX=1280 -ResY=720 &
+SIM_PID=$!
+
+echo "⏳ Waiting for AirSim PX4 TCP server on port 4560..."
+for i in {1..60}; do
+    if ss -ltnp 2>/dev/null | grep -q ':4560'; then
+        echo "✅ AirSim is listening on TCP 4560."
+        break
+    fi
+
+    if ! kill -0 "$SIM_PID" 2>/dev/null; then
+        echo "❌ Unreal/AirSim exited before opening TCP 4560."
+        cleanup
+    fi
+
+    sleep 1
+done
+
+if ! ss -ltnp 2>/dev/null | grep -q ':4560'; then
+    echo "❌ Timed out waiting for AirSim TCP 4560."
+    cleanup
+fi
+
+# ---------------- 5. PX4 SITL Flight Controller ----------------
+echo "✈️  Booting PX4 SITL (Software In The Loop)..."
+
+PX4_LOG_ABS="$(pwd)/$LOG_DIR/px4_$TIMESTAMP.log"
+PX4_DIR_ABS="$(pwd)/PX4-Autopilot"
+
+tmux new-window -t "$SESSION_NAME" -n px4 \
+    "cd '$PX4_DIR_ABS' && source '$VENV_PATH/bin/activate' && PX4_SIM_HOSTNAME=localhost PX4_SIM_HOST_ADDR=127.0.0.1 make px4_sitl none_iris 2>&1 | tee '$PX4_LOG_ABS'"
+
+echo "✅ PX4 window started. Attach with: tmux attach -t $SESSION_NAME, then Ctrl-b w → px4"
+echo "📝 PX4 log: $PX4_LOG_ABS"
+
+wait "$SIM_PID"
 
 cleanup
