@@ -28,6 +28,8 @@
 
       "ControlPortLocal": 14540,
       "ControlPortRemote": 14580,
+      "LocalHostIp": "127.0.0.1",
+      "QgcHostIp": "127.0.0.1",
 
       "Parameters": {
         "COM_ARM_WO_GPS": 1,

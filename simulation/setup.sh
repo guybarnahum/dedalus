@@ -343,7 +343,9 @@ pip install airsim --no-build-isolation
 
 # 6. Install the remaining flight stack tools
 echo "📦 Installing remaining dependencies..."
-pip install pymavlink pyserial
+pip install pymavlink pyserial kconfiglib
+
+python -c "import kconfiglib" || { echo "❌ PX4 Python deps failed"; exit 1; }
 
 echo "✅ Python environment ready at $VENV_PATH"
 # --------------------------------------------------------------

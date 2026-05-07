@@ -122,6 +122,18 @@ else
    printf '\r\033[K✅ Colosseum not running.\n'
 fi
 
+if pgrep -f "Linux-Shipping" > /dev/null; then
+  run_and_log "Kill Unreal Linux-Shipping" pkill -9 -f "Linux-Shipping" || true
+fi
+
+if pgrep -f "AirSimNH" > /dev/null; then
+  run_and_log "Kill AirSimNH" pkill -9 -f "AirSimNH" || true
+fi
+
+if pgrep -f "Blocks" > /dev/null; then
+  run_and_log "Kill Blocks" pkill -9 -f "Blocks" || true
+fi
+
 if pgrep -f "px4" > /dev/null; then
    run_and_log "Kill PX4 SITL" pkill -9 -f "px4" || true
 else
@@ -141,6 +153,8 @@ if command -v dcv &>/dev/null; then
    fi
 fi
 
+tmux kill-session -t dedalus-sim 2>/dev/null || true
+
 if command -v docker &>/dev/null; then
   run_and_log "Stop Dedalus Docker Containers" bash -c 'docker stop $(docker ps -a -q --filter name=dedalus) 2>/dev/null || true'
 fi
@@ -151,7 +165,7 @@ if [[ "$MODE" == "soft" ]]; then
   run_and_log "Clear iceoryx shared memory" sudo rm -rf /dev/shm/iox*
   
   if [ -d "PX4-Autopilot" ]; then
-    run_and_log "Clear PX4 Build Cache" make -C PX4-Autopilot clean || true
+    run_and_log "Clear PX4 Build Cache" bash -c 'source "$HOME/dedalus/venv/bin/activate" 2>/dev/null || true; make -C PX4-Autopilot clean' || true
   fi
   
   run_and_log "Clear local CMake build artifacts" bash -c 'rm -rf ../src/build/* 2>/dev/null || true'

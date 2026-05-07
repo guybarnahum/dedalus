@@ -54,11 +54,14 @@ fi
 TARGET_ENV="${1:-AirSimNH}"
 S3_BUCKET="s3://dedalus-sim-assets-colosseum"
 SIM_DIR="colosseum_environments/${TARGET_ENV}_LinuxNoEditor"
+VENV_PATH="$HOME/dedalus/venv"
 
 # ---------------- Traps & Cleanup ----------------
 cleanup() {
     echo -e "\n🛑 Shutting down simulation stack..."
     pkill -9 -f "Linux-Shipping" || true
+    pkill -9 -f "AirSimNH" || true
+    pkill -9 -f "Blocks" || true
     pkill -9 -f "px4" || true
     pkill -9 -f "iox-roudi" || true
     echo "✅ Simulation terminated."
@@ -80,28 +83,45 @@ else
     echo "✅ iox-roudi is already running."
 fi
 
-# ---------------- 2. PX4 SITL Flight Controller ----------------
+# ---------------- 2. Apply Colosseum Settings ----------------
+echo "⚙️  Injecting Configuration (settings.json)..."
+mkdir -p ~/Documents/AirSim
+if [ -f "settings.json" ]; then
+    cp settings.json ~/Documents/AirSim/settings.json
+    echo "✅ Settings applied."
+else
+    echo "❌ Missing simulation/settings.json"
+    exit 1
+fi
+
+# ---------------- 3. PX4 Dependency Preflight ----------------
+echo "🐍 Checking PX4 Python build dependencies..."
+if [ ! -f "$VENV_PATH/bin/activate" ]; then
+    echo "❌ Missing Python venv at $VENV_PATH. Run ./setup.sh first."
+    exit 1
+fi
+source "$VENV_PATH/bin/activate"
+python -c "import menuconfig, kconfiglib" 2>/dev/null || {
+    echo "❌ Missing PX4 dependency: kconfiglib/menuconfig"
+    echo "Run: ./setup.sh --yes"
+    exit 1
+}
+echo "✅ PX4 Python dependencies available."
+
+# ---------------- 4. PX4 SITL Flight Controller ----------------
 echo "✈️  Booting PX4 SITL (Software In The Loop)..."
 
 PX4_LOG_ABS="$(pwd)/$LOG_DIR/px4_$TIMESTAMP.log"
 PX4_DIR_ABS="$(pwd)/PX4-Autopilot"
 
 tmux new-window -t "$SESSION_NAME" -n px4 \
-    "cd '$PX4_DIR_ABS' && make px4_sitl none_iris 2>&1 | tee '$PX4_LOG_ABS'"
+    "cd '$PX4_DIR_ABS' && source '$VENV_PATH/bin/activate' && make px4_sitl none_iris 2>&1 | tee '$PX4_LOG_ABS'"
 
 sleep 5
-echo "✅ PX4 daemon active. Attach with: tmux attach -t $SESSION_NAME, then Ctrl-b w → px4"
+echo "✅ PX4 window started. Attach with: tmux attach -t $SESSION_NAME, then Ctrl-b w → px4"
+echo "📝 PX4 log: $PX4_LOG_ABS"
 
-
-# ---------------- 3. Apply Colosseum Settings ----------------
-echo "⚙️  Injecting Configuration (settings.json)..."
-mkdir -p ~/Documents/AirSim
-if [ -f "settings.json" ]; then
-    cp settings.json ~/Documents/AirSim/settings.json
-    echo "✅ Settings applied."
-fi
-
-# ---------------- 4. Launch Unreal Engine Physics ----------------
+# ---------------- 5. Launch Unreal Engine Physics ----------------
 echo "🎮 Launching Colosseum Physics Engine ($TARGET_ENV)..."
 LAUNCH_EXE=$(find "$SIM_DIR" -maxdepth 1 -type f -name "*.sh" | grep -v "CrashReportClient" | head -n 1)
 

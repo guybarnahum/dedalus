@@ -1,76 +1,199 @@
+#!/usr/bin/env python3
 import airsim
 import time
+import argparse
+import traceback
 
-def run_test_flight():
+
+DEFAULT_VEHICLE = "PX4"
+
+
+def fps_from_timestamp_delta(prev_ts, ts):
+    if not prev_ts or ts <= prev_ts:
+        return None
+    dt = (ts - prev_ts) / 1e9
+    if dt <= 0:
+        return None
+    return 1.0 / dt
+
+
+def state_summary(state):
+    k = state.kinematics_estimated
+    q = k.orientation
+    p = k.position
+    gps = state.gps_location
+    rc = state.rc_data
+    return (
+        f"ts={state.timestamp} "
+        f"landed={state.landed_state} "
+        f"pos=({p.x_val:.2f},{p.y_val:.2f},{p.z_val:.2f}) "
+        f"q=({q.w_val:.3f},{q.x_val:.3f},{q.y_val:.3f},{q.z_val:.3f}) "
+        f"state_gps=({gps.latitude},{gps.longitude},{gps.altitude}) "
+        f"rc_valid={rc.is_valid}"
+    )
+
+
+def choose_vehicle(client, requested):
+    vehicles = client.listVehicles()
+    print(f"Vehicles: {vehicles}")
+
+    if not vehicles:
+        raise RuntimeError(
+            "No AirSim vehicles found. Check ~/Documents/AirSim/settings.json "
+            "and restart ./run.sh."
+        )
+
+    if requested in vehicles:
+        return requested
+
+    if requested:
+        print(f"⚠️ Requested vehicle '{requested}' not found; using '{vehicles[0]}'")
+    return vehicles[0]
+
+
+def wait_for_airsim_state(client, vehicle_name, timeout_s):
+    print(f"Waiting for AirSim state from '{vehicle_name}'...")
+    deadline = time.time() + timeout_s
+    last_ts = 0
+
+    while time.time() < deadline:
+        state = client.getMultirotorState(vehicle_name=vehicle_name)
+        fps = fps_from_timestamp_delta(last_ts, state.timestamp)
+        last_ts = state.timestamp
+
+        if fps:
+            print(f"{state_summary(state)} api_fps={fps:.2f}")
+        else:
+            print(state_summary(state))
+
+        q = state.kinematics_estimated.orientation
+        if state.timestamp > 0 and abs(q.w_val) > 0.1:
+            print("✅ AirSim vehicle state is alive.")
+            return state
+
+        time.sleep(1)
+
+    raise TimeoutError("Timed out waiting for timestamped AirSim vehicle state.")
+
+
+def wait_for_gps_sensor(client, vehicle_name, timeout_s):
+    print("Waiting for AirSim GPS sensor validity...")
+    deadline = time.time() + timeout_s
+
+    while time.time() < deadline:
+        gps = client.getGpsData(vehicle_name=vehicle_name)
+        fix = gps.gnss.fix_type
+        point = gps.gnss.geo_point
+        print(
+            f"gps_valid={gps.is_valid} fix_type={fix} "
+            f"lat={point.latitude} lon={point.longitude} alt={point.altitude}"
+        )
+        if gps.is_valid and fix >= 3:
+            print("✅ AirSim GPS sensor is valid.")
+            return gps
+        time.sleep(1)
+
+    raise TimeoutError(
+        "Timed out waiting for valid AirSim GPS. If PX4 says 'waiting for GPS', "
+        "also inspect the PX4 tmux window and logs/px4_*.log."
+    )
+
+
+def warmup_offboard(client, vehicle_name, count=8):
+    print("Sending offboard warmup setpoints...")
+    for i in range(count):
+        client.moveByVelocityAsync(0, 0, 0, 0.25, vehicle_name=vehicle_name).join()
+        print(f"  warmup {i + 1}/{count}")
+        time.sleep(0.1)
+
+
+def arm_with_retries(client, vehicle_name, attempts=3):
+    for i in range(attempts):
+        try:
+            print(f"Arming attempt {i + 1}/{attempts}...")
+            result = client.armDisarm(True, vehicle_name=vehicle_name)
+            print(f"✅ armDisarm(True) returned: {result}")
+            return True
+        except Exception as exc:
+            print(f"⚠️ armDisarm failed: {exc}")
+            time.sleep(1)
+
+    return False
+
+
+def run_test_flight(vehicle_name, timeout_s, skip_arm):
     client = airsim.MultirotorClient()
     client.confirmConnection()
 
-    # 1. Use the name exactly as defined in settings.json
-    v_name = "PX4"
-    
-    print(f"Waiting for PX4 SITL to initialize fully...")
-    
-    # We must wait until the drone is actually reporting a valid 
-    # orientation/position before we can 'take control' of the API.
-    while True:
-        state = client.getMultirotorState(vehicle_name=v_name)
-        # Check for non-zero timestamp AND valid kinematic data
-        if state.timestamp > 0 and abs(state.kinematics_estimated.orientation.w_val) > 0.1:
-            print(f"✅ PX4 Link Established. TS: {state.timestamp}")
-            break
-        print("... PX4 is still booting (checking sensors) ...")
-        time.sleep(2)
+    v_name = choose_vehicle(client, vehicle_name)
+    print(f"Using vehicle: {v_name}")
 
     try:
-        # 2. ENABLE CONTROL: Use a raw call to avoid wrapper argument bugs
-        print(f"Requesting control of '{v_name}'...")
-        # We call the underlying msgpack-rpc directly to ensure no extra args are sent
-        client.client.call('enableApiControl', True, v_name)
-        
-        last_ts = 0
-        print("Monitoring Telemetry & Performance...")
+        wait_for_airsim_state(client, v_name, timeout_s)
+        wait_for_gps_sensor(client, v_name, timeout_s)
 
-        # 3. FPS & ARMING LOOP
-        # We'll loop for 10 seconds to see the FPS before arming
+        print(f"Requesting API control of '{v_name}'...")
+        client.enableApiControl(True, vehicle_name=v_name)
+        print(f"API control enabled: {client.isApiControlEnabled(vehicle_name=v_name)}")
+
+        warmup_offboard(client, v_name)
+
+        last_ts = 0
+        print("Monitoring API timestamp-derived FPS...")
+
         start_wait = time.time()
-        while time.time() - start_wait < 10:
+        while time.time() - start_wait < 5:
             state = client.getMultirotorState(vehicle_name=v_name)
-            
-            # --- API FPS DETECTION ---
-            if last_ts > 0:
-                dt_nano = state.timestamp - last_ts
-                if dt_nano > 0:
-                    fps = 1.0 / (dt_nano / 1e9)
-                    print(f"API FPS: {fps:6.2f} | PX4 Status: {state.landed_state}", end='\r')
+            fps = fps_from_timestamp_delta(last_ts, state.timestamp)
+            if fps:
+                print(f"API FPS: {fps:6.2f} | landed_state={state.landed_state}", end="\r")
             last_ts = state.timestamp
             time.sleep(0.1)
+        print()
 
-        # 4. FORCE ARMING
-        # Because of COM_ARM_WO_GPS: 1 in your settings.json, this bypasses the GPS lock.
-        print("\nSending Arm Command...")
-        client.client.call('armDisarm', True, v_name)
-        
+        if not skip_arm:
+            armed = arm_with_retries(client, v_name)
+            if not armed:
+                raise RuntimeError(
+                    "PX4 arming failed. Check PX4 shell: commander status, "
+                    "mavlink status, listener sensor_gps, listener vehicle_gps_position."
+                )
+        else:
+            print("Skipping arm by request.")
+
         print("Executing Takeoff...")
-        # If this still fails, your EKF is still 'pre-flight checking'. 
-        # Bypass by using a direct velocity command:
-        # client.moveByVelocityAsync(0, 0, -5, 5, vehicle_name=v_name).join()
         client.takeoffAsync(vehicle_name=v_name).join()
-        
+
         print("Hovering...")
         time.sleep(5)
-        
+
+        print("Landing...")
         client.landAsync(vehicle_name=v_name).join()
 
     except Exception as e:
-        print(f"\n❌ RPC Session Error: {e}")
+        print(f"\n❌ Test flight failed: {e}")
+        traceback.print_exc()
     finally:
-        # Cleanup
         try:
-            client.client.call('armDisarm', False, v_name)
-            client.client.call('enableApiControl', False, v_name)
-        except:
+            client.armDisarm(False, vehicle_name=v_name)
+        except Exception:
+            pass
+        try:
+            client.enableApiControl(False, vehicle_name=v_name)
+        except Exception:
             pass
         print("Test Concluded.")
 
+
 if __name__ == "__main__":
-    run_test_flight()
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--vehicle", default=DEFAULT_VEHICLE)
+    parser.add_argument("--timeout", type=int, default=30)
+    parser.add_argument("--skip-arm", action="store_true")
+    args = parser.parse_args()
+
+    run_test_flight(
+        vehicle_name=args.vehicle,
+        timeout_s=args.timeout,
+        skip_arm=args.skip_arm,
+    )
