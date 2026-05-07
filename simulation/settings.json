@@ -1,10 +1,40 @@
 {
   "SettingsVersion": 1.2,
   "SimMode": "Multirotor",
+
+  "LogMessagesVisible": true,
+  "ShowDashboard": true,
+  "ViewMode": "FlyWithMe",
+
+  "OriginGeopoint": {
+    "Latitude": 47.641468,
+    "Longitude": -122.140165,
+    "Altitude": 121
+  },
+
+  "ClockSpeed": 1.0,
+
   "Vehicles": {
-    "Drone1": {
-      "VehicleType": "SimpleFlight",
-      "AutoCreate": true
+    "PX4": {
+      "VehicleType": "PX4Multirotor",
+
+      "UseSerial": false,
+      "UseTcp": false,
+
+      "LockStep": true,
+
+      "UdpIp": "127.0.0.1",
+      "UdpPort": 14560,
+
+      "ControlPortLocal": 14540,
+      "ControlPortRemote": 14580,
+
+      "Parameters": {
+        "COM_ARM_WO_GPS": 1,
+        "NAV_RCL_ACT": 0,
+        "NAV_DLL_ACT": 0,
+        "COM_OBL_ACT": 1
+      }
     }
   }
 }
