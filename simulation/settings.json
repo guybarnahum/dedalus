@@ -1,6 +1,9 @@
 {
   "SettingsVersion": 1.2,
   "SimMode": "Multirotor",
+  "LogMessagesVisible": true,
+  "ShowDashboard": true,
+  "ViewMode": "FlyWithMe",
   "Vehicles": {
     "PX4": {
       "VehicleType": "PX4Multirotor",
