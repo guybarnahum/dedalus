@@ -16,7 +16,9 @@
       "UseTcp": true,
       "TcpPort": 4560,
       "ControlIp": "127.0.0.1",
-      "ControlPort": 14580,
+      "ControlPortLocal": 14540,
+      "ControlPortRemote": 14580,
+      "LockStep": true,
       "Parameters": {
         "COM_ARM_WO_GPS": 1,
         "NAV_RCL_ACT": 0,
