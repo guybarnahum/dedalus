@@ -312,6 +312,33 @@ for ENV in "${PRELOAD_ENVS[@]}"; do
     fi
 done
 
+# ----------------- PYTHON VIRTUAL ENVIRONMENT -----------------
+echo "🐍 Setting up Python Virtual Environment..."
+
+# Install system-level dependencies for Python env
+sudo apt-get update
+sudo apt-get install -y python3-venv python3-pip
+
+VENV_PATH="$HOME/dedalus/venv"
+
+# Create venv if it doesn't exist
+if [ ! -d "$VENV_PATH" ]; then
+    python3 -m venv "$VENV_PATH"
+fi
+
+# Activate and install/upgrade dependencies
+source "$VENV_PATH/bin/activate"
+pip install --upgrade pip
+pip install \
+    airsim \
+    pymavlink \
+    msgpack-rpc-python \
+    numpy \
+    pyserial
+
+echo "✅ Python environment ready at $VENV_PATH"
+# --------------------------------------------------------------
+
 echo ""
 echo "=================================================================="
 echo "✅ ENVIRONMENT SETUP COMPLETE"
