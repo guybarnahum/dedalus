@@ -4,6 +4,11 @@
   "LogMessagesVisible": true,
   "ShowDashboard": true,
   "ViewMode": "FlyWithMe",
+  "OriginGeopoint": {
+    "Latitude": 47.641468,
+    "Longitude": -122.140165,
+    "Altitude": 121
+  },
   "Vehicles": {
     "PX4": {
       "VehicleType": "PX4Multirotor",

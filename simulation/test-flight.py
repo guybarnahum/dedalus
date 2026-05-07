@@ -2,45 +2,49 @@ import airsim
 import time
 
 def run_test_flight():
+    # MultirotorClient inherits from VehicleClient
     client = airsim.MultirotorClient()
     client.confirmConnection()
 
-    # --- API-CORRECT HOME SET ---
-    print("Setting Home Location via simSetHomeLocation...")
-    home_gps = airsim.GeoPoint()
-    home_gps.latitude = 47.641468
-    home_gps.longitude = -122.140165
-    home_gps.altitude = 121.0
-    
-    # Correct API method name
-    client.simSetHomeLocation(home_gps)
+    # --- 1. FORCE ARMING (Bypass GPS) ---
+    # We use the valid 'setParam' API to tell PX4 to ignore GPS for arming.
+    # Parameter names must be strings, values are typically floats in AirSim RPC.
+    print("Setting PX4 parameter: COM_ARM_WO_GPS = 1.0")
+    client.setParam("COM_ARM_WO_GPS", 1.0)
 
     client.enableApiControl(True)
     
-    # --- FPS & ARMING LOGIC ---
     last_ts = 0
     try:
-        print("Waiting for drone to report ready...")
+        print("Monitoring Telemetry & FPS...")
         while True:
+            # getMultirotorState() is the valid method
             state = client.getMultirotorState()
             
-            # Detect FPS from API timestamps (nanoseconds)
+            # --- 2. DETECT FPS FROM API ---
+            # state.timestamp is a uint64 in nanoseconds
             if last_ts > 0:
-                dt = (state.timestamp - last_ts) / 1e9
-                if dt > 0:
-                    fps = 1.0 / dt
-                    print(f"Current API FPS: {fps:.2f}", end='\r')
+                dt_nano = state.timestamp - last_ts
+                if dt_nano > 0:
+                    # Convert nanoseconds to seconds for FPS
+                    actual_fps = 1.0 / (dt_nano / 1e9)
+                    print(f"API Detect FPS: {actual_fps:.2f} | Landed: {state.landed_state}", end='\r')
             last_ts = state.timestamp
 
-            # Check if we can arm
-            # If you set COM_ARM_WO_GPS in settings.json, this loop can be shorter
+            # --- 3. ARMING LOGIC ---
+            # Check if drone is ready to arm (landed_state 0 is Landed)
             if state.landed_state == airsim.LandedState.Landed:
-                print("\nDrone is ready. Arming...")
-                client.armDisarm(True)
-                break
-            time.sleep(0.5)
+                print("\nAttempting to Arm...")
+                # armDisarm(True) is the valid method
+                success = client.armDisarm(True)
+                if success:
+                    print("✅ Armed successfully!")
+                    break
+            
+            time.sleep(0.1)
 
         print("Taking off...")
+        # takeoffAsync is valid, but may still fail if PX4 has NO position estimate.
         client.takeoffAsync().join()
         
         print("Hovering...")
