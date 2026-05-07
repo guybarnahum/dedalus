@@ -255,10 +255,10 @@ else
   echo "✅ PX4 build directory found. Skipping."
 fi
 
-echo "🔨 Verifying PX4 SITL build..."
+echo "🔨 Verifying PX4 SITL build artifacts..."
 source "$HOME/dedalus/venv/bin/activate"
 cd PX4-Autopilot
-run_and_log "Build PX4 SITL none_iris" make px4_sitl none_iris
+run_and_log "Build PX4 SITL" make px4_sitl
 cd ../
 echo "✅ PX4 SITL build verified."
 
