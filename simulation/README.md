@@ -1,5 +1,7 @@
 # 🎮 The Virtual Proving Ground (Simulation Environment)
 
+<img width="1446" height="833" alt="Screenshot 2026-05-07 at 1 55 20 PM" src="https://github.com/user-attachments/assets/83ebe7e1-0355-4400-9ac6-f7514c291f7c" />
+
 ![Sim Engine](https://img.shields.io/badge/Engine-Colosseum_(AirSim)-blue)
 ![Flight Controller](https://img.shields.io/badge/FCU-PX4_SITL-orange)
 ![Visualization](https://img.shields.io/badge/Display-NICE_DCV-green)
