@@ -5,59 +5,65 @@ def run_test_flight():
     client = airsim.MultirotorClient()
     client.confirmConnection()
 
-    # 1. Get the correct vehicle name from the server
+    # Get the vehicle name (verified as 'PX4' in your logs)
     vehicles = client.listVehicles()
     if not vehicles:
-        print("❌ No vehicles found in simulation!")
+        print("❌ No vehicles found!")
         return
-    
-    vehicle_name = vehicles[0]
-    print(f"Found vehicle: '{vehicle_name}'. Enabling control...")
+    v_name = vehicles[0]
 
-    # 2. Enable Control specifically for this name
-    client.enableApiControl(True, vehicle_name=vehicle_name)
+    print(f"Waiting for telemetry from '{v_name}'...")
+    
+    # 1. LOOP: Wait for valid state before enabling API
+    # This prevents the rpclib crash by ensuring the vehicle is fully initialized
+    while True:
+        state = client.getMultirotorState(vehicle_name=v_name)
+        if state.timestamp > 0:
+            print(f"✅ Telemetry received. Simulation Timestamp: {state.timestamp}")
+            break
+        print("... Waiting for initial heartbeat ...")
+        time.sleep(1)
+
+    # 2. Enable Control
+    # Passing an empty string often bypasses naming bugs in single-vehicle sims
+    print(f"Enabling API control for '{v_name}'...")
+    client.enableApiControl(True, vehicle_name=v_name)
     
     last_ts = 0
     try:
-        print("Monitoring Telemetry (Press Ctrl+C to stop)...")
-        # We'll run a loop to see the FPS and arm status
-        while True:
-            # getMultirotorState is the standard method for telemetry
-            state = client.getMultirotorState(vehicle_name=vehicle_name)
+        # 3. Telemetry & FPS Loop
+        for _ in range(50):
+            state = client.getMultirotorState(vehicle_name=v_name)
             
-            # FPS Calculation from Hardware Timestamps
+            # FPS Calculation: 1 / (Delta Time in seconds)
             if last_ts > 0:
-                dt_seconds = (state.timestamp - last_ts) / 1e9
-                if dt_seconds > 0:
-                    fps = 1.0 / dt_seconds
-                    # 0 = Landed, 1 = Flying
-                    print(f"Sim FPS: {fps:.2f} | Landed State: {state.landed_state}", end='\r')
-            
+                dt = (state.timestamp - last_ts) / 1e9
+                if dt > 0:
+                    fps = 1.0 / dt
+                    print(f"FPS: {fps:6.2f} | Landed State: {state.landed_state}", end='\r')
             last_ts = state.timestamp
 
-            # 3. Arming Logic
-            # Note: This will only work if COM_ARM_WO_GPS is set in settings.json
+            # 4. Arming Logic
+            # Note: Requires COM_ARM_WO_GPS: 1 in settings.json
             if state.landed_state == 0: # LandedState.Landed
-                print(f"\nVehicle '{vehicle_name}' is Landed. Attempting Arm...")
-                client.armDisarm(True, vehicle_name=vehicle_name)
+                print(f"\nArming '{v_name}'...")
+                client.armDisarm(True, vehicle_name=v_name)
                 break
-            
             time.sleep(0.1)
 
         print("Taking off...")
-        # Note: If this fails, the EKF still doesn't have a position lock.
-        client.takeoffAsync(vehicle_name=vehicle_name).join()
+        client.takeoffAsync(vehicle_name=v_name).join()
         
         print("Hovering...")
         time.sleep(5)
         
-        client.landAsync(vehicle_name=vehicle_name).join()
+        client.landAsync(vehicle_name=v_name).join()
 
     except Exception as e:
-        print(f"\n❌ Flight Command Failed: {e}")
+        print(f"\n❌ Error during flight: {e}")
     finally:
-        client.armDisarm(False, vehicle_name=vehicle_name)
-        client.enableApiControl(False, vehicle_name=vehicle_name)
+        client.armDisarm(False, vehicle_name=v_name)
+        client.enableApiControl(False, vehicle_name=v_name)
         print("Test concluded.")
 
 if __name__ == "__main__":
