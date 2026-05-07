@@ -6,11 +6,15 @@
 set -e
 cd "$(dirname "$0")"
 
+# ------------ LOGGING CONFIGURATION ----------------
+LOG_DIR="logs"
+mkdir -p "$LOG_DIR"
+TIMESTAMP=$(date +%Y%m%d_%H%M%S)
+SIM_LOG="$LOG_DIR/sim_$TIMESTAMP.log"
+
 # ------------ VIDEO & DISPLAY CONFIGURATION --------
-# Dynamically locate the NICE DCV session and its X11 bridge
 SESSION_NAME="dedalus-sim"
 
-# 1. Probe DCV for current display and authority file
 DCV_JSON=$(dcv describe-session "$SESSION_NAME" --json 2>/dev/null) || {
     echo "❌ Error: DCV session '$SESSION_NAME' not found. Run setup.sh first."
     exit 1
@@ -24,52 +28,32 @@ if [[ -z "$DISPLAY" || -z "$XAUTHORITY" ]]; then
     exit 1
 fi
 
-# 2. Grant local permission to the X-server
-# This allows the background simulation process to talk to the DCV display
 xhost +SI:localuser:$(whoami) >/dev/null 2>&1
 
-echo "🖥️  Video Configured: Display $DISPLAY | Auth $XAUTHORITY"
-
-
 # ---------------- tmux Auto-Wrapper ----------------
-# If we are not already inside a tmux session, relaunch this script inside one!
-if ! command -v tmux &>/dev/null; then
-    echo "📦 Installing 'tmux' utility..."
-    sudo apt-get update >/dev/null && sudo apt-get install -y tmux >/dev/null
-fi
-
 if [ -z "$TMUX" ]; then
-    SESSION_NAME="dedalus-sim"
+    echo "🖥️  Video Configured: Display $DISPLAY | Auth $XAUTHORITY"
     echo "🚀 Spawning simulation in background tmux session ('$SESSION_NAME')..."
     
-    # Clean up any lingering dead sessions
     tmux kill-session -t "$SESSION_NAME" 2>/dev/null || true
     
-    # Relaunch this exact script with all arguments inside a detached tmux session
-    tmux new-session -d -s "$SESSION_NAME" "$0 $*"
+    # Relaunch the script inside tmux and pipe EVERYTHING to the timestamped log
+    # 'tee' allows us to see the logs in 'tmux attach' AND write to the file simultaneously
+    tmux new-session -d -s "$SESSION_NAME" "bash -c './run.sh $* 2>&1 | tee $SIM_LOG'"
     
     echo "✅ Simulation is booting in the background!"
-    echo "   The Unreal Engine GUI will pop up on your desktop momentarily."
+    echo "📝 LOG FILE: $SIM_LOG"
     echo ""
-    echo "   -> To view live logs:  tmux attach -t $SESSION_NAME"
-    echo "   -> To exit the logs:   Press Ctrl+B, then D"
+    echo "   -> To tail logs:       tail -f $SIM_LOG"
+    echo "   -> To view live GUI:   Switch to your NICE DCV Client"
     echo "   -> To kill the sim:    ./cleanup.sh"
     exit 0
 fi
 
 # ---------------- Configuration ----------------
-TARGET_ENV="${1:-Blocks}"
+TARGET_ENV="${1:-AirSimNH}"
 S3_BUCKET="s3://dedalus-sim-assets-colosseum"
-COLOSSEUM_RELEASE_TAG="v2.0.0-beta.0"
-
-BINARY_NAME="${TARGET_ENV}.zip"
 SIM_DIR="colosseum_environments/${TARGET_ENV}_LinuxNoEditor"
-
-# Array of base URLs to cycle through if S3 fails
-FALLBACK_MIRRORS=(
-    "https://github.com/microsoft/AirSim/releases/download/v1.8.1-linux"
-    "https://github.com/microsoft/AirSim/releases/download/v1.7.0-linux"
-)
 
 # ---------------- Traps & Cleanup ----------------
 cleanup() {
@@ -84,99 +68,37 @@ trap cleanup SIGINT SIGTERM
 
 echo "🚀 Initiating Project Dedalus Simulation Stack..."
 echo "🌍 Target Environment: $TARGET_ENV"
-
-# ---------------- 0. Prerequisite Check ----------------
-if ! command -v unzip &>/dev/null; then
-    echo "📦 Installing 'unzip' utility..."
-    sudo apt-get update >/dev/null && sudo apt-get install -y unzip >/dev/null
-fi
+echo "⏰ Started at: $(date)"
 
 # ---------------- 1. IPC Daemon ----------------
 echo "⚙️  Starting Eclipse iceoryx (iox-roudi)..."
 if ! pgrep -f "iox-roudi" > /dev/null; then
-    iox-roudi -m true > /tmp/iox-roudi.log 2>&1 &
+    # Redirect internal daemon logs to a specific sub-log for debugging IPC issues
+    iox-roudi -m true > "$LOG_DIR/iox_$TIMESTAMP.log" 2>&1 &
     sleep 2
 else
     echo "✅ iox-roudi is already running."
 fi
 
-# ---------------- 2. Fetch Colosseum (Cascading Fallback) ----------------
-if [ ! -d "$SIM_DIR" ]; then
-    echo "📦 Environment '$TARGET_ENV' not found locally."
-    mkdir -p colosseum_environments
-    DOWNLOAD_SUCCESS=false
-    
-    echo "⬇️  Attempting to pull from S3 ($S3_BUCKET)..."
-    if aws s3 cp "$S3_BUCKET/$BINARY_NAME" "/tmp/$BINARY_NAME" 2>/dev/null; then
-        echo "✅ Downloaded from S3."
-        DOWNLOAD_SUCCESS=true
-    else
-        echo "⚠️  S3 download failed. Checking fallback mirrors..."
-        for MIRROR in "${FALLBACK_MIRRORS[@]}"; do
-            URL="${MIRROR}/${BINARY_NAME}"
-            echo "   -> Trying $MIRROR..."
-            if wget -q --show-progress -O "/tmp/$BINARY_NAME" "$URL"; then
-                echo "✅ Downloaded from fallback mirror."
-                DOWNLOAD_SUCCESS=true
-                break
-            else
-                rm -f "/tmp/$BINARY_NAME"
-            fi
-        done
-    fi
-    
-    if [ "$DOWNLOAD_SUCCESS" = false ]; then
-        echo "❌ CRITICAL: Failed to download '$TARGET_ENV' from all sources."
-        echo ""
-        echo "📂 Currently Installed Environments:"
-        if [ -d "colosseum_environments" ] && [ "$(ls -A colosseum_environments)" ]; then
-            ls -1 colosseum_environments | grep "_LinuxNoEditor" | sed 's/_LinuxNoEditor//' | sed 's/^/   - /' || echo "   (None)"
-        else
-            echo "   (None)"
-        fi
-        echo ""
-        cleanup
-    fi
-    
-    echo "📦 Extracting & Formatting (This may take a minute)..."
-    unzip -q "/tmp/$BINARY_NAME" -d "/tmp/${TARGET_ENV}_ext"
-    rm -rf "$SIM_DIR"
-    mkdir -p "$SIM_DIR"
-    
-    EXE_PATH=$(find "/tmp/${TARGET_ENV}_ext" -type f -name "*.sh" | grep -v "CrashReportClient" | head -n 1)
-    if [ -z "$EXE_PATH" ]; then
-        echo "❌ CRITICAL: No .sh executable found inside downloaded zip! The archive may be corrupted or for Windows."
-        rm -rf "/tmp/${TARGET_ENV}_ext" "/tmp/$BINARY_NAME"
-        cleanup
-    fi
-    BASE_DIR=$(dirname "$EXE_PATH")
-    mv "$BASE_DIR"/* "$SIM_DIR"/
-    rm -rf "/tmp/${TARGET_ENV}_ext" "/tmp/$BINARY_NAME"
-    chmod +x "$SIM_DIR"/*.sh
-    echo "✅ Extraction complete."
-fi
-
-# ---------------- 3. PX4 SITL Flight Controller ----------------
+# ---------------- 2. PX4 SITL Flight Controller ----------------
 echo "✈️  Booting PX4 SITL (Software In The Loop)..."
 cd PX4-Autopilot
-make px4_sitl none_iris > /tmp/px4.log 2>&1 &
+# We pipe this to the main log via the wrapper, but also keep a dedicated PX4 log
+make px4_sitl none_iris > "$LOG_DIR/px4_$TIMESTAMP.log" 2>&1 &
 cd ../
 sleep 3
 echo "✅ PX4 daemon active."
 
-# ---------------- 4. Apply Colosseum Settings ----------------
+# ---------------- 3. Apply Colosseum Settings ----------------
 echo "⚙️  Injecting Configuration (settings.json)..."
 mkdir -p ~/Documents/AirSim
 if [ -f "settings.json" ]; then
     cp settings.json ~/Documents/AirSim/settings.json
     echo "✅ Settings applied."
-else
-    echo "⚠️  No settings.json found in $(pwd). Colosseum will use defaults."
 fi
 
-# ---------------- 5. Launch Unreal Engine Physics ----------------
+# ---------------- 4. Launch Unreal Engine Physics ----------------
 echo "🎮 Launching Colosseum Physics Engine ($TARGET_ENV)..."
-
 LAUNCH_EXE=$(find "$SIM_DIR" -maxdepth 1 -type f -name "*.sh" | grep -v "CrashReportClient" | head -n 1)
 
 if [ -z "$LAUNCH_EXE" ]; then
@@ -184,8 +106,7 @@ if [ -z "$LAUNCH_EXE" ]; then
     cleanup
 fi
 
-# Runs windowed so you can see the terminal and the drone simultaneously
+# The output of this executable will flow into $SIM_LOG via the tmux 'tee'
 "$LAUNCH_EXE" -windowed -ResX=1280 -ResY=720
 
-# If the Unreal Engine GUI is closed, trigger cleanup automatically
 cleanup
