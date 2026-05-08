@@ -151,8 +151,24 @@ def run_test_flight(vehicle_name, timeout_s, skip_arm):
             time.sleep(0.1)
         print()
 
-        print("Skipping arm RPC; testing direct velocity command...")
-        client.moveByVelocityAsync(0, 0, -1, 5, vehicle_name=v_name).join()
+        if not skip_arm:
+            armed = arm_with_retries(client, v_name)
+            if not armed:
+                print(
+                    "⚠️ armDisarm() failed through AirSim RPC, but PX4 may still be healthy. "
+                    "Continuing to takeoffAsync() because PX4 manual commander arm works."
+                )
+        else:
+            print("Skipping arm by request.")
+
+        print("Executing Takeoff...")
+        client.takeoffAsync(vehicle_name=v_name).join()
+
+        print("Hovering...")
+        time.sleep(5)
+
+        print("Landing...")
+        client.landAsync(vehicle_name=v_name).join()
 
     except Exception as e:
         print(f"\n❌ Test flight failed: {e}")
