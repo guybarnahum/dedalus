@@ -87,7 +87,111 @@ cd ~/dedalus/simulation && ./run.sh AirSimNH
 
 ---
 
-## Phase 5: Lifecycle & Persistence
+## Phase 5: Autonomous Flight Testing
+
+Once the simulation environment is running, use **`test-flight.py`** to execute autonomous flight sequences with trajectory playback.
+
+### Running Flight Tests
+
+1. **Basic Test (Default 10-Second Hover):**
+   ```bash
+   cd ~/dedalus/simulation
+   python test-flight.py
+   ```
+   This executes: arm → hover for 10s → land via PX4 shell.
+
+2. **Custom Trajectory (Orbit & Figure-Eight):**
+   ```bash
+   python test-flight.py --control px4 --trajectory trajectories/circle_figure8.json
+   ```
+   Streams velocity commands during the autonomous sequence.
+
+3. **MAVLink Control with Climb Verification:**
+   ```bash
+   python test-flight.py --control mavlink --mavlink-endpoint 127.0.0.1:14550
+   ```
+   Uses MAVLink protocol; detects false ACKs if aircraft doesn't gain altitude.
+
+4. **AirSim-Only Control (for debugging):**
+   ```bash
+   python test-flight.py --control airsim --trajectory my_trajectory.json
+   ```
+
+### Trajectory Format
+
+Create custom trajectories in `simulation/trajectories/` as JSON files with segment definitions:
+
+```json
+{
+  "name": "custom_mission",
+  "rate_hz": 10,
+  "segments": [
+    {
+      "type": "hold",
+      "duration_s": 3,
+      "vx_mps": 0.0,
+      "vy_mps": 0.0,
+      "vz_mps": 0.0
+    },
+    {
+      "type": "figure8_velocity",
+      "duration_s": 15,
+      "center_x": 0.0,
+      "center_y": 0.0,
+      "size": 20.0,
+      "altitude": 30.0
+    },
+    {
+      "type": "hold",
+      "duration_s": 2,
+      "vx_mps": 0.0,
+      "vy_mps": 0.0,
+      "vz_mps": 0.0
+    }
+  ]
+}
+```
+
+**Segment Types:**
+
+| Type | Key Fields | Purpose |
+|------|-----------|---------|
+| `hold` | `duration_s`, `vx/vy/vz_mps` | Fixed velocity (0,0,0 for hover) |
+| `circle_velocity` | `duration_s`, `center_x/y`, `radius`, `altitude`, `clockwise` | Orbital flight |
+| `figure8_velocity` | `duration_s`, `center_x/y`, `size`, `altitude` | Figure-eight pattern |
+| `velocity_keyframes` | `duration_s`, `keyframes` | Custom velocity waypoints |
+
+### Debugging Tips
+
+**Check PX4 Shell Status:**
+```bash
+# In a separate tmux pane or DCV terminal
+tmux list-sessions
+tmux attach-session -t dedalus-sim
+# Navigate to the px4 pane and check for errors
+```
+
+**Verify AirSim Connection:**
+```bash
+# Confirm TCP port 4560 is listening
+netstat -tuln | grep 4560
+```
+
+**Enable Verbose Output:**
+Pass `-v` or inspect PX4 terminal directly for arm/takeoff diagnostics.
+
+**Reload Test Flight Script:**
+If you modify `test-flight.py`, no restart is required—just re-run:
+```bash
+python test-flight.py --control px4 --trajectory new_trajectory.json
+```
+
+For detailed CLI reference and control mode architecture, see [README.md](README.md).
+
+---
+
+## Phase 6: Lifecycle & Persistence
+
 
 * **Linger:** `setup.sh` enables `loginctl enable-linger`. The DCV session will start automatically on boot.
 * **Stopping:** Always **Stop** the instance via the AWS Console when finished to avoid L4 hourly compute charges.

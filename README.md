@@ -28,5 +28,85 @@ To guarantee stability and prevent hardware loss, Dedalus enforces a strict sepa
 2. **Simulation Environment (CI/CD):** Code executes inside **Colosseum** (AirSim fork) and **PX4 SITL**. Pull requests are automatically gated by headless simulated flight tests.
 3. **Edge Environment (Physical Drone):** A pure C++20 runtime operating bare-metal via `.deb` packages and A/B partition flashing on the Jetson Orin.
 
+## Simulation & Flight Testing
+
+The Virtual Proving Ground (`simulation/` directory) provides a complete high-fidelity environment for testing autonomous flight logic before risking physical hardware.
+
+### Quick Start (AWS EC2)
+1. **Provision:** Follow [simulation/INSTALL.md](simulation/INSTALL.md) to bootstrap a `g6.2xlarge` GPU instance.
+2. **Launch:** Connect via NICE DCV and run:
+   ```bash
+   cd ~/dedalus/simulation && ./run.sh AirSimNH
+   ```
+3. **Test Flight:** Execute autonomous flight sequences with:
+   ```bash
+   python test-flight.py --control px4 --trajectory trajectories/circle_figure8.json
+   ```
+
+### Trajectory-Based Flight Testing
+
+The **`test-flight.py`** harness provides multi-mode autonomous flight control with JSON-based trajectory playback:
+
+**Control Modes:**
+* **`auto` (default):** Attempts PX4 shell (most reliable) → MAVLink (with climb verification) → AirSim RPC (fallback)
+* **`px4`:** Direct shell arm/takeoff/land with AirSim velocity injection for payload execution
+* **`mavlink`:** MAVLink protocol with enhanced error detection (detects false ACKs if no altitude gain)
+* **`airsim`:** Pure AirSim RPC (least reliable, included for comparison)
+
+**Trajectory Format (JSON):**
+Trajectories define multi-segment flight sequences with rate-controlled playback (default 10 Hz):
+
+```json
+{
+  "name": "example_trajectory",
+  "rate_hz": 10,
+  "segments": [
+    {
+      "type": "hold",
+      "label": "hover",
+      "duration_s": 5,
+      "vx_mps": 0.0,
+      "vy_mps": 0.0,
+      "vz_mps": 0.0
+    },
+    {
+      "type": "circle_velocity",
+      "label": "orbit_right",
+      "duration_s": 10,
+      "center_x": 0.0,
+      "center_y": 0.0,
+      "radius": 10.0,
+      "altitude": 25.0,
+      "clockwise": true
+    }
+  ]
+}
+```
+
+**Supported Segment Types:**
+* `hold` — Maintain position (zero velocity)
+* `circle_velocity` — Circular orbit with center offset
+* `figure8_velocity` — Figure-eight pattern
+* `velocity_keyframes` — Arbitrary waypoint list with linear interpolation
+
+**Interactive Testing:**
+```bash
+# Basic flight test with default 10s hover trajectory
+python test-flight.py
+
+# Custom trajectory with explicit control mode
+python test-flight.py --control px4 --trajectory my_trajectory.json
+
+# MAVLink with climb verification enabled
+python test-flight.py --control mavlink --mavlink-endpoint 127.0.0.1:14550
+
+# Real-time diagnostics (verbose PX4 shell output)
+python test-flight.py --control px4 --px4-tmux-target dedalus-sim:px4
+```
+
+See [simulation/README.md](simulation/README.md) for complete CLI reference and [simulation/INSTALL.md](simulation/INSTALL.md) for environment setup.
+
+---
+
 ## Getting Started
 *(Documentation on bootstrapping the local Colosseum simulation environment and Jetson L4T cross-compilation Docker containers is forthcoming.)*
