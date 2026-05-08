@@ -308,57 +308,56 @@ def mavlink_disarm(mav, force=False):
         print(f"⚠️ MAVLink disarm failed/ignored: {exc}")
 
 
-def mavlink_set_mode(mav, mode_name):
-    mode_mapping = mav.mode_mapping()
-    if not mode_mapping or mode_name not in mode_mapping:
-        raise RuntimeError(f"MAVLink mode '{mode_name}' not available. Known modes: {mode_mapping}")
-
-    mode_id = mode_mapping[mode_name]
-    print(f"Setting MAVLink mode: {mode_name} ({mode_id})")
-    mav.set_mode(mode_id)
-
-    deadline = time.time() + 5
-    while time.time() < deadline:
-        ack = mav.recv_match(type="COMMAND_ACK", blocking=True, timeout=0.5)
-        if ack:
-            print(f"Mode change ACK: command={ack.command} result={ack.result}")
-            return True
-
-    print("⚠️ No mode ACK received; continuing.")
-    return False
-
-
-def mavlink_send_position_target_local_ned(mav, x, y, z, vx, vy, vz, yaw=0.0):
+def mavlink_takeoff(mav, relative_alt_m=3.0):
     """
-    Send a local NED setpoint. Uses position + velocity fields.
+    Use PX4's normal takeoff command instead of OFFBOARD.
 
-    type_mask ignores acceleration, yaw-rate. Position and velocity are active.
+    This matches the working PX4 shell path more closely:
+      commander arm
+      commander takeoff
+
+    AirSim/PX4 Offboard mode is more sensitive and our previous set_mode()
+    call was invalid for PX4 because pymavlink returned tuple mode mappings.
     """
-    type_mask = (
-        mavutil.mavlink.POSITION_TARGET_TYPEMASK_AX_IGNORE |
-        mavutil.mavlink.POSITION_TARGET_TYPEMASK_AY_IGNORE |
-        mavutil.mavlink.POSITION_TARGET_TYPEMASK_AZ_IGNORE |
-        mavutil.mavlink.POSITION_TARGET_TYPEMASK_YAW_RATE_IGNORE
-    )
-
-    mav.mav.set_position_target_local_ned_send(
-        int(time.time() * 1e3) & 0xFFFFFFFF,
+    print(f"Sending MAVLink NAV_TAKEOFF relative_alt_m={relative_alt_m}...")
+    mav.mav.command_long_send(
         mav.target_system,
         mav.target_component or mavutil.mavlink.MAV_COMP_ID_AUTOPILOT1,
-        mavutil.mavlink.MAV_FRAME_LOCAL_NED,
-        type_mask,
-        x,
-        y,
-        z,
-        vx,
-        vy,
-        vz,
+        mavutil.mavlink.MAV_CMD_NAV_TAKEOFF,
         0,
         0,
         0,
-        yaw,
+        0,
+        float("nan"),
+        0,
+        0,
+        relative_alt_m,
+    )
+
+    result = wait_for_command_ack(mav, mavutil.mavlink.MAV_CMD_NAV_TAKEOFF)
+    if result != mavutil.mavlink.MAV_RESULT_ACCEPTED:
+        raise RuntimeError(f"MAVLink takeoff rejected with MAV_RESULT={result}")
+
+
+def mavlink_land(mav):
+    print("Sending MAVLink NAV_LAND...")
+    mav.mav.command_long_send(
+        mav.target_system,
+        mav.target_component or mavutil.mavlink.MAV_COMP_ID_AUTOPILOT1,
+        mavutil.mavlink.MAV_CMD_NAV_LAND,
+        0,
+        0,
+        0,
+        0,
+        float("nan"),
+        0,
+        0,
         0,
     )
+
+    result = wait_for_command_ack(mav, mavutil.mavlink.MAV_CMD_NAV_LAND)
+    if result != mavutil.mavlink.MAV_RESULT_ACCEPTED:
+        raise RuntimeError(f"MAVLink land rejected with MAV_RESULT={result}")
 
 
 def mavlink_wait_local_position(mav, timeout_s=10):
@@ -376,54 +375,25 @@ def mavlink_wait_local_position(mav, timeout_s=10):
     raise TimeoutError("Timed out waiting for LOCAL_POSITION_NED.")
 
 
-def mavlink_stream_setpoint(mav, x, y, z, vx, vy, vz, duration_s, hz=20):
-    interval = 1.0 / hz
-    end = time.time() + duration_s
-
-    while time.time() < end:
-        mavlink_send_position_target_local_ned(mav, x, y, z, vx, vy, vz)
-        time.sleep(interval)
-
-
 def mavlink_control_sequence(mav, force_arm=False):
     """
-    PX4 Offboard sequence:
+    PX4 MAVLink command sequence:
       1. Wait for local position.
-      2. Stream setpoints before mode switch.
-      3. Set OFFBOARD.
-      4. Arm.
-      5. Command climb using local NED z.
-      6. Hold.
-      7. Land.
+      2. Arm.
+      3. Send NAV_TAKEOFF.
+      4. Hold.
+      5. Send NAV_LAND.
+
+    We intentionally avoid OFFBOARD here because the current PX4/pymavlink
+    mode mapping returned tuples like (29, 6, 0), and mav.set_mode() rejected
+    them with "required argument is not a float".
     """
-    pos = mavlink_wait_local_position(mav)
-
-    hold_x = pos.x
-    hold_y = pos.y
-    hold_z = pos.z
-    takeoff_z = min(hold_z - 3.0, -3.0)
-
-    print("Priming MAVLink Offboard setpoints...")
-    mavlink_stream_setpoint(mav, hold_x, hold_y, hold_z, 0, 0, 0, duration_s=2)
-
-    try:
-        mavlink_set_mode(mav, "OFFBOARD")
-    except Exception as exc:
-        print(f"⚠️ OFFBOARD mode switch failed/uncertain: {exc}")
-
+    mavlink_wait_local_position(mav)
     mavlink_arm(mav, force=force_arm)
-
-    print(f"Climbing to local NED z={takeoff_z:.2f}...")
-    mavlink_stream_setpoint(mav, hold_x, hold_y, takeoff_z, 0, 0, -0.7, duration_s=6)
-
-    print("Holding position...")
-    mavlink_stream_setpoint(mav, hold_x, hold_y, takeoff_z, 0, 0, 0, duration_s=6)
-
-    print("Landing via MAVLink mode LAND...")
-    try:
-        mavlink_set_mode(mav, "LAND")
-    except Exception as exc:
-        print(f"⚠️ LAND mode switch failed; falling back to disarm later: {exc}")
+    mavlink_takeoff(mav, relative_alt_m=3.0)
+    print("Holding after MAVLink takeoff...")
+    time.sleep(8)
+    mavlink_land(mav)
     time.sleep(8)
 
 
@@ -439,9 +409,17 @@ def airsim_control_sequence(client, vehicle_name):
 
 def auto_control_sequence(client, vehicle_name, endpoints, px4_tmux_target, force_mavlink_arm):
     """
-    Prefer MAVLink for PX4 because AirSim/Colosseum armDisarm() is broken in this setup.
-    Fall back to PX4 shell. Use AirSim only as last resort.
+    Prefer PX4 shell because it is the only confirmed complete path so far:
+    arm, takeoff, and land. MAVLink currently arms successfully and now tries
+    NAV_TAKEOFF/NAV_LAND, but PX4 shell remains the safest default.
     """
+    try:
+        print("AUTO control: trying PX4 shell control sequence...")
+        px4_control_sequence(px4_tmux_target)
+        return "px4-shell", None
+    except Exception as exc:
+        print(f"⚠️ AUTO PX4 shell control failed: {exc}")
+
     try:
         print("AUTO control: trying MAVLink full control sequence...")
         mav = connect_mavlink(endpoints)
@@ -449,13 +427,6 @@ def auto_control_sequence(client, vehicle_name, endpoints, px4_tmux_target, forc
         return "mavlink", mav
     except Exception as exc:
         print(f"⚠️ AUTO MAVLink control failed: {exc}")
-
-    try:
-        print("AUTO control: trying PX4 shell control sequence...")
-        px4_control_sequence(px4_tmux_target)
-        return "px4-shell", None
-    except Exception as exc:
-        print(f"⚠️ AUTO PX4 shell control failed: {exc}")
 
     print("AUTO control: trying AirSim control sequence as last resort...")
     airsim_control_sequence(client, vehicle_name)
@@ -571,7 +542,7 @@ if __name__ == "__main__":
         default="auto",
         help=(
             "Control strategy for arm/takeoff/hover/land. "
-            "Default: auto."
+            "Default: auto, currently prefers PX4 shell because it is the confirmed working path."
         ),
     )
     parser.add_argument("--force-mavlink-arm", action="store_true")
