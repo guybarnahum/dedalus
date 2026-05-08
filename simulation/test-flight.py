@@ -375,6 +375,37 @@ def mavlink_wait_local_position(mav, timeout_s=10):
     raise TimeoutError("Timed out waiting for LOCAL_POSITION_NED.")
 
 
+def mavlink_get_local_position(mav, timeout_s=2):
+    msg = mav.recv_match(type="LOCAL_POSITION_NED", blocking=True, timeout=timeout_s)
+    if msg is None:
+        raise TimeoutError("Timed out waiting for LOCAL_POSITION_NED sample.")
+    return msg
+
+
+def mavlink_verify_climb(mav, start_z, min_climb_m=0.5, timeout_s=8):
+    """
+    PX4 local NED uses negative z for altitude above home.
+    A successful climb should make z decrease by at least min_climb_m.
+    """
+    print(f"Verifying climb: start_z={start_z:.2f}, required climb={min_climb_m:.2f}m")
+    deadline = time.time() + timeout_s
+    best_z = start_z
+
+    while time.time() < deadline:
+        pos = mavlink_get_local_position(mav, timeout_s=1)
+        best_z = min(best_z, pos.z)
+        climb = start_z - best_z
+        print(f"  local_z={pos.z:.2f}, observed_climb={climb:.2f}m")
+        if climb >= min_climb_m:
+            print("✅ MAVLink takeoff produced real climb.")
+            return True
+
+    raise RuntimeError(
+        "MAVLink takeoff was ACKed by PX4, but no real climb was observed. "
+        "Use --control px4 or --control auto for the confirmed working path."
+    )
+
+
 def mavlink_control_sequence(mav, force_arm=False):
     """
     PX4 MAVLink command sequence:
@@ -388,11 +419,12 @@ def mavlink_control_sequence(mav, force_arm=False):
     mode mapping returned tuples like (29, 6, 0), and mav.set_mode() rejected
     them with "required argument is not a float".
     """
-    mavlink_wait_local_position(mav)
+    pos = mavlink_wait_local_position(mav)
     mavlink_arm(mav, force=force_arm)
     mavlink_takeoff(mav, relative_alt_m=3.0)
+    mavlink_verify_climb(mav, start_z=pos.z, min_climb_m=0.5, timeout_s=8)
     print("Holding after MAVLink takeoff...")
-    time.sleep(8)
+    time.sleep(5)
     mavlink_land(mav)
     time.sleep(8)
 
@@ -542,7 +574,8 @@ if __name__ == "__main__":
         default="auto",
         help=(
             "Control strategy for arm/takeoff/hover/land. "
-            "Default: auto, currently prefers PX4 shell because it is the confirmed working path."
+            "Default: auto, currently prefers PX4 shell because it is the confirmed working path. "
+            "MAVLink mode is experimental: PX4 may ACK takeoff without producing motion."
         ),
     )
     parser.add_argument("--force-mavlink-arm", action="store_true")
