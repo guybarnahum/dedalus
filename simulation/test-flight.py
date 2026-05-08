@@ -4,12 +4,31 @@ import time
 import argparse
 import traceback
 import subprocess
+import json
+import math
+from pathlib import Path
 
 from pymavlink import mavutil
 
 
 DEFAULT_VEHICLE = "PX4"
 DEFAULT_PX4_TMUX_TARGET = "dedalus-sim:px4"
+
+DEFAULT_TRAJECTORY_DICT = {
+    "name": "default_takeoff_hover_land",
+    "description": "Simple takeoff, hover, land sequence.",
+    "rate_hz": 10,
+    "segments": [
+        {
+            "type": "hold",
+            "label": "hover",
+            "duration_s": 10,
+            "vx_mps": 0.0,
+            "vy_mps": 0.0,
+            "vz_mps": 0.0,
+        }
+    ],
+}
 
 DEFAULT_MAVLINK_ENDPOINTS = [
     "udpin:127.0.0.1:14550",
@@ -173,12 +192,198 @@ def px4_land_via_shell(target):
         pass
 
 
-def px4_control_sequence(target):
-    print("PX4 shell control sequence: arm -> takeoff -> hold -> land")
+def validate_trajectory_file(path):
+    """
+    Validate that a trajectory file is valid JSON and contains 'segments'.
+    Returns the path if valid; raises argparse.ArgumentTypeError if not.
+    """
+    trajectory_path = Path(path)
+    if not trajectory_path.is_absolute():
+        trajectory_path = Path(__file__).resolve().parent / trajectory_path
+
+    if not trajectory_path.exists():
+        raise argparse.ArgumentTypeError(f"Trajectory file not found: {trajectory_path}")
+
+    try:
+        with trajectory_path.open("r", encoding="utf-8") as f:
+            data = json.load(f)
+        if "segments" not in data:
+            raise argparse.ArgumentTypeError(
+                f"Trajectory file missing 'segments' key: {trajectory_path}"
+            )
+        return path
+    except json.JSONDecodeError as e:
+        raise argparse.ArgumentTypeError(
+            f"Invalid JSON in trajectory file {trajectory_path}: {e}"
+        )
+    except Exception as e:
+        raise argparse.ArgumentTypeError(f"Error reading trajectory file {trajectory_path}: {e}")
+
+
+def load_trajectory(path):
+    # If path is None or empty, use the default hardcoded trajectory.
+    if not path:
+        return DEFAULT_TRAJECTORY_DICT
+
+    # Otherwise load from file.
+    if not path.is_absolute():
+        path = Path(__file__).resolve().parent / path
+
+    with path.open("r", encoding="utf-8") as f:
+        data = json.load(f)
+
+    if "segments" not in data:
+        raise ValueError(f"Trajectory file missing 'segments': {path}")
+
+    return data
+
+
+def lerp(a, b, u):
+    return a + (b - a) * u
+
+
+def interpolate_keyframes(keyframes, t):
+    if not keyframes:
+        return 0.0, 0.0, 0.0
+
+    if t <= keyframes[0]["t"]:
+        k = keyframes[0]
+        return k.get("vx_mps", 0.0), k.get("vy_mps", 0.0), k.get("vz_mps", 0.0)
+
+    if t >= keyframes[-1]["t"]:
+        k = keyframes[-1]
+        return k.get("vx_mps", 0.0), k.get("vy_mps", 0.0), k.get("vz_mps", 0.0)
+
+    for i in range(len(keyframes) - 1):
+        a = keyframes[i]
+        b = keyframes[i + 1]
+        if a["t"] <= t <= b["t"]:
+            span = max(b["t"] - a["t"], 1e-6)
+            u = (t - a["t"]) / span
+            return (
+                lerp(a.get("vx_mps", 0.0), b.get("vx_mps", 0.0), u),
+                lerp(a.get("vy_mps", 0.0), b.get("vy_mps", 0.0), u),
+                lerp(a.get("vz_mps", 0.0), b.get("vz_mps", 0.0), u),
+            )
+
+    k = keyframes[-1]
+    return k.get("vx_mps", 0.0), k.get("vy_mps", 0.0), k.get("vz_mps", 0.0)
+
+
+def segment_velocity(segment, t):
+    typ = segment.get("type")
+
+    if typ == "hold":
+        return (
+            segment.get("vx_mps", 0.0),
+            segment.get("vy_mps", 0.0),
+            segment.get("vz_mps", 0.0),
+        )
+
+    if typ == "velocity_keyframes":
+        return interpolate_keyframes(segment["keyframes"], t)
+
+    if typ == "circle_velocity":
+        duration = float(segment["duration_s"])
+        speed = float(segment.get("speed_mps", 2.0))
+        radius = float(segment.get("radius_m", 10.0))
+        direction = segment.get("direction", "cw").lower()
+        vz = float(segment.get("vz_mps", 0.0))
+
+        omega = speed / max(radius, 1e-6)
+        theta = omega * t
+        sign = -1.0 if direction == "cw" else 1.0
+
+        # NED horizontal velocity tangent to a circle.
+        vx = speed * math.cos(theta)
+        vy = sign * speed * math.sin(theta)
+
+        # Make duration roughly match one full loop if user did not tune it exactly.
+        _ = duration
+        return vx, vy, vz
+
+    if typ == "figure8_velocity":
+        duration = float(segment["duration_s"])
+        speed = float(segment.get("speed_mps", 2.0))
+        scale = float(segment.get("scale_m", 10.0))
+        vz = float(segment.get("vz_mps", 0.0))
+
+        # Lemniscate-inspired velocity field.
+        # x = A sin(theta), y = A sin(theta) cos(theta)
+        # We scale derivatives so the speed remains near requested speed.
+        theta = 2.0 * math.pi * t / max(duration, 1e-6)
+        dx = scale * math.cos(theta)
+        dy = scale * math.cos(2.0 * theta)
+        norm = max(math.hypot(dx, dy), 1e-6)
+
+        vx = speed * dx / norm
+        vy = speed * dy / norm
+        return vx, vy, vz
+
+    raise ValueError(f"Unknown trajectory segment type: {typ}")
+
+
+def play_velocity_trajectory(client, vehicle_name, trajectory_path):
+    trajectory = load_trajectory(trajectory_path)
+    rate_hz = float(trajectory.get("rate_hz", 10))
+    dt = 1.0 / max(rate_hz, 1.0)
+
+    print(f"Playing trajectory: {trajectory.get('name', trajectory_path)}")
+    print(f"Description: {trajectory.get('description', '')}")
+    print(f"Rate: {rate_hz:.1f} Hz")
+
+    for seg_idx, segment in enumerate(trajectory["segments"], start=1):
+        label = segment.get("label", segment.get("type", f"segment-{seg_idx}"))
+        typ = segment.get("type")
+
+        if typ == "velocity_keyframes":
+            duration = float(segment["keyframes"][-1]["t"])
+        else:
+            duration = float(segment.get("duration_s", 0))
+
+        if duration <= 0:
+            print(f"Skipping empty segment: {label}")
+            continue
+
+        print(f"\nSegment {seg_idx}: {label} ({typ}, {duration:.1f}s)")
+        start = time.time()
+        next_tick = start
+
+        while True:
+            now = time.time()
+            t = now - start
+            if t >= duration:
+                break
+
+            vx, vy, vz = segment_velocity(segment, t)
+            client.moveByVelocityAsync(vx, vy, vz, dt, vehicle_name=vehicle_name).join()
+
+            print(
+                f"\r  t={t:5.1f}/{duration:5.1f}s "
+                f"v=({vx:+.2f},{vy:+.2f},{vz:+.2f}) m/s",
+                end="",
+                flush=True,
+            )
+
+            next_tick += dt
+            sleep_s = next_tick - time.time()
+            if sleep_s > 0:
+                time.sleep(sleep_s)
+
+        print()
+
+    print("\nTrajectory complete. Sending zero velocity settle command.")
+    client.moveByVelocityAsync(0, 0, 0, 2, vehicle_name=vehicle_name).join()
+
+
+def px4_control_sequence(client, vehicle_name, target, trajectory_path):
+    print("PX4 shell control sequence: arm → takeoff → velocity trajectory → land")
     px4_shell("commander arm", target)
     time.sleep(2)
     px4_shell("commander takeoff", target)
-    time.sleep(10)
+    print("Waiting for PX4 takeoff climb...")
+    time.sleep(8)
+    play_velocity_trajectory(client, vehicle_name, trajectory_path)
     px4_shell("commander land", target)
     time.sleep(8)
     disarm_via_px4_shell(target)
@@ -445,7 +650,14 @@ def airsim_control_sequence(client, vehicle_name):
     client.landAsync(vehicle_name=vehicle_name).join()
 
 
-def auto_control_sequence(client, vehicle_name, endpoints, px4_tmux_target, force_mavlink_arm):
+def auto_control_sequence(
+    client,
+    vehicle_name,
+    endpoints,
+    px4_tmux_target,
+    force_mavlink_arm,
+    trajectory_path,
+):
     """
     Prefer PX4 shell because it is the only confirmed complete path so far:
     arm, takeoff, and land. MAVLink currently arms successfully and now tries
@@ -453,7 +665,7 @@ def auto_control_sequence(client, vehicle_name, endpoints, px4_tmux_target, forc
     """
     try:
         print("AUTO control: trying PX4 shell control sequence...")
-        px4_control_sequence(px4_tmux_target)
+        px4_control_sequence(client, vehicle_name, px4_tmux_target, trajectory_path)
         return "px4-shell", None
     except Exception as exc:
         print(f"⚠️ AUTO PX4 shell control failed: {exc}")
@@ -479,6 +691,7 @@ def run_test_flight(
     px4_tmux_target,
     control_mode,
     force_mavlink_arm,
+    trajectory_path,
 ):
     client = airsim.MultirotorClient()
     client.confirmConnection()
@@ -519,14 +732,19 @@ def run_test_flight(
                 mavlink_control_sequence(mav, force_arm=force_mavlink_arm)
                 control_method = "mavlink"
             elif control_mode == "px4":
-                px4_control_sequence(px4_tmux_target)
+                px4_control_sequence(client, v_name, px4_tmux_target, trajectory_path)
                 control_method = "px4-shell"
             elif control_mode == "airsim":
                 airsim_control_sequence(client, v_name)
                 control_method = "airsim"
             elif control_mode == "auto":
                 control_method, mav = auto_control_sequence(
-                    client, v_name, mavlink_endpoints, px4_tmux_target, force_mavlink_arm
+                    client,
+                    v_name,
+                    mavlink_endpoints,
+                    px4_tmux_target,
+                    force_mavlink_arm,
+                    trajectory_path,
                 )
             else:
                 raise RuntimeError(f"Unknown control mode: {control_mode}")
@@ -575,6 +793,16 @@ if __name__ == "__main__":
     )
     parser.add_argument("--px4-tmux-target", default=DEFAULT_PX4_TMUX_TARGET)
     parser.add_argument(
+        "--trajectory",
+        type=validate_trajectory_file,
+        default=None,
+        help=(
+            "Path to a JSON trajectory file. Relative paths are resolved from "
+            "the simulation directory. If not provided, uses hardcoded "
+            "takeoff/hover/land sequence."
+        ),
+    )
+    parser.add_argument(
         "--control",
         choices=["auto", "mavlink", "px4", "airsim"],
         default="auto",
@@ -597,4 +825,5 @@ if __name__ == "__main__":
         px4_tmux_target=args.px4_tmux_target,
         control_mode=args.control,
         force_mavlink_arm=args.force_mavlink_arm,
+        trajectory_path=args.trajectory,
     )

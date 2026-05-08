@@ -1,0 +1,41 @@
+{
+  "name": "circle_then_figure8",
+  "description": "Large circle followed by figure eight using NED velocity vectors.",
+  "rate_hz": 10,
+  "segments": [
+    {
+      "type": "circle_velocity",
+      "label": "large clockwise circle",
+      "duration_s": 36,
+      "speed_mps": 3.0,
+      "radius_m": 18,
+      "direction": "cw",
+      "vz_mps": 0.0
+    },
+    {
+      "type": "hold",
+      "label": "brief center hold",
+      "duration_s": 4,
+      "vx_mps": 0.0,
+      "vy_mps": 0.0,
+      "vz_mps": 0.0
+    },
+    {
+      "type": "figure8_velocity",
+      "label": "large figure eight",
+      "duration_s": 48,
+      "speed_mps": 3.0,
+      "scale_m": 18,
+      "vz_mps": 0.0
+    },
+    {
+      "type": "velocity_keyframes",
+      "label": "soft exit and settle",
+      "keyframes": [
+        { "t": 0, "vx_mps": 1.5, "vy_mps": 0.0, "vz_mps": 0.0 },
+        { "t": 3, "vx_mps": 0.8, "vy_mps": 0.0, "vz_mps": 0.0 },
+        { "t": 6, "vx_mps": 0.0, "vy_mps": 0.0, "vz_mps": 0.0 }
+      ]
+    }
+  ]
+}
