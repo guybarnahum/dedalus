@@ -3,9 +3,19 @@ import airsim
 import time
 import argparse
 import traceback
+import subprocess
+
+from pymavlink import mavutil
 
 
 DEFAULT_VEHICLE = "PX4"
+DEFAULT_PX4_TMUX_TARGET = "dedalus-sim:px4"
+
+DEFAULT_MAVLINK_ENDPOINTS = [
+    "udpin:127.0.0.1:14550",
+    "udpin:127.0.0.1:14540",
+    "udpin:127.0.0.1:14600",
+]
 
 
 def fps_from_timestamp_delta(prev_ts, ts):
@@ -121,12 +131,201 @@ def arm_with_retries(client, vehicle_name, attempts=3):
     return False
 
 
-def run_test_flight(vehicle_name, timeout_s, skip_arm):
+def px4_shell(cmd, target=DEFAULT_PX4_TMUX_TARGET):
+    print(f"PX4 shell> {cmd}")
+    subprocess.run(
+        ["tmux", "send-keys", "-t", target, cmd, "C-m"],
+        check=True,
+    )
+
+
+def arm_via_px4_shell(target):
+    try:
+        px4_shell("commander arm", target)
+        time.sleep(2)
+        return True
+    except Exception as exc:
+        print(f"⚠️ PX4 shell arm fallback failed: {exc}")
+        return False
+
+
+def disarm_via_px4_shell(target):
+    try:
+        px4_shell("commander disarm", target)
+    except Exception:
+        pass
+
+
+def parse_mavlink_endpoints(raw):
+    endpoints = []
+    for item in raw:
+        for endpoint in item.split(","):
+            endpoint = endpoint.strip()
+            if endpoint:
+                endpoints.append(endpoint)
+    return endpoints
+
+
+def connect_mavlink(endpoints, timeout_s=4):
+    last_error = None
+
+    for endpoint in endpoints:
+        print(f"Trying MAVLink endpoint: {endpoint}")
+        mav = None
+
+        try:
+            mav = mavutil.mavlink_connection(
+                endpoint,
+                autoreconnect=True,
+                source_system=255,
+                source_component=mavutil.mavlink.MAV_COMP_ID_MISSIONPLANNER,
+            )
+
+            hb = mav.wait_heartbeat(timeout=timeout_s)
+            if hb is None:
+                raise TimeoutError("no heartbeat")
+
+            print(
+                "✅ MAVLink heartbeat received "
+                f"from system={mav.target_system}, component={mav.target_component}"
+            )
+            return mav
+
+        except Exception as exc:
+            last_error = exc
+            print(f"⚠️ MAVLink endpoint failed: {endpoint}: {exc}")
+            try:
+                if mav:
+                    mav.close()
+            except Exception:
+                pass
+
+    raise RuntimeError(f"No usable MAVLink endpoint found. Last error: {last_error}")
+
+
+def wait_for_command_ack(mav, command, timeout_s=5):
+    deadline = time.time() + timeout_s
+
+    while time.time() < deadline:
+        msg = mav.recv_match(type="COMMAND_ACK", blocking=True, timeout=0.5)
+        if msg is None:
+            continue
+
+        if msg.command != command:
+            continue
+
+        result = msg.result
+        result_name = mavutil.mavlink.enums["MAV_RESULT"].get(result)
+        result_text = result_name.name if result_name else str(result)
+        print(f"MAVLink COMMAND_ACK command={command} result={result_text}")
+        return result
+
+    raise TimeoutError(f"Timed out waiting for COMMAND_ACK for command={command}")
+
+
+def mavlink_arm(mav, force=False):
+    param2 = 21196 if force else 0
+
+    print(f"Sending MAVLink arm command force={force}...")
+    mav.mav.command_long_send(
+        mav.target_system,
+        mav.target_component or mavutil.mavlink.MAV_COMP_ID_AUTOPILOT1,
+        mavutil.mavlink.MAV_CMD_COMPONENT_ARM_DISARM,
+        0,
+        1,
+        param2,
+        0,
+        0,
+        0,
+        0,
+        0,
+    )
+
+    result = wait_for_command_ack(
+        mav,
+        mavutil.mavlink.MAV_CMD_COMPONENT_ARM_DISARM,
+    )
+
+    if result != mavutil.mavlink.MAV_RESULT_ACCEPTED:
+        raise RuntimeError(f"MAVLink arm rejected with MAV_RESULT={result}")
+
+    print("✅ MAVLink arm accepted.")
+    return True
+
+
+def mavlink_disarm(mav, force=False):
+    param2 = 21196 if force else 0
+
+    try:
+        print(f"Sending MAVLink disarm command force={force}...")
+        mav.mav.command_long_send(
+            mav.target_system,
+            mav.target_component or mavutil.mavlink.MAV_COMP_ID_AUTOPILOT1,
+            mavutil.mavlink.MAV_CMD_COMPONENT_ARM_DISARM,
+            0,
+            0,
+            param2,
+            0,
+            0,
+            0,
+            0,
+            0,
+        )
+        wait_for_command_ack(
+            mav,
+            mavutil.mavlink.MAV_CMD_COMPONENT_ARM_DISARM,
+            timeout_s=3,
+        )
+    except Exception as exc:
+        print(f"⚠️ MAVLink disarm failed/ignored: {exc}")
+
+
+def arm_vehicle(client, vehicle_name, endpoints, px4_tmux_target, force_mavlink_arm=False):
+    """
+    Preferred order:
+      1. AirSim RPC armDisarm(), for environments where it works.
+      2. MAVLink arm through PX4 directly.
+      3. PX4 shell fallback via tmux.
+
+    Current Colosseum/PX4 path appears to have a broken AirSim armDisarm()
+    bridge, so the MAVLink route is the practical path.
+    """
+    print("Trying AirSim RPC armDisarm() first...")
+    if arm_with_retries(client, vehicle_name):
+        return "airsim-rpc", None
+
+    print("⚠️ AirSim RPC armDisarm() failed. Trying MAVLink arm...")
+    try:
+        mav = connect_mavlink(endpoints)
+        mavlink_arm(mav, force=force_mavlink_arm)
+        return "mavlink", mav
+    except Exception as exc:
+        print(f"⚠️ MAVLink arm failed: {exc}")
+
+    print("⚠️ Falling back to PX4 shell commander arm via tmux...")
+    if arm_via_px4_shell(px4_tmux_target):
+        return "px4-shell", None
+
+    raise RuntimeError(
+        "All arming methods failed: AirSim RPC, MAVLink, and PX4 shell fallback."
+    )
+
+
+def run_test_flight(
+    vehicle_name,
+    timeout_s,
+    skip_arm,
+    mavlink_endpoints,
+    px4_tmux_target,
+    force_mavlink_arm,
+):
     client = airsim.MultirotorClient()
     client.confirmConnection()
 
     v_name = choose_vehicle(client, vehicle_name)
     print(f"Using vehicle: {v_name}")
+    arm_method = None
+    mav = None
 
     try:
         wait_for_airsim_state(client, v_name, timeout_s)
@@ -152,20 +351,22 @@ def run_test_flight(vehicle_name, timeout_s, skip_arm):
         print()
 
         if not skip_arm:
-            armed = arm_with_retries(client, v_name)
-            if not armed:
-                print(
-                    "⚠️ armDisarm() failed through AirSim RPC, but PX4 may still be healthy. "
-                    "Continuing to takeoffAsync() because PX4 manual commander arm works."
-                )
+            arm_method, mav = arm_vehicle(
+                client=client,
+                vehicle_name=v_name,
+                endpoints=mavlink_endpoints,
+                px4_tmux_target=px4_tmux_target,
+                force_mavlink_arm=force_mavlink_arm,
+            )
+            print(f"✅ Armed using method: {arm_method}")
         else:
             print("Skipping arm by request.")
 
-        print("Executing Takeoff...")
-        client.takeoffAsync(vehicle_name=v_name).join()
+        print("Executing direct climb command...")
+        client.moveByVelocityAsync(0, 0, -2, 5, vehicle_name=v_name).join()
 
         print("Hovering...")
-        time.sleep(5)
+        client.moveByVelocityAsync(0, 0, 0, 5, vehicle_name=v_name).join()
 
         print("Landing...")
         client.landAsync(vehicle_name=v_name).join()
@@ -174,10 +375,21 @@ def run_test_flight(vehicle_name, timeout_s, skip_arm):
         print(f"\n❌ Test flight failed: {e}")
         traceback.print_exc()
     finally:
+        if mav is not None:
+            mavlink_disarm(mav, force=force_mavlink_arm)
+            try:
+                mav.close()
+            except Exception:
+                pass
+
+        if arm_method == "px4-shell":
+            disarm_via_px4_shell(px4_tmux_target)
+
         try:
             client.armDisarm(False, vehicle_name=v_name)
         except Exception:
             pass
+
         try:
             client.enableApiControl(False, vehicle_name=v_name)
         except Exception:
@@ -190,10 +402,26 @@ if __name__ == "__main__":
     parser.add_argument("--vehicle", default=DEFAULT_VEHICLE)
     parser.add_argument("--timeout", type=int, default=30)
     parser.add_argument("--skip-arm", action="store_true")
+    parser.add_argument(
+        "--mavlink-endpoint",
+        action="append",
+        default=[],
+        help=(
+            "MAVLink endpoint(s) to try. Can be repeated or comma-separated. "
+            "Default: udpin:127.0.0.1:14550, udpin:127.0.0.1:14540, udpin:127.0.0.1:14600"
+        ),
+    )
+    parser.add_argument("--px4-tmux-target", default=DEFAULT_PX4_TMUX_TARGET)
+    parser.add_argument("--force-mavlink-arm", action="store_true")
     args = parser.parse_args()
+
+    endpoints = parse_mavlink_endpoints(args.mavlink_endpoint) or DEFAULT_MAVLINK_ENDPOINTS
 
     run_test_flight(
         vehicle_name=args.vehicle,
         timeout_s=args.timeout,
         skip_arm=args.skip_arm,
+        mavlink_endpoints=endpoints,
+        px4_tmux_target=args.px4_tmux_target,
+        force_mavlink_arm=args.force_mavlink_arm,
     )
