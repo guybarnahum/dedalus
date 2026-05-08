@@ -395,11 +395,17 @@ def mavlink_verify_climb(mav, start_z, min_climb_m=0.5, timeout_s=8):
         pos = mavlink_get_local_position(mav, timeout_s=1)
         best_z = min(best_z, pos.z)
         climb = start_z - best_z
-        print(f"  local_z={pos.z:.2f}, observed_climb={climb:.2f}m")
+        print(
+            f"\r  local_z={pos.z:.2f}, observed_climb={climb:.2f}m",
+            end="",
+            flush=True,
+        )
         if climb >= min_climb_m:
+            print()
             print("✅ MAVLink takeoff produced real climb.")
             return True
 
+    print()
     raise RuntimeError(
         "MAVLink takeoff was ACKed by PX4, but no real climb was observed. "
         "Use --control px4 or --control auto for the confirmed working path."
