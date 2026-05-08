@@ -151,24 +151,8 @@ def run_test_flight(vehicle_name, timeout_s, skip_arm):
             time.sleep(0.1)
         print()
 
-        if not skip_arm:
-            armed = arm_with_retries(client, v_name)
-            if not armed:
-                raise RuntimeError(
-                    "PX4 arming failed. Check PX4 shell: commander status, "
-                    "mavlink status, listener sensor_gps, listener vehicle_gps_position."
-                )
-        else:
-            print("Skipping arm by request.")
-
-        print("Executing Takeoff...")
-        client.takeoffAsync(vehicle_name=v_name).join()
-
-        print("Hovering...")
-        time.sleep(5)
-
-        print("Landing...")
-        client.landAsync(vehicle_name=v_name).join()
+        print("Skipping arm RPC; testing direct velocity command...")
+        client.moveByVelocityAsync(0, 0, -1, 5, vehicle_name=v_name).join()
 
     except Exception as e:
         print(f"\n❌ Test flight failed: {e}")

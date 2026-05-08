@@ -147,7 +147,7 @@ PX4_LOG_ABS="$(pwd)/$LOG_DIR/px4_$TIMESTAMP.log"
 PX4_DIR_ABS="$(pwd)/PX4-Autopilot"
 
 tmux new-window -t "$SESSION_NAME" -n px4 \
-    "cd '$PX4_DIR_ABS' && source '$VENV_PATH/bin/activate' && PX4_SIM_HOSTNAME=localhost PX4_SIM_HOST_ADDR=127.0.0.1 make px4_sitl none_iris 2>&1 | tee '$PX4_LOG_ABS'"
+    "cd '$PX4_DIR_ABS' && source '$VENV_PATH/bin/activate' && PX4_SIM_HOSTNAME=localhost PX4_SIM_HOST_ADDR=127.0.0.1 PX4_GZ_STANDALONE=1 make px4_sitl none_iris 2>&1 | tee '$PX4_LOG_ABS'"
 
 echo "✅ PX4 window started. Attach with: tmux attach -t $SESSION_NAME, then Ctrl-b w → px4"
 echo "📝 PX4 log: $PX4_LOG_ABS"
