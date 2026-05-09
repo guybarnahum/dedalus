@@ -14,13 +14,14 @@ set -e
 cd "$(dirname "$0")"
 
 # ---------------- Configuration ----------------
-PRELOAD_ENVS=("Blocks" "AirSimNH")
+PRELOAD_ENVS=("Blocks" "AirSimNH" "LandscapeMountains" "Africa_Savannah")
 S3_BUCKET="s3://dedalus-sim-assets-colosseum"
 
 # Array of base URLs to cycle through if S3 fails
 FALLBACK_MIRRORS=(
     "https://github.com/microsoft/AirSim/releases/download/v1.8.1-linux"
     "https://github.com/microsoft/AirSim/releases/download/v1.7.0-linux"
+    "https://sourceforge.net/projects/airsim.mirror/files/v1.7.0-linux/"
 )
 
 # ---------------- Auto-yes handling ----------------
