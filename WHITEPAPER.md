@@ -1,7 +1,9 @@
 # Architecture White Paper: Project Dedalus
 
 **Document Type:** Technical Strategy & Architecture Review
+
 **Target Audience:** Engineering Leadership, Principal Architects
+
 **Subject:** Vision-Centric Autonomous Flight Stack for High-Speed Edge-Compute UAVs
 
 ---
