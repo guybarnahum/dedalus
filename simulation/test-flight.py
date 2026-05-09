@@ -377,7 +377,60 @@ def play_velocity_trajectory(client, vehicle_name, trajectory_path):
     client.moveByVelocityAsync(0, 0, 0, 2, vehicle_name=vehicle_name).join()
 
 
-def px4_control_sequence(client, vehicle_name, target, trajectory_path, mavlink_endpoints):
+def climb_to_safe_height_mavlink(mav, safe_height_m, timeout_s=20, min_margin_m=0.35):
+    """
+    Climb to a safe relative altitude before horizontal trajectory playback.
+
+    PX4 LOCAL_POSITION_NED convention:
+      z = 0 near home
+      z = negative above home
+
+    So safe_height_m=8.0 means target_z=-8.0.
+    """
+    target_z = -abs(safe_height_m)
+    deadline = time.time() + timeout_s
+
+    print(f"Climbing to safe height: {safe_height_m:.1f}m AGL target_z={target_z:.2f}")
+
+    while time.time() < deadline:
+        pos = mavlink_get_local_position(mav, timeout_s=1)
+        remaining = pos.z - target_z
+
+        if remaining <= min_margin_m:
+            print(
+                f"\n✅ Safe height reached: local_z={pos.z:.2f}, "
+                f"height≈{-pos.z:.2f}m"
+            )
+            mavlink_send_velocity_local_ned(mav, 0, 0, 0)
+            return True
+
+        # Negative vz climbs in NED. Slow down near target.
+        climb_vz = -min(1.5, max(0.35, remaining * 0.4))
+        mavlink_send_velocity_local_ned(mav, 0, 0, climb_vz)
+
+        print(
+            f"\r  local_z={pos.z:.2f}, height≈{-pos.z:.2f}m, "
+            f"remaining={remaining:.2f}m, vz={climb_vz:.2f}",
+            end="",
+            flush=True,
+        )
+        time.sleep(0.1)
+
+    print()
+    raise RuntimeError(
+        f"Timed out climbing to safe height {safe_height_m:.1f}m. "
+        "Use a lower --safe-height or inspect PX4 offboard state."
+    )
+
+
+def px4_control_sequence(
+    client,
+    vehicle_name,
+    target,
+    trajectory_path,
+    mavlink_endpoints,
+    safe_height_m,
+):
     print("PX4 hybrid control sequence: shell arm/takeoff → MAVLink velocity trajectory → shell land")
     px4_shell("commander arm", target)
     time.sleep(2)
@@ -389,6 +442,7 @@ def px4_control_sequence(client, vehicle_name, target, trajectory_path, mavlink_
     try:
         prime_mavlink_offboard_velocity(mav, duration_s=2.0, hz=20)
         mavlink_set_px4_mode(mav, "OFFBOARD")
+        climb_to_safe_height_mavlink(mav, safe_height_m=safe_height_m)
         play_mavlink_velocity_trajectory(mav, trajectory_path)
     finally:
         try:
@@ -826,6 +880,7 @@ def auto_control_sequence(
     px4_tmux_target,
     force_mavlink_arm,
     trajectory_path,
+    safe_height_m,
 ):
     """
     Prefer PX4 shell because it is the only confirmed complete path so far:
@@ -840,6 +895,7 @@ def auto_control_sequence(
             px4_tmux_target,
             trajectory_path,
             endpoints,
+            safe_height_m,
         )
         return "px4-shell", None
     except Exception as exc:
@@ -867,6 +923,7 @@ def run_test_flight(
     control_mode,
     force_mavlink_arm,
     trajectory_path,
+    safe_height_m,
 ):
     client = airsim.MultirotorClient()
     client.confirmConnection()
@@ -913,6 +970,7 @@ def run_test_flight(
                     px4_tmux_target,
                     trajectory_path,
                     mavlink_endpoints,
+                    safe_height_m,
                 )
                 control_method = "px4-shell"
             elif control_mode == "airsim":
@@ -926,6 +984,7 @@ def run_test_flight(
                     px4_tmux_target,
                     force_mavlink_arm,
                     trajectory_path,
+                    safe_height_m,
                 )
             else:
                 raise RuntimeError(f"Unknown control mode: {control_mode}")
@@ -994,6 +1053,15 @@ if __name__ == "__main__":
         ),
     )
     parser.add_argument("--force-mavlink-arm", action="store_true")
+    parser.add_argument(
+        "--safe-height",
+        type=float,
+        default=10.0,
+        help=(
+            "Target safe flight height in meters above the PX4 local origin "
+            "before playing the horizontal trajectory. Default: 10m."
+        ),
+    )
     args = parser.parse_args()
 
     endpoints = parse_mavlink_endpoints(args.mavlink_endpoint) or DEFAULT_MAVLINK_ENDPOINTS
@@ -1007,4 +1075,5 @@ if __name__ == "__main__":
         control_mode=args.control,
         force_mavlink_arm=args.force_mavlink_arm,
         trajectory_path=args.trajectory,
+        safe_height_m=args.safe_height,
     )
