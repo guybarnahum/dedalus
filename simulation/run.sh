@@ -46,7 +46,7 @@ if [ -z "$TMUX" ]; then
     echo ""
     echo "   -> To tail logs:       tail -f $SIM_LOG"
     echo "   -> To view live GUI:   Switch to your NICE DCV Client"
-    echo "   -> To kill the sim:    ./cleanup.sh"
+    echo "   -> To stop the sim:    ./stop.sh"
     exit 0
 fi
 
