@@ -226,14 +226,15 @@ def load_trajectory(path):
         return DEFAULT_TRAJECTORY_DICT
 
     # Otherwise load from file.
-    if not path.is_absolute():
-        path = Path(__file__).resolve().parent / path
+    trajectory_path = Path(path)
+    if not trajectory_path.is_absolute():
+        trajectory_path = Path(__file__).resolve().parent / trajectory_path
 
-    with path.open("r", encoding="utf-8") as f:
+    with trajectory_path.open("r", encoding="utf-8") as f:
         data = json.load(f)
 
     if "segments" not in data:
-        raise ValueError(f"Trajectory file missing 'segments': {path}")
+        raise ValueError(f"Trajectory file missing 'segments': {trajectory_path}")
 
     return data
 
