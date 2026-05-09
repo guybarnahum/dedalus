@@ -377,14 +377,25 @@ def play_velocity_trajectory(client, vehicle_name, trajectory_path):
     client.moveByVelocityAsync(0, 0, 0, 2, vehicle_name=vehicle_name).join()
 
 
-def px4_control_sequence(client, vehicle_name, target, trajectory_path):
-    print("PX4 shell control sequence: arm → takeoff → velocity trajectory → land")
+def px4_control_sequence(client, vehicle_name, target, trajectory_path, mavlink_endpoints):
+    print("PX4 hybrid control sequence: shell arm/takeoff → MAVLink velocity trajectory → shell land")
     px4_shell("commander arm", target)
     time.sleep(2)
     px4_shell("commander takeoff", target)
     print("Waiting for PX4 takeoff climb...")
     time.sleep(8)
-    play_velocity_trajectory(client, vehicle_name, trajectory_path)
+
+    mav = connect_mavlink(mavlink_endpoints)
+    try:
+        prime_mavlink_offboard_velocity(mav, duration_s=2.0, hz=20)
+        mavlink_set_px4_mode(mav, "OFFBOARD")
+        play_mavlink_velocity_trajectory(mav, trajectory_path)
+    finally:
+        try:
+            mav.close()
+        except Exception:
+            pass
+
     px4_shell("commander land", target)
     time.sleep(8)
     disarm_via_px4_shell(target)
@@ -545,6 +556,163 @@ def mavlink_takeoff(mav, relative_alt_m=3.0):
         raise RuntimeError(f"MAVLink takeoff rejected with MAV_RESULT={result}")
 
 
+def mavlink_set_px4_mode(mav, mode_name, timeout_s=3):
+    """
+    PX4 mode mappings from pymavlink often return tuples:
+
+        OFFBOARD -> (base_mode, main_mode, sub_mode)
+
+    mav.set_mode() does not handle that tuple correctly in this environment,
+    so use MAV_CMD_DO_SET_MODE directly.
+    """
+    mapping = mav.mode_mapping()
+    if not mapping or mode_name not in mapping:
+        raise RuntimeError(f"PX4 mode '{mode_name}' not found. Known modes: {mapping}")
+
+    mode = mapping[mode_name]
+    if isinstance(mode, tuple):
+        base_mode, main_mode, sub_mode = mode[:3]
+    else:
+        # Fallback for non-PX4/simple mappings.
+        base_mode = mavutil.mavlink.MAV_MODE_FLAG_CUSTOM_MODE_ENABLED
+        main_mode = mode
+        sub_mode = 0
+
+    print(
+        f"Setting PX4 mode {mode_name}: "
+        f"base_mode={base_mode}, main_mode={main_mode}, sub_mode={sub_mode}"
+    )
+
+    mav.mav.command_long_send(
+        mav.target_system,
+        mav.target_component or mavutil.mavlink.MAV_COMP_ID_AUTOPILOT1,
+        mavutil.mavlink.MAV_CMD_DO_SET_MODE,
+        0,
+        float(base_mode),
+        float(main_mode),
+        float(sub_mode),
+        0,
+        0,
+        0,
+        0,
+    )
+
+    # Some PX4 mode changes do not reliably emit COMMAND_ACK on this path.
+    deadline = time.time() + timeout_s
+    while time.time() < deadline:
+        msg = mav.recv_match(type="COMMAND_ACK", blocking=True, timeout=0.5)
+        if msg and msg.command == mavutil.mavlink.MAV_CMD_DO_SET_MODE:
+            print(f"PX4 mode ACK: result={msg.result}")
+            return msg.result == mavutil.mavlink.MAV_RESULT_ACCEPTED
+
+    print("⚠️ No PX4 mode ACK received; continuing and verifying by motion.")
+    return True
+
+
+def mavlink_send_velocity_local_ned(mav, vx, vy, vz):
+    """
+    Send velocity-only local-NED setpoint.
+
+    PX4 NED convention:
+      +x = north / forward-ish world axis
+      +y = east / right-ish world axis
+      +z = down
+    """
+    type_mask = (
+        mavutil.mavlink.POSITION_TARGET_TYPEMASK_X_IGNORE |
+        mavutil.mavlink.POSITION_TARGET_TYPEMASK_Y_IGNORE |
+        mavutil.mavlink.POSITION_TARGET_TYPEMASK_Z_IGNORE |
+        mavutil.mavlink.POSITION_TARGET_TYPEMASK_AX_IGNORE |
+        mavutil.mavlink.POSITION_TARGET_TYPEMASK_AY_IGNORE |
+        mavutil.mavlink.POSITION_TARGET_TYPEMASK_AZ_IGNORE |
+        mavutil.mavlink.POSITION_TARGET_TYPEMASK_YAW_IGNORE |
+        mavutil.mavlink.POSITION_TARGET_TYPEMASK_YAW_RATE_IGNORE
+    )
+
+    mav.mav.set_position_target_local_ned_send(
+        int(time.time() * 1e3) & 0xFFFFFFFF,
+        mav.target_system,
+        mav.target_component or mavutil.mavlink.MAV_COMP_ID_AUTOPILOT1,
+        mavutil.mavlink.MAV_FRAME_LOCAL_NED,
+        type_mask,
+        0,
+        0,
+        0,
+        vx,
+        vy,
+        vz,
+        0,
+        0,
+        0,
+        0,
+        0,
+    )
+
+
+def prime_mavlink_offboard_velocity(mav, duration_s=2.0, hz=20):
+    print("Priming PX4 Offboard velocity stream...")
+    dt = 1.0 / hz
+    end = time.time() + duration_s
+    while time.time() < end:
+        mavlink_send_velocity_local_ned(mav, 0, 0, 0)
+        time.sleep(dt)
+
+
+def play_mavlink_velocity_trajectory(mav, trajectory_path):
+    trajectory = load_trajectory(trajectory_path)
+    rate_hz = float(trajectory.get("rate_hz", 10))
+    dt = 1.0 / max(rate_hz, 1.0)
+
+    print(f"Playing MAVLink velocity trajectory: {trajectory.get('name', trajectory_path)}")
+    print(f"Description: {trajectory.get('description', '')}")
+    print(f"Rate: {rate_hz:.1f} Hz")
+
+    for seg_idx, segment in enumerate(trajectory["segments"], start=1):
+        label = segment.get("label", segment.get("type", f"segment-{seg_idx}"))
+        typ = segment.get("type")
+
+        if typ == "velocity_keyframes":
+            duration = float(segment["keyframes"][-1]["t"])
+        else:
+            duration = float(segment.get("duration_s", 0))
+
+        if duration <= 0:
+            print(f"Skipping empty segment: {label}")
+            continue
+
+        print(f"\nSegment {seg_idx}: {label} ({typ}, {duration:.1f}s)")
+        start = time.time()
+        next_tick = start
+
+        while True:
+            now = time.time()
+            t = now - start
+            if t >= duration:
+                break
+
+            vx, vy, vz = segment_velocity(segment, t)
+            mavlink_send_velocity_local_ned(mav, vx, vy, vz)
+
+            print(
+                f"\r  t={t:5.1f}/{duration:5.1f}s "
+                f"v=({vx:+.2f},{vy:+.2f},{vz:+.2f}) m/s",
+                end="",
+                flush=True,
+            )
+
+            next_tick += dt
+            sleep_s = next_tick - time.time()
+            if sleep_s > 0:
+                time.sleep(sleep_s)
+
+        print()
+
+    print("\nTrajectory complete. Sending zero velocity settle command.")
+    for _ in range(20):
+        mavlink_send_velocity_local_ned(mav, 0, 0, 0)
+        time.sleep(0.05)
+
+
 def mavlink_land(mav):
     print("Sending MAVLink NAV_LAND...")
     mav.mav.command_long_send(
@@ -666,7 +834,13 @@ def auto_control_sequence(
     """
     try:
         print("AUTO control: trying PX4 shell control sequence...")
-        px4_control_sequence(client, vehicle_name, px4_tmux_target, trajectory_path)
+        px4_control_sequence(
+            client,
+            vehicle_name,
+            px4_tmux_target,
+            trajectory_path,
+            endpoints,
+        )
         return "px4-shell", None
     except Exception as exc:
         print(f"⚠️ AUTO PX4 shell control failed: {exc}")
@@ -733,7 +907,13 @@ def run_test_flight(
                 mavlink_control_sequence(mav, force_arm=force_mavlink_arm)
                 control_method = "mavlink"
             elif control_mode == "px4":
-                px4_control_sequence(client, v_name, px4_tmux_target, trajectory_path)
+                px4_control_sequence(
+                    client,
+                    v_name,
+                    px4_tmux_target,
+                    trajectory_path,
+                    mavlink_endpoints,
+                )
                 control_method = "px4-shell"
             elif control_mode == "airsim":
                 airsim_control_sequence(client, v_name)
