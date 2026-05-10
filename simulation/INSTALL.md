@@ -1,201 +1,170 @@
-# ☁️ EC2 Simulation Setup Guide
+# Simulation Installation and Runtime Guide
 
-This guide details how to provision and bootstrap an AWS EC2 GPU instance to run the Project Dedalus Virtual Proving Ground.
+This document is focused on simulation runtime usage only.
 
-## Phase 1: AWS Provisioning Requirements
+Provisioning and bootstrap steps live in the root guide: [INSTALL.md](../INSTALL.md).
 
-To ensure the `setup.sh` script passes its hardware and licensing gates, you must provision an instance that meets these exact specifications.
+## Scope of This Document
 
-### 1. Instance Type
-* **Recommended:** `g6.2xlarge` (NVIDIA L4 GPU, 32GB RAM). This is the current project standard for high-fidelity tactical flight simulation.
-* **Alternative:** `g5.2xlarge` (NVIDIA A10G).
+This simulation guide covers:
+- launching the simulation stack with [run.sh](run.sh)
+- stopping runtime safely with [stop.sh](stop.sh)
+- when to use [cleanup.sh](cleanup.sh) for reset/rebuild
+- running flight tests with [test-flight.py](test-flight.py)
 
-### 2. AMI (Amazon Machine Image)
-* **Standard:** **Ubuntu Server 22.04 LTS (HVM)**
-* *Note:* While Deep Learning AMIs are available, our `setup.sh` is designed to provision a clean Ubuntu 22.04 environment with the specific NICE DCV/XDCV versions required for our L4-optimized "Windshield" architecture.
+This simulation guide does not cover:
+- AWS instance provisioning
+- first-time host bootstrap (`setup.sh`) details
 
-### 3. Metadata and Permissions (Critical)
-NICE DCV validates its license via the AWS Instance Metadata Service (IMDS). If this is misconfigured, hardware acceleration will be disabled.
-* **IMDSv2:** Required.
-* **Hop Limit:** Must be set to **2** (to allow the bridge from the XDCV container to the metadata endpoint).
-* **IAM Role:** Attach a role with `S3:GetObject` permissions for the `dedalus-sim-assets-colosseum` bucket.
+## 1. Runtime Prerequisites
 
-### 4. Networking (Security Group)
-* **SSH (TCP 22):** Restrict to your IP.
-* **DCV (TCP & UDP 8443):** Required for the remote visual stream. Both protocols must be open for optimal performance.
+Before using this guide, ensure root provisioning is complete:
+- [INSTALL.md](../INSTALL.md) has been followed
+- `$HOME/dedalus/venv` exists
+- DCV session `dedalus-sim` is available
 
----
-
-## Phase 2: Bootstrapping the Environment
-
-Connect via SSH and execute the automated setup. The script handles NVIDIA drivers, X11 configuration, and the DCV session manager.
+Quick checks:
 
 ```bash
-# 1. Connect to the instance
-ssh -i "your-key.pem" guy@<YOUR_EC2_IP>
-
-# 2. Clone the repository
-git clone [https://github.com/guybarnahum/dedalus.git](https://github.com/guybarnahum/dedalus.git)
-cd dedalus
-
-# 3. Execute the setup
-# This script installs the Windshield (XDCV), builds iceoryx/PX4, and pulls S3 assets.
-./simulation/setup.sh
+cd ~/dedalus/simulation
+ls "$HOME/dedalus/venv/bin/activate"
+dcv describe-session dedalus-sim --json
 ```
 
-### Post-Setup: User Credentials
-NICE DCV requires a system password for the remote handshake:
-```bash
-sudo passwd $(whoami)
-```
+## 2. Launch the Simulation
 
----
+From the simulation directory:
 
-## Phase 3: Connecting the "Windshield"
-
-We use **NICE DCV** to stream the GPU frame buffer. Unlike standard VNC, DCV allows Unreal Engine to render directly on the L4 hardware.
-
-1. **Verify the Session:**
-   The setup script creates a persistent session named `dedalus-sim`. Verify it is active:
-   ```bash
-   dcv list-sessions
-   ```
-2. **Launch the Client:**
-   * Download the [NICE DCV Client](https://download.nice-dcv.com/) for your local OS.
-   * Enter `<YOUR_EC2_IP>:8443`.
-   * Log in using your Ubuntu username and the password you set above.
-
----
-
-## Phase 4: Launching the Simulation
-
-The simulation environment is "Visual-Aware." It must be launched into the DCV display context.
-
-### Option A: From the DCV Desktop
-Open the terminal emulator inside the DCV window and run:
 ```bash
 cd ~/dedalus/simulation
 ./run.sh AirSimNH
 ```
 
-### Option B: From SSH (Headless Handoff)
-If you prefer launching via SSH, `run.sh` will dynamically probe the DCV session for the correct `DISPLAY` and `XAUTHORITY` variables:
+Behavior summary:
+- resolves DCV display metadata
+- launches a `tmux` session named `dedalus-sim`
+- starts `iox-roudi`
+- starts Unreal/AirSim and waits for TCP 4560
+- starts PX4 SITL in a dedicated tmux window
+
+Useful runtime outputs:
+- main simulation log under `simulation/logs/`
+- PX4 log under `simulation/logs/`
+
+## 3. Stop vs Cleanup
+
+Use the correct script for intent:
+
+1. Runtime stop only:
+
 ```bash
-# The script handles the X11 bridge automatically
-cd ~/dedalus/simulation && ./run.sh AirSimNH
+cd ~/dedalus/simulation
+./stop.sh
 ```
 
----
+`stop.sh` is intentionally light. It stops running processes and tmux session, and does not remove build/cache state.
 
-## Phase 5: Autonomous Flight Testing
+2. Reset or rebuild-oriented cleanup:
 
-Once the simulation environment is running, use **`test-flight.py`** to execute autonomous flight sequences with trajectory playback.
-
-### Running Flight Tests
-
-1. **Basic Test (Default 10-Second Hover):**
-   ```bash
-   cd ~/dedalus/simulation
-   python test-flight.py
-   ```
-   This executes: arm → hover for 10s → land via PX4 shell.
-
-2. **Custom Trajectory (Orbit & Figure-Eight):**
-   ```bash
-   python test-flight.py --control px4 --trajectory trajectories/circle_figure8.json
-   ```
-   Streams velocity commands during the autonomous sequence.
-
-3. **MAVLink Control with Climb Verification:**
-   ```bash
-   python test-flight.py --control mavlink --mavlink-endpoint 127.0.0.1:14550
-   ```
-   Uses MAVLink protocol; detects false ACKs if aircraft doesn't gain altitude.
-
-4. **AirSim-Only Control (for debugging):**
-   ```bash
-   python test-flight.py --control airsim --trajectory my_trajectory.json
-   ```
-
-### Trajectory Format
-
-Create custom trajectories in `simulation/trajectories/` as JSON files with segment definitions:
-
-```json
-{
-  "name": "custom_mission",
-  "rate_hz": 10,
-  "segments": [
-    {
-      "type": "hold",
-      "duration_s": 3,
-      "vx_mps": 0.0,
-      "vy_mps": 0.0,
-      "vz_mps": 0.0
-    },
-    {
-      "type": "figure8_velocity",
-      "duration_s": 15,
-      "center_x": 0.0,
-      "center_y": 0.0,
-      "size": 20.0,
-      "altitude": 30.0
-    },
-    {
-      "type": "hold",
-      "duration_s": 2,
-      "vx_mps": 0.0,
-      "vy_mps": 0.0,
-      "vz_mps": 0.0
-    }
-  ]
-}
-```
-
-**Segment Types:**
-
-| Type | Key Fields | Purpose |
-|------|-----------|---------|
-| `hold` | `duration_s`, `vx/vy/vz_mps` | Fixed velocity (0,0,0 for hover) |
-| `circle_velocity` | `duration_s`, `center_x/y`, `radius`, `altitude`, `clockwise` | Orbital flight |
-| `figure8_velocity` | `duration_s`, `center_x/y`, `size`, `altitude` | Figure-eight pattern |
-| `velocity_keyframes` | `duration_s`, `keyframes` | Custom velocity waypoints |
-
-### Debugging Tips
-
-**Check PX4 Shell Status:**
 ```bash
-# In a separate tmux pane or DCV terminal
-tmux list-sessions
-tmux attach-session -t dedalus-sim
-# Navigate to the px4 pane and check for errors
+cd ~/dedalus/simulation
+./cleanup.sh --soft --yes
 ```
 
-**Verify AirSim Connection:**
+Use `cleanup.sh` only when you explicitly want reset semantics.
+
+## 4. Operating in tmux
+
+Attach to the runtime session:
+
 ```bash
-# Confirm TCP port 4560 is listening
-netstat -tuln | grep 4560
+tmux attach -t dedalus-sim
 ```
 
-**Enable Verbose Output:**
-Pass `-v` or inspect PX4 terminal directly for arm/takeoff diagnostics.
+Typical checks:
 
-**Reload Test Flight Script:**
-If you modify `test-flight.py`, no restart is required—just re-run:
 ```bash
-python test-flight.py --control px4 --trajectory new_trajectory.json
+# verify TCP endpoint from AirSim
+ss -ltnp | grep 4560
+
+# list tmux sessions/windows
+tmux ls
 ```
 
-For detailed CLI reference and control mode architecture, see [README.md](README.md).
+## 5. Flight Test Execution
 
----
+Activate venv first:
 
-## Phase 6: Lifecycle & Persistence
+```bash
+cd ~/dedalus/simulation
+source "$HOME/dedalus/venv/bin/activate"
+```
 
+Run default flight:
 
-* **Linger:** `setup.sh` enables `loginctl enable-linger`. The DCV session will start automatically on boot.
-* **Stopping:** Always **Stop** the instance via the AWS Console when finished to avoid L4 hourly compute charges.
-* **Recovery:** If the DCV terminal fails to open or the session disappears, restart the user-level service:
-  ```bash
-  systemctl --user restart dcv-session.service
-  ```
+```bash
+python test-flight.py
+```
+
+Run explicit PX4 hybrid mode:
+
+```bash
+python test-flight.py --control px4
+```
+
+Run custom trajectory:
+
+```bash
+python test-flight.py --control px4 --trajectory trajectories/circle_figure8.json
+```
+
+Run with explicit safe climb height:
+
+```bash
+python test-flight.py --control px4 --safe-height 10.0
+```
+
+## 6. Control Modes Quick Reference
+
+```text
+--control auto     prefer PX4 shell path, fallback chain enabled
+--control px4      PX4 shell arm/takeoff/land + MAVLink trajectory body
+--control mavlink  MAVLink command path (experimental)
+--control airsim   AirSim-only fallback path
+```
+
+## 7. Troubleshooting
+
+1. AirSim TCP not up:
+
+```bash
+ss -ltnp | grep 4560
+```
+
+If missing, restart runtime with [stop.sh](stop.sh) then [run.sh](run.sh).
+
+2. PX4 shell checks:
+
+```bash
+tmux attach -t dedalus-sim
+```
+
+In PX4 window:
+
+```bash
+commander status
+mavlink status
+```
+
+3. DCV session issues:
+
+```bash
+systemctl --user restart dcv-session.service
+dcv list-sessions
+```
+
+## 8. Related Docs
+
+- Root provisioning: [INSTALL.md](../INSTALL.md)
+- Simulation overview: [README.md](README.md)
+- Flight harness details: [test-flight.py](test-flight.py)
