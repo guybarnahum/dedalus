@@ -1,5 +1,6 @@
 add_library(dedalus_core
     sensors/ego_state_provider.cpp
+    sensors/recorded_frame_source.cpp
     sensors/replay_frame_source.cpp
     sensors/synthetic_frame_source.cpp
     perception/perception_pipeline.cpp
