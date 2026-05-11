@@ -1,12 +1,10 @@
 # Project Dedalus - LLM Context & Operational State
 
-> **Purpose:** This file is the project handoff document for LLMs. It should let an LLM understand the architecture, repo conventions, current simulation state, known bugs, and safe modification patterns without rediscovering the debugging history.
+> Purpose: This file is the project handoff document for LLMs. It should let an LLM understand the architecture, repo conventions, current simulation state, known bugs, and safe modification patterns without rediscovering the debugging history.
 
 ---
 
 ## 1. Project Identity
-
-**Project Name:** Dedalus
 
 Dedalus is a virtual proving ground and edge-autonomy stack for drone behavior, perception, world modeling, tactical mapping, memory, and control experiments.
 
@@ -30,54 +28,13 @@ The immediate engineering focus is no longer only simulation bring-up. The next 
 sensors -> perception -> world_model
 ```
 
-The goal is to build a modular C++ perception-to-world-model runtime that can first run with placeholder blocks, then continuously improve as better detectors, trackers, depth estimators, VIO, mapping, memory, and planning modules become available.
+The goal is to build a modular C++ perception-to-world-model runtime that can first run with placeholder blocks, then continuously improve as better detectors, trackers, depth estimators, VIO, mapping, memory, identity, and planning modules become available.
 
 ---
 
 ## 2. Current Repository Structure
 
-Current top-level structure:
-
-```text
-dedalus/
-├── CMakeLists.txt
-├── config/
-│   ├── behaviors.yaml
-│   └── camera_intrinsics.yaml
-├── infrastructure/
-│   ├── aws/
-│   │   └── main.tf
-│   └── docker/
-│       └── Dockerfile.l4t_cross
-├── INSTALL.md
-├── LLM.md
-├── models/
-├── README.md
-├── scripts/
-├── simulation/
-│   ├── cleanup.sh
-│   ├── INSTALL.md
-│   ├── README.md
-│   ├── run.sh
-│   ├── scenarios/
-│   ├── settings.json
-│   ├── setup.sh
-│   ├── stop.sh
-│   ├── test-flight.py
-│   └── trajectories/
-│       └── circle_figure8.json
-├── src/
-│   ├── behavior/
-│   ├── CMakeLists.txt
-│   ├── ipc/
-│   ├── perception/
-│   ├── safety/
-│   ├── sensors/
-│   └── world_model/
-└── WHITEPAPER.md
-```
-
-The current `src/` directories are domain placeholders. The next implementation should add public contracts under `include/dedalus/...`, concrete implementations under `src/...`, small runtime apps under `apps/`, and tests under `tests/`.
+The current `src/` directories are domain placeholders. The next implementation should add public contracts under `include/dedalus/...`, concrete implementations under `src/...`, runtime apps under `apps/`, tests under `tests/`, and debug/visualization utilities under `tools/`.
 
 Recommended expansion:
 
@@ -107,46 +64,41 @@ tools/
 ├── visualize_world_model.py
 ├── visualize_tactical_map.py
 ├── visualize_flight_map.py
+├── inspect_identity_hypotheses.py
+├── visualize_relative_map.py
 └── inspect_memory_map.py
 ```
 
 ---
 
-## 3. Architectural Direction
-
-Dedalus is intended to support a modular drone autonomy stack.
-
-### 3.1 Runtime Domains
-
-Major runtime domains:
+## 3. Core Runtime Domains
 
 - `sensors/`: camera, video stream, IMU, MAVLink/FCU state, ego-state ingestion
-- `perception/`: detection, tracking, features, depth, segmentation, projection, TensorRT inference
-- `world_model/`: dynamic agents, tactical exclusion zones, global flight map, landmarks, localization, memory
+- `perception/`: detection, tracking, identity, features, depth, segmentation, lighting/appearance estimation, projection, TensorRT inference
+- `world_model/`: dynamic agents, containers, tactical exclusion zones, relative/global flight maps, landmarks, localization, appearance conditions, memory
 - `behavior/`: policy, intent, behavior trees, mission logic
 - `safety/`: command mux, kill switch, manual override, bounded outputs
 - `ipc/`: low-latency data exchange; intended production IPC is Eclipse iceoryx
 
-### 3.2 Immediate Focus
-
-The immediate focus is:
+Immediate focus:
 
 ```text
 Frame input
     -> detection
-    -> tracking
+    -> tracking + identity hypotheses
     -> depth / geometry / projection
     -> dynamic agents
+    -> container relationships
     -> tactical obstacle/exclusion zones
+    -> relative map
     -> rough global flight map
     -> landmarks
+    -> appearance-condition model
     -> actual + memory world model
-    -> debuggable WorldSnapshot / EffectiveWorldView
+    -> WorldSnapshot / EffectiveWorldView
 ```
 
-Do **not** jump directly into behavior trees, intercept behavior, or command output until world-model snapshots are stable.
-
-### 3.3 Control Philosophy
+Do **not** jump into behavior trees, intercept behavior, or command output until world-model snapshots are stable.
 
 The autonomy stack should eventually produce bounded kinematic intents:
 
@@ -172,17 +124,14 @@ AI Planner Intent
 
 ## 4. Core-Stack Design Principle
 
-The most important rule for the core-stack:
-
-```text
 Every stage must be a replaceable module behind a stable interface.
-```
 
 First implementations may be simplistic:
 
 ```text
 ScriptedDetector
 SimpleCentroidTracker
+AppearanceOnlyIdentityResolver
 FlatGroundProjector
 ConeExclusionMapper
 InMemoryWorldModel
@@ -194,19 +143,64 @@ Future implementations should fit behind the same contracts:
 ```text
 YoloTensorRtDetector
 ReIdKalmanTracker
+ContainerAwareIdentityResolver
+ClothingChangeRobustIdentityResolver
 VioRayProjector
 VoxelSdfMapper
 MultiResolutionFlightMap
+RelativeMapStore
 PersistentMemoryLayer
+LightingRobustEmbeddings
 ```
 
 Avoid hardcoding AirSim, TensorRT, PX4, YOLO, iceoryx, or a specific camera path into the core contracts.
 
 ---
 
-## 5. Core Contracts
+## 5. New Core Concepts To Preserve
 
-The following contracts define the initial perception-to-world-model runtime. They should live under `include/dedalus/...`.
+### Container-aware identity
+
+People can enter cars, boats, houses, garages, and buildings. These containers can hide or transport people. A person can later exit with changed appearance or clothing. Preserve identity as a probabilistic hypothesis using appearance, motion continuity, entry/exit events, container trajectory, location, timing, gait/body cues, and confidence.
+
+### Relative map frames
+
+Dedalus must support mapping without global location anchoring. A drone may remember a neighborhood, canyon, industrial yard, dock, building cluster, or mountain pass without knowing latitude/longitude. A relative map can later receive a geographic anchor without rewriting the map.
+
+### Appearance conditions
+
+Day/night, season, sun angle, shadows, weather, dust, wet roads, snow, visible/IR/thermal mode, and artificial lighting can change the appearance of people, objects, roads, terrain, and buildings. Do not treat every appearance change as a persistent map change.
+
+---
+
+## 6. Core Contracts
+
+Contracts should live under `include/dedalus/...`.
+
+Important contracts:
+
+```text
+FramePacket
+Detection2D
+Track2D
+IdentityHypothesis
+EgoState
+Observation3D
+AgentState
+ContainerState
+ContainmentEvent
+ContainmentHypothesis
+ExclusionZone
+MapFrame
+RelativeMapReference
+FlightMapCell
+StaticStructure
+FlightCorridor
+AppearanceCondition
+AppearanceConditionSignature
+WorldSnapshot
+EffectiveWorldView
+```
 
 ### 5.1 FramePacket
 
@@ -221,6 +215,7 @@ struct FramePacket {
     std::optional<Pose3> camera_T_world;
     std::optional<Pose3> camera_T_body;
     std::optional<EgoState> ego_hint;
+    std::optional<AppearanceCondition> appearance_condition;
 };
 ```
 
@@ -255,6 +250,7 @@ struct Detection2D {
     ClassLabel class_label;
     FactionLabel faction;
     FeatureVector appearance;
+    AppearanceCondition appearance_condition;
 };
 ```
 
@@ -274,9 +270,10 @@ YoloOnnxDetector
 YoloTensorRtDetector
 SegmentationDetector
 PoseDetector
+LightingRobustDetector
 ```
 
-### 5.3 Track2D
+### 5.3 Tracking and Identity
 
 ```cpp
 struct Track2D {
@@ -290,6 +287,14 @@ struct Track2D {
     int age_frames;
     int missed_frames;
 };
+
+struct IdentityHypothesis {
+    IdentityId identity_id;
+    TrackId track_id;
+    TimePoint timestamp;
+    float confidence;
+    std::vector<std::string> evidence;  // appearance, motion, container_exit, location, timing
+};
 ```
 
 Initial trackers:
@@ -297,6 +302,7 @@ Initial trackers:
 ```text
 SimpleCentroidTracker
 IouTracker
+AppearanceOnlyIdentityResolver
 ```
 
 Future trackers:
@@ -306,6 +312,8 @@ KalmanTracker2D
 DeepSortLikeTracker
 OpticalFlowAssistedTracker
 ReIdTracker
+ContainerAwareIdentityResolver
+ClothingChangeRobustIdentityResolver
 ```
 
 ### 5.4 EgoState
@@ -317,6 +325,7 @@ struct EgoState {
     Vec3 velocity_local;
     Vec3 angular_velocity_body;
     Covariance6 covariance;
+    MapFrameId map_frame_id;
 };
 ```
 
@@ -335,6 +344,7 @@ Future providers:
 VioProvider
 VisualInertialSlamProvider
 Px4EstimatorBridge
+RelativeMapLocalizationProvider
 ```
 
 ### 5.5 Observation3D
@@ -345,6 +355,7 @@ struct Observation3D {
     TimePoint timestamp;
     Vec3 position_body;
     Vec3 position_local;
+    MapFrameId map_frame_id;
     Covariance3 covariance;
     ClassLabel class_label;
     FactionLabel faction;
@@ -372,17 +383,20 @@ StructureFromMotionProjector
 
 ---
 
-## 6. World Model Layers
+## 7. World Model Layers
 
 The world model is not one map. It is a layered state system.
 
 ```text
 WorldModel
 ├── DynamicAgentLayer
+├── ContainerRelationshipLayer
 ├── TacticalObstacleLayer
+├── RelativeMapLayer
 ├── GlobalFlightMapLayer
 ├── LandmarkLayer
 ├── EgoLocalizationLayer
+├── AppearanceConditionLayer
 └── MemoryLayer
 ```
 
@@ -395,21 +409,70 @@ Tracks moving entities such as drones, people, vehicles, animals, and other miss
 ```cpp
 struct AgentState {
     AgentId agent_id;
+    IdentityId identity_id;
     TrackId source_track_id;
     TimePoint last_seen;
     Vec3 position_local;
     Vec3 velocity_local;
+    MapFrameId map_frame_id;
     Covariance6 covariance;
     ClassLabel class_label;
     FactionLabel faction;
-    AgentLifecycle lifecycle;  // new, active, occluded, stale, retired
+    AgentLifecycle lifecycle;  // new, active, occluded, contained, stale, retired
     float confidence;
 };
 ```
 
-Start with simple in-memory motion extrapolation. Later add EKF and ReID-assisted persistence.
+Start with in-memory motion extrapolation. Later add EKF, ReID, clothing-change robustness, and container-aware identity reasoning.
 
-### 6.2 TacticalObstacleLayer
+### 6.2 ContainerRelationshipLayer
+
+Dedalus must understand that cars, boats, houses, garages, and buildings can hide or transport people.
+
+Examples:
+
+```text
+person enters car
+person exits car wearing different clothes
+person enters house and becomes unobservable
+person exits another side of the house
+person enters boat and moves with the boat
+vehicle stops and multiple people emerge
+```
+
+```cpp
+struct ContainerState {
+    AgentId container_id;
+    ContainerType type;       // car, boat, house, building, garage, room, unknown
+    Pose3 local_T_container;
+    Vec3 velocity_local;
+    MapFrameId map_frame_id;
+    float capacity_estimate;
+    float confidence;
+};
+
+struct ContainmentEvent {
+    EventId event_id;
+    TimePoint timestamp;
+    ContainmentEventType type; // enter, exit, possible_enter, possible_exit, transfer
+    AgentId subject_agent_id;
+    AgentId container_agent_id;
+    float confidence;
+    std::vector<std::string> evidence;
+};
+
+struct ContainmentHypothesis {
+    IdentityId identity_id;
+    AgentId possible_container_id;
+    TimePoint entered_at;
+    TimePoint last_supported;
+    float confidence;
+};
+```
+
+This layer feeds the identity resolver and preserves plausible identity hypotheses through occlusion and transport.
+
+### 6.3 TacticalObstacleLayer
 
 Short-range, high-urgency obstacle representation for local collision avoidance.
 
@@ -428,6 +491,7 @@ struct ExclusionZone {
     ZoneType type;          // cone, cylinder, box, voxel_cluster
     Pose3 local_T_zone;
     Vec3 dimensions;
+    MapFrameId map_frame_id;
     float confidence;
     float inflation_radius_m;
     TimePoint expires_at;
@@ -451,9 +515,43 @@ LocalSdfMapper
 VelocityObstacleMapper
 ```
 
-### 6.3 GlobalFlightMapLayer
+### 6.4 RelativeMapLayer
+
+Dedalus must support mapping without global location anchoring. A drone may learn a neighborhood, canyon, industrial yard, dock, building cluster, or mountain pass without knowing latitude/longitude.
+
+```cpp
+struct MapFrame {
+    MapFrameId map_frame_id;
+    std::optional<GeoAnchor> geo_anchor;
+    Pose3 local_T_anchor;
+    float scale_confidence;
+    float orientation_confidence;
+    TimePoint created_at;
+    TimePoint last_used;
+};
+
+struct RelativeMapReference {
+    MapFrameId map_frame_id;
+    Vec3 position_in_map;
+    Covariance3 covariance;
+};
+```
+
+Rules:
+
+```text
+1. A relative map is valid even without GPS.
+2. All observations should carry a MapFrameId when possible.
+3. Maps may be merged when landmarks and geometry align.
+4. A relative map may later receive a GeoAnchor without rewriting its internal structure.
+5. Memory can store relative maps and retrieve them by visual/structural signature.
+```
+
+### 6.5 GlobalFlightMapLayer
 
 Low-resolution, longer-horizon navigational map used for rough route planning.
+
+The global flight map may be global geographically or only global inside a relative map frame.
 
 Its questions are:
 
@@ -478,6 +576,7 @@ Contracts:
 struct FlightMapCell {
     CellId cell_id;
     Bounds3 bounds;
+    MapFrameId map_frame_id;
     float min_safe_altitude_m;
     float max_safe_altitude_m;
     float occupancy_probability;
@@ -489,7 +588,9 @@ struct StaticStructure {
     StructureId structure_id;
     StructureType type;     // building, tree_cluster, road, river, ridge, tower
     Primitive3D primitive;  // cylinder, box, mesh_proxy, polyline, height_patch
+    MapFrameId map_frame_id;
     FeatureSignature signature;
+    AppearanceConditionSignature condition_signature;
     float confidence;
     TimePoint first_seen;
     TimePoint last_confirmed;
@@ -498,6 +599,7 @@ struct StaticStructure {
 struct FlightCorridor {
     CorridorId corridor_id;
     std::vector<Vec3> centerline;
+    MapFrameId map_frame_id;
     float radius_m;
     float min_altitude_m;
     float max_altitude_m;
@@ -513,7 +615,7 @@ PrimitiveStaticMapper
 FlightCorridorExtractor
 ```
 
-### 6.4 LandmarkLayer and EgoLocalizationLayer
+### 6.6 LandmarkLayer and EgoLocalizationLayer
 
 The landmark layer stores visual/spatial anchors useful for map-relative localization:
 
@@ -527,9 +629,46 @@ towers
 unique roof outlines
 ```
 
-Landmarks should include geometry plus feature signatures. The localization layer can later match current visual features against landmarks to reduce drift in GPS-denied flight.
+Landmarks should include geometry plus feature signatures. The localization layer can later match current visual features against landmarks to reduce drift in GPS-denied flight, retrieve relative maps, merge maps, and relocalize after drift.
 
-### 6.5 MemoryLayer
+### 6.7 AppearanceConditionLayer
+
+Dedalus should explicitly model appearance changes caused by illumination, season, time of day, weather, and sensor mode.
+
+Examples:
+
+```text
+day vs night
+sun angle and shadows
+overcast vs bright sunlight
+seasonal foliage changes
+wet roads vs dry roads
+snow or dust
+visible light vs infrared
+headlights or artificial lighting
+```
+
+```cpp
+struct AppearanceCondition {
+    TimePoint timestamp;
+    LightingMode lighting_mode;   // day, night, dawn, dusk, artificial, unknown
+    WeatherMode weather_mode;     // clear, rain, fog, dust, snow, unknown
+    SeasonMode season_mode;       // spring, summer, fall, winter, unknown
+    SensorMode sensor_mode;       // rgb, mono, ir, thermal, unknown
+    float confidence;
+};
+
+struct AppearanceConditionSignature {
+    FeatureVector invariant_features;
+    FeatureVector condition_specific_features;
+    AppearanceCondition observed_condition;
+    float invariance_confidence;
+};
+```
+
+Memory should store condition-specific signatures when useful, but prefer condition-invariant features for identity, landmark matching, and map retrieval.
+
+### 6.8 MemoryLayer
 
 The memory layer allows Dedalus to become familiar with an area.
 
@@ -566,9 +705,11 @@ Rules:
 1. Fresh confident actual observations override memory.
 2. If actual is missing, memory may be used with uncertainty inflation.
 3. If actual contradicts memory once, mark a conflict.
-4. If actual repeatedly contradicts memory, update or retire memory.
+4. If actual repeatedly contradicts memory under comparable appearance conditions, update or retire memory.
 5. If memory has not been confirmed recently, decay confidence.
 6. Unknown regions are treated conservatively, not as free space.
+7. Relative maps are valid memory artifacts even without global geo anchoring.
+8. Container and identity hypotheses decay over time unless supported by new observations.
 ```
 
 Memory statistics:
@@ -598,7 +739,7 @@ Retired        repeatedly contradicted or no longer useful
 
 ---
 
-## 7. WorldSnapshot Contract
+## 8. WorldSnapshot Contract
 
 The world model should publish a debug-friendly snapshot early.
 
@@ -606,13 +747,18 @@ The world model should publish a debug-friendly snapshot early.
 struct WorldSnapshot {
     TimePoint timestamp;
     EgoState ego;
+    MapFrameId active_map_frame_id;
 
     std::vector<AgentState> agents;
+    std::vector<ContainerState> containers;
+    std::vector<ContainmentEvent> containment_events;
     std::vector<ExclusionZone> tactical_exclusion_zones;
     std::vector<FlightCorridor> flight_corridors;
     std::vector<StaticStructure> static_structures;
     std::vector<Landmark> landmarks;
     std::vector<UncertainRegion> uncertain_regions;
+    std::vector<MapFrame> map_frames;
+    AppearanceCondition appearance_condition;
 };
 ```
 
@@ -621,6 +767,11 @@ Early apps should be able to emit JSON snapshots for tests and visualization:
 ```json
 {
   "timestamp_ns": 123456789,
+  "active_map_frame_id": "map_local_0001",
+  "appearance_condition": {
+    "lighting_mode": "day",
+    "weather_mode": "clear"
+  },
   "ego": {
     "position_local": [0.0, 0.0, -12.0],
     "velocity_local": [1.2, 0.0, 0.0]
@@ -630,13 +781,16 @@ Early apps should be able to emit JSON snapshots for tests and visualization:
   "flight_corridors": [],
   "static_structures": [],
   "landmarks": [],
-  "uncertain_regions": []
+  "uncertain_regions": [],
+  "containers": [],
+  "containment_events": [],
+  "map_frames": []
 }
 ```
 
 ---
 
-## 8. IPC Strategy
+## 9. IPC Strategy
 
 Production IPC target:
 
@@ -658,6 +812,7 @@ Canonical message families:
 FramePacket
 Detection2DArray
 Track2DArray
+IdentityHypothesisArray
 Observation3DArray
 WorldSnapshot
 EffectiveWorldView
@@ -666,7 +821,7 @@ ControlIntent later
 
 ---
 
-## 9. Runtime Composition
+## 10. Runtime Composition
 
 Modules should be selected by config.
 
@@ -689,14 +844,22 @@ perception:
     type: scripted
   tracker:
     type: iou
+  identity_resolver:
+    type: appearance_only
+  appearance_condition:
+    type: simple_metadata
   projector:
     type: airsim_depth
 
 world_model:
   dynamic_agents:
     type: in_memory
+  containers:
+    type: simple_events
   tactical_obstacles:
     type: cone_exclusion
+  relative_map:
+    type: local_frame
   global_flight_map:
     type: multires_height_map
   memory:
@@ -722,14 +885,22 @@ perception:
     engine_path: models/detectors/yolo11_int8.engine
   tracker:
     type: reid_kalman
+  identity_resolver:
+    type: container_aware
+  appearance_condition:
+    type: learned_condition_estimator
   projector:
     type: vio_ray_projector
 
 world_model:
   dynamic_agents:
     type: ekf
+  containers:
+    type: probabilistic_containment
   tactical_obstacles:
     type: voxel_sdf
+  relative_map:
+    type: visual_structural_map
   global_flight_map:
     type: multires_primitives
   memory:
@@ -739,7 +910,7 @@ world_model:
 
 ---
 
-## 10. Implementation Roadmap
+## 11. Implementation Roadmap
 
 ### Milestone 1: Core Contracts and In-Process Pipeline
 
@@ -751,13 +922,18 @@ Build:
 FramePacket
 Detection2D
 Track2D
+IdentityHypothesis
 Observation3D
 EgoState
 AgentState
+ContainerState
+ContainmentEvent
 ExclusionZone
+MapFrame
 FlightMapCell
 StaticStructure
 FlightCorridor
+AppearanceCondition
 WorldSnapshot
 EffectiveWorldView
 ```
@@ -768,6 +944,7 @@ Add:
 NullDetector
 ScriptedDetector
 SimpleCentroidTracker
+AppearanceOnlyIdentityResolver
 FlatGroundProjector
 InMemoryWorldModel
 InProcessBus
@@ -791,6 +968,7 @@ MpegCameraSource
 AirSimFrameSource
 AirSimEgoStateProvider
 AirSimDepthProjector or AirSimGroundTruthDetector
+SimpleAppearanceConditionEstimator
 ```
 
 Goal:
@@ -815,11 +993,13 @@ Goal:
 Generate short-range tactical exclusion zones from uncertain obstacles and dynamic agents.
 ```
 
-### Milestone 4: Rough Global Flight Map
+### Milestone 4: Relative and Rough Global Flight Maps
 
 Add:
 
 ```text
+RelativeMapLayer
+MapFrame management
 MultiResolutionHeightMap
 PrimitiveStaticMapper
 FlightCorridorExtractor
@@ -829,27 +1009,46 @@ LandmarkLayer
 Goal:
 
 ```text
-Build low-resolution traversability and candidate flight corridors from repeated frames.
+Build low-resolution traversability and candidate flight corridors in a relative map frame, even without global geo anchoring.
 ```
 
-### Milestone 5: Memory Layer
+### Milestone 5: Container-Aware Identity
 
 Add:
 
 ```text
-PersistentMapStore
-ActualVsMemoryFusion
-MapConflictDetector
-MemoryConfidenceDecay
+ContainerRelationshipLayer
+ContainmentEvent detector
+ContainerAwareIdentityResolver
+IdentityHypothesis history
 ```
 
 Goal:
 
 ```text
-Load remembered map state, use it when actual observations are incomplete, and update memory only after repeated confirmation.
+Preserve identity hypotheses when people enter/exit cars, boats, houses, or buildings, including after clothing changes.
 ```
 
-### Milestone 6: Production Perception Upgrades
+### Milestone 6: Memory Layer
+
+Add:
+
+```text
+PersistentMapStore
+RelativeMapStore
+ActualVsMemoryFusion
+MapConflictDetector
+MemoryConfidenceDecay
+AppearanceCondition-aware memory comparison
+```
+
+Goal:
+
+```text
+Load remembered relative or anchored map state, use it when actual observations are incomplete, and update memory only after repeated confirmation under comparable conditions.
+```
+
+### Milestone 7: Production Perception Upgrades
 
 Add:
 
@@ -858,8 +1057,10 @@ YoloOnnxDetector
 YoloTensorRtDetector
 KalmanTracker2D
 ReIdTracker
+ClothingChangeRobustIdentityResolver
 VioRayProjector
 MonocularDepthProjector
+LightingRobustEmbeddings
 ```
 
 Goal:
@@ -870,7 +1071,7 @@ Replace placeholders without changing downstream world-model contracts.
 
 ---
 
-## 11. Simulation Stack
+## 12. Simulation Stack
 
 The current simulation environment uses:
 
@@ -914,7 +1115,7 @@ The simulation should now be used as an integration harness for the core-stack. 
 
 ---
 
-## 12. Setup / Cleanup / Run Responsibilities
+## 13. Setup / Cleanup / Run Responsibilities
 
 ### `setup.sh`
 
@@ -1041,7 +1242,7 @@ INFO  [commander] Ready for takeoff!
 
 ---
 
-## 13. AirSim / PX4 Settings
+## 14. AirSim / PX4 Settings
 
 The working AirSim PX4 mode is TCP simulator link, not UDP.
 
@@ -1090,7 +1291,7 @@ That caused HIL missing warnings and arming/control failures.
 
 ---
 
-## 14. Known AirSim / Colosseum PX4 Limitation
+## 15. Known AirSim / Colosseum PX4 Limitation
 
 The AirSim/Colosseum RPC call:
 
@@ -1158,7 +1359,7 @@ where `auto` currently prefers the confirmed PX4 shell path.
 
 ---
 
-## 15. PX4 Shell Access
+## 16. PX4 Shell Access
 
 PX4 runs in a tmux window named:
 
@@ -1216,7 +1417,7 @@ commander disarm
 
 ---
 
-## 16. `test-flight.py` Current Behavior
+## 17. `test-flight.py` Current Behavior
 
 `simulation/test-flight.py` is a flight-test harness.
 
@@ -1262,7 +1463,7 @@ So `--control mavlink` should verify real local-z movement and report failure if
 
 ---
 
-## 17. Trajectory System
+## 18. Trajectory System
 
 The preferred mission-body interface is a JSON trajectory file that defines velocity-vector commands.
 
@@ -1307,7 +1508,7 @@ and avoid spamming repeated lines for MAVLink climb verification.
 
 ---
 
-## 18. Known Debugging Milestones
+## 19. Known Debugging Milestones
 
 These are important facts future LLMs should not rediscover from scratch:
 
@@ -1347,7 +1548,7 @@ These are important facts future LLMs should not rediscover from scratch:
 
 ---
 
-## 19. Common Commands
+## 20. Common Commands
 
 Start clean:
 
@@ -1408,7 +1609,7 @@ tmux send-keys -t dedalus-sim:px4 'commander status' C-m
 
 ---
 
-## 20. Style / Contribution Guidance for LLMs
+## 21. Style / Contribution Guidance for LLMs
 
 When modifying this repo:
 
@@ -1467,6 +1668,8 @@ When implementing the core-stack:
 - Build `InProcessBus` before `IceoryxBus`.
 - Build `ScriptedDetector` before TensorRT.
 - Build `ConeExclusionMapper` before voxel/SDF.
+- Build `RelativeMapLayer` before geo-anchored global maps.
 - Build `MultiResolutionHeightMap` before dense SLAM.
+- Build `AppearanceConditionLayer` before treating map changes as persistent changes.
 - Build `DisabledMemoryLayer` / in-memory memory before persistent storage.
 - Keep C++ contracts stable and small.
