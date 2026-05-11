@@ -1,0 +1,18 @@
+# Example AirSim provider composition. This is not used by CI because the
+# dependency-free core build only provides explicit unavailable AirSim stubs.
+# Real AirSim/PX4 integration should keep these provider names and replace the
+# stub backend behind the same contracts.
+
+frame_source: airsim
+ego_provider: airsim
+detector: airsim_ground_truth
+tracker: simple_centroid
+identity_resolver: appearance_only
+projector: airsim_depth
+world_model: in_memory
+fallback_map_frame_id: map_airsim_0001
+
+airsim_host: 127.0.0.1
+airsim_rpc_port: 41451
+airsim_vehicle_name: PX4
+airsim_camera_name: front_center
