@@ -19,6 +19,7 @@ struct CoreStackProviderConfig {
     std::string identity_resolver{"appearance_only"};
     std::string projector{"flat_ground"};
     std::string world_model{"in_memory"};
+    std::string recorded_manifest_path;
     MapFrameId fallback_map_frame_id{"map_local_0001"};
 };
 
