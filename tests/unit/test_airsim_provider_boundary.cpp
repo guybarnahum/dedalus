@@ -74,7 +74,7 @@ int main() {
     }
 
     const auto stream_config = dedalus::load_core_stack_config("config/core_stack_airsim_stream_ci.yaml");
-    if (stream_config.airsim_bridge_mode != "stream_jsonl" || stream_config.frame_source != "airsim") {
+    if (stream_config.bridge_mode != "stream_jsonl" || stream_config.frame_source != "airsim") {
         std::cerr << "AirSim stream config did not parse expected bridge mode\n";
         return 1;
     }
