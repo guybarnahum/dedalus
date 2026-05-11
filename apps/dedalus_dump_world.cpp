@@ -1,36 +1,49 @@
+#include <exception>
 #include <iostream>
+#include <string>
 
-#include "dedalus/perception/perception_pipeline.hpp"
-#include "dedalus/sensors/frame_source.hpp"
-#include "dedalus/world_model/in_memory_world_model.hpp"
+#include "dedalus/runtime/config_loader.hpp"
+#include "dedalus/runtime/core_stack_runner.hpp"
+#include "dedalus/runtime/provider_registry.hpp"
 #include "dedalus/world_model/world_snapshot.hpp"
 
-int main() {
-    dedalus::SyntheticFrameSource frame_source;
-    const auto frame = frame_source.next_frame();
-    if (!frame.has_value()) {
-        return 1;
+namespace {
+
+std::string config_path_from_args(int argc, char** argv) {
+    std::string config_path = "config/core_stack_ci.yaml";
+
+    for (int i = 1; i < argc; ++i) {
+        const std::string arg = argv[i];
+        if (arg == "--config") {
+            if (i + 1 >= argc) {
+                throw std::invalid_argument("--config requires a path");
+            }
+            config_path = argv[++i];
+        } else {
+            throw std::invalid_argument("unknown argument: " + arg);
+        }
     }
 
-    dedalus::EgoState ego = frame->ego_hint.value_or(dedalus::EgoState{});
-    if (ego.map_frame_id.value.empty() || ego.map_frame_id.value == "map_unknown") {
-        ego.timestamp = frame->timestamp;
-        ego.map_frame_id = dedalus::MapFrameId{"map_local_0001"};
+    return config_path;
+}
+
+}  // namespace
+
+int main(int argc, char** argv) {
+    try {
+        const auto config_path = config_path_from_args(argc, argv);
+        const auto config = dedalus::load_core_stack_config(config_path);
+
+        dedalus::ProviderRegistry registry;
+        dedalus::CoreStackRunner runner{registry.create(config)};
+        if (!runner.run_once()) {
+            return 1;
+        }
+
+        std::cout << dedalus::to_json(runner.snapshot());
+        return 0;
+    } catch (const std::exception& ex) {
+        std::cerr << "dedalus_dump_world: " << ex.what() << "\n";
+        return 2;
     }
-
-    dedalus::ScriptedDetector detector;
-    dedalus::SimpleCentroidTracker tracker;
-    dedalus::AppearanceOnlyIdentityResolver identity_resolver;
-    dedalus::FlatGroundProjector projector;
-    dedalus::PerceptionPipeline pipeline(detector, tracker, identity_resolver, projector);
-
-    dedalus::InMemoryWorldModel world_model(ego.map_frame_id);
-    world_model.update_ego(ego);
-    if (frame->appearance_condition.has_value()) {
-        world_model.update_appearance(*frame->appearance_condition);
-    }
-    world_model.ingest(pipeline.process(*frame, ego));
-
-    std::cout << dedalus::to_json(world_model.snapshot());
-    return 0;
 }
