@@ -46,21 +46,21 @@ void apply_config_value(CoreStackProviderConfig& config, const std::string& key,
         config.world_model = value;
     } else if (key == "recorded_manifest_path") {
         config.recorded_manifest_path = value;
-    } else if (key == "source_host" || key == "airsim_host") {
+    } else if (key == "source_host") {
         config.source_host = value;
-    } else if (key == "source_rpc_port" || key == "airsim_rpc_port") {
+    } else if (key == "source_rpc_port") {
         config.source_rpc_port = std::stoi(value);
-    } else if (key == "vehicle_name" || key == "airsim_vehicle_name") {
+    } else if (key == "vehicle_name") {
         config.vehicle_name = value;
-    } else if (key == "vehicle_camera_name" || key == "airsim_camera_name") {
+    } else if (key == "vehicle_camera_name") {
         config.vehicle_camera_name = value;
-    } else if (key == "bridge_transport" || key == "airsim_transport") {
+    } else if (key == "bridge_transport") {
         config.bridge_transport = value;
-    } else if (key == "bridge_command" || key == "airsim_bridge_command") {
+    } else if (key == "bridge_command") {
         config.bridge_command = value;
-    } else if (key == "bridge_mode" || key == "airsim_bridge_mode") {
+    } else if (key == "bridge_mode") {
         config.bridge_mode = value;
-    } else if (key == "ego_bridge_command" || key == "airsim_ego_bridge_command") {
+    } else if (key == "ego_bridge_command") {
         config.ego_bridge_command = value;
     } else if (key == "fallback_map_frame_id") {
         config.fallback_map_frame_id = MapFrameId{value};
