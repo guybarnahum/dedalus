@@ -1,6 +1,7 @@
 #include "dedalus/sensors/replay_frame_source.hpp"
 
 #include <string>
+#include <utility>
 
 namespace dedalus {
 
