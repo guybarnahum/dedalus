@@ -2,6 +2,7 @@
 
 #include "dedalus/perception/perception_pipeline.hpp"
 #include "dedalus/world_model/effective_world_view.hpp"
+#include "dedalus/world_model/rough_flight_map_builder.hpp"
 #include "dedalus/world_model/tactical_obstacle_mapper.hpp"
 #include "dedalus/world_model/world_snapshot.hpp"
 
@@ -21,6 +22,7 @@ public:
 private:
     WorldSnapshot snapshot_;
     ConeExclusionMapper cone_exclusion_mapper_;
+    RoughFlightMapBuilder rough_flight_map_builder_;
 };
 
 }  // namespace dedalus
