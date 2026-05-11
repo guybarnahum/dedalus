@@ -1,0 +1,19 @@
+# CI-safe binary source frame-stream provider composition. This exercises
+# frame_source=airsim through a fake fixed-header binary bridge without importing AirSim.
+
+frame_source: airsim
+bridge_mode: stream_binary
+bridge_command: python3 tests/fixtures/airsim_binary_bridge_ci_fake.py --count 2 --rate-hz 0
+ego_provider: airsim
+ego_bridge_command: python3 tests/fixtures/airsim_ego_bridge_ci_fake.py
+detector: scripted
+tracker: simple_centroid
+identity_resolver: appearance_only
+projector: flat_ground
+world_model: in_memory
+fallback_map_frame_id: map_airsim_binary_ci_0001
+
+source_host: 127.0.0.1
+source_rpc_port: 41451
+vehicle_name: PX4
+vehicle_camera_name: front_center
