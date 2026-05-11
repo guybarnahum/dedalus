@@ -1,0 +1,19 @@
+# Live AirSim RGB ingestion through the external Python bridge.
+# This config uses frame_source=airsim but keeps ego/depth/ground-truth out of
+# the run by using no_telemetry, scripted detector, and flat_ground projector.
+# It requires a running AirSim/Colosseum simulation and the Python AirSim package.
+
+frame_source: airsim
+airsim_bridge_command: python3 simulation/airsim-capture-frame.py
+ego_provider: no_telemetry
+detector: scripted
+tracker: simple_centroid
+identity_resolver: appearance_only
+projector: flat_ground
+world_model: in_memory
+fallback_map_frame_id: map_airsim_live_rgb_0001
+
+airsim_host: 127.0.0.1
+airsim_rpc_port: 41451
+airsim_vehicle_name: PX4
+airsim_camera_name: front_center
