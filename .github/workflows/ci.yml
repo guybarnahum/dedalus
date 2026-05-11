@@ -29,10 +29,14 @@ jobs:
       - name: Configure
         run: |
           cmake -S . -B build-validation \
-            -DDEDALUS_BUILD_APPS=ON
+            -DDEDALUS_BUILD_APPS=ON \
+            -DDEDALUS_BUILD_TESTS=ON
 
       - name: Build
         run: cmake --build build-validation -j$(nproc)
+
+      - name: Run unit tests
+        run: ctest --test-dir build-validation --output-on-failure
 
       - name: Run dedalus_core_stack
         run: ./build-validation/apps/dedalus_core_stack > /tmp/world_snapshot.json
