@@ -1,0 +1,12 @@
+# CI-safe recorded-frame provider composition. This uses a tiny text PPM
+# fixture and does not require OpenCV, GStreamer, AirSim, or media codecs.
+
+frame_source: recorded_frames
+recorded_manifest_path: tests/fixtures/recorded_frames/manifest.txt
+ego_provider: no_telemetry
+detector: scripted
+tracker: simple_centroid
+identity_resolver: appearance_only
+projector: flat_ground
+world_model: in_memory
+fallback_map_frame_id: map_recorded_ci_0001
