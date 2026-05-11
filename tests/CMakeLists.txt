@@ -83,3 +83,20 @@ set_tests_properties(recorded_frame_world_model_flow
     PROPERTIES
         WORKING_DIRECTORY ${PROJECT_SOURCE_DIR}
 )
+
+add_executable(test_airsim_provider_boundary
+    unit/test_airsim_provider_boundary.cpp
+)
+
+target_link_libraries(test_airsim_provider_boundary
+    PRIVATE
+        dedalus_core
+)
+
+target_compile_features(test_airsim_provider_boundary PRIVATE cxx_std_20)
+
+add_test(NAME airsim_provider_boundary COMMAND test_airsim_provider_boundary)
+set_tests_properties(airsim_provider_boundary
+    PROPERTIES
+        WORKING_DIRECTORY ${PROJECT_SOURCE_DIR}
+)
