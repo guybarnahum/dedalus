@@ -1,5 +1,7 @@
 #include "dedalus/sensors/ego_state_provider.hpp"
 
+#include <utility>
+
 namespace dedalus {
 
 NoTelemetryEgoProvider::NoTelemetryEgoProvider(MapFrameId fallback_map_frame_id)
