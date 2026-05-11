@@ -54,6 +54,15 @@ void InMemoryWorldModel::ingest(const PerceptionPipelineOutput& perception_outpu
         snapshot_.timestamp,
         snapshot_.active_map_frame_id);
 
+    const auto flight_map_update = rough_flight_map_builder_.build(
+        perception_output.observations,
+        snapshot_.ego,
+        snapshot_.timestamp,
+        snapshot_.active_map_frame_id);
+    snapshot_.static_structures = flight_map_update.static_structures;
+    snapshot_.flight_corridors = flight_map_update.flight_corridors;
+    snapshot_.landmarks = flight_map_update.landmarks;
+
     snapshot_.containers.clear();
     ContainerState car;
     car.container_id = AgentId{"agent_car_0001"};
