@@ -1,6 +1,7 @@
 #include "dedalus/simulation/airsim_providers.hpp"
 
 #include <stdexcept>
+#include <string>
 #include <utility>
 
 namespace dedalus {
