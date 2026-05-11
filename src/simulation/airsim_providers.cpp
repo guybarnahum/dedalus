@@ -7,6 +7,7 @@
 #include <stdexcept>
 #include <string>
 #include <utility>
+#include <vector>
 
 namespace dedalus {
 namespace {
@@ -62,7 +63,7 @@ std::string run_bridge_command(const std::string& command) {
     }
 
     if (output.empty()) {
-        throw std::runtime_error("AirSim bridge command produced no image data");
+        throw std::runtime_error("AirSim bridge command produced no output");
     }
 
     return output;
@@ -107,6 +108,67 @@ ImageView parse_ppm_bytes(const std::string& ppm) {
     return image;
 }
 
+std::vector<double> parse_json_number_array(const std::string& json, const std::string& key, std::size_t expected_size) {
+    const std::string marker = "\"" + key + "\":";
+    const auto marker_pos = json.find(marker);
+    if (marker_pos == std::string::npos) {
+        throw std::runtime_error("AirSim ego bridge JSON missing key: " + key);
+    }
+
+    const auto open_pos = json.find('[', marker_pos + marker.size());
+    const auto close_pos = json.find(']', open_pos);
+    if (open_pos == std::string::npos || close_pos == std::string::npos || close_pos <= open_pos) {
+        throw std::runtime_error("AirSim ego bridge JSON has invalid array for key: " + key);
+    }
+
+    std::string body = json.substr(open_pos + 1U, close_pos - open_pos - 1U);
+    std::replace(body.begin(), body.end(), ',', ' ');
+    std::istringstream input{body};
+
+    std::vector<double> values;
+    double value = 0.0;
+    while (input >> value) {
+        values.push_back(value);
+    }
+
+    if (values.size() != expected_size) {
+        throw std::runtime_error("AirSim ego bridge JSON has wrong array size for key: " + key);
+    }
+
+    return values;
+}
+
+Nanoseconds parse_json_i64(const std::string& json, const std::string& key) {
+    const std::string marker = "\"" + key + "\":";
+    const auto marker_pos = json.find(marker);
+    if (marker_pos == std::string::npos) {
+        throw std::runtime_error("AirSim ego bridge JSON missing key: " + key);
+    }
+
+    const auto value_start = marker_pos + marker.size();
+    const auto value_end = json.find_first_of(",}\n\r\t ", value_start);
+    const auto token = json.substr(value_start, value_end == std::string::npos ? std::string::npos : value_end - value_start);
+    return static_cast<Nanoseconds>(std::stoll(token));
+}
+
+Vec3 to_vec3(const std::vector<double>& values) {
+    return Vec3{values.at(0), values.at(1), values.at(2)};
+}
+
+EgoState parse_ego_json(const std::string& json, const MapFrameId& map_frame_id, TimePoint frame_timestamp) {
+    EgoState ego;
+    ego.timestamp = TimePoint{parse_json_i64(json, "timestamp_ns")};
+    if (ego.timestamp.timestamp_ns == 0) {
+        ego.timestamp = frame_timestamp;
+    }
+    ego.local_T_body.position = to_vec3(parse_json_number_array(json, "position", 3U));
+    ego.local_T_body.rotation_rpy = to_vec3(parse_json_number_array(json, "rotation_rpy", 3U));
+    ego.velocity_local = to_vec3(parse_json_number_array(json, "velocity", 3U));
+    ego.angular_velocity_body = to_vec3(parse_json_number_array(json, "angular_velocity", 3U));
+    ego.map_frame_id = map_frame_id;
+    return ego;
+}
+
 }  // namespace
 
 AirSimFrameSource::AirSimFrameSource(AirSimProviderConfig config)
@@ -144,8 +206,19 @@ std::optional<FramePacket> AirSimFrameSource::next_frame() {
 AirSimEgoStateProvider::AirSimEgoStateProvider(AirSimProviderConfig config)
     : config_(std::move(config)) {}
 
-EgoStateEstimate AirSimEgoStateProvider::estimate(const FramePacket&) {
-    throw unavailable("AirSimEgoStateProvider");
+EgoStateEstimate AirSimEgoStateProvider::estimate(const FramePacket& frame) {
+    std::ostringstream command;
+    command << config_.ego_bridge_command
+            << " --host " << shell_quote(config_.host)
+            << " --rpc-port " << config_.rpc_port
+            << " --vehicle-name " << shell_quote(config_.vehicle_name)
+            << " --camera-name " << shell_quote(config_.camera_name);
+
+    EgoStateEstimate estimate;
+    estimate.ego = parse_ego_json(run_bridge_command(command.str()), config_.map_frame_id, frame.timestamp);
+    estimate.telemetry_available = true;
+    estimate.confidence = 0.85F;
+    return estimate;
 }
 
 AirSimDepthProjector::AirSimDepthProjector(AirSimProviderConfig config)
