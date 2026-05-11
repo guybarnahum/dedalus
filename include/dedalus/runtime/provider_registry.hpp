@@ -24,6 +24,7 @@ struct CoreStackProviderConfig {
     int airsim_rpc_port{41451};
     std::string airsim_vehicle_name{"PX4"};
     std::string airsim_camera_name{"front_center"};
+    std::string airsim_bridge_command{"python3 simulation/airsim-capture-frame.py"};
     MapFrameId fallback_map_frame_id{"map_local_0001"};
 };
 
