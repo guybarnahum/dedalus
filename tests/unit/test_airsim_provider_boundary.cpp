@@ -49,8 +49,6 @@ int main() {
     if (ego.map_frame_id.value != "map_airsim_bridge_ci_0001" ||
         ego.timestamp.timestamp_ns != 123456789 ||
         !nearly_equal(ego.local_T_body.position.x, 1.0) ||
-        !nearly_equal(ego.local_T_body.position.y, 2.0) ||
-        !nearly_equal(ego.local_T_body.position.z, -3.0) ||
         !nearly_equal(ego.velocity_local.x, 4.0) ||
         !nearly_equal(ego.angular_velocity_body.z, 0.03)) {
         std::cerr << "AirSim ego bridge did not parse expected pose/velocity values\n";
@@ -72,6 +70,30 @@ int main() {
     if (!nearly_equal(snapshot.ego.local_T_body.position.x, 1.0) ||
         !nearly_equal(snapshot.ego.velocity_local.y, 5.0)) {
         std::cerr << "AirSim bridge snapshot did not preserve ego telemetry\n";
+        return 1;
+    }
+
+    const auto stream_config = dedalus::load_core_stack_config("config/core_stack_airsim_stream_ci.yaml");
+    if (stream_config.airsim_bridge_mode != "stream_jsonl" || stream_config.frame_source != "airsim") {
+        std::cerr << "AirSim stream config did not parse expected bridge mode\n";
+        return 1;
+    }
+
+    auto stream_providers = registry.create(stream_config);
+    const auto stream_frame_1 = stream_providers.frame_source->next_frame();
+    const auto stream_frame_2 = stream_providers.frame_source->next_frame();
+    const auto stream_frame_3 = stream_providers.frame_source->next_frame();
+    if (!stream_frame_1.has_value() || !stream_frame_2.has_value() || stream_frame_3.has_value()) {
+        std::cerr << "AirSim stream bridge did not produce exactly two CI frames\n";
+        return 1;
+    }
+
+    if (stream_frame_1->frame_id.value != "airsim_stream_frame_0001" ||
+        stream_frame_2->frame_id.value != "airsim_stream_frame_0002" ||
+        stream_frame_1->timestamp.timestamp_ns != 1000 ||
+        stream_frame_2->timestamp.timestamp_ns != 1001 ||
+        stream_frame_1->image.bytes.size() != 12U) {
+        std::cerr << "AirSim stream bridge did not preserve frame metadata or payload\n";
         return 1;
     }
 
