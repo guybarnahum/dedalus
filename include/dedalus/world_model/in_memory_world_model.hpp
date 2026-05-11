@@ -1,6 +1,8 @@
 #pragma once
 
 #include "dedalus/perception/perception_pipeline.hpp"
+#include "dedalus/world_model/effective_world_view.hpp"
+#include "dedalus/world_model/tactical_obstacle_mapper.hpp"
 #include "dedalus/world_model/world_snapshot.hpp"
 
 namespace dedalus {
@@ -14,9 +16,11 @@ public:
     void ingest(const PerceptionPipelineOutput& perception_output);
 
     WorldSnapshot snapshot() const;
+    EffectiveWorldView effective_view() const;
 
 private:
     WorldSnapshot snapshot_;
+    ConeExclusionMapper cone_exclusion_mapper_;
 };
 
 }  // namespace dedalus
