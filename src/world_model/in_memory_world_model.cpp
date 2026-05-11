@@ -49,6 +49,11 @@ void InMemoryWorldModel::ingest(const PerceptionPipelineOutput& perception_outpu
         snapshot_.agents.push_back(agent);
     }
 
+    snapshot_.tactical_exclusion_zones = cone_exclusion_mapper_.map(
+        perception_output.observations,
+        snapshot_.timestamp,
+        snapshot_.active_map_frame_id);
+
     snapshot_.containers.clear();
     ContainerState car;
     car.container_id = AgentId{"agent_car_0001"};
@@ -59,10 +64,28 @@ void InMemoryWorldModel::ingest(const PerceptionPipelineOutput& perception_outpu
     car.capacity_estimate = 4.0F;
     car.confidence = 0.65F;
     snapshot_.containers.push_back(car);
+
+    snapshot_.uncertain_regions.clear();
+    UncertainRegion region;
+    region.region_id = "unknown_forward_sector";
+    region.bounds.min = Vec3{8.0, -6.0, -14.0};
+    region.bounds.max = Vec3{30.0, 6.0, -4.0};
+    region.map_frame_id = snapshot_.active_map_frame_id;
+    region.uncertainty = 0.6F;
+    region.reason = "synthetic_placeholder_depth_uncertainty";
+    snapshot_.uncertain_regions.push_back(region);
 }
 
 WorldSnapshot InMemoryWorldModel::snapshot() const {
     return snapshot_;
+}
+
+EffectiveWorldView InMemoryWorldModel::effective_view() const {
+    EffectiveWorldView view;
+    view.actual = snapshot_;
+    view.memory.confidence = 0.0F;
+    view.uncertain_regions = snapshot_.uncertain_regions;
+    return view;
 }
 
 }  // namespace dedalus
