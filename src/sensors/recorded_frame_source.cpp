@@ -1,10 +1,11 @@
 #include "dedalus/sensors/recorded_frame_source.hpp"
 
+#include <algorithm>
 #include <cstdint>
 #include <fstream>
+#include <sstream>
 #include <stdexcept>
 #include <string>
-#include <utility>
 
 namespace dedalus {
 namespace {
@@ -22,34 +23,45 @@ std::string read_ppm_token(std::istream& input) {
     throw std::runtime_error("unexpected end of PPM file");
 }
 
-ImageView load_binary_ppm(const std::filesystem::path& path) {
+std::uint8_t scale_ppm_value(int value, int max_value) {
+    if (value < 0 || value > max_value || max_value <= 0) {
+        throw std::runtime_error("invalid PPM pixel value");
+    }
+    return static_cast<std::uint8_t>((value * 255) / max_value);
+}
+
+ImageView load_ppm(const std::filesystem::path& path) {
     std::ifstream input{path, std::ios::binary};
     if (!input) {
         throw std::runtime_error("failed to open PPM image: " + path.string());
     }
 
     const std::string magic = read_ppm_token(input);
-    if (magic != "P6") {
-        throw std::runtime_error("unsupported PPM format in " + path.string() + ": expected P6");
-    }
-
     const int width = std::stoi(read_ppm_token(input));
     const int height = std::stoi(read_ppm_token(input));
     const int max_value = std::stoi(read_ppm_token(input));
-    if (width <= 0 || height <= 0 || max_value != 255) {
+    if (width <= 0 || height <= 0 || max_value <= 0 || max_value > 255) {
         throw std::runtime_error("invalid PPM header in " + path.string());
     }
-
-    input.get();  // consume one byte of whitespace after max value
 
     ImageView image;
     image.width = width;
     image.height = height;
     image.channels = 3;
     image.bytes.resize(static_cast<std::size_t>(width * height * image.channels));
-    input.read(reinterpret_cast<char*>(image.bytes.data()), static_cast<std::streamsize>(image.bytes.size()));
-    if (input.gcount() != static_cast<std::streamsize>(image.bytes.size())) {
-        throw std::runtime_error("truncated PPM image: " + path.string());
+
+    if (magic == "P3") {
+        for (auto& byte : image.bytes) {
+            byte = scale_ppm_value(std::stoi(read_ppm_token(input)), max_value);
+        }
+    } else if (magic == "P6") {
+        input.get();  // consume one byte of whitespace after max value
+        input.read(reinterpret_cast<char*>(image.bytes.data()), static_cast<std::streamsize>(image.bytes.size()));
+        if (input.gcount() != static_cast<std::streamsize>(image.bytes.size())) {
+            throw std::runtime_error("truncated PPM image: " + path.string());
+        }
+    } else {
+        throw std::runtime_error("unsupported PPM format in " + path.string() + ": expected P3 or P6");
     }
 
     return image;
@@ -109,7 +121,7 @@ std::optional<FramePacket> RecordedFrameSource::next_frame() {
     frame.frame_id = entry.frame_id;
     frame.timestamp = entry.timestamp;
     frame.camera_id = entry.camera_id;
-    frame.image = load_binary_ppm(image_path);
+    frame.image = load_ppm(image_path);
     frame.intrinsics.fx = 420.0;
     frame.intrinsics.fy = 420.0;
     frame.intrinsics.cx = static_cast<double>(frame.image.width) * 0.5;
