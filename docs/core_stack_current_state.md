@@ -34,6 +34,28 @@ config/core_stack_ci.yaml OR config/core_stack_recorded_ci.yaml OR config/core_s
 
 The direct synthetic wiring that originally lived in apps has been moved behind config-driven provider composition. This is a plugin-style composition boundary, not dynamic shared-library loading yet.
 
+## Replay artifact workflow
+
+Recorded or simulation-exported frames can now be replayed into deterministic snapshot artifacts:
+
+```bash
+./build-validation/apps/dedalus_replay_recording \
+  --config config/core_stack_recorded_ci.yaml \
+  --output-dir out/replay_snapshots \
+  --max-frames 0
+```
+
+`--max-frames 0` means run until the configured frame source is exhausted. The replay app writes:
+
+```text
+out/replay_snapshots/snapshot_0001.json
+out/replay_snapshots/snapshot_0002.json
+...
+out/replay_snapshots/snapshot_manifest.txt
+```
+
+This is the preferred regression/debug artifact path for recorded fixtures and AirSim-exported frames.
+
 ## Config format decision
 
 Current config uses a flat YAML subset because the repo already has YAML config files and provider selection benefits from human-readable key/value pairs.
@@ -92,13 +114,16 @@ src/
 
 apps/
 ├── dedalus_core_stack.cpp
-└── dedalus_dump_world.cpp
+├── dedalus_dump_world.cpp
+└── dedalus_replay_recording.cpp
 
 tests/
 ├── fixtures/
 │   └── recorded_frames/
 │       ├── frame_0001.ppm
 │       └── manifest.txt
+├── integration/
+│   └── test_replay_recording_smoke.py
 └── unit/
     ├── test_airsim_provider_boundary.cpp
     ├── test_core_stack_config_loader.cpp
@@ -185,6 +210,7 @@ AirSimFrameSource stub
 AirSimEgoStateProvider stub
 AirSimDepthProjector stub
 AirSimGroundTruthDetector stub
+dedalus_replay_recording
 ```
 
 These are deliberately deterministic placeholders or explicit integration stubs. They exist to lock down interfaces, tests, JSON shape, CI gates, and module boundaries before adding real perception, mapping, memory, or simulation adapters.
@@ -212,9 +238,12 @@ Future real providers should be added behind this registry and selected through 
 ```text
 apps/dedalus_core_stack.cpp
 apps/dedalus_dump_world.cpp
+apps/dedalus_replay_recording.cpp
 ```
 
-Both load provider config with `--config`, use `ProviderRegistry` + `CoreStackRunner`, and emit `WorldSnapshot` JSON. If `--config` is omitted, they default to `config/core_stack_ci.yaml`.
+`dedalus_core_stack` and `dedalus_dump_world` load provider config with `--config`, use `ProviderRegistry` + `CoreStackRunner`, and emit one `WorldSnapshot` JSON. If `--config` is omitted, they default to `config/core_stack_ci.yaml`.
+
+`dedalus_replay_recording` loads provider config with `--config`, runs until the configured frame source is exhausted, and writes one snapshot JSON per processed frame plus `snapshot_manifest.txt`.
 
 Examples:
 
@@ -222,6 +251,7 @@ Examples:
 ./build-validation/apps/dedalus_core_stack --config config/core_stack_ci.yaml
 ./build-validation/apps/dedalus_core_stack --config config/core_stack_recorded_ci.yaml
 ./build-validation/apps/dedalus_core_stack --config config/core_stack_airsim_example.yaml
+./build-validation/apps/dedalus_replay_recording --config config/core_stack_recorded_ci.yaml --output-dir out/replay_snapshots
 ```
 
 The AirSim example command will fail in the current dependency-free build with an explicit integration-provider unavailable error.
@@ -238,6 +268,7 @@ tests/unit/test_provider_composition.cpp
 tests/unit/test_core_stack_config_loader.cpp
 tests/unit/test_recorded_frame_world_model_flow.cpp
 tests/unit/test_airsim_provider_boundary.cpp
+tests/integration/test_replay_recording_smoke.py
 ```
 
 `test_world_snapshot_json` guards the previous `map_frames` serialization bug.
@@ -303,6 +334,15 @@ ProviderRegistry lists the AirSim frame source
 AirSimFrameSource throws a clear integration-provider unavailable error in dependency-free builds
 ```
 
+`test_replay_recording_smoke.py` validates:
+
+```text
+dedalus_replay_recording runs on config/core_stack_recorded_ci.yaml
+snapshot_0001.json is written
+snapshot_manifest.txt is written
+snapshot JSON preserves map_recorded_ci_0001 and contains world-model artifacts
+```
+
 ## CI smoke contract
 
 The CI, staging, and production workflows build with:
@@ -342,7 +382,7 @@ landmarks
 landmark_id = landmark_building_corner_0001
 ```
 
-Recorded-frame ingestion and AirSim provider-boundary checks are covered by CTest, not by the primary smoke artifact.
+Recorded-frame ingestion, AirSim provider-boundary checks, and replay artifact generation are covered by CTest, not by the primary smoke artifact.
 
 ## Current status
 
@@ -358,11 +398,12 @@ Video-only/no-telemetry ingestion boundary: implemented
 Replay frame-source boundary: implemented
 Recorded frame-source boundary: implemented
 AirSim provider boundary: implemented as explicit unavailable stubs
+Replay snapshot artifact generation: implemented
 In-memory world model: implemented
 Tactical exclusion layer placeholder: implemented
 EffectiveWorldView placeholder: implemented
 Rough global flight-map placeholder: implemented
-Unit/flow/provider/config/recorded-ingestion/AirSim-boundary tests: implemented
+Unit/flow/provider/config/recorded-ingestion/AirSim-boundary/replay tests: implemented
 CI/staging/production smoke assertions: implemented
 ```
 
@@ -398,16 +439,14 @@ iceoryx runtime transport
 
 ## Next recommended step
 
-The next architectural step should be a real AirSim integration backend, not behavior/control:
+The next architectural step should be replay artifact comparison and regression baselines, not behavior/control:
 
 ```text
-AirSimFrameSource backed by the existing simulation environment
-  -> keep provider name: frame_source = airsim
-  -> select provider through config/core_stack_airsim_example.yaml or a runtime copy
-  -> same FrameSource contract
-  -> same PerceptionPipeline contract
-  -> same InMemoryWorldModel contract
-  -> WorldSnapshot JSON parity with synthetic/video-only/recorded sources
+recorded/simulation replay input
+  -> dedalus_replay_recording
+  -> snapshot JSON sequence
+  -> baseline manifest / diff tool
+  -> CI-safe regression checks for stable fields
 ```
 
 Keep real AirSim/PX4/OpenCV/GStreamer dependencies out of unit tests. Simulation/media adapters should be integration-path modules, not required for core library tests.
