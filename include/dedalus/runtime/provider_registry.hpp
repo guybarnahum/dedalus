@@ -20,6 +20,10 @@ struct CoreStackProviderConfig {
     std::string projector{"flat_ground"};
     std::string world_model{"in_memory"};
     std::string recorded_manifest_path;
+    std::string airsim_host{"127.0.0.1"};
+    int airsim_rpc_port{41451};
+    std::string airsim_vehicle_name{"PX4"};
+    std::string airsim_camera_name{"front_center"};
     MapFrameId fallback_map_frame_id{"map_local_0001"};
 };
 
