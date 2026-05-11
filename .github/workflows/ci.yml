@@ -11,9 +11,6 @@ on:
       - staging
       - main
 
-env:
-  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
-
 jobs:
   build-and-validate:
     name: Build and smoke validate
@@ -21,7 +18,7 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Install cmake
         run: |
@@ -47,6 +44,7 @@ jobs:
           grep -q '"active_map_frame_id": "map_local_0001"' /tmp/world_snapshot.json
           grep -q '"class": "person"' /tmp/world_snapshot.json
           grep -q '"type": "car"' /tmp/world_snapshot.json
+          grep -q '"map_frame_id": "map_local_0001"' /tmp/world_snapshot.json
 
       - name: Check whitespace
         run: git diff --check
@@ -86,6 +84,12 @@ jobs:
               echo "| car container | ❌ missing |" >> $GITHUB_STEP_SUMMARY
             fi
 
+            if grep -q '"map_frame_id": "map_local_0001"' /tmp/world_snapshot.json; then
+              echo "| map_frame_id in map_frames | ✅ present |" >> $GITHUB_STEP_SUMMARY
+            else
+              echo "| map_frame_id in map_frames | ❌ missing |" >> $GITHUB_STEP_SUMMARY
+            fi
+
             echo "" >> $GITHUB_STEP_SUMMARY
             echo "### WorldSnapshot output" >> $GITHUB_STEP_SUMMARY
             echo '```json' >> $GITHUB_STEP_SUMMARY
@@ -96,7 +100,7 @@ jobs:
           fi
 
       - name: Upload snapshot artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: world-snapshot-ci
           path: /tmp/world_snapshot.json

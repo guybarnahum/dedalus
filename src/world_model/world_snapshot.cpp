@@ -233,7 +233,24 @@ std::string to_json(const WorldSnapshot& snapshot) {
     out << "  \"static_structures\": [],\n";
     out << "  \"landmarks\": [],\n";
     out << "  \"uncertain_regions\": [],\n";
-    out << "  \"map_frames\": []\n";
+
+    out << "  \"map_frames\": [";
+    for (std::size_t i = 0; i < snapshot.map_frames.size(); ++i) {
+        const auto& frame = snapshot.map_frames[i];
+        if (i != 0) {
+            out << ",";
+        }
+        out << "\n";
+        out << "    {\n";
+        out << "      \"map_frame_id\": \"" << escape_json(frame.map_frame_id.value) << "\",\n";
+        out << "      \"scale_confidence\": " << frame.scale_confidence << ",\n";
+        out << "      \"orientation_confidence\": " << frame.orientation_confidence << "\n";
+        out << "    }";
+    }
+    if (!snapshot.map_frames.empty()) {
+        out << "\n  ";
+    }
+    out << "]\n";
     out << "}\n";
 
     return out.str();
