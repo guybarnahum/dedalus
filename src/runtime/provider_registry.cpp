@@ -22,6 +22,7 @@ AirSimProviderConfig airsim_config_from(const CoreStackProviderConfig& config) {
     airsim.vehicle_name = config.airsim_vehicle_name;
     airsim.camera_name = config.airsim_camera_name;
     airsim.bridge_command = config.airsim_bridge_command;
+    airsim.bridge_mode = config.airsim_bridge_mode;
     airsim.ego_bridge_command = config.airsim_ego_bridge_command;
     airsim.map_frame_id = config.fallback_map_frame_id;
     return airsim;
