@@ -55,9 +55,29 @@ int main() {
         return 1;
     }
 
+    if (snapshot.static_structures.size() != 1U || snapshot.static_structures.front().type != "building") {
+        std::cerr << "world model did not emit expected static structure\n";
+        return 1;
+    }
+
+    if (snapshot.flight_corridors.size() != 1U || snapshot.flight_corridors.front().corridor_id.value.empty()) {
+        std::cerr << "world model did not emit expected flight corridor\n";
+        return 1;
+    }
+
+    if (snapshot.landmarks.size() != 1U || snapshot.landmarks.front().type != "building_corner") {
+        std::cerr << "world model did not emit expected landmark\n";
+        return 1;
+    }
+
     const auto view = world_model.effective_view();
     if (view.actual.agents.size() != 1U || view.uncertain_regions.empty()) {
         std::cerr << "effective view missing actual agent or uncertainty state\n";
+        return 1;
+    }
+
+    if (view.actual.flight_corridors.empty() || view.actual.landmarks.empty()) {
+        std::cerr << "effective view missing rough flight-map artifacts\n";
         return 1;
     }
 
