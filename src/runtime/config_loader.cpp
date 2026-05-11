@@ -46,6 +46,14 @@ void apply_config_value(CoreStackProviderConfig& config, const std::string& key,
         config.world_model = value;
     } else if (key == "recorded_manifest_path") {
         config.recorded_manifest_path = value;
+    } else if (key == "airsim_host") {
+        config.airsim_host = value;
+    } else if (key == "airsim_rpc_port") {
+        config.airsim_rpc_port = std::stoi(value);
+    } else if (key == "airsim_vehicle_name") {
+        config.airsim_vehicle_name = value;
+    } else if (key == "airsim_camera_name") {
+        config.airsim_camera_name = value;
     } else if (key == "fallback_map_frame_id") {
         config.fallback_map_frame_id = MapFrameId{value};
     } else {
