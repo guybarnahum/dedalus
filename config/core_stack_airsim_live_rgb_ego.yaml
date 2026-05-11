@@ -1,0 +1,19 @@
+# Live AirSim RGB + ego-state ingestion through external Python bridges.
+# This requires a running AirSim/Colosseum simulation and the Python AirSim package.
+# Depth projection and AirSim ground-truth detection are still not enabled here.
+
+frame_source: airsim
+airsim_bridge_command: python3 simulation/airsim-capture-frame.py
+ego_provider: airsim
+airsim_ego_bridge_command: python3 simulation/airsim-capture-ego.py
+detector: scripted
+tracker: simple_centroid
+identity_resolver: appearance_only
+projector: flat_ground
+world_model: in_memory
+fallback_map_frame_id: map_airsim_live_ego_0001
+
+airsim_host: 127.0.0.1
+airsim_rpc_port: 41451
+airsim_vehicle_name: PX4
+airsim_camera_name: front_center
