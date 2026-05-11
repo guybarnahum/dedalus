@@ -3,6 +3,8 @@ add_library(dedalus_core
     sensors/replay_frame_source.cpp
     sensors/synthetic_frame_source.cpp
     perception/perception_pipeline.cpp
+    runtime/core_stack_runner.cpp
+    runtime/provider_registry.cpp
     world_model/in_memory_world_model.cpp
     world_model/rough_flight_map_builder.cpp
     world_model/tactical_obstacle_mapper.cpp
