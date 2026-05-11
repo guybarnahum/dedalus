@@ -1,38 +1,52 @@
 # Bridge Transport Plugins
 
-The AirSim provider path now separates provider semantics from transport mechanics.
+The simulation/provider path separates provider semantics from transport mechanics.
 
 ## Provider vs Transport
 
 Providers describe what data is being requested:
 
 ```text
-AirSimFrameSource      -> image frames
-AirSimEgoStateProvider -> pose and velocity telemetry
+FrameSource provider      -> image frames
+EgoStateProvider provider -> pose and velocity telemetry
 ```
 
-Transports describe how the bridge data moves into the C++ process:
+Transports describe how bridge data moves into the C++ process:
 
 ```text
 pipe          -> implemented
 shared_memory -> placeholder, explicit not implemented
 ```
 
-This keeps the AirSim provider contracts stable while allowing the transport to evolve from simple pipes to shared-memory rings later.
+This keeps provider contracts stable while allowing the transport to evolve from simple pipes to shared-memory rings later.
 
 ## Config
 
 Current configs default to pipe transport:
 
 ```yaml
-airsim_transport: pipe
+bridge_transport: pipe
 ```
 
 Future shared-memory shape:
 
 ```yaml
-airsim_transport: shared_memory
+bridge_transport: shared_memory
 ```
+
+Source connection and vehicle/camera fields are intentionally generic:
+
+```yaml
+source_host: 127.0.0.1
+source_rpc_port: 41451
+vehicle_name: PX4
+vehicle_camera_name: front_center
+bridge_mode: stream_jsonl
+bridge_command: python3 simulation/airsim-stream-frames.py --count 0 --rate-hz 5
+ego_bridge_command: python3 simulation/airsim-capture-ego.py
+```
+
+The config loader still accepts the older AirSim-prefixed names as compatibility aliases, but checked-in configs should use the generic names.
 
 The shared-memory transport exists as a class and config option but intentionally throws `shared_memory bridge transport is not implemented yet` today.
 
@@ -45,7 +59,7 @@ request_once(command)        -> run command, read all stdout, close process
 read_stream_line(command)    -> start command once, then read one line per call
 ```
 
-The current AirSim frame modes use it as follows:
+The current frame bridge modes use it as follows:
 
 ```text
 one_shot_ppm
@@ -57,7 +71,7 @@ stream_jsonl
   -> JSONL frame records with base64 PPM payloads
 ```
 
-`AirSimEgoStateProvider` currently uses `request_once()` with:
+The current ego provider uses `request_once()` with:
 
 ```text
 simulation/airsim-capture-ego.py
