@@ -50,6 +50,9 @@ jobs:
           grep -q '"class": "person"' /tmp/world_snapshot_staging.json
           grep -q '"type": "car"' /tmp/world_snapshot_staging.json
           grep -q '"map_frame_id": "map_local_0001"' /tmp/world_snapshot_staging.json
+          grep -q '"tactical_exclusion_zones"' /tmp/world_snapshot_staging.json
+          grep -q '"reason": "dynamic_observation_cone"' /tmp/world_snapshot_staging.json
+          grep -q '"uncertain_regions"' /tmp/world_snapshot_staging.json
 
       - name: Check whitespace
         run: git diff --check
@@ -93,6 +96,18 @@ jobs:
               echo "| map_frame_id in map_frames | ✅ present |" >> $GITHUB_STEP_SUMMARY
             else
               echo "| map_frame_id in map_frames | ❌ missing |" >> $GITHUB_STEP_SUMMARY
+            fi
+
+            if grep -q '"reason": "dynamic_observation_cone"' /tmp/world_snapshot_staging.json; then
+              echo "| tactical exclusion zone | ✅ present |" >> $GITHUB_STEP_SUMMARY
+            else
+              echo "| tactical exclusion zone | ❌ missing |" >> $GITHUB_STEP_SUMMARY
+            fi
+
+            if grep -q '"uncertain_regions"' /tmp/world_snapshot_staging.json; then
+              echo "| uncertain regions | ✅ present |" >> $GITHUB_STEP_SUMMARY
+            else
+              echo "| uncertain regions | ❌ missing |" >> $GITHUB_STEP_SUMMARY
             fi
 
             echo "" >> $GITHUB_STEP_SUMMARY
