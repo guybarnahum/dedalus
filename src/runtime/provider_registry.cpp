@@ -6,6 +6,7 @@
 
 #include "dedalus/sensors/recorded_frame_source.hpp"
 #include "dedalus/sensors/replay_frame_source.hpp"
+#include "dedalus/simulation/airsim_providers.hpp"
 
 namespace dedalus {
 namespace {
@@ -14,10 +15,21 @@ std::invalid_argument unknown_provider(const std::string& category, const std::s
     return std::invalid_argument("unknown " + category + " provider: " + name);
 }
 
+AirSimProviderConfig airsim_config_from(const CoreStackProviderConfig& config) {
+    AirSimProviderConfig airsim;
+    airsim.host = config.airsim_host;
+    airsim.rpc_port = config.airsim_rpc_port;
+    airsim.vehicle_name = config.airsim_vehicle_name;
+    airsim.camera_name = config.airsim_camera_name;
+    airsim.map_frame_id = config.fallback_map_frame_id;
+    return airsim;
+}
+
 }  // namespace
 
 CoreStackProviders ProviderRegistry::create(const CoreStackProviderConfig& config) const {
     CoreStackProviders providers;
+    const auto airsim_config = airsim_config_from(config);
 
     if (config.frame_source == "synthetic") {
         providers.frame_source = std::make_unique<SyntheticFrameSource>();
@@ -28,6 +40,8 @@ CoreStackProviders ProviderRegistry::create(const CoreStackProviderConfig& confi
             throw std::invalid_argument("recorded_frames provider requires recorded_manifest_path");
         }
         providers.frame_source = std::make_unique<RecordedFrameSource>(config.recorded_manifest_path);
+    } else if (config.frame_source == "airsim") {
+        providers.frame_source = std::make_unique<AirSimFrameSource>(airsim_config);
     } else {
         throw unknown_provider("frame_source", config.frame_source);
     }
@@ -36,12 +50,16 @@ CoreStackProviders ProviderRegistry::create(const CoreStackProviderConfig& confi
         providers.ego_provider = std::make_unique<FrameHintEgoProvider>(config.fallback_map_frame_id);
     } else if (config.ego_provider == "no_telemetry") {
         providers.ego_provider = std::make_unique<NoTelemetryEgoProvider>(config.fallback_map_frame_id);
+    } else if (config.ego_provider == "airsim") {
+        providers.ego_provider = std::make_unique<AirSimEgoStateProvider>(airsim_config);
     } else {
         throw unknown_provider("ego_provider", config.ego_provider);
     }
 
     if (config.detector == "scripted") {
         providers.detector = std::make_unique<ScriptedDetector>();
+    } else if (config.detector == "airsim_ground_truth") {
+        providers.detector = std::make_unique<AirSimGroundTruthDetector>(airsim_config);
     } else {
         throw unknown_provider("detector", config.detector);
     }
@@ -60,6 +78,8 @@ CoreStackProviders ProviderRegistry::create(const CoreStackProviderConfig& confi
 
     if (config.projector == "flat_ground") {
         providers.projector = std::make_unique<FlatGroundProjector>();
+    } else if (config.projector == "airsim_depth") {
+        providers.projector = std::make_unique<AirSimDepthProjector>(airsim_config);
     } else {
         throw unknown_provider("projector", config.projector);
     }
@@ -74,15 +94,15 @@ CoreStackProviders ProviderRegistry::create(const CoreStackProviderConfig& confi
 }
 
 std::vector<std::string> ProviderRegistry::frame_sources() const {
-    return {"synthetic", "video_only", "recorded_frames"};
+    return {"synthetic", "video_only", "recorded_frames", "airsim"};
 }
 
 std::vector<std::string> ProviderRegistry::ego_providers() const {
-    return {"frame_hint", "no_telemetry"};
+    return {"frame_hint", "no_telemetry", "airsim"};
 }
 
 std::vector<std::string> ProviderRegistry::detectors() const {
-    return {"scripted"};
+    return {"scripted", "airsim_ground_truth"};
 }
 
 std::vector<std::string> ProviderRegistry::trackers() const {
@@ -94,7 +114,7 @@ std::vector<std::string> ProviderRegistry::identity_resolvers() const {
 }
 
 std::vector<std::string> ProviderRegistry::projectors() const {
-    return {"flat_ground"};
+    return {"flat_ground", "airsim_depth"};
 }
 
 std::vector<std::string> ProviderRegistry::world_models() const {
