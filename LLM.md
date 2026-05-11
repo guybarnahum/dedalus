@@ -2,6 +2,8 @@
 
 > Purpose: This file is the project handoff document for LLMs. It should let an LLM understand the architecture, repo conventions, current simulation state, known bugs, and safe modification patterns without rediscovering the debugging history.
 
+> Current implementation note: for the latest concrete core-stack implementation state, see `docs/core_stack_current_state.md`. That file tracks the buildable contracts, placeholder modules, tests, CI smoke contract, and next recommended step.
+
 ---
 
 ## 1. Project Identity
