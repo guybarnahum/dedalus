@@ -108,5 +108,51 @@ See [simulation/README.md](simulation/README.md) for complete CLI reference and 
 
 ---
 
+## CI/CD
+
+Three GitHub Actions workflows gate the build and smoke-validate the `WorldSnapshot` JSON contract on every relevant event.
+
+### Workflows
+
+| Workflow | File | Trigger | Build type | Purpose |
+|---|---|---|---|---|
+| **CI** | `ci.yml` | PR targeting `staging` or `main`; manual dispatch | Debug | Gate PRs — must pass before merge |
+| **Staging** | `staging.yml` | Push to `staging` or `main`; manual dispatch | Debug | Pre-release gate for branch integrations |
+| **Production** | `production.yml` | Push of `v*.*.*` tag; manual dispatch | Release (`-O2`) | Validate release candidates |
+
+**Trigger rationale:**
+- CI is PR-only — every contribution is validated before merge, not just after.
+- Staging fires on both the `staging` branch (normal integration path) **and** `main` (direct-to-production shortcut) so `main` is never dark after a merge.
+- Production is tag-triggered, not merge-triggered — a human must explicitly cut a `v*.*.*` tag. A push to `main` alone does not promote to production.
+
+### Smoke Validation Contract
+
+Every workflow builds `dedalus_core_stack` and asserts the emitted `WorldSnapshot` JSON satisfies:
+
+| Check | Assertion |
+|---|---|
+| Valid JSON | `python3 -m json.tool` exits 0 |
+| `active_map_frame_id` | field present and equals `"map_local_0001"` |
+| Person agent | `"class": "person"` present in agents array |
+| Car container | `"type": "car"` present in containers array |
+| `map_frames` populated | `"map_frame_id": "map_local_0001"` present (not silently empty) |
+
+Results are written to `$GITHUB_STEP_SUMMARY` as a markdown table visible in the GitHub Actions UI.
+
+### Cutting a Release
+
+```bash
+# After merging to main and staging workflow passes:
+git tag -a v0.1.0 -m "Milestone 1A: world snapshot spine"
+git push origin v0.1.0
+# → triggers Production workflow
+```
+
+### Actions Versions
+
+All workflows use `actions/checkout@v6` and `actions/upload-artifact@v6` (Node.js 24-native, no deprecation warnings).
+
+---
+
 ## Getting Started
 *(Documentation on bootstrapping the local Colosseum simulation environment and Jetson L4T cross-compilation Docker containers is forthcoming.)*

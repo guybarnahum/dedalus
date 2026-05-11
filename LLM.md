@@ -1673,3 +1673,58 @@ When implementing the core-stack:
 - Build `AppearanceConditionLayer` before treating map changes as persistent changes.
 - Build `DisabledMemoryLayer` / in-memory memory before persistent storage.
 - Keep C++ contracts stable and small.
+
+---
+
+## 22. CI/CD Structure and Decisions
+
+Three GitHub Actions workflows live in `.github/workflows/`. They are the sole automated validation gate at this stage. All three run on `ubuntu-22.04`.
+
+### Workflow Files and Triggers
+
+| File | Trigger | Build type |
+|---|---|---|
+| `ci.yml` | PR targeting `staging` or `main`; `workflow_dispatch` | Debug |
+| `staging.yml` | Push to `staging` branch; push to `main` branch; `workflow_dispatch` | Debug |
+| `production.yml` | Push of `v*.*.*` tag; `workflow_dispatch` | Release (`-DCMAKE_BUILD_TYPE=Release`) |
+
+**Rationale for this trigger model:**
+
+- CI is PR-only. Validation fires on contributions before they land, not after.
+- Staging fires on `staging` branch pushes (normal integration path) **and** on `main` pushes (shortcut-to-production path without publishing a version). This ensures `main` is never dark after a direct merge.
+- Production is tag-triggered, not merge-triggered. A push to `main` alone does not promote a build to production. A human must cut a `v*.*.*` tag explicitly. This prevents accidental production promotions during routine iteration.
+
+### Branch Strategy
+
+```text
+feat/* or fix/*  →  PR targeting staging or main  →  CI workflow
+staging push     →  Staging workflow
+main push        →  Staging workflow (pre-release gate)
+v*.*.* tag push  →  Production workflow
+```
+
+### Smoke Validation Contract
+
+Every workflow runs `dedalus_core_stack`, pipes output to a temp JSON file, then asserts:
+
+1. `python3 -m json.tool` exits 0 — output is valid JSON.
+2. `"active_map_frame_id": "map_local_0001"` — `WorldSnapshot` carries an active map frame.
+3. `"class": "person"` — at least one person agent is present and serialized.
+4. `"type": "car"` — at least one car container is present and serialized.
+5. `"map_frame_id": "map_local_0001"` — `map_frames` array is populated (guards against silent empty-array serializer bugs).
+
+These are the minimum contract. When new `WorldSnapshot` fields are made mandatory, add `grep -q` assertions to the "Check required fields" step and a corresponding row to the "Write job summary" step in **all three** workflow files.
+
+Results are written to `$GITHUB_STEP_SUMMARY` as a markdown table visible in the GitHub Actions job UI.
+
+### Action Versions
+
+Use `actions/checkout@v6` and `actions/upload-artifact@v6`. These target Node.js 24 natively. Do not downgrade to `@v4` (Node.js 20, deprecated May 2025).
+
+### Cutting a Release
+
+```bash
+git tag -a v0.1.0 -m "Milestone 1A: world snapshot spine"
+git push origin v0.1.0
+# triggers Production workflow
+```
