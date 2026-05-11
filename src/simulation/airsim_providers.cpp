@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <array>
+#include <cctype>
 #include <cstdio>
 #include <cstdlib>
 #include <sstream>
@@ -30,6 +31,16 @@ std::string shell_quote(const std::string& value) {
     }
     quoted += "'";
     return quoted;
+}
+
+std::string build_bridge_command(const AirSimProviderConfig& config, const std::string& base_command) {
+    std::ostringstream command;
+    command << base_command
+            << " --host " << shell_quote(config.host)
+            << " --rpc-port " << config.rpc_port
+            << " --vehicle-name " << shell_quote(config.vehicle_name)
+            << " --camera-name " << shell_quote(config.camera_name);
+    return command.str();
 }
 
 std::string run_bridge_command(const std::string& command) {
@@ -94,7 +105,7 @@ ImageView parse_ppm_bytes(const std::string& ppm) {
         throw std::runtime_error("AirSim bridge returned invalid PPM header");
     }
 
-    input.get();  // consume one byte of whitespace after max value
+    input.get();
 
     ImageView image;
     image.width = width;
@@ -107,6 +118,79 @@ ImageView parse_ppm_bytes(const std::string& ppm) {
     }
 
     return image;
+}
+
+int b64_value(char ch) {
+    if (ch >= 'A' && ch <= 'Z') {
+        return ch - 'A';
+    }
+    if (ch >= 'a' && ch <= 'z') {
+        return ch - 'a' + 26;
+    }
+    if (ch >= '0' && ch <= '9') {
+        return ch - '0' + 52;
+    }
+    if (ch == '+') {
+        return 62;
+    }
+    if (ch == '/') {
+        return 63;
+    }
+    if (ch == '=') {
+        return -2;
+    }
+    if (std::isspace(static_cast<unsigned char>(ch)) != 0) {
+        return -3;
+    }
+    return -1;
+}
+
+std::string base64_decode(const std::string& encoded) {
+    std::string output;
+    int value = 0;
+    int bits = -8;
+
+    for (const char ch : encoded) {
+        const int decoded = b64_value(ch);
+        if (decoded == -3) {
+            continue;
+        }
+        if (decoded == -2) {
+            break;
+        }
+        if (decoded < 0) {
+            throw std::runtime_error("invalid base64 character in AirSim stream frame");
+        }
+
+        value = (value << 6) + decoded;
+        bits += 6;
+        if (bits >= 0) {
+            output.push_back(static_cast<char>((value >> bits) & 0xFF));
+            bits -= 8;
+        }
+    }
+
+    return output;
+}
+
+std::string parse_json_string(const std::string& json, const std::string& key) {
+    const std::string marker = "\"" + key + "\":";
+    const auto marker_pos = json.find(marker);
+    if (marker_pos == std::string::npos) {
+        throw std::runtime_error("AirSim stream JSON missing key: " + key);
+    }
+
+    const auto open_pos = json.find('"', marker_pos + marker.size());
+    if (open_pos == std::string::npos) {
+        throw std::runtime_error("AirSim stream JSON has invalid string for key: " + key);
+    }
+
+    const auto close_pos = json.find('"', open_pos + 1U);
+    if (close_pos == std::string::npos) {
+        throw std::runtime_error("AirSim stream JSON has unterminated string for key: " + key);
+    }
+
+    return json.substr(open_pos + 1U, close_pos - open_pos - 1U);
 }
 
 std::vector<double> parse_json_number_array(const std::string& json, const std::string& key, std::size_t expected_size) {
@@ -143,7 +227,7 @@ Nanoseconds parse_json_i64(const std::string& json, const std::string& key) {
     const std::string marker = "\"" + key + "\":";
     const auto marker_pos = json.find(marker);
     if (marker_pos == std::string::npos) {
-        throw std::runtime_error("AirSim ego bridge JSON missing key: " + key);
+        throw std::runtime_error("AirSim bridge JSON missing key: " + key);
     }
 
     const auto value_start = marker_pos + marker.size();
@@ -170,24 +254,12 @@ EgoState parse_ego_json(const std::string& json, const MapFrameId& map_frame_id,
     return ego;
 }
 
-}  // namespace
-
-AirSimFrameSource::AirSimFrameSource(AirSimProviderConfig config)
-    : config_(std::move(config)) {}
-
-std::optional<FramePacket> AirSimFrameSource::next_frame() {
-    std::ostringstream command;
-    command << config_.bridge_command
-            << " --host " << shell_quote(config_.host)
-            << " --rpc-port " << config_.rpc_port
-            << " --vehicle-name " << shell_quote(config_.vehicle_name)
-            << " --camera-name " << shell_quote(config_.camera_name);
-
+FramePacket frame_from_image(const AirSimProviderConfig& config, ImageView image, FrameId frame_id, TimePoint timestamp) {
     FramePacket frame;
-    frame.frame_id = FrameId{"airsim_live_frame_" + std::to_string(++next_frame_index_)};
-    frame.timestamp = TimePoint{0};
-    frame.camera_id = CameraId{config_.camera_name};
-    frame.image = parse_ppm_bytes(run_bridge_command(command.str()));
+    frame.frame_id = std::move(frame_id);
+    frame.timestamp = timestamp;
+    frame.camera_id = CameraId{config.camera_name};
+    frame.image = std::move(image);
     frame.intrinsics.fx = 420.0;
     frame.intrinsics.fy = 420.0;
     frame.intrinsics.cx = static_cast<double>(frame.image.width) * 0.5;
@@ -200,23 +272,80 @@ std::optional<FramePacket> AirSimFrameSource::next_frame() {
     appearance.sensor_mode = SensorMode::Rgb;
     appearance.confidence = 0.45F;
     frame.appearance_condition = appearance;
-
     return frame;
+}
+
+}  // namespace
+
+AirSimFrameSource::AirSimFrameSource(AirSimProviderConfig config)
+    : config_(std::move(config)) {}
+
+AirSimFrameSource::~AirSimFrameSource() {
+    if (stream_pipe_ != nullptr) {
+        (void)pclose(stream_pipe_);
+        stream_pipe_ = nullptr;
+    }
+}
+
+FramePacket AirSimFrameSource::next_one_shot_frame() {
+    const auto command = build_bridge_command(config_, config_.bridge_command);
+    return frame_from_image(
+        config_,
+        parse_ppm_bytes(run_bridge_command(command)),
+        FrameId{"airsim_live_frame_" + std::to_string(++next_frame_index_)},
+        TimePoint{0});
+}
+
+std::optional<FramePacket> AirSimFrameSource::next_stream_jsonl_frame() {
+    if (stream_pipe_ == nullptr) {
+        const auto command = build_bridge_command(config_, config_.bridge_command);
+        stream_pipe_ = popen(command.c_str(), "r");
+        if (stream_pipe_ == nullptr) {
+            throw std::runtime_error("failed to start persistent AirSim stream bridge");
+        }
+    }
+
+    std::array<char, 65536> line{};
+    if (std::fgets(line.data(), static_cast<int>(line.size()), stream_pipe_) == nullptr) {
+        const int status = pclose(stream_pipe_);
+        stream_pipe_ = nullptr;
+        if (status != 0) {
+            throw std::runtime_error("persistent AirSim stream bridge exited with status " + std::to_string(status));
+        }
+        return std::nullopt;
+    }
+
+    const std::string json_line{line.data()};
+    const auto frame_id = parse_json_string(json_line, "frame_id");
+    const auto timestamp = parse_json_i64(json_line, "timestamp_ns");
+    const auto ppm_b64 = parse_json_string(json_line, "ppm_b64");
+
+    ++next_frame_index_;
+    return frame_from_image(
+        config_,
+        parse_ppm_bytes(base64_decode(ppm_b64)),
+        FrameId{frame_id},
+        TimePoint{timestamp});
+}
+
+std::optional<FramePacket> AirSimFrameSource::next_frame() {
+    if (config_.bridge_mode == "stream_jsonl") {
+        return next_stream_jsonl_frame();
+    }
+    if (config_.bridge_mode == "one_shot_ppm") {
+        return next_one_shot_frame();
+    }
+    throw std::runtime_error("unknown AirSim bridge mode: " + config_.bridge_mode);
 }
 
 AirSimEgoStateProvider::AirSimEgoStateProvider(AirSimProviderConfig config)
     : config_(std::move(config)) {}
 
 EgoStateEstimate AirSimEgoStateProvider::estimate(const FramePacket& frame) {
-    std::ostringstream command;
-    command << config_.ego_bridge_command
-            << " --host " << shell_quote(config_.host)
-            << " --rpc-port " << config_.rpc_port
-            << " --vehicle-name " << shell_quote(config_.vehicle_name)
-            << " --camera-name " << shell_quote(config_.camera_name);
+    const auto command = build_bridge_command(config_, config_.ego_bridge_command);
 
     EgoStateEstimate estimate;
-    estimate.ego = parse_ego_json(run_bridge_command(command.str()), config_.map_frame_id, frame.timestamp);
+    estimate.ego = parse_ego_json(run_bridge_command(command), config_.map_frame_id, frame.timestamp);
     estimate.telemetry_available = true;
     estimate.confidence = 0.85F;
     return estimate;
