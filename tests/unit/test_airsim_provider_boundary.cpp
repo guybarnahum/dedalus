@@ -1,5 +1,5 @@
+#include <cmath>
 #include <iostream>
-#include <stdexcept>
 #include <string>
 
 #include "dedalus/runtime/config_loader.hpp"
@@ -8,8 +8,8 @@
 
 namespace {
 
-bool contains(const std::string& haystack, const std::string& needle) {
-    return haystack.find(needle) != std::string::npos;
+bool nearly_equal(double lhs, double rhs) {
+    return std::abs(lhs - rhs) < 1.0e-9;
 }
 
 }  // namespace
@@ -24,23 +24,8 @@ int main() {
         return 1;
     }
 
-    auto example_providers = registry.create(example_config);
-    bool ego_unavailable = false;
-    try {
-        dedalus::FramePacket frame;
-        frame.timestamp = dedalus::TimePoint{123};
-        (void)example_providers.ego_provider->estimate(frame);
-    } catch (const std::runtime_error& error) {
-        ego_unavailable = contains(error.what(), "AirSimEgoStateProvider") &&
-                          contains(error.what(), "integration provider");
-    }
-    if (!ego_unavailable) {
-        std::cerr << "AirSim ego provider did not fail explicitly as unavailable\n";
-        return 1;
-    }
-
     const auto bridge_config = dedalus::load_core_stack_config("config/core_stack_airsim_bridge_ci.yaml");
-    if (bridge_config.frame_source != "airsim" || bridge_config.ego_provider != "no_telemetry" ||
+    if (bridge_config.frame_source != "airsim" || bridge_config.ego_provider != "airsim" ||
         bridge_config.detector != "scripted" || bridge_config.projector != "flat_ground") {
         std::cerr << "AirSim bridge config did not parse expected provider names\n";
         return 1;
@@ -54,6 +39,24 @@ int main() {
         return 1;
     }
 
+    const auto ego_estimate = bridge_providers.ego_provider->estimate(*frame);
+    if (!ego_estimate.ego.has_value() || !ego_estimate.telemetry_available || ego_estimate.confidence < 0.8F) {
+        std::cerr << "AirSim ego bridge did not report telemetry-backed ego state\n";
+        return 1;
+    }
+
+    const auto ego = *ego_estimate.ego;
+    if (ego.map_frame_id.value != "map_airsim_bridge_ci_0001" ||
+        ego.timestamp.timestamp_ns != 123456789 ||
+        !nearly_equal(ego.local_T_body.position.x, 1.0) ||
+        !nearly_equal(ego.local_T_body.position.y, 2.0) ||
+        !nearly_equal(ego.local_T_body.position.z, -3.0) ||
+        !nearly_equal(ego.velocity_local.x, 4.0) ||
+        !nearly_equal(ego.angular_velocity_body.z, 0.03)) {
+        std::cerr << "AirSim ego bridge did not parse expected pose/velocity values\n";
+        return 1;
+    }
+
     dedalus::CoreStackRunner runner{registry.create(bridge_config)};
     if (!runner.run_once()) {
         std::cerr << "AirSim bridge runner failed\n";
@@ -63,6 +66,12 @@ int main() {
     const auto snapshot = runner.snapshot();
     if (snapshot.active_map_frame_id.value != "map_airsim_bridge_ci_0001" || snapshot.agents.empty()) {
         std::cerr << "AirSim bridge snapshot missing expected state\n";
+        return 1;
+    }
+
+    if (!nearly_equal(snapshot.ego.local_T_body.position.x, 1.0) ||
+        !nearly_equal(snapshot.ego.velocity_local.y, 5.0)) {
+        std::cerr << "AirSim bridge snapshot did not preserve ego telemetry\n";
         return 1;
     }
 
