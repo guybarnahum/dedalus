@@ -278,9 +278,67 @@ std::string to_json(const WorldSnapshot& snapshot) {
     }
     out << "],\n";
 
-    out << "  \"flight_corridors\": [],\n";
-    out << "  \"static_structures\": [],\n";
-    out << "  \"landmarks\": [],\n";
+    out << "  \"flight_corridors\": [";
+    for (std::size_t i = 0; i < snapshot.flight_corridors.size(); ++i) {
+        const auto& corridor = snapshot.flight_corridors[i];
+        if (i != 0) {
+            out << ",";
+        }
+        out << "\n";
+        out << "    {\n";
+        out << "      \"corridor_id\": \"" << escape_json(corridor.corridor_id.value) << "\",\n";
+        out << "      \"radius_m\": " << corridor.radius_m << ",\n";
+        out << "      \"min_altitude_m\": " << corridor.min_altitude_m << ",\n";
+        out << "      \"max_altitude_m\": " << corridor.max_altitude_m << ",\n";
+        out << "      \"confidence\": " << corridor.confidence << "\n";
+        out << "    }";
+    }
+    if (!snapshot.flight_corridors.empty()) {
+        out << "\n  ";
+    }
+    out << "],\n";
+
+    out << "  \"static_structures\": [";
+    for (std::size_t i = 0; i < snapshot.static_structures.size(); ++i) {
+        const auto& structure = snapshot.static_structures[i];
+        if (i != 0) {
+            out << ",";
+        }
+        out << "\n";
+        out << "    {\n";
+        out << "      \"structure_id\": \"" << escape_json(structure.structure_id.value) << "\",\n";
+        out << "      \"type\": \"" << escape_json(structure.type) << "\",\n";
+        out << "      \"bounds\": ";
+        write_bounds3(out, structure.bounds);
+        out << ",\n";
+        out << "      \"confidence\": " << structure.confidence << "\n";
+        out << "    }";
+    }
+    if (!snapshot.static_structures.empty()) {
+        out << "\n  ";
+    }
+    out << "],\n";
+
+    out << "  \"landmarks\": [";
+    for (std::size_t i = 0; i < snapshot.landmarks.size(); ++i) {
+        const auto& landmark = snapshot.landmarks[i];
+        if (i != 0) {
+            out << ",";
+        }
+        out << "\n";
+        out << "    {\n";
+        out << "      \"landmark_id\": \"" << escape_json(landmark.landmark_id.value) << "\",\n";
+        out << "      \"type\": \"" << escape_json(landmark.type) << "\",\n";
+        out << "      \"position_local\": ";
+        write_vec3(out, landmark.position_local);
+        out << ",\n";
+        out << "      \"confidence\": " << landmark.confidence << "\n";
+        out << "    }";
+    }
+    if (!snapshot.landmarks.empty()) {
+        out << "\n  ";
+    }
+    out << "],\n";
 
     out << "  \"uncertain_regions\": [";
     for (std::size_t i = 0; i < snapshot.uncertain_regions.size(); ++i) {
