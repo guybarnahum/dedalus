@@ -14,6 +14,7 @@ struct AirSimProviderConfig {
     std::string vehicle_name{"PX4"};
     std::string camera_name{"front_center"};
     std::string bridge_command{"python3 simulation/airsim-capture-frame.py"};
+    std::string ego_bridge_command{"python3 simulation/airsim-capture-ego.py"};
     MapFrameId map_frame_id{"map_airsim_0001"};
 };
 
