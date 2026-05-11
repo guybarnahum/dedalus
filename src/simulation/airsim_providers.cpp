@@ -1,10 +1,8 @@
 #include "dedalus/simulation/airsim_providers.hpp"
 
 #include <algorithm>
-#include <array>
 #include <cctype>
-#include <cstdio>
-#include <cstdlib>
+#include <memory>
 #include <sstream>
 #include <stdexcept>
 #include <string>
@@ -18,6 +16,16 @@ std::runtime_error unavailable(const char* provider_name) {
     return std::runtime_error(
         std::string{provider_name} +
         " is an integration provider and is not available in the dependency-free core build");
+}
+
+std::unique_ptr<BridgeTransport> make_transport(const std::string& transport_name) {
+    if (transport_name == "pipe") {
+        return std::make_unique<PipeBridgeTransport>();
+    }
+    if (transport_name == "shared_memory") {
+        return std::make_unique<SharedMemoryBridgeTransport>();
+    }
+    throw std::runtime_error("unknown AirSim bridge transport: " + transport_name);
 }
 
 std::string shell_quote(const std::string& value) {
@@ -41,44 +49,6 @@ std::string build_bridge_command(const AirSimProviderConfig& config, const std::
             << " --vehicle-name " << shell_quote(config.vehicle_name)
             << " --camera-name " << shell_quote(config.camera_name);
     return command.str();
-}
-
-std::string run_bridge_command(const std::string& command) {
-    std::array<char, 4096> buffer{};
-    std::string output;
-
-    FILE* pipe = popen(command.c_str(), "r");
-    if (pipe == nullptr) {
-        throw std::runtime_error("failed to start AirSim bridge command");
-    }
-
-    while (true) {
-        const std::size_t bytes_read = std::fread(buffer.data(), 1U, buffer.size(), pipe);
-        if (bytes_read > 0U) {
-            output.append(buffer.data(), bytes_read);
-        }
-        if (bytes_read < buffer.size()) {
-            if (std::feof(pipe) != 0) {
-                break;
-            }
-            if (std::ferror(pipe) != 0) {
-                const int status = pclose(pipe);
-                (void)status;
-                throw std::runtime_error("failed while reading AirSim bridge command output");
-            }
-        }
-    }
-
-    const int status = pclose(pipe);
-    if (status != 0) {
-        throw std::runtime_error("AirSim bridge command failed with status " + std::to_string(status));
-    }
-
-    if (output.empty()) {
-        throw std::runtime_error("AirSim bridge command produced no output");
-    }
-
-    return output;
 }
 
 std::string read_ppm_token(std::istream& input) {
@@ -278,47 +248,29 @@ FramePacket frame_from_image(const AirSimProviderConfig& config, ImageView image
 }  // namespace
 
 AirSimFrameSource::AirSimFrameSource(AirSimProviderConfig config)
-    : config_(std::move(config)) {}
+    : config_(std::move(config)), transport_(make_transport(config_.transport)) {}
 
-AirSimFrameSource::~AirSimFrameSource() {
-    if (stream_pipe_ != nullptr) {
-        (void)pclose(stream_pipe_);
-        stream_pipe_ = nullptr;
-    }
-}
+AirSimFrameSource::~AirSimFrameSource() = default;
 
 FramePacket AirSimFrameSource::next_one_shot_frame() {
     const auto command = build_bridge_command(config_, config_.bridge_command);
     return frame_from_image(
         config_,
-        parse_ppm_bytes(run_bridge_command(command)),
+        parse_ppm_bytes(transport_->request_once(command)),
         FrameId{"airsim_live_frame_" + std::to_string(++next_frame_index_)},
         TimePoint{0});
 }
 
 std::optional<FramePacket> AirSimFrameSource::next_stream_jsonl_frame() {
-    if (stream_pipe_ == nullptr) {
-        const auto command = build_bridge_command(config_, config_.bridge_command);
-        stream_pipe_ = popen(command.c_str(), "r");
-        if (stream_pipe_ == nullptr) {
-            throw std::runtime_error("failed to start persistent AirSim stream bridge");
-        }
-    }
-
-    std::array<char, 65536> line{};
-    if (std::fgets(line.data(), static_cast<int>(line.size()), stream_pipe_) == nullptr) {
-        const int status = pclose(stream_pipe_);
-        stream_pipe_ = nullptr;
-        if (status != 0) {
-            throw std::runtime_error("persistent AirSim stream bridge exited with status " + std::to_string(status));
-        }
+    const auto command = build_bridge_command(config_, config_.bridge_command);
+    const auto json_line = transport_->read_stream_line(command);
+    if (!json_line.has_value()) {
         return std::nullopt;
     }
 
-    const std::string json_line{line.data()};
-    const auto frame_id = parse_json_string(json_line, "frame_id");
-    const auto timestamp = parse_json_i64(json_line, "timestamp_ns");
-    const auto ppm_b64 = parse_json_string(json_line, "ppm_b64");
+    const auto frame_id = parse_json_string(*json_line, "frame_id");
+    const auto timestamp = parse_json_i64(*json_line, "timestamp_ns");
+    const auto ppm_b64 = parse_json_string(*json_line, "ppm_b64");
 
     ++next_frame_index_;
     return frame_from_image(
@@ -339,13 +291,13 @@ std::optional<FramePacket> AirSimFrameSource::next_frame() {
 }
 
 AirSimEgoStateProvider::AirSimEgoStateProvider(AirSimProviderConfig config)
-    : config_(std::move(config)) {}
+    : config_(std::move(config)), transport_(make_transport(config_.transport)) {}
 
 EgoStateEstimate AirSimEgoStateProvider::estimate(const FramePacket& frame) {
     const auto command = build_bridge_command(config_, config_.ego_bridge_command);
 
     EgoStateEstimate estimate;
-    estimate.ego = parse_ego_json(run_bridge_command(command), config_.map_frame_id, frame.timestamp);
+    estimate.ego = parse_ego_json(transport_->request_once(command), config_.map_frame_id, frame.timestamp);
     estimate.telemetry_available = true;
     estimate.confidence = 0.85F;
     return estimate;
