@@ -13,6 +13,7 @@ struct AirSimProviderConfig {
     int rpc_port{41451};
     std::string vehicle_name{"PX4"};
     std::string camera_name{"front_center"};
+    std::string bridge_command{"python3 simulation/airsim-capture-frame.py"};
     MapFrameId map_frame_id{"map_airsim_0001"};
 };
 
@@ -24,6 +25,7 @@ public:
 
 private:
     AirSimProviderConfig config_;
+    int next_frame_index_{0};
 };
 
 class AirSimEgoStateProvider final : public EgoStateProvider {
