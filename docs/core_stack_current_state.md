@@ -7,22 +7,22 @@ This document captures the implemented state of the Dedalus core-stack after the
 The repo now has a buildable C++20 core-stack skeleton with dependency-free provider composition:
 
 ```text
-config/core_stack_ci.yaml OR config/core_stack_recorded_ci.yaml
+config/core_stack_ci.yaml OR config/core_stack_recorded_ci.yaml OR config/core_stack_airsim_example.yaml
   -> load_core_stack_config()
       -> CoreStackProviderConfig
           -> ProviderRegistry
               -> FrameSource provider
-                  -> SyntheticFrameSource OR VideoOnlyFrameSource OR RecordedFrameSource
+                  -> SyntheticFrameSource OR VideoOnlyFrameSource OR RecordedFrameSource OR AirSimFrameSource stub
               -> EgoStateProvider provider
-                  -> FrameHintEgoProvider OR NoTelemetryEgoProvider
+                  -> FrameHintEgoProvider OR NoTelemetryEgoProvider OR AirSimEgoStateProvider stub
               -> Detector provider
-                  -> ScriptedDetector
+                  -> ScriptedDetector OR AirSimGroundTruthDetector stub
               -> Tracker provider
                   -> SimpleCentroidTracker
               -> IdentityResolver provider
                   -> AppearanceOnlyIdentityResolver
               -> Projector3D provider
-                  -> FlatGroundProjector
+                  -> FlatGroundProjector OR AirSimDepthProjector stub
               -> WorldModel provider
                   -> InMemoryWorldModel
           -> CoreStackRunner
@@ -41,6 +41,7 @@ Current config uses a flat YAML subset because the repo already has YAML config 
 ```text
 config/core_stack_ci.yaml
 config/core_stack_recorded_ci.yaml
+config/core_stack_airsim_example.yaml
 ```
 
 The parser is intentionally dependency-free and only supports flat `key: value` entries for now. Do not add `yaml-cpp`, TOML, OpenCV, GStreamer, or AirSim as a requirement for core unit tests.
@@ -57,6 +58,10 @@ identity_resolver
 projector
 world_model
 fallback_map_frame_id
+airsim_host
+airsim_rpc_port
+airsim_vehicle_name
+airsim_camera_name
 ```
 
 ## Current tree shape
@@ -65,6 +70,7 @@ fallback_map_frame_id
 config/
 ├── behaviors.yaml
 ├── camera_intrinsics.yaml
+├── core_stack_airsim_example.yaml
 ├── core_stack_ci.yaml
 └── core_stack_recorded_ci.yaml
 
@@ -74,12 +80,14 @@ include/dedalus/
 ├── perception/
 ├── runtime/
 ├── sensors/
+├── simulation/
 └── world_model/
 
 src/
 ├── perception/
 ├── runtime/
 ├── sensors/
+├── simulation/
 └── world_model/
 
 apps/
@@ -92,6 +100,7 @@ tests/
 │       ├── frame_0001.ppm
 │       └── manifest.txt
 └── unit/
+    ├── test_airsim_provider_boundary.cpp
     ├── test_core_stack_config_loader.cpp
     ├── test_perception_world_model_flow.cpp
     ├── test_provider_composition.cpp
@@ -110,6 +119,7 @@ include/dedalus/sensors/frame_source.hpp
 include/dedalus/sensors/ego_state_provider.hpp
 include/dedalus/sensors/recorded_frame_source.hpp
 include/dedalus/sensors/replay_frame_source.hpp
+include/dedalus/simulation/airsim_providers.hpp
 include/dedalus/perception/types.hpp
 include/dedalus/perception/perception_pipeline.hpp
 include/dedalus/runtime/config_loader.hpp
@@ -131,6 +141,7 @@ ImageView
 CameraIntrinsics
 EgoStateEstimate
 RecordedFrameManifestEntry
+AirSimProviderConfig
 CoreStackProviderConfig
 CoreStackProviders
 Detection2D
@@ -170,21 +181,27 @@ InProcessBus
 ProviderRegistry
 CoreStackRunner
 load_core_stack_config
+AirSimFrameSource stub
+AirSimEgoStateProvider stub
+AirSimDepthProjector stub
+AirSimGroundTruthDetector stub
 ```
 
-These are deliberately deterministic placeholders. They exist to lock down interfaces, tests, JSON shape, CI gates, and module boundaries before adding real perception, mapping, memory, or simulation adapters.
+These are deliberately deterministic placeholders or explicit integration stubs. They exist to lock down interfaces, tests, JSON shape, CI gates, and module boundaries before adding real perception, mapping, memory, or simulation adapters.
 
 `RecordedFrameSource` is a real file-backed adapter for CI-safe recorded frames. It currently reads a simple manifest plus P3/P6 PPM image files. This is intentionally not a full media decoder.
+
+The AirSim providers are registered integration stubs. They intentionally throw a clear runtime error in dependency-free builds. They define the provider boundary and config names for future AirSim/PX4 integration but do not yet call AirSim RPC APIs.
 
 ## Provider names currently registered
 
 ```text
-frame_source: synthetic, video_only, recorded_frames
-ego_provider: frame_hint, no_telemetry
-detector: scripted
+frame_source: synthetic, video_only, recorded_frames, airsim
+ego_provider: frame_hint, no_telemetry, airsim
+detector: scripted, airsim_ground_truth
 tracker: simple_centroid
 identity_resolver: appearance_only
-projector: flat_ground
+projector: flat_ground, airsim_depth
 world_model: in_memory
 ```
 
@@ -204,7 +221,10 @@ Examples:
 ```bash
 ./build-validation/apps/dedalus_core_stack --config config/core_stack_ci.yaml
 ./build-validation/apps/dedalus_core_stack --config config/core_stack_recorded_ci.yaml
+./build-validation/apps/dedalus_core_stack --config config/core_stack_airsim_example.yaml
 ```
+
+The AirSim example command will fail in the current dependency-free build with an explicit integration-provider unavailable error.
 
 ## Tests
 
@@ -217,6 +237,7 @@ tests/unit/test_video_only_world_model_flow.cpp
 tests/unit/test_provider_composition.cpp
 tests/unit/test_core_stack_config_loader.cpp
 tests/unit/test_recorded_frame_world_model_flow.cpp
+tests/unit/test_airsim_provider_boundary.cpp
 ```
 
 `test_world_snapshot_json` guards the previous `map_frames` serialization bug.
@@ -274,6 +295,14 @@ recorded_frames + no_telemetry composition runs through CoreStackRunner
 recorded flow emits world-model artifacts
 ```
 
+`test_airsim_provider_boundary` validates:
+
+```text
+config/core_stack_airsim_example.yaml parses AirSim provider names and connection fields
+ProviderRegistry lists the AirSim frame source
+AirSimFrameSource throws a clear integration-provider unavailable error in dependency-free builds
+```
+
 ## CI smoke contract
 
 The CI, staging, and production workflows build with:
@@ -313,7 +342,7 @@ landmarks
 landmark_id = landmark_building_corner_0001
 ```
 
-Recorded-frame ingestion is covered by CTest, not by the primary smoke artifact.
+Recorded-frame ingestion and AirSim provider-boundary checks are covered by CTest, not by the primary smoke artifact.
 
 ## Current status
 
@@ -323,15 +352,17 @@ Provider/plugin-style composition boundary: implemented
 Config-driven provider composition: implemented
 CI-safe provider config: implemented
 Recorded-frame CI config: implemented
+AirSim provider example config: implemented
 Synthetic perception pipeline: implemented
 Video-only/no-telemetry ingestion boundary: implemented
 Replay frame-source boundary: implemented
 Recorded frame-source boundary: implemented
+AirSim provider boundary: implemented as explicit unavailable stubs
 In-memory world model: implemented
 Tactical exclusion layer placeholder: implemented
 EffectiveWorldView placeholder: implemented
 Rough global flight-map placeholder: implemented
-Unit/flow/provider/config/recorded-ingestion tests: implemented
+Unit/flow/provider/config/recorded-ingestion/AirSim-boundary tests: implemented
 CI/staging/production smoke assertions: implemented
 ```
 
@@ -345,10 +376,11 @@ Nested/full YAML parser
 TOML parser
 RecordedVideoFrameSource backed by real media decode
 MpegCameraSource backed by MPEG/RTSP/GStreamer/OpenCV
-AirSimFrameSource
-AirSimEgoStateProvider
-AirSimDepthProjector
-AirSimGroundTruthDetector
+Real AirSim RPC backend
+Real AirSimFrameSource frame capture
+Real AirSimEgoStateProvider telemetry capture
+Real AirSimDepthProjector depth-image projection
+Real AirSimGroundTruthDetector object/segmentation ground truth
 NullDetector
 IouTracker
 KalmanTracker2D
@@ -366,12 +398,12 @@ iceoryx runtime transport
 
 ## Next recommended step
 
-The next architectural step should be AirSim integration, not behavior/control:
+The next architectural step should be a real AirSim integration backend, not behavior/control:
 
 ```text
 AirSimFrameSource backed by the existing simulation environment
-  -> register provider name in ProviderRegistry
-  -> select provider through config
+  -> keep provider name: frame_source = airsim
+  -> select provider through config/core_stack_airsim_example.yaml or a runtime copy
   -> same FrameSource contract
   -> same PerceptionPipeline contract
   -> same InMemoryWorldModel contract
