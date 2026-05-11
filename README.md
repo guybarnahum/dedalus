@@ -106,6 +106,126 @@ python test-flight.py --control px4 --px4-tmux-target dedalus-sim:px4
 
 See [simulation/README.md](simulation/README.md) for complete CLI reference and [simulation/INSTALL.md](simulation/INSTALL.md) for environment setup.
 
+### Using AirSim Providers with the Core Stack
+
+The core stack uses config-driven provider composition. Provider configs live under `config/` and are loaded by the C++ debug apps:
+
+```bash
+cmake -S . -B build-validation \
+  -DDEDALUS_BUILD_APPS=ON \
+  -DDEDALUS_BUILD_TESTS=ON
+cmake --build build-validation -j$(nproc)
+```
+
+The CI-safe synthetic provider path is:
+
+```bash
+./build-validation/apps/dedalus_core_stack \
+  --config config/core_stack_ci.yaml
+```
+
+The CI-safe recorded-frame path is:
+
+```bash
+./build-validation/apps/dedalus_core_stack \
+  --config config/core_stack_recorded_ci.yaml
+```
+
+That recorded config reads the tiny fixture manifest in `tests/fixtures/recorded_frames/` through `RecordedFrameSource`. It does not require AirSim, OpenCV, GStreamer, FFmpeg, or media codecs.
+
+#### Export AirSim Frames into the Recorded-Frame Provider
+
+The current practical AirSim integration path is a Python bridge that exports AirSim camera frames into the same recorded-frame manifest format consumed by the C++ core stack.
+
+Start the simulation first:
+
+```bash
+cd ~/dedalus/simulation
+./run.sh
+```
+
+In another terminal, export one or more AirSim frames:
+
+```bash
+cd ~/dedalus
+source ~/dedalus/venv/bin/activate
+python simulation/export-airsim-frames.py \
+  --host 127.0.0.1 \
+  --rpc-port 41451 \
+  --vehicle-name PX4 \
+  --camera-name front_center \
+  --count 5 \
+  --output out/airsim_frames
+```
+
+The exporter writes:
+
+```text
+out/airsim_frames/*.ppm
+out/airsim_frames/manifest.txt
+out/airsim_frames/metadata.json
+out/airsim_frames/core_stack_airsim_recorded.yaml
+```
+
+Then run the C++ core stack on those exported AirSim frames:
+
+```bash
+./build-validation/apps/dedalus_core_stack \
+  --config out/airsim_frames/core_stack_airsim_recorded.yaml
+```
+
+This executes:
+
+```text
+RecordedFrameSource
+  -> NoTelemetryEgoProvider
+  -> ScriptedDetector
+  -> SimpleCentroidTracker
+  -> AppearanceOnlyIdentityResolver
+  -> FlatGroundProjector
+  -> InMemoryWorldModel
+  -> WorldSnapshot JSON
+```
+
+This path is the preferred AirSim workflow right now because it exercises real simulation imagery while keeping the C++ core stack dependency-free and reproducible.
+
+#### Direct AirSim Provider Names
+
+The following provider names are already reserved and registered for direct AirSim integration:
+
+```yaml
+frame_source: airsim
+ego_provider: airsim
+detector: airsim_ground_truth
+projector: airsim_depth
+```
+
+The example config is:
+
+```bash
+config/core_stack_airsim_example.yaml
+```
+
+It includes:
+
+```yaml
+frame_source: airsim
+ego_provider: airsim
+detector: airsim_ground_truth
+tracker: simple_centroid
+identity_resolver: appearance_only
+projector: airsim_depth
+world_model: in_memory
+fallback_map_frame_id: map_airsim_0001
+
+airsim_host: 127.0.0.1
+airsim_rpc_port: 41451
+airsim_vehicle_name: PX4
+airsim_camera_name: front_center
+```
+
+In the current dependency-free build, these direct AirSim providers are explicit stubs. Running this config will fail with a clear integration-provider unavailable error. That is intentional: it protects CI and unit tests from accidentally depending on AirSim/PX4/media libraries while preserving the exact provider names and config shape for the future direct backend.
+
 ---
 
 ## CI/CD
