@@ -1,5 +1,6 @@
 #include "dedalus/simulation/airsim_providers.hpp"
 
+#include <algorithm>
 #include <array>
 #include <cstdio>
 #include <cstdlib>
