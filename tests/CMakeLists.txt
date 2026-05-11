@@ -62,3 +62,7 @@ target_link_libraries(test_core_stack_config_loader
 target_compile_features(test_core_stack_config_loader PRIVATE cxx_std_20)
 
 add_test(NAME core_stack_config_loader COMMAND test_core_stack_config_loader)
+set_tests_properties(core_stack_config_loader
+    PROPERTIES
+        WORKING_DIRECTORY ${PROJECT_SOURCE_DIR}
+)
