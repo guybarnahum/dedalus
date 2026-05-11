@@ -1,0 +1,102 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - 'feat/**'
+      - 'fix/**'
+      - 'chore/**'
+  pull_request:
+    branches:
+      - staging
+      - main
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
+jobs:
+  build-and-validate:
+    name: Build and smoke validate
+    runs-on: ubuntu-22.04
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install cmake
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y cmake g++
+
+      - name: Configure
+        run: |
+          cmake -S . -B build-validation \
+            -DDEDALUS_BUILD_APPS=ON
+
+      - name: Build
+        run: cmake --build build-validation -j$(nproc)
+
+      - name: Run dedalus_core_stack
+        run: ./build-validation/apps/dedalus_core_stack > /tmp/world_snapshot.json
+
+      - name: Validate JSON
+        run: python3 -m json.tool /tmp/world_snapshot.json >/dev/null
+
+      - name: Check required fields
+        run: |
+          grep -q '"active_map_frame_id": "map_local_0001"' /tmp/world_snapshot.json
+          grep -q '"class": "person"' /tmp/world_snapshot.json
+          grep -q '"type": "car"' /tmp/world_snapshot.json
+
+      - name: Check whitespace
+        run: git diff --check
+
+      - name: Write job summary
+        if: always()
+        run: |
+          echo "## CI Validation Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Check | Result |" >> $GITHUB_STEP_SUMMARY
+          echo "|---|---|" >> $GITHUB_STEP_SUMMARY
+
+          if [ -f /tmp/world_snapshot.json ]; then
+            echo "| Build & run | ✅ passed |" >> $GITHUB_STEP_SUMMARY
+
+            if python3 -m json.tool /tmp/world_snapshot.json >/dev/null 2>&1; then
+              echo "| JSON valid | ✅ passed |" >> $GITHUB_STEP_SUMMARY
+            else
+              echo "| JSON valid | ❌ failed |" >> $GITHUB_STEP_SUMMARY
+            fi
+
+            if grep -q '"active_map_frame_id": "map_local_0001"' /tmp/world_snapshot.json; then
+              echo "| active_map_frame_id | ✅ present |" >> $GITHUB_STEP_SUMMARY
+            else
+              echo "| active_map_frame_id | ❌ missing |" >> $GITHUB_STEP_SUMMARY
+            fi
+
+            if grep -q '"class": "person"' /tmp/world_snapshot.json; then
+              echo "| person agent | ✅ present |" >> $GITHUB_STEP_SUMMARY
+            else
+              echo "| person agent | ❌ missing |" >> $GITHUB_STEP_SUMMARY
+            fi
+
+            if grep -q '"type": "car"' /tmp/world_snapshot.json; then
+              echo "| car container | ✅ present |" >> $GITHUB_STEP_SUMMARY
+            else
+              echo "| car container | ❌ missing |" >> $GITHUB_STEP_SUMMARY
+            fi
+
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "### WorldSnapshot output" >> $GITHUB_STEP_SUMMARY
+            echo '```json' >> $GITHUB_STEP_SUMMARY
+            cat /tmp/world_snapshot.json >> $GITHUB_STEP_SUMMARY
+            echo '```' >> $GITHUB_STEP_SUMMARY
+          else
+            echo "| Build & run | ❌ failed — snapshot not produced |" >> $GITHUB_STEP_SUMMARY
+          fi
+
+      - name: Upload snapshot artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: world-snapshot-ci
+          path: /tmp/world_snapshot.json
