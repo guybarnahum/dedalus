@@ -53,6 +53,12 @@ jobs:
           grep -q '"tactical_exclusion_zones"' /tmp/world_snapshot_staging.json
           grep -q '"reason": "dynamic_observation_cone"' /tmp/world_snapshot_staging.json
           grep -q '"uncertain_regions"' /tmp/world_snapshot_staging.json
+          grep -q '"flight_corridors"' /tmp/world_snapshot_staging.json
+          grep -q '"corridor_id": "corridor_forward_0001"' /tmp/world_snapshot_staging.json
+          grep -q '"static_structures"' /tmp/world_snapshot_staging.json
+          grep -q '"structure_id": "structure_building_0001"' /tmp/world_snapshot_staging.json
+          grep -q '"landmarks"' /tmp/world_snapshot_staging.json
+          grep -q '"landmark_id": "landmark_building_corner_0001"' /tmp/world_snapshot_staging.json
 
       - name: Check whitespace
         run: git diff --check
@@ -108,6 +114,24 @@ jobs:
               echo "| uncertain regions | ✅ present |" >> $GITHUB_STEP_SUMMARY
             else
               echo "| uncertain regions | ❌ missing |" >> $GITHUB_STEP_SUMMARY
+            fi
+
+            if grep -q '"corridor_id": "corridor_forward_0001"' /tmp/world_snapshot_staging.json; then
+              echo "| rough flight corridor | ✅ present |" >> $GITHUB_STEP_SUMMARY
+            else
+              echo "| rough flight corridor | ❌ missing |" >> $GITHUB_STEP_SUMMARY
+            fi
+
+            if grep -q '"structure_id": "structure_building_0001"' /tmp/world_snapshot_staging.json; then
+              echo "| static structure | ✅ present |" >> $GITHUB_STEP_SUMMARY
+            else
+              echo "| static structure | ❌ missing |" >> $GITHUB_STEP_SUMMARY
+            fi
+
+            if grep -q '"landmark_id": "landmark_building_corner_0001"' /tmp/world_snapshot_staging.json; then
+              echo "| landmark | ✅ present |" >> $GITHUB_STEP_SUMMARY
+            else
+              echo "| landmark | ❌ missing |" >> $GITHUB_STEP_SUMMARY
             fi
 
             echo "" >> $GITHUB_STEP_SUMMARY
