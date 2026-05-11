@@ -8,7 +8,7 @@
 
 **Project Name:** Dedalus
 
-Dedalus is a virtual proving ground and edge-autonomy stack for drone behavior, perception, world modeling, and control experiments.
+Dedalus is a virtual proving ground and edge-autonomy stack for drone behavior, perception, world modeling, tactical mapping, memory, and control experiments.
 
 The current repo combines:
 
@@ -18,29 +18,25 @@ The current repo combines:
 - infrastructure helpers under `infrastructure/`
 - project strategy/architecture notes in `WHITEPAPER.md` and this file
 
-The immediate working focus is the simulation environment:
+The simulation environment is working well enough to become the core-stack integration harness:
 
 ```text
 Colosseum / AirSim fork  <->  PX4 SITL  <->  Python flight test client
 ```
 
-The simulation is being run on:
+The immediate engineering focus is no longer only simulation bring-up. The next phase is the **core-stack**:
 
 ```text
-Ubuntu 22.04
-AWS g6 instance
-NVIDIA L4 GPU
-NICE DCV virtual desktop
-Colosseum / AirSim fork
-PX4 SITL
-AirSim Python API 1.8.1
+sensors -> perception -> world_model
 ```
+
+The goal is to build a modular C++ perception-to-world-model runtime that can first run with placeholder blocks, then continuously improve as better detectors, trackers, depth estimators, VIO, mapping, memory, and planning modules become available.
 
 ---
 
-## 2. Repository Structure
+## 2. Current Repository Structure
 
-Current expected top-level structure:
+Current top-level structure:
 
 ```text
 dedalus/
@@ -53,6 +49,7 @@ dedalus/
 │   │   └── main.tf
 │   └── docker/
 │       └── Dockerfile.l4t_cross
+├── INSTALL.md
 ├── LLM.md
 ├── models/
 ├── README.md
@@ -65,6 +62,7 @@ dedalus/
 │   ├── scenarios/
 │   ├── settings.json
 │   ├── setup.sh
+│   ├── stop.sh
 │   ├── test-flight.py
 │   └── trajectories/
 │       └── circle_figure8.json
@@ -79,28 +77,78 @@ dedalus/
 └── WHITEPAPER.md
 ```
 
+The current `src/` directories are domain placeholders. The next implementation should add public contracts under `include/dedalus/...`, concrete implementations under `src/...`, small runtime apps under `apps/`, and tests under `tests/`.
+
+Recommended expansion:
+
+```text
+include/dedalus/
+├── core/
+├── sensors/
+├── perception/
+├── world_model/
+├── ipc/
+└── runtime/
+
+apps/
+├── dedalus_core_stack.cpp
+├── dedalus_perception_node.cpp
+├── dedalus_world_model_node.cpp
+└── dedalus_dump_world.cpp
+
+tests/
+├── unit/
+├── integration/
+└── fixtures/
+
+tools/
+├── replay_sequence.py
+├── export_airsim_frames.py
+├── visualize_world_model.py
+├── visualize_tactical_map.py
+├── visualize_flight_map.py
+└── inspect_memory_map.py
+```
+
 ---
 
 ## 3. Architectural Direction
 
 Dedalus is intended to support a modular drone autonomy stack.
 
-### Edge Runtime
-
-The future edge runtime should be C++20-first.
+### 3.1 Runtime Domains
 
 Major runtime domains:
 
-- `sensors/`: camera, IMU, MAVLink/FCU ingestion
-- `perception/`: detection, tracking, pose/features, TensorRT inference
-- `world_model/`: local state, dynamic agents, trajectories, confidence
+- `sensors/`: camera, video stream, IMU, MAVLink/FCU state, ego-state ingestion
+- `perception/`: detection, tracking, features, depth, segmentation, projection, TensorRT inference
+- `world_model/`: dynamic agents, tactical exclusion zones, global flight map, landmarks, localization, memory
 - `behavior/`: policy, intent, behavior trees, mission logic
 - `safety/`: command mux, kill switch, manual override, bounded outputs
-- `ipc/`: low-latency data exchange; current intended IPC is Eclipse iceoryx
+- `ipc/`: low-latency data exchange; intended production IPC is Eclipse iceoryx
 
-### Control Philosophy
+### 3.2 Immediate Focus
 
-The autonomy stack should produce bounded kinematic intents:
+The immediate focus is:
+
+```text
+Frame input
+    -> detection
+    -> tracking
+    -> depth / geometry / projection
+    -> dynamic agents
+    -> tactical obstacle/exclusion zones
+    -> rough global flight map
+    -> landmarks
+    -> actual + memory world model
+    -> debuggable WorldSnapshot / EffectiveWorldView
+```
+
+Do **not** jump directly into behavior trees, intercept behavior, or command output until world-model snapshots are stable.
+
+### 3.3 Control Philosophy
+
+The autonomy stack should eventually produce bounded kinematic intents:
 
 ```text
 velocity vector + yaw/yaw-rate intent
@@ -108,9 +156,721 @@ velocity vector + yaw/yaw-rate intent
 
 The flight controller remains responsible for stabilization, estimator fusion, arming state, motor control, failsafes, and low-level flight safety.
 
+Command priority should remain:
+
+```text
+Hardware Kill Switch
+    >
+Human RC Override
+    >
+Safety Constraint Layer
+    >
+AI Planner Intent
+```
+
 ---
 
-## 4. Simulation Stack
+## 4. Core-Stack Design Principle
+
+The most important rule for the core-stack:
+
+```text
+Every stage must be a replaceable module behind a stable interface.
+```
+
+First implementations may be simplistic:
+
+```text
+ScriptedDetector
+SimpleCentroidTracker
+FlatGroundProjector
+ConeExclusionMapper
+InMemoryWorldModel
+DisabledMemoryLayer
+```
+
+Future implementations should fit behind the same contracts:
+
+```text
+YoloTensorRtDetector
+ReIdKalmanTracker
+VioRayProjector
+VoxelSdfMapper
+MultiResolutionFlightMap
+PersistentMemoryLayer
+```
+
+Avoid hardcoding AirSim, TensorRT, PX4, YOLO, iceoryx, or a specific camera path into the core contracts.
+
+---
+
+## 5. Core Contracts
+
+The following contracts define the initial perception-to-world-model runtime. They should live under `include/dedalus/...`.
+
+### 5.1 FramePacket
+
+```cpp
+struct FramePacket {
+    FrameId frame_id;
+    TimePoint timestamp;
+    CameraId camera_id;
+    ImageView image;
+    CameraIntrinsics intrinsics;
+
+    std::optional<Pose3> camera_T_world;
+    std::optional<Pose3> camera_T_body;
+    std::optional<EgoState> ego_hint;
+};
+```
+
+Supported frame-source modes:
+
+```text
+SyntheticFrameSource
+RecordedVideoFrameSource
+MpegCameraSource
+AirSimFrameSource
+```
+
+Future frame-source modes:
+
+```text
+MipiCsiCameraSource
+GmslCameraSource
+NvArgusCameraSource
+```
+
+Important: support video-only sources with no telemetry. Missing ego-state must be explicit and downstream confidence should degrade accordingly.
+
+### 5.2 Detection2D
+
+```cpp
+struct Detection2D {
+    DetectionId detection_id;
+    FrameId frame_id;
+    TimePoint timestamp;
+    Rect2 bbox_px;
+    float confidence;
+    ClassLabel class_label;
+    FactionLabel faction;
+    FeatureVector appearance;
+};
+```
+
+Initial detectors:
+
+```text
+NullDetector
+ScriptedDetector
+AirSimGroundTruthDetector
+CpuMockDetector
+```
+
+Future detectors:
+
+```text
+YoloOnnxDetector
+YoloTensorRtDetector
+SegmentationDetector
+PoseDetector
+```
+
+### 5.3 Track2D
+
+```cpp
+struct Track2D {
+    TrackId track_id;
+    TimePoint timestamp;
+    Rect2 bbox_px;
+    ClassLabel class_label;
+    FactionLabel faction;
+    float confidence;
+    TrackState state;      // tentative, confirmed, lost
+    int age_frames;
+    int missed_frames;
+};
+```
+
+Initial trackers:
+
+```text
+SimpleCentroidTracker
+IouTracker
+```
+
+Future trackers:
+
+```text
+KalmanTracker2D
+DeepSortLikeTracker
+OpticalFlowAssistedTracker
+ReIdTracker
+```
+
+### 5.4 EgoState
+
+```cpp
+struct EgoState {
+    TimePoint timestamp;
+    Pose3 local_T_body;
+    Vec3 velocity_local;
+    Vec3 angular_velocity_body;
+    Covariance6 covariance;
+};
+```
+
+Initial ego-state providers:
+
+```text
+StaticEgoStateProvider
+NoTelemetryEgoProvider
+AirSimGroundTruthEgoProvider
+Px4LocalPositionProvider
+```
+
+Future providers:
+
+```text
+VioProvider
+VisualInertialSlamProvider
+Px4EstimatorBridge
+```
+
+### 5.5 Observation3D
+
+```cpp
+struct Observation3D {
+    TrackId track_id;
+    TimePoint timestamp;
+    Vec3 position_body;
+    Vec3 position_local;
+    Covariance3 covariance;
+    ClassLabel class_label;
+    FactionLabel faction;
+    float confidence;
+};
+```
+
+Initial projectors:
+
+```text
+FlatGroundProjector
+KnownSizeProjector
+AirSimDepthProjector
+FakeDepthProjector
+```
+
+Future projectors:
+
+```text
+VioRayProjector
+MonocularDepthProjector
+StereoProjector
+StructureFromMotionProjector
+```
+
+---
+
+## 6. World Model Layers
+
+The world model is not one map. It is a layered state system.
+
+```text
+WorldModel
+├── DynamicAgentLayer
+├── TacticalObstacleLayer
+├── GlobalFlightMapLayer
+├── LandmarkLayer
+├── EgoLocalizationLayer
+└── MemoryLayer
+```
+
+Perception modules produce observations. The world model owns fused state.
+
+### 6.1 DynamicAgentLayer
+
+Tracks moving entities such as drones, people, vehicles, animals, and other mission-relevant actors.
+
+```cpp
+struct AgentState {
+    AgentId agent_id;
+    TrackId source_track_id;
+    TimePoint last_seen;
+    Vec3 position_local;
+    Vec3 velocity_local;
+    Covariance6 covariance;
+    ClassLabel class_label;
+    FactionLabel faction;
+    AgentLifecycle lifecycle;  // new, active, occluded, stale, retired
+    float confidence;
+};
+```
+
+Start with simple in-memory motion extrapolation. Later add EKF and ReID-assisted persistence.
+
+### 6.2 TacticalObstacleLayer
+
+Short-range, high-urgency obstacle representation for local collision avoidance.
+
+Its question is:
+
+```text
+Where should the drone not fly in the next 0.5-5 seconds?
+```
+
+Start with cone/frustum-based exclusion zones. Upgrade later to voxel occupancy or SDF.
+
+```cpp
+struct ExclusionZone {
+    ZoneId zone_id;
+    TimePoint timestamp;
+    ZoneType type;          // cone, cylinder, box, voxel_cluster
+    Pose3 local_T_zone;
+    Vec3 dimensions;
+    float confidence;
+    float inflation_radius_m;
+    TimePoint expires_at;
+    std::string reason;
+};
+```
+
+Initial implementations:
+
+```text
+ConeExclusionMapper
+SimpleInflationPolicy
+TacticalObstacleLayer
+```
+
+Future implementations:
+
+```text
+VoxelExclusionMapper
+LocalSdfMapper
+VelocityObstacleMapper
+```
+
+### 6.3 GlobalFlightMapLayer
+
+Low-resolution, longer-horizon navigational map used for rough route planning.
+
+Its questions are:
+
+```text
+Where can the drone probably fly over the next 50-1000 meters?
+What corridors exist between buildings, mountains, trees, or terrain?
+What static structures are useful for visual localization?
+```
+
+Represent as a pyramid of resolutions:
+
+```text
+Level 0: coarse 2.5D height / traversability map
+Level 1: cylinders and primitive static obstacle volumes
+Level 2: landmark structures with visual feature signatures
+Level 3: optional dense local patches near important regions
+```
+
+Contracts:
+
+```cpp
+struct FlightMapCell {
+    CellId cell_id;
+    Bounds3 bounds;
+    float min_safe_altitude_m;
+    float max_safe_altitude_m;
+    float occupancy_probability;
+    float traversability_score;
+    float confidence;
+};
+
+struct StaticStructure {
+    StructureId structure_id;
+    StructureType type;     // building, tree_cluster, road, river, ridge, tower
+    Primitive3D primitive;  // cylinder, box, mesh_proxy, polyline, height_patch
+    FeatureSignature signature;
+    float confidence;
+    TimePoint first_seen;
+    TimePoint last_confirmed;
+};
+
+struct FlightCorridor {
+    CorridorId corridor_id;
+    std::vector<Vec3> centerline;
+    float radius_m;
+    float min_altitude_m;
+    float max_altitude_m;
+    float confidence;
+};
+```
+
+Initial implementations:
+
+```text
+MultiResolutionHeightMap
+PrimitiveStaticMapper
+FlightCorridorExtractor
+```
+
+### 6.4 LandmarkLayer and EgoLocalizationLayer
+
+The landmark layer stores visual/spatial anchors useful for map-relative localization:
+
+```text
+building corners
+road curves
+river edges
+tree clusters
+mountain ridges
+towers
+unique roof outlines
+```
+
+Landmarks should include geometry plus feature signatures. The localization layer can later match current visual features against landmarks to reduce drift in GPS-denied flight.
+
+### 6.5 MemoryLayer
+
+The memory layer allows Dedalus to become familiar with an area.
+
+Separate:
+
+```text
+Actual World Model
+    live, short-lived, sensor-driven
+
+Working Memory
+    current mission/session, minutes to hours
+
+Persistent Memory
+    saved across missions, area familiarity
+
+Prior Map
+    imported map, satellite map, survey map, or human-provided map
+```
+
+Planning should read an effective view:
+
+```cpp
+struct EffectiveWorldView {
+    WorldSnapshot actual;
+    WorldMemorySnapshot memory;
+    std::vector<MapConflict> conflicts;
+    std::vector<UncertainRegion> uncertain_regions;
+};
+```
+
+Rules:
+
+```text
+1. Fresh confident actual observations override memory.
+2. If actual is missing, memory may be used with uncertainty inflation.
+3. If actual contradicts memory once, mark a conflict.
+4. If actual repeatedly contradicts memory, update or retire memory.
+5. If memory has not been confirmed recently, decay confidence.
+6. Unknown regions are treated conservatively, not as free space.
+```
+
+Memory statistics:
+
+```cpp
+struct MemoryStats {
+    int observations_confirmed;
+    int observations_missing;
+    int observations_contradicted;
+    TimePoint first_seen;
+    TimePoint last_seen;
+    TimePoint last_confirmed;
+    float persistence_score;
+    float confidence;
+};
+```
+
+Memory states:
+
+```text
+Candidate      seen once or twice
+Confirmed      observed repeatedly in one mission
+Persistent     observed across missions or times
+Conflicted     current actual observations disagree with memory
+Retired        repeatedly contradicted or no longer useful
+```
+
+---
+
+## 7. WorldSnapshot Contract
+
+The world model should publish a debug-friendly snapshot early.
+
+```cpp
+struct WorldSnapshot {
+    TimePoint timestamp;
+    EgoState ego;
+
+    std::vector<AgentState> agents;
+    std::vector<ExclusionZone> tactical_exclusion_zones;
+    std::vector<FlightCorridor> flight_corridors;
+    std::vector<StaticStructure> static_structures;
+    std::vector<Landmark> landmarks;
+    std::vector<UncertainRegion> uncertain_regions;
+};
+```
+
+Early apps should be able to emit JSON snapshots for tests and visualization:
+
+```json
+{
+  "timestamp_ns": 123456789,
+  "ego": {
+    "position_local": [0.0, 0.0, -12.0],
+    "velocity_local": [1.2, 0.0, 0.0]
+  },
+  "agents": [],
+  "tactical_exclusion_zones": [],
+  "flight_corridors": [],
+  "static_structures": [],
+  "landmarks": [],
+  "uncertain_regions": []
+}
+```
+
+---
+
+## 8. IPC Strategy
+
+Production IPC target:
+
+```text
+Eclipse iceoryx
+```
+
+Early implementation should also support:
+
+```text
+InProcessBus
+```
+
+Do not make iceoryx mandatory for all tests. Unit tests and simple integration tests should run without RouDi or shared memory setup.
+
+Canonical message families:
+
+```text
+FramePacket
+Detection2DArray
+Track2DArray
+Observation3DArray
+WorldSnapshot
+EffectiveWorldView
+ControlIntent later
+```
+
+---
+
+## 9. Runtime Composition
+
+Modules should be selected by config.
+
+Example placeholder config:
+
+```yaml
+runtime:
+  rate_hz: 30
+  mode: in_process
+
+sensors:
+  frame_source:
+    type: airsim
+    camera: front_center
+  ego_state:
+    type: airsim_ground_truth
+
+perception:
+  detector:
+    type: scripted
+  tracker:
+    type: iou
+  projector:
+    type: airsim_depth
+
+world_model:
+  dynamic_agents:
+    type: in_memory
+  tactical_obstacles:
+    type: cone_exclusion
+  global_flight_map:
+    type: multires_height_map
+  memory:
+    type: disabled
+```
+
+Future production-style config:
+
+```yaml
+runtime:
+  rate_hz: 30
+  mode: iceoryx
+
+sensors:
+  frame_source:
+    type: mipi_csi
+  ego_state:
+    type: vio
+
+perception:
+  detector:
+    type: yolo_tensorrt
+    engine_path: models/detectors/yolo11_int8.engine
+  tracker:
+    type: reid_kalman
+  projector:
+    type: vio_ray_projector
+
+world_model:
+  dynamic_agents:
+    type: ekf
+  tactical_obstacles:
+    type: voxel_sdf
+  global_flight_map:
+    type: multires_primitives
+  memory:
+    type: persistent
+    path: data/world_memory
+```
+
+---
+
+## 10. Implementation Roadmap
+
+### Milestone 1: Core Contracts and In-Process Pipeline
+
+Add public headers and placeholder implementations.
+
+Build:
+
+```text
+FramePacket
+Detection2D
+Track2D
+Observation3D
+EgoState
+AgentState
+ExclusionZone
+FlightMapCell
+StaticStructure
+FlightCorridor
+WorldSnapshot
+EffectiveWorldView
+```
+
+Add:
+
+```text
+NullDetector
+ScriptedDetector
+SimpleCentroidTracker
+FlatGroundProjector
+InMemoryWorldModel
+InProcessBus
+dedalus_core_stack
+dedalus_dump_world
+```
+
+Goal:
+
+```text
+Run a fake/synthetic sequence and emit WorldSnapshot JSON.
+```
+
+### Milestone 2: Video and Simulation Input
+
+Add:
+
+```text
+RecordedVideoFrameSource
+MpegCameraSource
+AirSimFrameSource
+AirSimEgoStateProvider
+AirSimDepthProjector or AirSimGroundTruthDetector
+```
+
+Goal:
+
+```text
+Run the perception/world-model stack during an existing Colosseum/PX4 trajectory.
+```
+
+### Milestone 3: Tactical Obstacle Layer
+
+Add:
+
+```text
+ConeExclusionMapper
+SimpleInflationPolicy
+TacticalObstacleLayer
+```
+
+Goal:
+
+```text
+Generate short-range tactical exclusion zones from uncertain obstacles and dynamic agents.
+```
+
+### Milestone 4: Rough Global Flight Map
+
+Add:
+
+```text
+MultiResolutionHeightMap
+PrimitiveStaticMapper
+FlightCorridorExtractor
+LandmarkLayer
+```
+
+Goal:
+
+```text
+Build low-resolution traversability and candidate flight corridors from repeated frames.
+```
+
+### Milestone 5: Memory Layer
+
+Add:
+
+```text
+PersistentMapStore
+ActualVsMemoryFusion
+MapConflictDetector
+MemoryConfidenceDecay
+```
+
+Goal:
+
+```text
+Load remembered map state, use it when actual observations are incomplete, and update memory only after repeated confirmation.
+```
+
+### Milestone 6: Production Perception Upgrades
+
+Add:
+
+```text
+YoloOnnxDetector
+YoloTensorRtDetector
+KalmanTracker2D
+ReIdTracker
+VioRayProjector
+MonocularDepthProjector
+```
+
+Goal:
+
+```text
+Replace placeholders without changing downstream world-model contracts.
+```
+
+---
+
+## 11. Simulation Stack
 
 The current simulation environment uses:
 
@@ -128,6 +888,7 @@ The important files are:
 simulation/setup.sh       installs/builds dependencies
 simulation/cleanup.sh     resets runtime/build state
 simulation/run.sh         launches DCV-bound simulation stack
+simulation/stop.sh        stops simulation process/session state
 simulation/settings.json  AirSim/Colosseum vehicle configuration
 simulation/test-flight.py flight test and trajectory runner
 ```
@@ -149,9 +910,11 @@ source ~/dedalus/venv/bin/activate
 python test-flight.py
 ```
 
+The simulation should now be used as an integration harness for the core-stack. Avoid coupling the core-stack directly to `test-flight.py`; instead, add adapters or tools that can observe/consume simulation frames while `test-flight.py` handles the known-good flight motion path.
+
 ---
 
-## 5. Setup / Cleanup / Run Responsibilities
+## 12. Setup / Cleanup / Run Responsibilities
 
 ### `setup.sh`
 
@@ -278,7 +1041,7 @@ INFO  [commander] Ready for takeoff!
 
 ---
 
-## 6. AirSim / PX4 Settings
+## 13. AirSim / PX4 Settings
 
 The working AirSim PX4 mode is TCP simulator link, not UDP.
 
@@ -327,7 +1090,7 @@ That caused HIL missing warnings and arming/control failures.
 
 ---
 
-## 7. Known AirSim / Colosseum PX4 Limitation
+## 14. Known AirSim / Colosseum PX4 Limitation
 
 The AirSim/Colosseum RPC call:
 
@@ -395,7 +1158,7 @@ where `auto` currently prefers the confirmed PX4 shell path.
 
 ---
 
-## 8. PX4 Shell Access
+## 15. PX4 Shell Access
 
 PX4 runs in a tmux window named:
 
@@ -453,7 +1216,7 @@ commander disarm
 
 ---
 
-## 9. `test-flight.py` Current Behavior
+## 16. `test-flight.py` Current Behavior
 
 `simulation/test-flight.py` is a flight-test harness.
 
@@ -499,7 +1262,7 @@ So `--control mavlink` should verify real local-z movement and report failure if
 
 ---
 
-## 10. Trajectory System
+## 17. Trajectory System
 
 The preferred mission-body interface is a JSON trajectory file that defines velocity-vector commands.
 
@@ -534,52 +1297,6 @@ figure8_velocity
 velocity_keyframes
 ```
 
-Example JSON:
-
-```json
-{
-    "name": "circle_then_figure8",
-    "description": "Large circle followed by figure eight using NED velocity vectors.",
-    "rate_hz": 10,
-    "segments": [
-        {
-            "type": "circle_velocity",
-            "label": "large clockwise circle",
-            "duration_s": 36,
-            "speed_mps": 3.0,
-            "radius_m": 18,
-            "direction": "cw",
-            "vz_mps": 0.0
-        },
-        {
-            "type": "hold",
-            "label": "brief center hold",
-            "duration_s": 4,
-            "vx_mps": 0.0,
-            "vy_mps": 0.0,
-            "vz_mps": 0.0
-        },
-        {
-            "type": "figure8_velocity",
-            "label": "large figure eight",
-            "duration_s": 48,
-            "speed_mps": 3.0,
-            "scale_m": 18,
-            "vz_mps": 0.0
-        },
-        {
-            "type": "velocity_keyframes",
-            "label": "soft exit and settle",
-            "keyframes": [
-                { "t": 0, "vx_mps": 1.5, "vy_mps": 0.0, "vz_mps": 0.0 },
-                { "t": 3, "vx_mps": 0.8, "vy_mps": 0.0, "vz_mps": 0.0 },
-                { "t": 6, "vx_mps": 0.0, "vy_mps": 0.0, "vz_mps": 0.0 }
-            ]
-        }
-    ]
-}
-```
-
 The trajectory player should print live status on one terminal line where appropriate, for example:
 
 ```text
@@ -590,7 +1307,7 @@ and avoid spamming repeated lines for MAVLink climb verification.
 
 ---
 
-## 11. Known Debugging Milestones
+## 18. Known Debugging Milestones
 
 These are important facts future LLMs should not rediscover from scratch:
 
@@ -630,7 +1347,7 @@ These are important facts future LLMs should not rediscover from scratch:
 
 ---
 
-## 12. Common Commands
+## 19. Common Commands
 
 Start clean:
 
@@ -691,7 +1408,7 @@ tmux send-keys -t dedalus-sim:px4 'commander status' C-m
 
 ---
 
-## 13. Style / Contribution Guidance for LLMs
+## 20. Style / Contribution Guidance for LLMs
 
 When modifying this repo:
 
@@ -704,8 +1421,13 @@ When modifying this repo:
 - Do not silently report flight success unless motion is actually observed.
 - Preserve `--control auto` as a safe default.
 - Keep trajectory behavior editable through JSON rather than hardcoding mission paths in Python.
+- For the core-stack, add interfaces first and placeholder implementations second.
+- Do not make TensorRT, AirSim, PX4, or iceoryx mandatory for unit tests.
+- Keep behavior/control downstream of `WorldSnapshot` / `EffectiveWorldView`.
+- Do not let perception modules directly own world-model state.
+- Do not let world-model modules directly command PX4.
 
-When debugging:
+When debugging simulation:
 
 - First check whether PX4 and AirSim are connected:
 
@@ -738,3 +1460,13 @@ When debugging:
     ```
 
     do not keep debugging PX4 health. Use `--control px4` and treat it as the known Colosseum/AirSim RPC bridge bug.
+
+When implementing the core-stack:
+
+- First success condition is a JSON `WorldSnapshot`, not flight autonomy.
+- Build `InProcessBus` before `IceoryxBus`.
+- Build `ScriptedDetector` before TensorRT.
+- Build `ConeExclusionMapper` before voxel/SDF.
+- Build `MultiResolutionHeightMap` before dense SLAM.
+- Build `DisabledMemoryLayer` / in-memory memory before persistent storage.
+- Keep C++ contracts stable and small.
