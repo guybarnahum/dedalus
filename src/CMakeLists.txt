@@ -1,4 +1,7 @@
 add_library(dedalus_core
+    sensors/synthetic_frame_source.cpp
+    perception/perception_pipeline.cpp
+    world_model/in_memory_world_model.cpp
     world_model/world_snapshot.cpp
 )
 
