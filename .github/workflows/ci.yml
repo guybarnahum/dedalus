@@ -39,7 +39,7 @@ jobs:
         run: ctest --test-dir build-validation --output-on-failure
 
       - name: Run dedalus_core_stack
-        run: ./build-validation/apps/dedalus_core_stack > /tmp/world_snapshot.json
+        run: ./build-validation/apps/dedalus_core_stack --config config/core_stack_ci.yaml > /tmp/world_snapshot.json
 
       - name: Validate JSON
         run: python3 -m json.tool /tmp/world_snapshot.json >/dev/null
