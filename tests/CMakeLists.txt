@@ -49,3 +49,16 @@ target_link_libraries(test_provider_composition
 target_compile_features(test_provider_composition PRIVATE cxx_std_20)
 
 add_test(NAME provider_composition COMMAND test_provider_composition)
+
+add_executable(test_core_stack_config_loader
+    unit/test_core_stack_config_loader.cpp
+)
+
+target_link_libraries(test_core_stack_config_loader
+    PRIVATE
+        dedalus_core
+)
+
+target_compile_features(test_core_stack_config_loader PRIVATE cxx_std_20)
+
+add_test(NAME core_stack_config_loader COMMAND test_core_stack_config_loader)
