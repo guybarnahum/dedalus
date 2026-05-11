@@ -46,7 +46,7 @@ bridge_command: python3 simulation/airsim-stream-frames.py --count 0 --rate-hz 5
 ego_bridge_command: python3 simulation/airsim-capture-ego.py
 ```
 
-The config loader still accepts the older AirSim-prefixed names as compatibility aliases, but checked-in configs should use the generic names.
+Only source-neutral bridge and source keys are accepted by the config loader.
 
 The shared-memory transport exists as a class and config option but intentionally throws `shared_memory bridge transport is not implemented yet` today.
 
