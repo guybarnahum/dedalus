@@ -44,6 +44,8 @@ void apply_config_value(CoreStackProviderConfig& config, const std::string& key,
         config.projector = value;
     } else if (key == "world_model") {
         config.world_model = value;
+    } else if (key == "recorded_manifest_path") {
+        config.recorded_manifest_path = value;
     } else if (key == "fallback_map_frame_id") {
         config.fallback_map_frame_id = MapFrameId{value};
     } else {
