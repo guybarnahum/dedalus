@@ -4,6 +4,7 @@
 #include <string>
 #include <utility>
 
+#include "dedalus/sensors/recorded_frame_source.hpp"
 #include "dedalus/sensors/replay_frame_source.hpp"
 
 namespace dedalus {
@@ -22,6 +23,11 @@ CoreStackProviders ProviderRegistry::create(const CoreStackProviderConfig& confi
         providers.frame_source = std::make_unique<SyntheticFrameSource>();
     } else if (config.frame_source == "video_only") {
         providers.frame_source = std::make_unique<VideoOnlyFrameSource>(1U);
+    } else if (config.frame_source == "recorded_frames") {
+        if (config.recorded_manifest_path.empty()) {
+            throw std::invalid_argument("recorded_frames provider requires recorded_manifest_path");
+        }
+        providers.frame_source = std::make_unique<RecordedFrameSource>(config.recorded_manifest_path);
     } else {
         throw unknown_provider("frame_source", config.frame_source);
     }
@@ -68,7 +74,7 @@ CoreStackProviders ProviderRegistry::create(const CoreStackProviderConfig& confi
 }
 
 std::vector<std::string> ProviderRegistry::frame_sources() const {
-    return {"synthetic", "video_only"};
+    return {"synthetic", "video_only", "recorded_frames"};
 }
 
 std::vector<std::string> ProviderRegistry::ego_providers() const {
