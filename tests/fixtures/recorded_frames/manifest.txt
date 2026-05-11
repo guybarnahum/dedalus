@@ -1,0 +1,2 @@
+# image_path frame_id timestamp_ns camera_id
+frame_0001.ppm recorded_frame_0001 123456789 recorded_front_center
