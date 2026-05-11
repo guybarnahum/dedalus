@@ -17,14 +17,14 @@ std::invalid_argument unknown_provider(const std::string& category, const std::s
 
 AirSimProviderConfig airsim_config_from(const CoreStackProviderConfig& config) {
     AirSimProviderConfig airsim;
-    airsim.host = config.airsim_host;
-    airsim.rpc_port = config.airsim_rpc_port;
-    airsim.vehicle_name = config.airsim_vehicle_name;
-    airsim.camera_name = config.airsim_camera_name;
-    airsim.transport = config.airsim_transport;
-    airsim.bridge_command = config.airsim_bridge_command;
-    airsim.bridge_mode = config.airsim_bridge_mode;
-    airsim.ego_bridge_command = config.airsim_ego_bridge_command;
+    airsim.host = config.source_host;
+    airsim.rpc_port = config.source_rpc_port;
+    airsim.vehicle_name = config.vehicle_name;
+    airsim.camera_name = config.vehicle_camera_name;
+    airsim.transport = config.bridge_transport;
+    airsim.bridge_command = config.bridge_command;
+    airsim.bridge_mode = config.bridge_mode;
+    airsim.ego_bridge_command = config.ego_bridge_command;
     airsim.map_frame_id = config.fallback_map_frame_id;
     return airsim;
 }
