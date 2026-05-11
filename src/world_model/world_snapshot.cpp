@@ -114,6 +114,21 @@ const char* to_string(ContainerType value) {
     }
 }
 
+const char* to_string(ZoneType value) {
+    switch (value) {
+        case ZoneType::Cone:
+            return "cone";
+        case ZoneType::Cylinder:
+            return "cylinder";
+        case ZoneType::Box:
+            return "box";
+        case ZoneType::VoxelCluster:
+            return "voxel_cluster";
+        default:
+            return "unknown";
+    }
+}
+
 const char* to_string(LightingMode value) {
     switch (value) {
         case LightingMode::Day:
@@ -152,6 +167,14 @@ const char* to_string(WeatherMode value) {
 
 void write_vec3(std::ostringstream& out, const Vec3& value) {
     out << "[" << value.x << "," << value.y << "," << value.z << "]";
+}
+
+void write_bounds3(std::ostringstream& out, const Bounds3& value) {
+    out << "{\"min\":";
+    write_vec3(out, value.min);
+    out << ",\"max\":";
+    write_vec3(out, value.max);
+    out << "}";
 }
 
 }  // namespace
@@ -228,11 +251,57 @@ std::string to_json(const WorldSnapshot& snapshot) {
     out << "],\n";
 
     out << "  \"containment_events\": [],\n";
-    out << "  \"tactical_exclusion_zones\": [],\n";
+
+    out << "  \"tactical_exclusion_zones\": [";
+    for (std::size_t i = 0; i < snapshot.tactical_exclusion_zones.size(); ++i) {
+        const auto& zone = snapshot.tactical_exclusion_zones[i];
+        if (i != 0) {
+            out << ",";
+        }
+        out << "\n";
+        out << "    {\n";
+        out << "      \"zone_id\": \"" << escape_json(zone.zone_id.value) << "\",\n";
+        out << "      \"type\": \"" << to_string(zone.type) << "\",\n";
+        out << "      \"position_local\": ";
+        write_vec3(out, zone.local_T_zone.position);
+        out << ",\n";
+        out << "      \"dimensions\": ";
+        write_vec3(out, zone.dimensions);
+        out << ",\n";
+        out << "      \"inflation_radius_m\": " << zone.inflation_radius_m << ",\n";
+        out << "      \"reason\": \"" << escape_json(zone.reason) << "\",\n";
+        out << "      \"confidence\": " << zone.confidence << "\n";
+        out << "    }";
+    }
+    if (!snapshot.tactical_exclusion_zones.empty()) {
+        out << "\n  ";
+    }
+    out << "],\n";
+
     out << "  \"flight_corridors\": [],\n";
     out << "  \"static_structures\": [],\n";
     out << "  \"landmarks\": [],\n";
-    out << "  \"uncertain_regions\": [],\n";
+
+    out << "  \"uncertain_regions\": [";
+    for (std::size_t i = 0; i < snapshot.uncertain_regions.size(); ++i) {
+        const auto& region = snapshot.uncertain_regions[i];
+        if (i != 0) {
+            out << ",";
+        }
+        out << "\n";
+        out << "    {\n";
+        out << "      \"region_id\": \"" << escape_json(region.region_id) << "\",\n";
+        out << "      \"bounds\": ";
+        write_bounds3(out, region.bounds);
+        out << ",\n";
+        out << "      \"uncertainty\": " << region.uncertainty << ",\n";
+        out << "      \"reason\": \"" << escape_json(region.reason) << "\"\n";
+        out << "    }";
+    }
+    if (!snapshot.uncertain_regions.empty()) {
+        out << "\n  ";
+    }
+    out << "],\n";
 
     out << "  \"map_frames\": [";
     for (std::size_t i = 0; i < snapshot.map_frames.size(); ++i) {
