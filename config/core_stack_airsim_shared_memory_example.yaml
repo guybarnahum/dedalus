@@ -1,0 +1,21 @@
+# Example future shared-memory AirSim transport config.
+# This intentionally fails today with a clear "not implemented" error.
+# It documents the target provider/transport shape without changing CI.
+
+frame_source: airsim
+airsim_transport: shared_memory
+airsim_bridge_mode: stream_jsonl
+airsim_bridge_command: unused-for-shared-memory-placeholder
+ego_provider: airsim
+airsim_ego_bridge_command: unused-for-shared-memory-placeholder
+detector: scripted
+tracker: simple_centroid
+identity_resolver: appearance_only
+projector: flat_ground
+world_model: in_memory
+fallback_map_frame_id: map_airsim_shared_memory_0001
+
+airsim_host: 127.0.0.1
+airsim_rpc_port: 41451
+airsim_vehicle_name: PX4
+airsim_camera_name: front_center
