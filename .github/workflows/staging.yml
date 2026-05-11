@@ -4,6 +4,7 @@ on:
   push:
     branches:
       - staging
+      - main
   workflow_dispatch:
     inputs:
       reason:
@@ -13,7 +14,7 @@ on:
 
 jobs:
   build-and-validate:
-    name: Staging build and smoke validate
+    name: Staging build and smoke validate (${{ github.ref_name }})
     runs-on: ubuntu-22.04
 
     steps:
