@@ -93,6 +93,48 @@ std::optional<std::string> PipeBridgeTransport::read_stream_line(const std::stri
     return std::string{line.data()};
 }
 
+std::optional<std::string> PipeBridgeTransport::read_stream_bytes(const std::string& command, std::size_t byte_count) {
+    if (impl_ == nullptr) {
+        impl_ = new Impl{};
+    }
+
+    if (impl_->stream_pipe == nullptr) {
+        impl_->stream_pipe = popen(command.c_str(), "r");
+        if (impl_->stream_pipe == nullptr) {
+            throw std::runtime_error("failed to start persistent bridge command");
+        }
+    }
+
+    std::string output(byte_count, '\0');
+    std::size_t total_read = 0U;
+    while (total_read < byte_count) {
+        const std::size_t bytes_read = std::fread(output.data() + total_read, 1U, byte_count - total_read, impl_->stream_pipe);
+        if (bytes_read > 0U) {
+            total_read += bytes_read;
+            continue;
+        }
+
+        if (std::feof(impl_->stream_pipe) != 0) {
+            FILE* pipe = impl_->stream_pipe;
+            impl_->stream_pipe = nullptr;
+            const int status = pclose(pipe);
+            if (status != 0) {
+                throw std::runtime_error("persistent bridge command exited with status " + std::to_string(status));
+            }
+            if (total_read == 0U) {
+                return std::nullopt;
+            }
+            throw std::runtime_error("persistent bridge command ended mid-frame");
+        }
+
+        if (std::ferror(impl_->stream_pipe) != 0) {
+            throw std::runtime_error("failed while reading persistent bridge command bytes");
+        }
+    }
+
+    return output;
+}
+
 void PipeBridgeTransport::close_stream() {
     if (impl_ != nullptr && impl_->stream_pipe != nullptr) {
         (void)pclose(impl_->stream_pipe);
@@ -105,6 +147,10 @@ std::string SharedMemoryBridgeTransport::request_once(const std::string&) {
 }
 
 std::optional<std::string> SharedMemoryBridgeTransport::read_stream_line(const std::string&) {
+    throw std::runtime_error("shared_memory bridge transport is not implemented yet");
+}
+
+std::optional<std::string> SharedMemoryBridgeTransport::read_stream_bytes(const std::string&, std::size_t) {
     throw std::runtime_error("shared_memory bridge transport is not implemented yet");
 }
 
