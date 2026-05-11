@@ -21,6 +21,7 @@ AirSimProviderConfig airsim_config_from(const CoreStackProviderConfig& config) {
     airsim.rpc_port = config.airsim_rpc_port;
     airsim.vehicle_name = config.airsim_vehicle_name;
     airsim.camera_name = config.airsim_camera_name;
+    airsim.transport = config.airsim_transport;
     airsim.bridge_command = config.airsim_bridge_command;
     airsim.bridge_mode = config.airsim_bridge_mode;
     airsim.ego_bridge_command = config.airsim_ego_bridge_command;
