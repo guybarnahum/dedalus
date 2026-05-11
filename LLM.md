@@ -34,39 +34,43 @@ The goal is to build a modular C++ perception-to-world-model runtime that can fi
 
 ## 2. Current Repository Structure
 
-The current `src/` directories are domain placeholders. The next implementation should add public contracts under `include/dedalus/...`, concrete implementations under `src/...`, runtime apps under `apps/`, tests under `tests/`, and debug/visualization utilities under `tools/`.
+The core-stack spine is implemented. Public contracts live under `include/dedalus/`, implementations under `src/`, apps under `apps/`, and tests under `tests/`. The `tools/` directory is not yet created.
 
-Recommended expansion:
+Current layout:
 
 ```text
 include/dedalus/
-├── core/
-├── sensors/
-├── perception/
-├── world_model/
-├── ipc/
-└── runtime/
+├── core/types.hpp
+├── sensors/frame_source.hpp
+├── perception/types.hpp
+├── perception/perception_pipeline.hpp
+├── ipc/in_process_bus.hpp
+└── world_model/
+    ├── world_snapshot.hpp
+    ├── effective_world_view.hpp
+    ├── in_memory_world_model.hpp
+    ├── tactical_obstacle_mapper.hpp
+    └── rough_flight_map_builder.hpp
+
+src/
+├── sensors/synthetic_frame_source.cpp
+├── perception/perception_pipeline.cpp
+└── world_model/
+    ├── world_snapshot.cpp
+    ├── in_memory_world_model.cpp
+    ├── tactical_obstacle_mapper.cpp
+    └── rough_flight_map_builder.cpp
 
 apps/
 ├── dedalus_core_stack.cpp
-├── dedalus_perception_node.cpp
-├── dedalus_world_model_node.cpp
 └── dedalus_dump_world.cpp
 
-tests/
-├── unit/
-├── integration/
-└── fixtures/
+tests/unit/
+├── test_world_snapshot_json.cpp
+└── test_perception_world_model_flow.cpp
 
 tools/
-├── replay_sequence.py
-├── export_airsim_frames.py
-├── visualize_world_model.py
-├── visualize_tactical_map.py
-├── visualize_flight_map.py
-├── inspect_identity_hypotheses.py
-├── visualize_relative_map.py
-└── inspect_memory_map.py
+└── (not yet created)
 ```
 
 ---
@@ -912,50 +916,46 @@ world_model:
 
 ## 11. Implementation Roadmap
 
-### Milestone 1: Core Contracts and In-Process Pipeline
+### Milestone 1: Core Contracts and In-Process Pipeline ✅ Complete
 
-Add public headers and placeholder implementations.
+All contracts, placeholder modules, tactical/map placeholders, unit tests, and CI smoke gates are implemented. See §23 for current implementation state.
 
-Build:
+Built contracts:
 
 ```text
-FramePacket
-Detection2D
-Track2D
-IdentityHypothesis
-Observation3D
-EgoState
-AgentState
-ContainerState
-ContainmentEvent
-ExclusionZone
-MapFrame
-FlightMapCell
-StaticStructure
-FlightCorridor
+FramePacket / ImageView / CameraIntrinsics
+Detection2D / Track2D / IdentityHypothesis / Observation3D
+EgoState / AgentState / ContainerState
+ExclusionZone / MapFrame
+StaticStructure / FlightCorridor / Landmark / UncertainRegion
 AppearanceCondition
-WorldSnapshot
-EffectiveWorldView
+WorldSnapshot / EffectiveWorldView
 ```
 
-Add:
+Built modules:
 
 ```text
-NullDetector
+SyntheticFrameSource
 ScriptedDetector
 SimpleCentroidTracker
 AppearanceOnlyIdentityResolver
 FlatGroundProjector
+ConeExclusionMapper
+RoughFlightMapBuilder
 InMemoryWorldModel
-InProcessBus
+InProcessBus (header-only)
 dedalus_core_stack
 dedalus_dump_world
 ```
 
-Goal:
+Goal achieved:
 
 ```text
-Run a fake/synthetic sequence and emit WorldSnapshot JSON.
+Synthetic frame → PerceptionPipeline → InMemoryWorldModel → WorldSnapshot JSON
+All world-model layers represented in snapshot (agents, containers, exclusion zones,
+uncertain regions, static structures, flight corridors, landmarks)
+Unit tests pass under ctest
+CI, staging, and production smoke-validate the JSON contract
 ```
 
 ### Milestone 2: Video and Simulation Input
@@ -1705,15 +1705,30 @@ v*.*.* tag push  →  Production workflow
 
 ### Smoke Validation Contract
 
-Every workflow runs `dedalus_core_stack`, pipes output to a temp JSON file, then asserts:
+Every workflow builds with `-DDEDALUS_BUILD_APPS=ON -DDEDALUS_BUILD_TESTS=ON`, then runs:
+
+```bash
+ctest --test-dir <build-dir> --output-on-failure
+```
+
+Then runs `dedalus_core_stack` and asserts the emitted JSON contains:
 
 1. `python3 -m json.tool` exits 0 — output is valid JSON.
 2. `"active_map_frame_id": "map_local_0001"` — `WorldSnapshot` carries an active map frame.
 3. `"class": "person"` — at least one person agent is present and serialized.
 4. `"type": "car"` — at least one car container is present and serialized.
-5. `"map_frame_id": "map_local_0001"` — `map_frames` array is populated (guards against silent empty-array serializer bugs).
+5. `"map_frame_id": "map_local_0001"` — `map_frames` array is populated (guards against silent empty-array serializer bug).
+6. `"tactical_exclusion_zones"` — tactical layer is present in snapshot.
+7. `"reason": "dynamic_observation_cone"` — exclusion zone carries a reason field.
+8. `"uncertain_regions"` — uncertain region layer is present.
+9. `"flight_corridors"` — flight corridor layer is present.
+10. `"corridor_id": "corridor_forward_0001"` — at least one corridor is serialized.
+11. `"static_structures"` — static structure layer is present.
+12. `"structure_id": "structure_building_0001"` — at least one structure is serialized.
+13. `"landmarks"` — landmark layer is present.
+14. `"landmark_id": "landmark_building_corner_0001"` — at least one landmark is serialized.
 
-These are the minimum contract. When new `WorldSnapshot` fields are made mandatory, add `grep -q` assertions to the "Check required fields" step and a corresponding row to the "Write job summary" step in **all three** workflow files.
+When new `WorldSnapshot` fields are made mandatory, add `grep -q` assertions to the "Check required fields" step and a corresponding row to the "Write job summary" step in **all three** workflow files.
 
 Results are written to `$GITHUB_STEP_SUMMARY` as a markdown table visible in the GitHub Actions job UI.
 
@@ -1724,7 +1739,126 @@ Use `actions/checkout@v6` and `actions/upload-artifact@v6`. These target Node.js
 ### Cutting a Release
 
 ```bash
-git tag -a v0.1.0 -m "Milestone 1A: world snapshot spine"
+git tag -a v0.1.0 -m "core-stack spine: synthetic pipeline to WorldSnapshot"
 git push origin v0.1.0
 # triggers Production workflow
 ```
+
+---
+
+## 23. Core Stack Implementation State
+
+This section captures what is actually built and in the repo. Use it to avoid assuming modules exist before they do.
+
+### Architecture Spine
+
+```text
+SyntheticFrameSource
+  -> PerceptionPipeline
+      -> ScriptedDetector
+      -> SimpleCentroidTracker
+      -> AppearanceOnlyIdentityResolver
+      -> FlatGroundProjector
+  -> InMemoryWorldModel
+      -> Dynamic agent output
+      -> Container placeholder output
+      -> Tactical exclusion-zone output
+      -> Uncertain-region output
+      -> Rough flight-map output
+          -> Static structures
+          -> Flight corridors
+          -> Landmarks
+  -> WorldSnapshot JSON
+  -> EffectiveWorldView
+```
+
+### Public Headers
+
+```text
+include/dedalus/core/types.hpp
+include/dedalus/sensors/frame_source.hpp
+include/dedalus/perception/types.hpp
+include/dedalus/perception/perception_pipeline.hpp
+include/dedalus/ipc/in_process_bus.hpp
+include/dedalus/world_model/world_snapshot.hpp
+include/dedalus/world_model/effective_world_view.hpp
+include/dedalus/world_model/in_memory_world_model.hpp
+include/dedalus/world_model/tactical_obstacle_mapper.hpp
+include/dedalus/world_model/rough_flight_map_builder.hpp
+```
+
+### Value Contracts
+
+```text
+FramePacket / ImageView / CameraIntrinsics
+Detection2D / Track2D / IdentityHypothesis / Observation3D
+EgoState / AgentState / ContainerState
+ExclusionZone / MapFrame
+StaticStructure / FlightCorridor / Landmark / UncertainRegion
+WorldSnapshot / EffectiveWorldView
+```
+
+### Placeholder Modules
+
+All deliberately deterministic. They lock down interfaces, JSON shape, CI gates, and module boundaries before real perception/mapping/memory adapters are added.
+
+```text
+SyntheticFrameSource
+ScriptedDetector
+SimpleCentroidTracker
+AppearanceOnlyIdentityResolver
+FlatGroundProjector
+ConeExclusionMapper
+RoughFlightMapBuilder
+InMemoryWorldModel
+InProcessBus
+```
+
+### Tests
+
+Tests are named architecturally, not after milestones.
+
+```text
+tests/unit/test_world_snapshot_json.cpp
+  — guards the map_frames serialization bug (empty-array regression)
+
+tests/unit/test_perception_world_model_flow.cpp
+  — validates the full synthetic perception/world-model flow
+  — asserts: one detection, one track, one identity hypothesis,
+    one 3D observation, one agent, one tactical exclusion zone,
+    one uncertain region, one static structure, one flight corridor,
+    one landmark, EffectiveWorldView contains actual state and uncertainty
+```
+
+### Not Yet Implemented
+
+Do not assume these exist:
+
+```text
+RecordedVideoFrameSource / MpegCameraSource
+AirSimFrameSource / AirSimEgoStateProvider
+AirSimDepthProjector / AirSimGroundTruthDetector
+NullDetector
+IouTracker / KalmanTracker2D
+YoloOnnxDetector / YoloTensorRtDetector
+real ReID
+container-aware identity resolver
+persistent memory layer / relative map store
+real flight corridor extraction
+voxel/SDF obstacle mapping
+behavior tree / control output
+iceoryx runtime transport
+```
+
+### Next Architectural Step
+
+Simulation/video ingestion — not behavior/control.
+
+```text
+RecordedVideoFrameSource or AirSimFrameSource
+  -> same PerceptionPipeline contract
+  -> same InMemoryWorldModel contract
+  -> WorldSnapshot JSON parity with synthetic source
+```
+
+Keep real AirSim/PX4 dependencies out of unit tests. Simulation adapters are integration-path modules, not required for core library tests.
