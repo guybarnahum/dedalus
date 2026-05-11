@@ -11,15 +11,15 @@ target_compile_features(test_world_snapshot_json PRIVATE cxx_std_20)
 
 add_test(NAME world_snapshot_json COMMAND test_world_snapshot_json)
 
-add_executable(test_milestone_1c_pipeline
-    unit/test_milestone_1c_pipeline.cpp
+add_executable(test_perception_world_model_flow
+    unit/test_perception_world_model_flow.cpp
 )
 
-target_link_libraries(test_milestone_1c_pipeline
+target_link_libraries(test_perception_world_model_flow
     PRIVATE
         dedalus_core
 )
 
-target_compile_features(test_milestone_1c_pipeline PRIVATE cxx_std_20)
+target_compile_features(test_perception_world_model_flow PRIVATE cxx_std_20)
 
-add_test(NAME milestone_1c_pipeline COMMAND test_milestone_1c_pipeline)
+add_test(NAME perception_world_model_flow COMMAND test_perception_world_model_flow)
