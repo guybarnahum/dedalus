@@ -2,7 +2,7 @@
 # frame_source=airsim through a fake bridge command without importing AirSim.
 
 frame_source: airsim
-airsim_bridge_command: python3 tests/fixtures/airsim_bridge_fake.py
+airsim_bridge_command: python3 tests/fixtures/airsim_bridge_ci_fake.py
 ego_provider: no_telemetry
 detector: scripted
 tracker: simple_centroid
