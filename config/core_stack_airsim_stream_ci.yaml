@@ -1,0 +1,19 @@
+# CI-safe persistent AirSim frame-stream provider composition. This exercises
+# frame_source=airsim through a fake JSONL stream bridge without importing AirSim.
+
+frame_source: airsim
+airsim_bridge_mode: stream_jsonl
+airsim_bridge_command: python3 tests/fixtures/airsim_stream_bridge_ci_fake.py --count 2 --rate-hz 0
+ego_provider: airsim
+airsim_ego_bridge_command: python3 tests/fixtures/airsim_ego_bridge_ci_fake.py
+detector: scripted
+tracker: simple_centroid
+identity_resolver: appearance_only
+projector: flat_ground
+world_model: in_memory
+fallback_map_frame_id: map_airsim_stream_ci_0001
+
+airsim_host: 127.0.0.1
+airsim_rpc_port: 41451
+airsim_vehicle_name: PX4
+airsim_camera_name: front_center
