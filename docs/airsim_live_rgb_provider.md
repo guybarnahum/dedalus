@@ -1,41 +1,49 @@
-# AirSim Live RGB Provider
+# AirSim Live RGB + Ego Providers
 
-This document describes the current live AirSim RGB ingestion path.
+This document describes the current live AirSim RGB and ego-state ingestion path.
 
 ## Status
 
-The core stack now supports a live RGB AirSim frame source through an external bridge command:
+The core stack now supports live AirSim scene images and ego-state telemetry through external bridge commands:
 
 ```text
 frame_source: airsim
 airsim_bridge_command: python3 simulation/airsim-capture-frame.py
-ego_provider: no_telemetry
+ego_provider: airsim
+airsim_ego_bridge_command: python3 simulation/airsim-capture-ego.py
 detector: scripted
 projector: flat_ground
 ```
 
-This is not a direct C++ AirSim RPC client. The C++ `AirSimFrameSource` remains dependency-free by invoking the configured bridge command, reading P6 PPM bytes from stdout, and converting them into a `FramePacket`.
+This is not a direct C++ AirSim RPC client. The C++ `AirSimFrameSource` and `AirSimEgoStateProvider` remain dependency-free by invoking configured bridge commands. The frame bridge returns P6 PPM bytes on stdout. The ego bridge returns flat JSON pose/velocity telemetry on stdout.
 
 ## Runtime Config
 
-Use:
+For RGB only with fallback/no-telemetry ego, use:
 
 ```text
 config/core_stack_airsim_live_rgb.yaml
 ```
 
-Example:
+For RGB plus AirSim ego telemetry, use:
+
+```text
+config/core_stack_airsim_live_rgb_ego.yaml
+```
+
+Example RGB + ego config:
 
 ```yaml
 frame_source: airsim
 airsim_bridge_command: python3 simulation/airsim-capture-frame.py
-ego_provider: no_telemetry
+ego_provider: airsim
+airsim_ego_bridge_command: python3 simulation/airsim-capture-ego.py
 detector: scripted
 tracker: simple_centroid
 identity_resolver: appearance_only
 projector: flat_ground
 world_model: in_memory
-fallback_map_frame_id: map_airsim_live_rgb_0001
+fallback_map_frame_id: map_airsim_live_ego_0001
 
 airsim_host: 127.0.0.1
 airsim_rpc_port: 41451
@@ -57,14 +65,14 @@ Then run the core stack from the repo root:
 ```bash
 cd ~/dedalus
 ./build-validation/apps/dedalus_core_stack \
-  --config config/core_stack_airsim_live_rgb.yaml
+  --config config/core_stack_airsim_live_rgb_ego.yaml
 ```
 
 For multiple snapshots:
 
 ```bash
 ./build-validation/apps/dedalus_replay_recording \
-  --config config/core_stack_airsim_live_rgb.yaml \
+  --config config/core_stack_airsim_live_rgb_ego.yaml \
   --output-dir out/airsim_live_snapshots \
   --max-frames 5
 ```
@@ -77,7 +85,14 @@ AirSim scene image
   -> P6 PPM stdout
   -> AirSimFrameSource
   -> FramePacket
-  -> NoTelemetryEgoProvider
+
+AirSim vehicle state
+  -> simulation/airsim-capture-ego.py
+  -> flat JSON stdout
+  -> AirSimEgoStateProvider
+  -> EgoState
+
+FramePacket + EgoState
   -> ScriptedDetector
   -> SimpleCentroidTracker
   -> FlatGroundProjector
@@ -90,7 +105,6 @@ AirSim scene image
 The following providers are still explicit unavailable integration stubs:
 
 ```text
-ego_provider: airsim
 detector: airsim_ground_truth
 projector: airsim_depth
 ```
@@ -103,18 +117,18 @@ CI does not require AirSim. It validates the live bridge path with:
 
 ```text
 config/core_stack_airsim_bridge_ci.yaml
-tests/fixtures/airsim_bridge_fake.py
+tests/fixtures/airsim_bridge_ci_fake.py
+tests/fixtures/airsim_ego_bridge_ci_fake.py
 tests/unit/test_airsim_provider_boundary.cpp
 ```
 
-The fake bridge emits a tiny P6 PPM frame to stdout. This verifies that `AirSimFrameSource` can execute an external bridge command, parse the frame, and run through `CoreStackRunner`, without installing AirSim.
+The fake frame bridge emits a tiny P6 PPM frame to stdout. The fake ego bridge emits deterministic pose and velocity JSON. This verifies that `AirSimFrameSource` and `AirSimEgoStateProvider` can execute external bridge commands, parse their outputs, and run through `CoreStackRunner`, without installing AirSim.
 
 ## Next Step
 
 The next AirSim slice should add one of:
 
 ```text
-AirSimEgoStateProvider bridge/backend
 AirSimDepthProjector bridge/backend
 AirSimGroundTruthDetector bridge/backend
 ```
