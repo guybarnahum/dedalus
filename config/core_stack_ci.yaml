@@ -1,0 +1,12 @@
+# CI-safe provider composition for the dependency-free core-stack smoke path.
+# This file intentionally uses a flat YAML subset parsed by the built-in
+# config loader. Keep heavy providers such as AirSim/OpenCV/GStreamer out of CI.
+
+frame_source: synthetic
+ego_provider: frame_hint
+detector: scripted
+tracker: simple_centroid
+identity_resolver: appearance_only
+projector: flat_ground
+world_model: in_memory
+fallback_map_frame_id: map_local_0001
