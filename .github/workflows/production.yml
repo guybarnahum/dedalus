@@ -32,10 +32,14 @@ jobs:
         run: |
           cmake -S . -B build-prod \
             -DDEDALUS_BUILD_APPS=ON \
+            -DDEDALUS_BUILD_TESTS=ON \
             -DCMAKE_BUILD_TYPE=Release
 
       - name: Build
         run: cmake --build build-prod -j$(nproc)
+
+      - name: Run unit tests
+        run: ctest --test-dir build-prod --output-on-failure
 
       - name: Run dedalus_core_stack
         run: ./build-prod/apps/dedalus_core_stack > /tmp/world_snapshot_prod.json
