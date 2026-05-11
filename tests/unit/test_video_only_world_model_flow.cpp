@@ -19,7 +19,7 @@ int main() {
     }
 
     dedalus::NoTelemetryEgoProvider ego_provider{dedalus::MapFrameId{"map_video_only_0001"}};
-    const auto ego_estimate = ego_provider.estimate(frame->timestamp);
+    const auto ego_estimate = ego_provider.estimate(*frame);
     if (!ego_estimate.ego.has_value() || ego_estimate.telemetry_available || ego_estimate.confidence >= 0.5F) {
         std::cerr << "no-telemetry ego provider did not report degraded ego state\n";
         return 1;
