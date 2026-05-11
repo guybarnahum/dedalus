@@ -4,10 +4,12 @@ This document captures the implemented state of the Dedalus core-stack after the
 
 ## Implemented architecture spine
 
-The repo now has a buildable C++20 core-stack skeleton:
+The repo now has a buildable C++20 core-stack skeleton with two dependency-free frame-ingestion modes:
 
 ```text
-SyntheticFrameSource
+SyntheticFrameSource OR VideoOnlyFrameSource
+  -> optional EgoStateProvider
+      -> synthetic ego hint OR NoTelemetryEgoProvider fallback
   -> PerceptionPipeline
       -> ScriptedDetector
       -> SimpleCentroidTracker
@@ -33,6 +35,8 @@ Current public headers include:
 ```text
 include/dedalus/core/types.hpp
 include/dedalus/sensors/frame_source.hpp
+include/dedalus/sensors/ego_state_provider.hpp
+include/dedalus/sensors/replay_frame_source.hpp
 include/dedalus/perception/types.hpp
 include/dedalus/perception/perception_pipeline.hpp
 include/dedalus/ipc/in_process_bus.hpp
@@ -49,6 +53,7 @@ Important value contracts now represented:
 FramePacket
 ImageView
 CameraIntrinsics
+EgoStateEstimate
 Detection2D
 Track2D
 IdentityHypothesis
@@ -70,6 +75,9 @@ EffectiveWorldView
 
 ```text
 SyntheticFrameSource
+ReplayFrameSource
+VideoOnlyFrameSource
+NoTelemetryEgoProvider
 ScriptedDetector
 SimpleCentroidTracker
 AppearanceOnlyIdentityResolver
@@ -98,6 +106,7 @@ Current tests are architectural, not milestone-named:
 ```text
 tests/unit/test_world_snapshot_json.cpp
 tests/unit/test_perception_world_model_flow.cpp
+tests/unit/test_video_only_world_model_flow.cpp
 ```
 
 `test_world_snapshot_json` guards the previous `map_frames` serialization bug.
@@ -116,6 +125,16 @@ one static structure
 one flight corridor
 one landmark
 EffectiveWorldView contains actual state and uncertainty
+```
+
+`test_video_only_world_model_flow` validates the degraded/no-telemetry ingestion path and asserts:
+
+```text
+VideoOnlyFrameSource emits no ego_hint
+NoTelemetryEgoProvider creates a low-confidence fallback ego state
+map_video_only_0001 is preserved as the relative map frame
+perception/world-model artifacts are still emitted
+appearance confidence remains low
 ```
 
 ## CI smoke contract
@@ -156,6 +175,8 @@ landmark_id = landmark_building_corner_0001
 ```text
 Core-stack bootstrap: implemented
 Synthetic perception pipeline: implemented
+Video-only/no-telemetry ingestion boundary: implemented
+Replay frame-source boundary: implemented
 In-memory world model: implemented
 Tactical exclusion layer placeholder: implemented
 EffectiveWorldView placeholder: implemented
@@ -169,8 +190,8 @@ CI/staging/production smoke assertions: implemented
 Do not assume these exist yet:
 
 ```text
-RecordedVideoFrameSource
-MpegCameraSource
+RecordedVideoFrameSource backed by real media decode
+MpegCameraSource backed by MPEG/RTSP/GStreamer/OpenCV
 AirSimFrameSource
 AirSimEgoStateProvider
 AirSimDepthProjector
@@ -192,13 +213,14 @@ iceoryx runtime transport
 
 ## Next recommended step
 
-The next architectural step should be simulation/video ingestion, not behavior/control:
+The next architectural step should be simulation ingestion, not behavior/control:
 
 ```text
-RecordedVideoFrameSource or AirSimFrameSource
+AirSimFrameSource or RecordedVideoFrameSource backed by actual media frames
+  -> same FrameSource contract
   -> same PerceptionPipeline contract
   -> same InMemoryWorldModel contract
-  -> WorldSnapshot JSON parity with synthetic source
+  -> WorldSnapshot JSON parity with synthetic/video-only sources
 ```
 
-Keep real AirSim/PX4 dependencies out of unit tests. Simulation adapters should be integration-path modules, not required for core library tests.
+Keep real AirSim/PX4/OpenCV/GStreamer dependencies out of unit tests. Simulation/media adapters should be integration-path modules, not required for core library tests.
