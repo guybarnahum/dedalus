@@ -19,3 +19,14 @@ target_link_libraries(dedalus_dump_world
 )
 
 target_compile_features(dedalus_dump_world PRIVATE cxx_std_20)
+
+add_executable(dedalus_replay_recording
+    dedalus_replay_recording.cpp
+)
+
+target_link_libraries(dedalus_replay_recording
+    PRIVATE
+        dedalus_core
+)
+
+target_compile_features(dedalus_replay_recording PRIVATE cxx_std_20)
