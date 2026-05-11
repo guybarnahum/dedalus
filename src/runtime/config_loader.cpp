@@ -56,6 +56,8 @@ void apply_config_value(CoreStackProviderConfig& config, const std::string& key,
         config.airsim_camera_name = value;
     } else if (key == "airsim_bridge_command") {
         config.airsim_bridge_command = value;
+    } else if (key == "airsim_ego_bridge_command") {
+        config.airsim_ego_bridge_command = value;
     } else if (key == "fallback_map_frame_id") {
         config.fallback_map_frame_id = MapFrameId{value};
     } else {
