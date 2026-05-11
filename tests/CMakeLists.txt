@@ -66,3 +66,20 @@ set_tests_properties(core_stack_config_loader
     PROPERTIES
         WORKING_DIRECTORY ${PROJECT_SOURCE_DIR}
 )
+
+add_executable(test_recorded_frame_world_model_flow
+    unit/test_recorded_frame_world_model_flow.cpp
+)
+
+target_link_libraries(test_recorded_frame_world_model_flow
+    PRIVATE
+        dedalus_core
+)
+
+target_compile_features(test_recorded_frame_world_model_flow PRIVATE cxx_std_20)
+
+add_test(NAME recorded_frame_world_model_flow COMMAND test_recorded_frame_world_model_flow)
+set_tests_properties(recorded_frame_world_model_flow
+    PROPERTIES
+        WORKING_DIRECTORY ${PROJECT_SOURCE_DIR}
+)
