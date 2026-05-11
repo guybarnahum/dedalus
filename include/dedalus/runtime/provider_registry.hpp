@@ -20,14 +20,14 @@ struct CoreStackProviderConfig {
     std::string projector{"flat_ground"};
     std::string world_model{"in_memory"};
     std::string recorded_manifest_path;
-    std::string airsim_host{"127.0.0.1"};
-    int airsim_rpc_port{41451};
-    std::string airsim_vehicle_name{"PX4"};
-    std::string airsim_camera_name{"front_center"};
-    std::string airsim_transport{"pipe"};
-    std::string airsim_bridge_command{"python3 simulation/airsim-capture-frame.py"};
-    std::string airsim_bridge_mode{"one_shot_ppm"};
-    std::string airsim_ego_bridge_command{"python3 simulation/airsim-capture-ego.py"};
+    std::string source_host{"127.0.0.1"};
+    int source_rpc_port{41451};
+    std::string vehicle_name{"PX4"};
+    std::string vehicle_camera_name{"front_center"};
+    std::string bridge_transport{"pipe"};
+    std::string bridge_command{"python3 simulation/airsim-capture-frame.py"};
+    std::string bridge_mode{"one_shot_ppm"};
+    std::string ego_bridge_command{"python3 simulation/airsim-capture-ego.py"};
     MapFrameId fallback_map_frame_id{"map_local_0001"};
 };
 
