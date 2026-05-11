@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cstdio>
 #include <string>
 
 #include "dedalus/perception/perception_pipeline.hpp"
@@ -14,6 +15,7 @@ struct AirSimProviderConfig {
     std::string vehicle_name{"PX4"};
     std::string camera_name{"front_center"};
     std::string bridge_command{"python3 simulation/airsim-capture-frame.py"};
+    std::string bridge_mode{"one_shot_ppm"};
     std::string ego_bridge_command{"python3 simulation/airsim-capture-ego.py"};
     MapFrameId map_frame_id{"map_airsim_0001"};
 };
@@ -21,12 +23,20 @@ struct AirSimProviderConfig {
 class AirSimFrameSource final : public FrameSource {
 public:
     explicit AirSimFrameSource(AirSimProviderConfig config);
+    ~AirSimFrameSource() override;
+
+    AirSimFrameSource(const AirSimFrameSource&) = delete;
+    AirSimFrameSource& operator=(const AirSimFrameSource&) = delete;
 
     std::optional<FramePacket> next_frame() override;
 
 private:
+    FramePacket next_one_shot_frame();
+    std::optional<FramePacket> next_stream_jsonl_frame();
+
     AirSimProviderConfig config_;
     int next_frame_index_{0};
+    FILE* stream_pipe_{nullptr};
 };
 
 class AirSimEgoStateProvider final : public EgoStateProvider {
