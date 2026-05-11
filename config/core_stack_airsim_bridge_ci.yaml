@@ -1,9 +1,11 @@
 # CI-safe AirSim bridge-provider composition. This exercises
-# frame_source=airsim through a fake bridge command without importing AirSim.
+# frame_source=airsim and ego_provider=airsim through fake bridge commands
+# without importing AirSim.
 
 frame_source: airsim
 airsim_bridge_command: python3 tests/fixtures/airsim_bridge_ci_fake.py
-ego_provider: no_telemetry
+ego_provider: airsim
+airsim_ego_bridge_command: python3 tests/fixtures/airsim_ego_bridge_ci_fake.py
 detector: scripted
 tracker: simple_centroid
 identity_resolver: appearance_only
