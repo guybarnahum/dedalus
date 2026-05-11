@@ -1,11 +1,12 @@
 #pragma once
 
-#include <cstdio>
+#include <memory>
 #include <string>
 
 #include "dedalus/perception/perception_pipeline.hpp"
 #include "dedalus/sensors/ego_state_provider.hpp"
 #include "dedalus/sensors/frame_source.hpp"
+#include "dedalus/simulation/bridge_transport.hpp"
 
 namespace dedalus {
 
@@ -14,6 +15,7 @@ struct AirSimProviderConfig {
     int rpc_port{41451};
     std::string vehicle_name{"PX4"};
     std::string camera_name{"front_center"};
+    std::string transport{"pipe"};
     std::string bridge_command{"python3 simulation/airsim-capture-frame.py"};
     std::string bridge_mode{"one_shot_ppm"};
     std::string ego_bridge_command{"python3 simulation/airsim-capture-ego.py"};
@@ -35,8 +37,8 @@ private:
     std::optional<FramePacket> next_stream_jsonl_frame();
 
     AirSimProviderConfig config_;
+    std::unique_ptr<BridgeTransport> transport_;
     int next_frame_index_{0};
-    FILE* stream_pipe_{nullptr};
 };
 
 class AirSimEgoStateProvider final : public EgoStateProvider {
@@ -47,6 +49,7 @@ public:
 
 private:
     AirSimProviderConfig config_;
+    std::unique_ptr<BridgeTransport> transport_;
 };
 
 class AirSimDepthProjector final : public Projector3D {
