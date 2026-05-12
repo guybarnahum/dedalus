@@ -7,6 +7,7 @@
 #include "dedalus/perception/perception_pipeline.hpp"
 #include "dedalus/sensors/ego_state_provider.hpp"
 #include "dedalus/sensors/frame_source.hpp"
+#include "dedalus/visualization/frame_annotator.hpp"
 #include "dedalus/world_model/in_memory_world_model.hpp"
 
 namespace dedalus {
@@ -15,10 +16,14 @@ struct CoreStackProviderConfig {
     std::string frame_source{"synthetic"};
     std::string ego_provider{"frame_hint"};
     std::string detector{"scripted"};
+    std::string camera_stabilizer{"null"};
     std::string tracker{"simple_centroid"};
     std::string identity_resolver{"appearance_only"};
     std::string projector{"flat_ground"};
     std::string world_model{"in_memory"};
+    std::string frame_annotator{"null"};
+    std::string annotation_output_path{"out/annotated.mp4"};
+    double annotation_output_fps{5.0};
     std::string recorded_manifest_path;
     std::string source_host{"127.0.0.1"};
     int source_rpc_port{41451};
@@ -35,10 +40,12 @@ struct CoreStackProviders {
     std::unique_ptr<FrameSource> frame_source;
     std::unique_ptr<EgoStateProvider> ego_provider;
     std::unique_ptr<Detector> detector;
+    std::unique_ptr<CameraStabilizer> camera_stabilizer;
     std::unique_ptr<Tracker> tracker;
     std::unique_ptr<IdentityResolver> identity_resolver;
     std::unique_ptr<Projector3D> projector;
     std::unique_ptr<InMemoryWorldModel> world_model;
+    std::unique_ptr<FrameAnnotationSink> frame_annotator;
 };
 
 class ProviderRegistry {
@@ -48,10 +55,12 @@ public:
     [[nodiscard]] std::vector<std::string> frame_sources() const;
     [[nodiscard]] std::vector<std::string> ego_providers() const;
     [[nodiscard]] std::vector<std::string> detectors() const;
+    [[nodiscard]] std::vector<std::string> camera_stabilizers() const;
     [[nodiscard]] std::vector<std::string> trackers() const;
     [[nodiscard]] std::vector<std::string> identity_resolvers() const;
     [[nodiscard]] std::vector<std::string> projectors() const;
     [[nodiscard]] std::vector<std::string> world_models() const;
+    [[nodiscard]] std::vector<std::string> frame_annotators() const;
 };
 
 }  // namespace dedalus
