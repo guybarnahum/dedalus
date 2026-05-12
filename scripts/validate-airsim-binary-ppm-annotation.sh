@@ -13,7 +13,9 @@ set -euo pipefail
 #   5. Writes a finite AirSim binary RGB + ppm_sequence config.
 #   6. Runs dedalus_replay_recording for N frames.
 #   7. Verifies snapshot + annotation artifacts.
-#   8. Reports annotation frame timestamps vs snapshot/ego timestamps.
+#   8. Validates annotation rows align with snapshot rows.
+#   9. Reports annotation frame timestamps vs snapshot/ego timestamps.
+#  10. Enforces a configurable soft timestamp-delta threshold.
 #
 # Assumptions:
 #   - Colosseum/AirSim is already running.
@@ -30,6 +32,7 @@ set -euo pipefail
 #   AIRSIM_CAMERA_NAME=front_center
 #   AIRSIM_FRAME_COUNT=10
 #   AIRSIM_RATE_HZ=5
+#   TIMESTAMP_SOFT_THRESHOLD_MS=500
 #   SKIP_BUILD=1
 #   SKIP_CTEST=1
 
@@ -45,6 +48,7 @@ AIRSIM_VEHICLE_NAME="${AIRSIM_VEHICLE_NAME:-PX4}"
 AIRSIM_CAMERA_NAME="${AIRSIM_CAMERA_NAME:-front_center}"
 AIRSIM_FRAME_COUNT="${AIRSIM_FRAME_COUNT:-10}"
 AIRSIM_RATE_HZ="${AIRSIM_RATE_HZ:-5}"
+TIMESTAMP_SOFT_THRESHOLD_MS="${TIMESTAMP_SOFT_THRESHOLD_MS:-500}"
 
 APP_PATH="$BUILD_DIR/apps/dedalus_replay_recording"
 
@@ -77,11 +81,27 @@ positive_int() {
   [[ "$value" =~ ^[0-9]+$ ]] && [[ "$value" -gt 0 ]]
 }
 
+positive_number() {
+  local value="$1"
+  python3 - "$value" <<'PY'
+import sys
+try:
+    value = float(sys.argv[1])
+except ValueError:
+    raise SystemExit(1)
+raise SystemExit(0 if value > 0 else 1)
+PY
+}
+
 log "repo root: $ROOT_DIR"
 cd "$ROOT_DIR"
 
 if ! positive_int "$AIRSIM_FRAME_COUNT"; then
   fail "AIRSIM_FRAME_COUNT must be a positive integer; got '$AIRSIM_FRAME_COUNT'"
+fi
+
+if ! positive_number "$TIMESTAMP_SOFT_THRESHOLD_MS"; then
+  fail "TIMESTAMP_SOFT_THRESHOLD_MS must be a positive number; got '$TIMESTAMP_SOFT_THRESHOLD_MS'"
 fi
 
 if command -v git >/dev/null 2>&1; then
@@ -244,6 +264,7 @@ from pathlib import Path
 
 annotation_manifest = Path("$ANNOTATION_MANIFEST")
 snapshot_manifest = Path("$SNAPSHOT_MANIFEST")
+soft_threshold_ms = float("$TIMESTAMP_SOFT_THRESHOLD_MS")
 
 annotation_rows = []
 for line in annotation_manifest.read_text().splitlines():
@@ -277,22 +298,42 @@ for line in snapshot_manifest.read_text().splitlines():
 if len(annotation_rows) != len(snapshot_rows):
     raise SystemExit(f"row count mismatch: annotations={len(annotation_rows)} snapshots={len(snapshot_rows)}")
 
-print("  index annotation_ts snapshot_ts delta_ns")
-max_abs_delta = 0
+print("  index annotation_ts snapshot_ts delta_ms frame_id snapshot")
+print("  ----- ------------- ----------- -------- -------- --------")
+max_abs_delta_ns = 0
 for ann, snap in zip(annotation_rows, snapshot_rows):
     if ann["index"] != snap["index"]:
         raise SystemExit(f"index mismatch: annotation={ann['index']} snapshot={snap['index']}")
-    delta = snap["timestamp_ns"] - ann["timestamp_ns"]
-    max_abs_delta = max(max_abs_delta, abs(delta))
-    print(f"  {ann['index']:>5} {ann['timestamp_ns']} {snap['timestamp_ns']} {delta}")
+    delta_ns = snap["timestamp_ns"] - ann["timestamp_ns"]
+    max_abs_delta_ns = max(max_abs_delta_ns, abs(delta_ns))
+    delta_ms = delta_ns / 1_000_000.0
+    print(
+        f"  {ann['index']:>5} "
+        f"{ann['timestamp_ns']} "
+        f"{snap['timestamp_ns']} "
+        f"{delta_ms:>8.3f} "
+        f"{ann['frame_id']} "
+        f"{snap['path']}"
+    )
 
-print(f"  max_abs_delta_ns: {max_abs_delta}")
+max_abs_delta_ms = max_abs_delta_ns / 1_000_000.0
+print(f"  rows: {len(annotation_rows)}")
+print(f"  max_abs_delta_ms: {max_abs_delta_ms:.3f}")
+print(f"  soft_threshold_ms: {soft_threshold_ms:.3f}")
 print()
 print("NOTE:")
 print("  For AirSim live RGB + ego_provider: airsim, exact timestamp equality is not expected today.")
 print("  Annotation timestamps come from the AirSim image response.")
 print("  Snapshot timestamps come from the per-sample ego bridge, which uses time.time_ns().")
-print("  This check validates row/index alignment and reports timing delta for follow-up policy work.")
+print("  This check validates row/index alignment and enforces a soft delta threshold.")
+
+if max_abs_delta_ms > soft_threshold_ms:
+    raise SystemExit(
+        "timestamp delta too large for current validation threshold: "
+        f"{max_abs_delta_ms:.3f} ms > {soft_threshold_ms:.3f} ms"
+    )
+
+print("OK: AirSim annotation rows align with snapshot rows")
 PY
 
 log "validation passed"
