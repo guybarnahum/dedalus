@@ -68,6 +68,12 @@ CoreStackProviders ProviderRegistry::create(const CoreStackProviderConfig& confi
         throw unknown_provider("detector", config.detector);
     }
 
+    if (config.camera_stabilizer == "null") {
+        providers.camera_stabilizer = std::make_unique<NullCameraStabilizer>();
+    } else {
+        throw unknown_provider("camera_stabilizer", config.camera_stabilizer);
+    }
+
     if (config.tracker == "simple_centroid") {
         providers.tracker = std::make_unique<SimpleCentroidTracker>();
     } else {
@@ -94,6 +100,16 @@ CoreStackProviders ProviderRegistry::create(const CoreStackProviderConfig& confi
         throw unknown_provider("world_model", config.world_model);
     }
 
+    if (config.frame_annotator == "null") {
+        providers.frame_annotator = std::make_unique<NullFrameAnnotationSink>();
+    } else if (config.frame_annotator == "mp4") {
+        providers.frame_annotator = std::make_unique<Mp4FrameAnnotationSink>(
+            config.annotation_output_path,
+            config.annotation_output_fps);
+    } else {
+        throw unknown_provider("frame_annotator", config.frame_annotator);
+    }
+
     return providers;
 }
 
@@ -107,6 +123,10 @@ std::vector<std::string> ProviderRegistry::ego_providers() const {
 
 std::vector<std::string> ProviderRegistry::detectors() const {
     return {"scripted", "airsim_ground_truth"};
+}
+
+std::vector<std::string> ProviderRegistry::camera_stabilizers() const {
+    return {"null"};
 }
 
 std::vector<std::string> ProviderRegistry::trackers() const {
@@ -123,6 +143,10 @@ std::vector<std::string> ProviderRegistry::projectors() const {
 
 std::vector<std::string> ProviderRegistry::world_models() const {
     return {"in_memory"};
+}
+
+std::vector<std::string> ProviderRegistry::frame_annotators() const {
+    return {"null", "mp4"};
 }
 
 }  // namespace dedalus
