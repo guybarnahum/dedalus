@@ -1,0 +1,108 @@
+#include "dedalus/runtime/pipeline_profiler.hpp"
+
+#include <filesystem>
+#include <stdexcept>
+#include <utility>
+
+namespace dedalus {
+namespace {
+
+std::string escape_json_string(const std::string& value) {
+    std::string escaped;
+    escaped.reserve(value.size());
+    for (const char ch : value) {
+        switch (ch) {
+            case '\\':
+                escaped += "\\\\";
+                break;
+            case '"':
+                escaped += "\\\"";
+                break;
+            case '\n':
+                escaped += "\\n";
+                break;
+            case '\r':
+                escaped += "\\r";
+                break;
+            case '\t':
+                escaped += "\\t";
+                break;
+            default:
+                escaped += ch;
+                break;
+        }
+    }
+    return escaped;
+}
+
+}  // namespace
+
+PipelineProfiler::PipelineProfiler(std::filesystem::path output_path)
+    : output_path_(std::move(output_path)) {
+    if (output_path_.empty()) {
+        throw std::invalid_argument("pipeline profiler requires non-empty profile_output_path");
+    }
+
+    if (output_path_.has_parent_path()) {
+        std::filesystem::create_directories(output_path_.parent_path());
+    }
+
+    output_.open(output_path_, std::ios::out | std::ios::trunc);
+    if (!output_) {
+        throw std::runtime_error("failed to open pipeline profile output: " + output_path_.string());
+    }
+}
+
+void PipelineProfiler::begin_frame(const FramePacket& frame) {
+    if (frame_open_) {
+        end_frame();
+    }
+
+    current_frame_ = PipelineFrameProfile{};
+    current_frame_.frame_id = frame.frame_id.value;
+    current_frame_.timestamp_ns = frame.timestamp.timestamp_ns;
+    frame_open_ = true;
+}
+
+void PipelineProfiler::record_stage(std::string name, const std::int64_t duration_us) {
+    if (!frame_open_) {
+        return;
+    }
+
+    current_frame_.stages.push_back(PipelineStageTiming{std::move(name), duration_us});
+}
+
+void PipelineProfiler::end_frame() {
+    if (!frame_open_) {
+        return;
+    }
+
+    std::int64_t total_us = 0;
+    for (const auto& stage : current_frame_.stages) {
+        total_us += stage.duration_us;
+    }
+
+    output_ << '{'
+            << "\"frame_id\":\"" << escape_json_string(current_frame_.frame_id) << "\",";
+    output_ << "\"timestamp_ns\":" << current_frame_.timestamp_ns << ',';
+    output_ << "\"total_us\":" << total_us << ',';
+    output_ << "\"stages\":{";
+
+    for (std::size_t i = 0; i < current_frame_.stages.size(); ++i) {
+        const auto& stage = current_frame_.stages[i];
+        if (i > 0U) {
+            output_ << ',';
+        }
+        output_ << '"' << escape_json_string(stage.name) << "\":" << stage.duration_us;
+    }
+
+    output_ << "}}\n";
+    output_.flush();
+    if (!output_) {
+        throw std::runtime_error("failed to write pipeline profile output: " + output_path_.string());
+    }
+
+    frame_open_ = false;
+}
+
+}  // namespace dedalus
