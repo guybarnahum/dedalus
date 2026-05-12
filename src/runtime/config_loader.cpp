@@ -29,6 +29,16 @@ std::string strip_quotes(std::string value) {
     return value;
 }
 
+bool parse_bool(const std::string& value) {
+    if (value == "true" || value == "1" || value == "yes" || value == "on") {
+        return true;
+    }
+    if (value == "false" || value == "0" || value == "no" || value == "off") {
+        return false;
+    }
+    throw std::invalid_argument("invalid boolean config value: " + value);
+}
+
 void apply_config_value(CoreStackProviderConfig& config, const std::string& key, const std::string& value) {
     if (key == "frame_source") {
         config.frame_source = value;
@@ -52,6 +62,10 @@ void apply_config_value(CoreStackProviderConfig& config, const std::string& key,
         config.annotation_output_path = value;
     } else if (key == "annotation_output_fps") {
         config.annotation_output_fps = std::stod(value);
+    } else if (key == "pipeline_timing_enabled") {
+        config.pipeline_timing_enabled = parse_bool(value);
+    } else if (key == "pipeline_timing_output_path") {
+        config.pipeline_timing_output_path = value;
     } else if (key == "recorded_manifest_path") {
         config.recorded_manifest_path = value;
     } else if (key == "source_host") {
