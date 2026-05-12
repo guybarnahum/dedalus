@@ -2,6 +2,8 @@
 
 #include <algorithm>
 #include <cctype>
+#include <cstdint>
+#include <cstring>
 #include <memory>
 #include <sstream>
 #include <stdexcept>
@@ -11,6 +13,23 @@
 
 namespace dedalus {
 namespace {
+
+constexpr std::size_t kBinaryFrameHeaderSize = 56U;
+constexpr std::uint32_t kBinaryFrameVersion = 1U;
+constexpr std::uint32_t kBinaryPixelFormatRgb8 = 1U;
+constexpr char kBinaryFrameMagic[8] = {'D', 'E', 'D', 'F', 'R', 'M', '1', '\0'};
+
+struct BinaryFrameHeader {
+    std::uint32_t header_size{0};
+    std::uint32_t version{0};
+    std::uint64_t sequence{0};
+    std::int64_t timestamp_ns{0};
+    std::uint32_t width{0};
+    std::uint32_t height{0};
+    std::uint32_t channels{0};
+    std::uint32_t pixel_format{0};
+    std::uint32_t payload_size{0};
+};
 
 std::runtime_error unavailable(const char* provider_name) {
     return std::runtime_error(
@@ -87,6 +106,70 @@ ImageView parse_ppm_bytes(const std::string& ppm) {
         throw std::runtime_error("AirSim bridge returned truncated PPM image data");
     }
 
+    return image;
+}
+
+std::uint32_t read_u32_le(const std::string& bytes, std::size_t offset) {
+    return static_cast<std::uint32_t>(static_cast<unsigned char>(bytes.at(offset))) |
+           (static_cast<std::uint32_t>(static_cast<unsigned char>(bytes.at(offset + 1U))) << 8U) |
+           (static_cast<std::uint32_t>(static_cast<unsigned char>(bytes.at(offset + 2U))) << 16U) |
+           (static_cast<std::uint32_t>(static_cast<unsigned char>(bytes.at(offset + 3U))) << 24U);
+}
+
+std::uint64_t read_u64_le(const std::string& bytes, std::size_t offset) {
+    std::uint64_t value = 0U;
+    for (std::size_t index = 0U; index < 8U; ++index) {
+        value |= static_cast<std::uint64_t>(static_cast<unsigned char>(bytes.at(offset + index))) << (8U * index);
+    }
+    return value;
+}
+
+std::int64_t read_i64_le(const std::string& bytes, std::size_t offset) {
+    return static_cast<std::int64_t>(read_u64_le(bytes, offset));
+}
+
+BinaryFrameHeader parse_binary_header(const std::string& header_bytes) {
+    if (header_bytes.size() != kBinaryFrameHeaderSize) {
+        throw std::runtime_error("binary frame header has invalid size");
+    }
+    if (std::memcmp(header_bytes.data(), kBinaryFrameMagic, sizeof(kBinaryFrameMagic)) != 0) {
+        throw std::runtime_error("binary frame header has invalid magic");
+    }
+
+    BinaryFrameHeader header;
+    header.header_size = read_u32_le(header_bytes, 8U);
+    header.version = read_u32_le(header_bytes, 12U);
+    header.sequence = read_u64_le(header_bytes, 16U);
+    header.timestamp_ns = read_i64_le(header_bytes, 24U);
+    header.width = read_u32_le(header_bytes, 32U);
+    header.height = read_u32_le(header_bytes, 36U);
+    header.channels = read_u32_le(header_bytes, 40U);
+    header.pixel_format = read_u32_le(header_bytes, 44U);
+    header.payload_size = read_u32_le(header_bytes, 48U);
+
+    if (header.header_size != kBinaryFrameHeaderSize || header.version != kBinaryFrameVersion) {
+        throw std::runtime_error("binary frame header has unsupported version or header size");
+    }
+    if (header.width == 0U || header.height == 0U || header.channels != 3U || header.pixel_format != kBinaryPixelFormatRgb8) {
+        throw std::runtime_error("binary frame header has unsupported image shape or pixel format");
+    }
+    if (header.payload_size != header.width * header.height * header.channels) {
+        throw std::runtime_error("binary frame payload size does not match image shape");
+    }
+
+    return header;
+}
+
+ImageView image_from_rgb_payload(const BinaryFrameHeader& header, const std::string& payload) {
+    if (payload.size() != header.payload_size) {
+        throw std::runtime_error("binary frame payload has invalid size");
+    }
+
+    ImageView image;
+    image.width = static_cast<int>(header.width);
+    image.height = static_cast<int>(header.height);
+    image.channels = static_cast<int>(header.channels);
+    image.bytes.assign(payload.begin(), payload.end());
     return image;
 }
 
@@ -280,7 +363,31 @@ std::optional<FramePacket> AirSimFrameSource::next_stream_jsonl_frame() {
         TimePoint{timestamp});
 }
 
+std::optional<FramePacket> AirSimFrameSource::next_stream_binary_frame() {
+    const auto command = build_bridge_command(config_, config_.bridge_command);
+    const auto header_bytes = transport_->read_stream_bytes(command, kBinaryFrameHeaderSize);
+    if (!header_bytes.has_value()) {
+        return std::nullopt;
+    }
+
+    const auto header = parse_binary_header(*header_bytes);
+    const auto payload = transport_->read_stream_bytes(command, header.payload_size);
+    if (!payload.has_value()) {
+        throw std::runtime_error("binary stream ended before frame payload");
+    }
+
+    ++next_frame_index_;
+    return frame_from_image(
+        config_,
+        image_from_rgb_payload(header, *payload),
+        FrameId{"binary_stream_frame_" + std::to_string(header.sequence)},
+        TimePoint{header.timestamp_ns});
+}
+
 std::optional<FramePacket> AirSimFrameSource::next_frame() {
+    if (config_.bridge_mode == "stream_binary") {
+        return next_stream_binary_frame();
+    }
     if (config_.bridge_mode == "stream_jsonl") {
         return next_stream_jsonl_frame();
     }
