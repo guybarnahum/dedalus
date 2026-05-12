@@ -136,4 +136,11 @@ if(Python3_Interpreter_FOUND)
             ${PROJECT_SOURCE_DIR}
             ${PROJECT_BINARY_DIR}
     )
+    add_test(
+        NAME replay_artifact_validator
+        COMMAND ${Python3_EXECUTABLE}
+            ${PROJECT_SOURCE_DIR}/tests/integration/test_replay_artifact_validator.py
+            ${PROJECT_SOURCE_DIR}
+            ${PROJECT_BINARY_DIR}
+    )
 endif()
