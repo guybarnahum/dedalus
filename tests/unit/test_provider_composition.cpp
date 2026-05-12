@@ -13,9 +13,16 @@ int main() {
         return 1;
     }
 
+    if (registry.camera_stabilizers().empty() || registry.frame_annotators().empty()) {
+        std::cerr << "provider registry missing stabilizer or annotator providers\n";
+        return 1;
+    }
+
     dedalus::CoreStackProviderConfig synthetic_config;
     synthetic_config.frame_source = "synthetic";
     synthetic_config.ego_provider = "frame_hint";
+    synthetic_config.camera_stabilizer = "null";
+    synthetic_config.frame_annotator = "null";
     synthetic_config.fallback_map_frame_id = dedalus::MapFrameId{"map_local_0001"};
 
     dedalus::CoreStackRunner synthetic_runner{registry.create(synthetic_config)};
@@ -33,6 +40,8 @@ int main() {
     dedalus::CoreStackProviderConfig video_config;
     video_config.frame_source = "video_only";
     video_config.ego_provider = "no_telemetry";
+    video_config.camera_stabilizer = "null";
+    video_config.frame_annotator = "null";
     video_config.fallback_map_frame_id = dedalus::MapFrameId{"map_video_only_0001"};
 
     dedalus::CoreStackRunner video_runner{registry.create(video_config)};
@@ -58,6 +67,20 @@ int main() {
 
     if (!threw) {
         std::cerr << "provider registry accepted an unknown provider\n";
+        return 1;
+    }
+
+    threw = false;
+    try {
+        dedalus::CoreStackProviderConfig bad_config;
+        bad_config.camera_stabilizer = "missing_provider";
+        (void)registry.create(bad_config);
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+
+    if (!threw) {
+        std::cerr << "provider registry accepted an unknown stabilizer provider\n";
         return 1;
     }
 
