@@ -102,6 +102,10 @@ CoreStackProviders ProviderRegistry::create(const CoreStackProviderConfig& confi
 
     if (config.frame_annotator == "null") {
         providers.frame_annotator = std::make_unique<NullFrameAnnotationSink>();
+    } else if (config.frame_annotator == "ppm_sequence") {
+        providers.frame_annotator = std::make_unique<PpmFrameAnnotationSink>(
+            config.annotation_output_path,
+            config.annotation_output_fps);
     } else if (config.frame_annotator == "mp4") {
         providers.frame_annotator = std::make_unique<Mp4FrameAnnotationSink>(
             config.annotation_output_path,
@@ -146,7 +150,7 @@ std::vector<std::string> ProviderRegistry::world_models() const {
 }
 
 std::vector<std::string> ProviderRegistry::frame_annotators() const {
-    return {"null", "mp4"};
+    return {"null", "ppm_sequence", "mp4"};
 }
 
 }  // namespace dedalus
