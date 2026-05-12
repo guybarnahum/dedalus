@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cstddef>
 #include <string>
 
 #include "dedalus/perception/perception_pipeline.hpp"
@@ -26,6 +27,19 @@ class NullFrameAnnotationSink final : public FrameAnnotationSink {
 public:
     void annotate(const AnnotationContext& context) override;
     void finish() override;
+};
+
+class PpmFrameAnnotationSink final : public FrameAnnotationSink {
+public:
+    explicit PpmFrameAnnotationSink(std::string output_dir, double output_fps);
+
+    void annotate(const AnnotationContext& context) override;
+    void finish() override;
+
+private:
+    std::string output_dir_;
+    double output_fps_{0.0};
+    std::size_t frame_index_{0U};
 };
 
 class Mp4FrameAnnotationSink final : public FrameAnnotationSink {
