@@ -3,7 +3,7 @@
 # Setup script for Project Dedalus Simulation Environment (AWS/EC2 GPU)
 # - Verifies NVIDIA L4/A10G/T4 GPU presence
 # - Esculates and maintains sudo privileges
-# - Installs core system dependencies (Docker, CMake, Ninja, build-essential, libacl1-dev)
+# - Installs core system dependencies (Docker, CMake, Ninja, build-essential, libacl1-dev, ffmpeg)
 # - Installs Remote Visualization (XFCE & NICE DCV)
 # - Fetches and builds Eclipse iceoryx (IPC)
 # - Fetches and builds PX4 SITL
@@ -140,7 +140,7 @@ if [ ! -f /var/lib/apt/periodic/update-success-stamp ] || [ $(find /var/lib/apt/
   run_and_log "Update APT cache" sudo apt-get update
 fi
 
-run_and_log "Install core tools" sudo DEBIAN_FRONTEND=noninteractive apt-get install -y build-essential cmake git wget curl ninja-build python3-pip libacl1-dev unzip
+run_and_log "Install core tools" sudo DEBIAN_FRONTEND=noninteractive apt-get install -y build-essential cmake git wget curl ninja-build python3-pip libacl1-dev unzip ffmpeg
 
 if ! command -v docker &>/dev/null; then
   run_and_log "Install Docker Server" sudo apt-get install -y docker.io docker-compose-v2
