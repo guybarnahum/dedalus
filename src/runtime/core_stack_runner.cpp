@@ -8,6 +8,7 @@ CoreStackRunner::CoreStackRunner(CoreStackProviders providers)
 bool CoreStackRunner::run_once() {
     const auto frame = providers_.frame_source->next_frame();
     if (!frame.has_value()) {
+        providers_.frame_annotator->finish();
         return false;
     }
 
@@ -18,6 +19,7 @@ bool CoreStackRunner::run_once() {
 
     PerceptionPipeline pipeline(
         *providers_.detector,
+        *providers_.camera_stabilizer,
         *providers_.tracker,
         *providers_.identity_resolver,
         *providers_.projector);
@@ -29,6 +31,12 @@ bool CoreStackRunner::run_once() {
         providers_.world_model->update_appearance(*frame->appearance_condition);
     }
     providers_.world_model->ingest(perception_output);
+
+    AnnotationContext annotation;
+    annotation.frame = perception_output.stabilized_frame.frame;
+    annotation.perception = perception_output;
+    annotation.world_snapshot = providers_.world_model->snapshot();
+    providers_.frame_annotator->annotate(annotation);
 
     return true;
 }
