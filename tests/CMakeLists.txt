@@ -143,4 +143,11 @@ if(Python3_Interpreter_FOUND)
             ${PROJECT_SOURCE_DIR}
             ${PROJECT_BINARY_DIR}
     )
+    add_test(
+        NAME ppm_sequence_mp4_export
+        COMMAND ${Python3_EXECUTABLE}
+            ${PROJECT_SOURCE_DIR}/tests/integration/test_ppm_sequence_mp4_export.py
+            ${PROJECT_SOURCE_DIR}
+            ${PROJECT_BINARY_DIR}
+    )
 endif()
