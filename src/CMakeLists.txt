@@ -9,6 +9,7 @@ add_library(dedalus_core
     runtime/provider_registry.cpp
     simulation/airsim_providers.cpp
     simulation/bridge_transport.cpp
+    visualization/frame_annotator.cpp
     world_model/in_memory_world_model.cpp
     world_model/rough_flight_map_builder.cpp
     world_model/tactical_obstacle_mapper.cpp
