@@ -209,17 +209,49 @@ def validate_snapshot_files(
             fail(f"snapshot {snapshot_path} has no agents")
 
 
+def resolve_annotation_frame_path(annotation_dir: Path, manifest_path_value: str) -> Path:
+    raw_path = Path(manifest_path_value)
+    if raw_path.is_absolute():
+        return raw_path
+
+    candidates = [
+        Path.cwd() / raw_path,
+        annotation_dir / raw_path,
+        annotation_dir / raw_path.name,
+    ]
+    for candidate in candidates:
+        if candidate.exists():
+            return candidate
+    return candidates[0]
+
+
 def validate_annotation_files(annotation_dir: Path, rows: list[AnnotationRow]) -> None:
     for row in rows:
-        frame_path = Path(row.path)
-        if not frame_path.is_absolute():
-            frame_path = annotation_dir.parent.parent / frame_path if row.path.startswith("out/") else annotation_dir / frame_path.name
+        frame_path = resolve_annotation_frame_path(annotation_dir, row.path)
         if not frame_path.exists():
             fail(f"annotation manifest references missing PPM frame: {row.path}")
         with frame_path.open("rb") as handle:
             magic = handle.read(2)
         if magic != b"P6":
             fail(f"annotation frame is not P6 PPM: {frame_path}")
+
+
+def validate_timestamp_delta(
+    label: str,
+    index: int,
+    left_timestamp_ns: int,
+    right_timestamp_ns: int,
+    threshold_ms: float | None,
+) -> float:
+    delta_ms = abs(left_timestamp_ns - right_timestamp_ns) / 1_000_000.0
+    if threshold_ms is None and delta_ms != 0.0:
+        fail(f"{label} timestamp mismatch at row {index}: delta_ms={delta_ms:.3f}")
+    if threshold_ms is not None and delta_ms > threshold_ms:
+        fail(
+            f"{label} timestamp delta too large at row {index}: "
+            f"{delta_ms:.3f} ms > {threshold_ms:.3f} ms"
+        )
+    return delta_ms
 
 
 def validate_alignment(
@@ -241,12 +273,15 @@ def validate_alignment(
         for snapshot, annotation in zip(snapshot_rows, annotation_rows):
             if snapshot.index != annotation.index:
                 fail(f"annotation/snapshot index mismatch: {annotation.index} != {snapshot.index}")
-            delta_ms = abs(snapshot.timestamp_ns - annotation.timestamp_ns) / 1_000_000.0
-            max_delta_ms = max(max_delta_ms, delta_ms)
-        if timestamp_soft_threshold_ms is not None and max_delta_ms > timestamp_soft_threshold_ms:
-            fail(
-                f"annotation/snapshot timestamp delta too large: "
-                f"{max_delta_ms:.3f} ms > {timestamp_soft_threshold_ms:.3f} ms"
+            max_delta_ms = max(
+                max_delta_ms,
+                validate_timestamp_delta(
+                    "annotation/snapshot",
+                    snapshot.index,
+                    annotation.timestamp_ns,
+                    snapshot.timestamp_ns,
+                    timestamp_soft_threshold_ms,
+                ),
             )
         print(f"annotation/snapshot max_abs_delta_ms: {max_delta_ms:.3f}")
 
@@ -256,14 +291,21 @@ def validate_alignment(
                 f"profile/snapshot row count mismatch: "
                 f"profile={len(profile_rows)} snapshots={len(snapshot_rows)}"
             )
+        max_delta_ms = 0.0
         for snapshot, profile in zip(snapshot_rows, profile_rows):
             if snapshot.index != profile.index:
                 fail(f"profile/snapshot index mismatch: {profile.index} != {snapshot.index}")
-            if snapshot.timestamp_ns != profile.timestamp_ns:
-                fail(
-                    f"profile/snapshot timestamp mismatch at row {snapshot.index}: "
-                    f"profile={profile.timestamp_ns} snapshot={snapshot.timestamp_ns}"
-                )
+            max_delta_ms = max(
+                max_delta_ms,
+                validate_timestamp_delta(
+                    "profile/snapshot",
+                    snapshot.index,
+                    profile.timestamp_ns,
+                    snapshot.timestamp_ns,
+                    timestamp_soft_threshold_ms,
+                ),
+            )
+        print(f"profile/snapshot max_abs_delta_ms: {max_delta_ms:.3f}")
 
 
 def main() -> int:
