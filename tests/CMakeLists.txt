@@ -101,6 +101,19 @@ set_tests_properties(airsim_provider_boundary
         WORKING_DIRECTORY ${PROJECT_SOURCE_DIR}
 )
 
+add_executable(test_ppm_frame_annotation_sink
+    unit/test_ppm_frame_annotation_sink.cpp
+)
+
+target_link_libraries(test_ppm_frame_annotation_sink
+    PRIVATE
+        dedalus_core
+)
+
+target_compile_features(test_ppm_frame_annotation_sink PRIVATE cxx_std_20)
+
+add_test(NAME ppm_frame_annotation_sink COMMAND test_ppm_frame_annotation_sink)
+
 find_package(Python3 COMPONENTS Interpreter)
 if(Python3_Interpreter_FOUND)
     add_test(
