@@ -97,5 +97,32 @@ int main() {
         return 1;
     }
 
+    const auto binary_config = dedalus::load_core_stack_config("config/core_stack_airsim_binary_ci.yaml");
+    if (binary_config.bridge_mode != "stream_binary" || binary_config.frame_source != "airsim") {
+        std::cerr << "AirSim binary config did not parse expected bridge mode\n";
+        return 1;
+    }
+
+    auto binary_providers = registry.create(binary_config);
+    const auto binary_frame_1 = binary_providers.frame_source->next_frame();
+    const auto binary_frame_2 = binary_providers.frame_source->next_frame();
+    const auto binary_frame_3 = binary_providers.frame_source->next_frame();
+    if (!binary_frame_1.has_value() || !binary_frame_2.has_value() || binary_frame_3.has_value()) {
+        std::cerr << "AirSim binary bridge did not produce exactly two CI frames\n";
+        return 1;
+    }
+
+    if (binary_frame_1->frame_id.value != "binary_stream_frame_1" ||
+        binary_frame_2->frame_id.value != "binary_stream_frame_2" ||
+        binary_frame_1->timestamp.timestamp_ns != 2000 ||
+        binary_frame_2->timestamp.timestamp_ns != 2001 ||
+        binary_frame_1->image.width != 2 ||
+        binary_frame_1->image.height != 2 ||
+        binary_frame_1->image.channels != 3 ||
+        binary_frame_1->image.bytes.size() != 12U) {
+        std::cerr << "AirSim binary bridge did not preserve frame metadata or payload\n";
+        return 1;
+    }
+
     return 0;
 }
