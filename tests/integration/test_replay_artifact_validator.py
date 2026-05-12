@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -22,6 +23,8 @@ def main() -> int:
     profile_jsonl = output_root / "pipeline_profile.jsonl"
     config_path = output_root / "core_stack_recorded_ppm_profile.yaml"
 
+    if output_root.exists():
+        shutil.rmtree(output_root)
     output_root.mkdir(parents=True, exist_ok=True)
     config_path.write_text(
         "\n".join(
