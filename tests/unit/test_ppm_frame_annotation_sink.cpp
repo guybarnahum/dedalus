@@ -6,6 +6,7 @@
 
 #include "dedalus/runtime/core_stack_runner.hpp"
 #include "dedalus/runtime/provider_registry.hpp"
+#include "dedalus/visualization/frame_annotator.hpp"
 
 namespace {
 
@@ -83,5 +84,58 @@ int main() {
     }
 
     std::filesystem::remove_all(output_dir);
+
+    // Low-resolution frame: overlay auto-scaling should choose glyph_scale=1 and
+    // still succeed without bounds violations on a 320x240 image.
+    {
+        const auto lowres_dir = std::filesystem::temp_directory_path() /
+                                "dedalus_ppm_frame_annotation_sink_lowres_test";
+        std::filesystem::remove_all(lowres_dir);
+
+        constexpr int kWidth = 320;
+        constexpr int kHeight = 240;
+
+        dedalus::AnnotationContext ctx;
+        ctx.frame.frame_id = dedalus::FrameId{"frame_lowres_0001"};
+        ctx.frame.timestamp = dedalus::TimePoint{42000000LL};
+        ctx.frame.image.width = kWidth;
+        ctx.frame.image.height = kHeight;
+        ctx.frame.image.channels = 3;
+        ctx.frame.image.bytes.assign(
+            static_cast<std::size_t>(kWidth * kHeight * 3), std::uint8_t{60U});
+
+        // One detection at coords well inside the frame.
+        dedalus::Detection2D det;
+        det.bbox_px = {30.0, 40.0, 80.0, 60.0};
+        det.class_label = dedalus::ClassLabel::Drone;
+        ctx.perception.stabilized_frame.detections.push_back(det);
+
+        // One track inside the frame.
+        dedalus::Track2D trk;
+        trk.track_id = dedalus::TrackId{"1"};
+        trk.bbox_px = {30.0, 40.0, 80.0, 60.0};
+        trk.class_label = dedalus::ClassLabel::Drone;
+        ctx.perception.tracks.push_back(trk);
+
+        dedalus::PpmFrameAnnotationSink lowres_sink{lowres_dir.string(), 5.0};
+        lowres_sink.annotate(ctx);
+
+        const auto lowres_frame = lowres_dir / "frame_000001.ppm";
+        if (!std::filesystem::exists(lowres_frame)) {
+            std::cerr << "low-resolution ppm annotation did not create frame artifact\n";
+            return 1;
+        }
+
+        const auto expected_lowres_size =
+            std::string{"P6\n320 240\n255\n"}.size() +
+            static_cast<std::size_t>(kWidth * kHeight * 3);
+        if (std::filesystem::file_size(lowres_frame) != expected_lowres_size) {
+            std::cerr << "low-resolution ppm annotation artifact has unexpected size\n";
+            return 1;
+        }
+
+        std::filesystem::remove_all(lowres_dir);
+    }
+
     return 0;
 }

@@ -100,6 +100,39 @@ std::array<std::uint8_t, 7> glyph_for(char ch) {
     }
 }
 
+struct OverlayStyle {
+    int glyph_scale = 1;
+    int stroke_px = 1;
+    int padding_px = 2;
+    int line_gap_px = 2;
+};
+
+int clamp_int(const int value, const int lo, const int hi) {
+    return std::max(lo, std::min(value, hi));
+}
+
+OverlayStyle choose_overlay_style(const int width, const int height) {
+    const int min_dim = std::min(width, height);
+
+    int scale = 1;
+    if (min_dim <= 360) {
+        scale = 1;
+    } else if (min_dim <= 900) {
+        scale = 2;
+    } else if (min_dim <= 1600) {
+        scale = 3;
+    } else {
+        scale = 4;
+    }
+
+    return OverlayStyle{
+        .glyph_scale = scale,
+        .stroke_px = std::max(1, scale),
+        .padding_px = std::max(2, 2 * scale),
+        .line_gap_px = std::max(2, scale),
+    };
+}
+
 void set_pixel(ImageView& image, const int x, const int y, const RgbColor color) {
     if (x < 0 || y < 0 || x >= image.width || y >= image.height || image.channels != 3) {
         return;
@@ -153,6 +186,46 @@ void draw_text(ImageView& image, int x, int y, const std::string& text, const Rg
         }
         cursor_x += 6 * safe_scale;
     }
+}
+
+int text_pixel_width(const std::string& text, const int glyph_scale) {
+    const int scale = std::max(1, glyph_scale);
+    if (text.empty()) {
+        return 0;
+    }
+    return static_cast<int>(text.size()) * 6 * scale;
+}
+
+int text_pixel_height(const int glyph_scale) {
+    return 8 * std::max(1, glyph_scale);
+}
+
+void draw_text_background(
+    ImageView& image,
+    const int x,
+    const int y,
+    const std::string& text,
+    const OverlayStyle& style,
+    const RgbColor bg_color) {
+    const int tw = text_pixel_width(text, style.glyph_scale);
+    const int th = text_pixel_height(style.glyph_scale);
+    const int left = clamp_int(x - style.padding_px, 0, image.width - 1);
+    const int top = clamp_int(y - style.padding_px, 0, image.height - 1);
+    const int right = clamp_int(x + tw + style.padding_px - 1, 0, image.width - 1);
+    const int bottom = clamp_int(y + th + style.padding_px - 1, 0, image.height - 1);
+    fill_rect(image, left, top, right - left + 1, bottom - top + 1, bg_color);
+}
+
+void draw_text_label(
+    ImageView& image,
+    const int x,
+    const int y,
+    const std::string& text,
+    const OverlayStyle& style,
+    const RgbColor fg_color,
+    const RgbColor bg_color) {
+    draw_text_background(image, x, y, text, style, bg_color);
+    draw_text(image, x, y, text, fg_color, style.glyph_scale);
 }
 
 std::string frame_file_name(const std::size_t frame_index) {
@@ -215,79 +288,100 @@ void append_manifest_row(
              << output_fps << '\n';
 }
 
-void draw_detection_overlay(ImageView& image, const Detection2D& detection) {
+void draw_detection_overlay(
+    ImageView& image, const Detection2D& detection, const OverlayStyle& style) {
     const RgbColor detection_color{255U, 210U, 0U};
     const int x = rounded_int(detection.bbox_px.x);
     const int y = rounded_int(detection.bbox_px.y);
     const int w = rounded_int(detection.bbox_px.width);
     const int h = rounded_int(detection.bbox_px.height);
-    draw_rect(image, x, y, w, h, detection_color, 2);
+    draw_rect(image, x, y, w, h, detection_color, style.stroke_px);
 
     const std::string label = "D:" + class_label_to_string(detection.class_label);
-    const int label_y = std::max(0, y - 12);
-    fill_rect(image, x, label_y, static_cast<int>(label.size()) * 6 + 4, 10, RgbColor{0U, 0U, 0U});
-    draw_text(image, x + 2, label_y + 1, label, detection_color, 1);
+    const int label_x = clamp_int(x + style.padding_px, 0, std::max(0, image.width - 1));
+    const int label_y = clamp_int(
+        y - text_pixel_height(style.glyph_scale) - style.padding_px,
+        0,
+        std::max(0, image.height - 1));
+    draw_text_label(image, label_x, label_y, label, style, detection_color, RgbColor{0U, 0U, 0U});
 }
 
-void draw_track_overlay(ImageView& image, const Track2D& track) {
+void draw_track_overlay(
+    ImageView& image, const Track2D& track, const OverlayStyle& style) {
     const RgbColor track_color{0U, 255U, 180U};
     const int x = rounded_int(track.bbox_px.x);
     const int y = rounded_int(track.bbox_px.y);
     const int w = rounded_int(track.bbox_px.width);
     const int h = rounded_int(track.bbox_px.height);
-    draw_rect(image, x - 3, y - 3, w + 6, h + 6, track_color, 1);
+    const int stroke = std::max(1, style.stroke_px);
+    draw_rect(image, x - stroke, y - stroke, w + 2 * stroke, h + 2 * stroke, track_color, stroke);
 
     std::ostringstream label;
     label << "T:" << track.track_id.value << " " << class_label_to_string(track.class_label);
-    const int label_y = std::min(image.height - 10, std::max(0, y + h + 3));
-    fill_rect(image, x, label_y, static_cast<int>(label.str().size()) * 6 + 4, 10, RgbColor{0U, 0U, 0U});
-    draw_text(image, x + 2, label_y + 1, label.str(), track_color, 1);
+    const int track_label_x = clamp_int(x + style.padding_px, 0, std::max(0, image.width - 1));
+    const int track_label_y = clamp_int(y + style.padding_px, 0, std::max(0, image.height - 1));
+    draw_text_label(
+        image, track_label_x, track_label_y, label.str(), style, track_color, RgbColor{0U, 0U, 0U});
 }
 
-void draw_world_metadata(ImageView& image, const AnnotationContext& context) {
+void draw_world_metadata(
+    ImageView& image, const AnnotationContext& context, const OverlayStyle& style) {
     const RgbColor text_color{255U, 255U, 255U};
-    fill_rect(image, 0, 0, image.width, 38, RgbColor{0U, 0U, 0U});
+    const RgbColor bg_color{0U, 0U, 0U};
+    const int hud_x = style.padding_px * 2;
+    int hud_y = style.padding_px * 2;
+    const int hud_line_advance = text_pixel_height(style.glyph_scale) + style.line_gap_px;
 
     const std::string line1 = "FRAME:" + context.frame.frame_id.value +
                               " MAP:" + context.world_snapshot.active_map_frame_id.value;
     const std::string line2 = "EGO MAP:" + context.world_snapshot.ego.map_frame_id.value +
                               " TS:" + std::to_string(context.frame.timestamp.timestamp_ns);
-    draw_text(image, 6, 5, line1, text_color, 1);
-    draw_text(image, 6, 19, line2, text_color, 1);
+    draw_text_label(image, hud_x, hud_y, line1, style, text_color, bg_color);
+    hud_y += hud_line_advance;
+    draw_text_label(image, hud_x, hud_y, line2, style, text_color, bg_color);
 }
 
-void draw_world_debug_shapes(ImageView& image, const WorldSnapshot& snapshot) {
+void draw_world_debug_shapes(
+    ImageView& image, const WorldSnapshot& snapshot, const OverlayStyle& style) {
     const RgbColor zone_color{255U, 80U, 80U};
     const RgbColor corridor_color{90U, 160U, 255U};
     const RgbColor landmark_color{190U, 120U, 255U};
+    const RgbColor bg_color{0U, 0U, 0U};
+    const int line_h = text_pixel_height(style.glyph_scale);
+    const int line_advance = line_h + style.line_gap_px;
+    const int indicator_size = std::max(8, line_h);
+    const int text_offset_x = indicator_size + style.padding_px * 2;
 
-    int y = 44;
+    int y = style.padding_px * 2 + line_h * 2 + style.line_gap_px * 2 + style.padding_px;
     for (const auto& zone : snapshot.tactical_exclusion_zones) {
-        draw_rect(image, 8, y, 22, 12, zone_color, 1);
-        draw_text(image, 36, y + 2, "ZONE:" + zone.zone_id.value, zone_color, 1);
-        y += 16;
-        if (y > image.height - 20) {
+        draw_rect(image, style.padding_px * 2, y, indicator_size, indicator_size, zone_color, style.stroke_px);
+        const int text_x = style.padding_px * 2 + text_offset_x;
+        draw_text_label(image, text_x, y, "ZONE:" + zone.zone_id.value, style, zone_color, bg_color);
+        y += line_advance;
+        if (y > image.height - line_advance) {
             break;
         }
     }
 
-    y = image.height - 18;
+    y = image.height - line_advance - style.padding_px;
     for (const auto& corridor : snapshot.flight_corridors) {
-        draw_rect(image, 8, y, 50, 8, corridor_color, 1);
-        draw_text(image, 64, y, "COR:" + corridor.corridor_id.value, corridor_color, 1);
-        y -= 14;
+        draw_rect(image, style.padding_px * 2, y, indicator_size * 3, indicator_size / 2 + 1, corridor_color, style.stroke_px);
+        const int text_x = style.padding_px * 2 + text_offset_x;
+        draw_text_label(image, text_x, y, "COR:" + corridor.corridor_id.value, style, corridor_color, bg_color);
+        y -= line_advance;
         if (y < image.height / 2) {
             break;
         }
     }
 
-    int x = image.width - 110;
-    y = 44;
+    const int landmark_col_width = text_pixel_width("LM:XXXXXXXX", style.glyph_scale) + text_offset_x + style.padding_px * 4;
+    int lm_x = image.width - landmark_col_width;
+    y = style.padding_px * 2 + line_h * 2 + style.line_gap_px * 2 + style.padding_px;
     for (const auto& landmark : snapshot.landmarks) {
-        draw_rect(image, x, y, 8, 8, landmark_color, 1);
-        draw_text(image, x + 12, y, "LM:" + landmark.landmark_id.value, landmark_color, 1);
-        y += 14;
-        if (y > image.height - 20) {
+        draw_rect(image, lm_x, y, indicator_size, indicator_size, landmark_color, style.stroke_px);
+        draw_text_label(image, lm_x + text_offset_x, y, "LM:" + landmark.landmark_id.value, style, landmark_color, bg_color);
+        y += line_advance;
+        if (y > image.height - line_advance) {
             break;
         }
     }
@@ -314,15 +408,16 @@ void PpmFrameAnnotationSink::annotate(const AnnotationContext& context) {
 
     std::filesystem::create_directories(output_dir_);
     ImageView annotated = context.frame.image;
+    const OverlayStyle overlay_style = choose_overlay_style(annotated.width, annotated.height);
 
-    draw_world_metadata(annotated, context);
+    draw_world_metadata(annotated, context, overlay_style);
     for (const auto& detection : context.perception.stabilized_frame.detections) {
-        draw_detection_overlay(annotated, detection);
+        draw_detection_overlay(annotated, detection, overlay_style);
     }
     for (const auto& track : context.perception.tracks) {
-        draw_track_overlay(annotated, track);
+        draw_track_overlay(annotated, track, overlay_style);
     }
-    draw_world_debug_shapes(annotated, context.world_snapshot);
+    draw_world_debug_shapes(annotated, context.world_snapshot, overlay_style);
 
     ++frame_index_;
     const auto frame_path = std::filesystem::path{output_dir_} / frame_file_name(frame_index_);
