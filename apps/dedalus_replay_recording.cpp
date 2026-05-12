@@ -3,11 +3,13 @@
 #include <fstream>
 #include <iomanip>
 #include <iostream>
+#include <memory>
 #include <sstream>
 #include <string>
 
 #include "dedalus/runtime/config_loader.hpp"
 #include "dedalus/runtime/core_stack_runner.hpp"
+#include "dedalus/runtime/pipeline_profiler.hpp"
 #include "dedalus/runtime/provider_registry.hpp"
 #include "dedalus/world_model/world_snapshot.hpp"
 
@@ -65,7 +67,13 @@ int main(int argc, char** argv) {
 
         const auto config = dedalus::load_core_stack_config(args.config_path);
         dedalus::ProviderRegistry registry;
-        dedalus::CoreStackRunner runner{registry.create(config)};
+
+        std::unique_ptr<dedalus::PipelineProfiler> timing_writer;
+        if (config.pipeline_timing_enabled) {
+            timing_writer = std::make_unique<dedalus::PipelineProfiler>(config.pipeline_timing_output_path);
+        }
+
+        dedalus::CoreStackRunner runner{registry.create(config), std::move(timing_writer)};
 
         const auto manifest_path = args.output_dir / "snapshot_manifest.txt";
         std::ofstream manifest{manifest_path};
@@ -103,6 +111,9 @@ int main(int argc, char** argv) {
 
         std::cout << "Wrote " << frame_count << " snapshot(s) to " << args.output_dir << "\n";
         std::cout << "Manifest: " << manifest_path << "\n";
+        if (config.pipeline_timing_enabled) {
+            std::cout << "Pipeline timing: " << config.pipeline_timing_output_path << "\n";
+        }
         return 0;
     } catch (const std::exception& ex) {
         std::cerr << "dedalus_replay_recording: " << ex.what() << "\n";
