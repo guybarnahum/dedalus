@@ -51,18 +51,6 @@ std::string class_label_to_string(const ClassLabel label) {
     }
 }
 
-std::string track_state_to_string(const TrackState state) {
-    switch (state) {
-        case TrackState::Tentative:
-            return "tentative";
-        case TrackState::Confirmed:
-            return "confirmed";
-        case TrackState::Lost:
-            return "lost";
-    }
-    return "unknown";
-}
-
 std::array<std::uint8_t, 7> glyph_for(char ch) {
     ch = static_cast<char>(std::toupper(static_cast<unsigned char>(ch)));
     switch (ch) {
