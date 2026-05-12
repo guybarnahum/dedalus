@@ -4,11 +4,11 @@
 
 > Current implementation note: for the latest concrete core-stack implementation state, see `docs/core_stack_current_state.md`. That file tracks the buildable contracts, placeholder modules, tests, CI smoke contract, and next recommended step.
 
-> Current handoff checkpoint: this file was updated for repo commit `7d7608d2dfc145c741859112123744cd36c685ab`. The active development phase is **Milestone 2: Video and Simulation Input**, with the core focus on live/simulated frame ingestion, bridge transports, provider modularity, replay artifacts, synchronized simulation capture, and visual validation hooks.
+> Current handoff checkpoint: this file was updated after the dependency-free PPM frame annotation provider slice. The active development phase remains **Milestone 2: Video and Simulation Input**, with the core focus now on validating visual annotation artifacts against recorded/simulated frame streams and preparing optional MP4/video export without adding mandatory media dependencies.
 
 ---
 
-## 0. Current Milestone 2 State at Commit `7d7608d2dfc145c741859112123744cd36c685ab`
+## 0. Current Milestone 2 State
 
 The repo is currently in Milestone 2. Milestone 1 is complete and the active work is connecting real or simulated frame sources into the C++ core-stack while keeping providers modular and CI dependency-free.
 
@@ -52,6 +52,16 @@ frame_annotator: null
 fallback_map_frame_id: map_local_0001
 ```
 
+Dependency-light visual validation provider:
+
+```yaml
+frame_annotator: ppm_sequence
+annotation_output_path: out/annotations
+annotation_output_fps: 5
+```
+
+`frame_annotator: null` remains the default and CI-safe no-op provider. `frame_annotator: ppm_sequence` is the first real visual annotation provider. It writes annotated PPM frames and a manifest using raw RGB pixel operations only, with no OpenCV, FFmpeg, GStreamer, or media-codec dependency. `frame_annotator: mp4` remains an explicit placeholder for a later optional export provider.
+
 ### Current source/provider work completed in Milestone 2
 
 Milestone 2 currently includes the following implemented slices:
@@ -90,6 +100,10 @@ Milestone 2 currently includes the following implemented slices:
 
 2E.7 — Perception stabilization and annotation hooks
   Implemented with NullCameraStabilizer and NullFrameAnnotationSink.
+
+2E.8 — Dependency-free visual annotation output
+  Implemented with PpmFrameAnnotationSink behind frame_annotator: ppm_sequence.
+  The provider writes annotated PPM image sequences plus manifest.txt for visual validation.
 ```
 
 ### Current source-neutral bridge config contract
@@ -1143,10 +1157,16 @@ struct AnnotationContext {
 };
 ```
 
-Current provider:
+Current CI-safe provider:
 
 ```text
 NullFrameAnnotationSink
+```
+
+Dependency-light visual validation provider:
+
+```text
+PpmFrameAnnotationSink
 ```
 
 Future placeholder provider:
@@ -1160,11 +1180,18 @@ Config shape:
 ```yaml
 frame_annotator: null
 
-# future:
+# dependency-light image sequence:
+frame_annotator: ppm_sequence
+annotation_output_path: out/annotations
+annotation_output_fps: 5
+
+# future optional video export:
 frame_annotator: mp4
 annotation_output_path: out/annotated.mp4
 annotation_output_fps: 5
 ```
+
+The PPM provider is implemented and writes annotated RGB frames plus manifest.txt using raw pixel operations. It is intended as the first real visual validation artifact path because it keeps normal unit tests dependency-free.
 
 The MP4 provider currently throws a clear not-implemented error and must remain optional. Do not add OpenCV, FFmpeg, or GStreamer as mandatory dependencies for unit tests. A future MP4 implementation should render world-model state onto processed frames and preserve raw input timing semantics so raw and annotated video can be watched side-by-side with the same mission duration.
 
@@ -1436,6 +1463,7 @@ world_model:
 
 frame_annotator:
   null
+  ppm_sequence
   mp4
 ```
 
@@ -1446,6 +1474,23 @@ AirSimDepthProjector is still an explicit unavailable integration provider.
 AirSimGroundTruthDetector is still an explicit unavailable integration provider.
 Mp4FrameAnnotationSink is still an explicit unavailable/placeholder provider.
 SharedMemoryBridgeTransport is still an explicit unavailable/placeholder transport.
+```
+
+Current visual annotation output:
+
+```text
+PpmFrameAnnotationSink is implemented and registered as frame_annotator: ppm_sequence.
+It writes:
+
+out/annotations/frame_000001.ppm
+out/annotations/frame_000002.ppm
+...
+out/annotations/manifest.txt
+
+The manifest records frame index, frame ID, timestamp, path, and configured output FPS.
+The first overlay slice draws detection boxes, track boxes, track IDs, class labels,
+frame ID, timestamp, active map frame, ego map frame, and simple debug markers for
+tactical exclusion zones, flight corridors, and landmarks.
 ```
 
 Current preferred AirSim frame processing path:
@@ -1488,14 +1533,16 @@ tmux session: dedalus-sim
 Milestone 2 remaining recommended work:
 
 ```text
-1. Run full ctest and fix any compile/test fallout from provider changes.
-2. Implement a real visual annotation renderer behind FrameAnnotationSink.
-3. Add MP4 export without making OpenCV/FFmpeg/GStreamer mandatory in unit tests.
-4. Make ego telemetry persistent or co-streamed with frame data.
-5. Implement AirSimDepthProjector bridge/backend.
-6. Implement AirSimGroundTruthDetector bridge/backend.
-7. Add optional shared-memory ring-buffer transport after binary pipe protocol stabilizes.
-8. Add a real camera/media provider, using the same bridge/source-neutral contracts.
+1. Run full ctest and fix any compile/test fallout from the ppm_sequence provider.
+2. Validate ppm_sequence against recorded_frames replay artifacts.
+3. Validate ppm_sequence against AirSim binary RGB capture artifacts.
+4. Add optional MP4 export or image-sequence-to-video conversion without making OpenCV/FFmpeg/GStreamer mandatory in unit tests.
+5. Add timestamp-driven duplication/drop policy for encoded video output.
+6. Make ego telemetry persistent or co-streamed with frame data.
+7. Implement AirSimDepthProjector bridge/backend.
+8. Implement AirSimGroundTruthDetector bridge/backend.
+9. Add optional shared-memory ring-buffer transport after binary pipe protocol stabilizes.
+10. Add a real camera/media provider, using the same bridge/source-neutral contracts.
 ```
 
 ### Milestone 3: Tactical Obstacle Layer
