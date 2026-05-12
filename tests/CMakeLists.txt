@@ -114,6 +114,19 @@ target_compile_features(test_ppm_frame_annotation_sink PRIVATE cxx_std_20)
 
 add_test(NAME ppm_frame_annotation_sink COMMAND test_ppm_frame_annotation_sink)
 
+add_executable(test_pipeline_profiler
+    unit/test_pipeline_profiler.cpp
+)
+
+target_link_libraries(test_pipeline_profiler
+    PRIVATE
+        dedalus_core
+)
+
+target_compile_features(test_pipeline_profiler PRIVATE cxx_std_20)
+
+add_test(NAME pipeline_profiler COMMAND test_pipeline_profiler)
+
 find_package(Python3 COMPONENTS Interpreter)
 if(Python3_Interpreter_FOUND)
     add_test(
