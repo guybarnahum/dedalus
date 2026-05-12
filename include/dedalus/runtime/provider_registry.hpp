@@ -24,6 +24,8 @@ struct CoreStackProviderConfig {
     std::string frame_annotator{"null"};
     std::string annotation_output_path{"out/annotated.mp4"};
     double annotation_output_fps{5.0};
+    bool pipeline_timing_enabled{false};
+    std::string pipeline_timing_output_path{"out/profile/pipeline_profile.jsonl"};
     std::string recorded_manifest_path;
     std::string source_host{"127.0.0.1"};
     int source_rpc_port{41451};
