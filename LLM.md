@@ -1197,6 +1197,93 @@ The MP4 provider currently throws a clear not-implemented error and must remain 
 
 ---
 
+## 8.2 Pipeline Timing / Profiling Contract
+
+The core runtime now has a dependency-free coarse timing harness for Milestone 2 validation.
+
+Config:
+
+```yaml
+pipeline_timing_enabled: false
+pipeline_timing_output_path: out/profile/pipeline_profile.jsonl
+```
+
+The default is off. When enabled, `dedalus_replay_recording` creates a JSONL timing writer and passes it into `CoreStackRunner`.
+
+The profiler writes one JSON object per processed frame:
+
+```json
+{"frame_id":"frame_0001","timestamp_ns":123456789,"total_us":962,"stages":{"frame_source.next_frame":437,"ego_provider.estimate":0,"perception_pipeline.process":497,"world_model.update_ego":0,"world_model.update_appearance":0,"world_model.ingest":23,"world_model.snapshot":5,"frame_annotator.annotate":0}}
+```
+
+Current stages:
+
+```text
+frame_source.next_frame
+ego_provider.estimate
+perception_pipeline.process
+world_model.update_ego
+world_model.update_appearance   # emitted when appearance metadata exists
+world_model.ingest
+world_model.snapshot
+frame_annotator.annotate
+```
+
+This should remain dependency-free. Do not add Tracy, perfetto, OpenCV, FFmpeg, GStreamer, or platform profilers to the core timing path. Rich profiling can be added later as optional tooling.
+
+---
+
+## 8.3 Replay Artifact Validation Contract
+
+Milestone 2.10 adds a CI-safe replay/capture artifact validator:
+
+```text
+scripts/validate-replay-artifacts.py
+```
+
+It validates the consistency of:
+
+```text
+snapshot_manifest.txt
+snapshot_*.json
+annotation manifest.txt, when annotation output is present
+annotated PPM frames, when annotation output is present
+pipeline_profile.jsonl, when timing output is present
+```
+
+Typical recorded-frame validation:
+
+```bash
+python3 scripts/validate-replay-artifacts.py \
+  --snapshot-dir out/recorded_ppm_validation/snapshots \
+  --annotation-dir out/recorded_ppm_validation/annotations \
+  --profile-jsonl out/recorded_profile/pipeline_profile.jsonl \
+  --expect-frames 1 \
+  --expect-map-frame map_recorded_ci_0001 \
+  --timestamp-soft-threshold-ms 0 \
+  --require-agent \
+  --require-world-keys
+```
+
+Typical AirSim validation:
+
+```bash
+python3 scripts/validate-replay-artifacts.py \
+  --snapshot-dir out/airsim_binary_ppm_profile_validation/snapshots \
+  --annotation-dir out/airsim_binary_ppm_profile_validation/annotations \
+  --profile-jsonl out/airsim_binary_ppm_profile_validation/pipeline_profile.jsonl \
+  --expect-frames 10 \
+  --timestamp-soft-threshold-ms 500 \
+  --require-agent \
+  --require-world-keys
+```
+
+Exact timestamp equality is required by default. Use `--timestamp-soft-threshold-ms` for AirSim runs because frame timestamps currently come from the image bridge while snapshot/ego timestamps come from a separate per-sample ego bridge.
+
+This closes the next validation gap before optional MP4 export, shared-memory transport, or Milestone 3 tactical obstacle work.
+
+---
+
 ## 9. IPC Strategy
 
 Production IPC target:
