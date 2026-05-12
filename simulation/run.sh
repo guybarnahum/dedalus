@@ -24,7 +24,7 @@ CORE_OUTPUT_DIR="../out/airsim_run_$TIMESTAMP"
 CORE_MAX_FRAMES="0"
 CORE_SAMPLING_FPS="5"
 CONTROL_START_DELAY_S="10"
-FLIGHT_CONTROL_MODE="px4"
+FLIGHT_CONTROL_MODE=""
 FLIGHT_TRAJECTORY="trajectories/circle_figure8.json"
 FLIGHT_SAFE_HEIGHT_M="8"
 
@@ -44,7 +44,9 @@ Options:
   --no-core-stack               Do not start the C++ core-stack side. Default.
   --with-flight-control         Start test-flight.py in a tmux window.
   --no-flight-control           Do not start test-flight.py. Default.
-  --flight-control MODE         test-flight.py --control value. Default: px4
+  --flight-control MODE         Optional test-flight.py --control value.
+                                If omitted, run.sh does not pass --control and lets
+                                test-flight.py use its own default behavior.
   --flight-trajectory PATH      test-flight.py --trajectory value. Default: trajectories/circle_figure8.json
   --flight-safe-height-m M      test-flight.py --safe-height value. Default: 8
   --control-start-delay-s N     Delay after PX4 window launch before starting velocity-control and aligned capture.
@@ -282,7 +284,11 @@ echo "🌍 Target Environment: $TARGET_ENV"
 echo "⏰ Started at: $(date)"
 if [[ "$WITH_FLIGHT_CONTROL" == "1" ]]; then
     echo "🕹️  Flight control: enabled"
-    echo "   Control mode: $FLIGHT_CONTROL_MODE"
+    if [[ -n "$FLIGHT_CONTROL_MODE" ]]; then
+        echo "   Control mode: $FLIGHT_CONTROL_MODE"
+    else
+        echo "   Control mode: test-flight.py default"
+    fi
     echo "   Trajectory:   $FLIGHT_TRAJECTORY_ABS"
     echo "   Start delay:  ${CONTROL_START_DELAY_S}s after PX4 window launch"
 fi
@@ -382,9 +388,26 @@ if [[ "$WITH_FLIGHT_CONTROL" == "1" ]]; then
         cleanup
     fi
 
+    FLIGHT_CONTROL_ARGS=(
+        python test-flight.py
+        --trajectory "$FLIGHT_TRAJECTORY_ABS"
+        --safe-height "$FLIGHT_SAFE_HEIGHT_M"
+    )
+
+    if [[ -n "$FLIGHT_CONTROL_MODE" ]]; then
+        FLIGHT_CONTROL_ARGS=(
+            python test-flight.py
+            --control "$FLIGHT_CONTROL_MODE"
+            --trajectory "$FLIGHT_TRAJECTORY_ABS"
+            --safe-height "$FLIGHT_SAFE_HEIGHT_M"
+        )
+    fi
+
+    printf -v FLIGHT_CONTROL_CMD '%q ' "${FLIGHT_CONTROL_ARGS[@]}"
+
     echo "🕹️  Starting flight-control window after ${CONTROL_START_DELAY_S}s delay..."
     tmux new-window -t "$SESSION_NAME" -n flight-control \
-        "sleep '$CONTROL_START_DELAY_S'; cd '$(pwd)' && source '$VENV_PATH/bin/activate' && python test-flight.py --control '$FLIGHT_CONTROL_MODE' --trajectory '$FLIGHT_TRAJECTORY_ABS' --safe-height '$FLIGHT_SAFE_HEIGHT_M' 2>&1 | tee '$FLIGHT_LOG_ABS'"
+        "sleep '$CONTROL_START_DELAY_S'; cd '$(pwd)' && source '$VENV_PATH/bin/activate' && $FLIGHT_CONTROL_CMD 2>&1 | tee '$FLIGHT_LOG_ABS'"
 
     echo "✅ Flight-control window started. Attach with: tmux attach -t $SESSION_NAME, then Ctrl-b w → flight-control"
     echo "📝 Flight-control log: $FLIGHT_LOG_ABS"
