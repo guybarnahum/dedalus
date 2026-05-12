@@ -20,15 +20,21 @@ int main() {
     const dedalus::EgoState ego = *frame->ego_hint;
 
     dedalus::ScriptedDetector detector;
+    dedalus::NullCameraStabilizer stabilizer;
     dedalus::SimpleCentroidTracker tracker;
     dedalus::AppearanceOnlyIdentityResolver identity_resolver;
     dedalus::FlatGroundProjector projector;
-    dedalus::PerceptionPipeline pipeline(detector, tracker, identity_resolver, projector);
+    dedalus::PerceptionPipeline pipeline(detector, stabilizer, tracker, identity_resolver, projector);
 
     const auto output = pipeline.process(*frame, ego);
-    if (output.detections.size() != 1U || output.tracks.size() != 1U ||
-        output.identities.size() != 1U || output.observations.size() != 1U) {
+    if (output.detections.size() != 1U || output.stabilized_frame.detections.size() != 1U ||
+        output.tracks.size() != 1U || output.identities.size() != 1U || output.observations.size() != 1U) {
         std::cerr << "unexpected pipeline output cardinality\n";
+        return 1;
+    }
+
+    if (output.stabilized_frame.transform_available) {
+        std::cerr << "null stabilizer unexpectedly reported a transform\n";
         return 1;
     }
 
