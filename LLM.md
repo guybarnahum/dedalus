@@ -4,6 +4,276 @@
 
 > Current implementation note: for the latest concrete core-stack implementation state, see `docs/core_stack_current_state.md`. That file tracks the buildable contracts, placeholder modules, tests, CI smoke contract, and next recommended step.
 
+> Current handoff checkpoint: this file was updated for repo commit `7d7608d2dfc145c741859112123744cd36c685ab`. The active development phase is **Milestone 2: Video and Simulation Input**, with the core focus on live/simulated frame ingestion, bridge transports, provider modularity, replay artifacts, synchronized simulation capture, and visual validation hooks.
+
+---
+
+## 0. Current Milestone 2 State at Commit `7d7608d2dfc145c741859112123744cd36c685ab`
+
+The repo is currently in Milestone 2. Milestone 1 is complete and the active work is connecting real or simulated frame sources into the C++ core-stack while keeping providers modular and CI dependency-free.
+
+The current architectural rule is:
+
+```text
+Core contracts should not know whether a source is AirSim, MPEG, camera SDK,
+OpenCV, GStreamer, shared memory, pipe, or future hardware.
+
+Provider implementations may know source-specific details.
+Config keys should remain source-neutral wherever possible.
+```
+
+The current buildable core-stack path is:
+
+```text
+FrameSource
+  -> EgoStateProvider
+  -> Detector
+  -> CameraStabilizer
+  -> Tracker
+  -> IdentityResolver
+  -> Projector3D
+  -> InMemoryWorldModel
+  -> FrameAnnotationSink
+  -> WorldSnapshot JSON
+```
+
+Current CI-safe provider composition defaults:
+
+```yaml
+frame_source: synthetic
+ego_provider: frame_hint
+detector: scripted
+camera_stabilizer: null
+tracker: simple_centroid
+identity_resolver: appearance_only
+projector: flat_ground
+world_model: in_memory
+frame_annotator: null
+fallback_map_frame_id: map_local_0001
+```
+
+### Current source/provider work completed in Milestone 2
+
+Milestone 2 currently includes the following implemented slices:
+
+```text
+2A — Recorded-frame ingestion provider
+  Implemented via RecordedFrameSource and recorded-frame fixture configs.
+
+2B — AirSim provider boundary
+  Implemented as registered provider names and provider configs.
+
+2C — AirSim export bridge
+  Implemented as Python AirSim frame export to PPM/manifest, consumable by RecordedFrameSource.
+
+2D — Replay snapshot artifacts
+  Implemented via apps/dedalus_replay_recording.
+
+2E.1 — Live AirSim RGB ingestion
+  Implemented through a bridge-backed frame source.
+
+2E.2 — Live AirSim ego-state ingestion
+  Implemented through a bridge-backed ego-state provider.
+
+2E.3 — Persistent AirSim frame stream
+  Implemented through stream_jsonl mode.
+
+2E.4 — Bridge transport abstraction
+  Implemented through BridgeTransport with pipe implemented and shared_memory placeholder.
+
+2E.5 — Binary framed bridge protocol
+  Implemented through stream_binary mode.
+
+2E.6 — Simulation/run orchestration
+  Implemented in simulation/run.sh with optional core-stack and flight-control windows,
+  sampling FPS control, and capture alignment to velocity-control start.
+
+2E.7 — Perception stabilization and annotation hooks
+  Implemented with NullCameraStabilizer and NullFrameAnnotationSink.
+```
+
+### Current source-neutral bridge config contract
+
+The project intentionally removed old AirSim-prefixed config keys from the config loader.
+
+Use only generic keys:
+
+```yaml
+source_host: 127.0.0.1
+source_rpc_port: 41451
+vehicle_name: PX4
+vehicle_camera_name: front_center
+
+bridge_transport: pipe
+bridge_mode: stream_binary
+bridge_command: python3 simulation/airsim-stream-frames-binary.py --count 0 --rate-hz 5
+
+ego_bridge_command: python3 simulation/airsim-capture-ego.py
+```
+
+Do **not** use these removed legacy keys:
+
+```yaml
+airsim_host:
+airsim_rpc_port:
+airsim_vehicle_name:
+airsim_camera_name:
+airsim_transport:
+airsim_bridge_mode:
+airsim_bridge_command:
+airsim_ego_bridge_command:
+```
+
+If those keys are used, `load_core_stack_config()` should fail with `unknown core-stack config key`.
+
+### Current bridge modes
+
+Frame bridge modes currently supported by `AirSimFrameSource`:
+
+```text
+one_shot_ppm
+  Debug/simple path. Runs a bridge command per frame and expects P6 PPM bytes.
+
+stream_jsonl
+  Persistent line-oriented path. Reads one JSON record per frame with base64 PPM payload.
+
+stream_binary
+  Preferred current path. Reads a fixed-size binary header plus raw RGB payload.
+```
+
+Preferred runtime config:
+
+```text
+config/core_stack_airsim_binary_rgb_ego.yaml
+```
+
+Preferred command:
+
+```bash
+./build-staging/apps/dedalus_replay_recording \
+  --config config/core_stack_airsim_binary_rgb_ego.yaml \
+  --output-dir out/airsim_binary_snapshots \
+  --max-frames 5
+```
+
+### Current bridge transports
+
+The bridge transport layer is separate from provider semantics.
+
+Current transport interface:
+
+```cpp
+class BridgeTransport {
+public:
+    virtual std::string request_once(const std::string& command) = 0;
+    virtual std::optional<std::string> read_stream_line(const std::string& command) = 0;
+    virtual std::optional<std::string> read_stream_bytes(const std::string& command, std::size_t byte_count) = 0;
+    virtual void close_stream() = 0;
+};
+```
+
+Implemented:
+
+```text
+PipeBridgeTransport
+```
+
+Explicit placeholder:
+
+```text
+SharedMemoryBridgeTransport
+```
+
+`shared_memory` is config-selectable but intentionally throws:
+
+```text
+shared_memory bridge transport is not implemented yet
+```
+
+Do not implement real shared memory until the binary frame protocol and timing semantics are stable.
+
+### Binary frame protocol
+
+`bridge_mode: stream_binary` uses the protocol documented in:
+
+```text
+docs/binary_frame_bridge_protocol.md
+```
+
+Header:
+
+```text
+magic[8]        = DEDFRM1\0
+header_size     uint32, currently 56
+version         uint32, currently 1
+sequence        uint64
+timestamp_ns    int64
+width           uint32
+height          uint32
+channels        uint32, currently 3
+pixel_format    uint32, currently 1 for RGB8
+payload_size    uint32
+reserved        uint32
+payload         raw RGB bytes
+```
+
+C++ validates:
+
+```text
+magic == DEDFRM1\0
+header_size == 56
+version == 1
+width > 0
+height > 0
+channels == 3
+pixel_format == RGB8
+payload_size == width * height * channels
+```
+
+### Current simulation/run.sh orchestration
+
+`simulation/run.sh` now supports launching both the simulator/control side and the core-stack capture side.
+
+Example:
+
+```bash
+cd ~/dedalus/simulation
+
+./run.sh AirSimNH \
+  --with-flight-control \
+  --with-core-stack \
+  --core-sampling-fps 5 \
+  --core-max-frames 0
+```
+
+Timing model:
+
+```text
+PX4 window starts
+sleep control-start-delay-s
+flight-control starts
+core-stack capture starts at the same scheduled time
+```
+
+`--core-max-frames 0` means:
+
+```text
+With --with-flight-control:
+  derive max frames from trajectory duration × core-sampling-fps
+  so capture ends with the velocity-control trajectory.
+
+Without --with-flight-control:
+  keep old behavior and run until the stream ends.
+```
+
+`run.sh` generates:
+
+```text
+out/airsim_run_<timestamp>/core_stack_runtime.yaml
+```
+
+and rewrites `--rate-hz` inside the selected bridge command to match `--core-sampling-fps`.
+
 ---
 
 ## 1. Project Identity
@@ -137,6 +407,8 @@ First implementations may be simplistic:
 ```text
 ScriptedDetector
 SimpleCentroidTracker
+NullCameraStabilizer
+NullFrameAnnotationSink
 AppearanceOnlyIdentityResolver
 FlatGroundProjector
 ConeExclusionMapper
@@ -149,6 +421,8 @@ Future implementations should fit behind the same contracts:
 ```text
 YoloTensorRtDetector
 ReIdKalmanTracker
+FeatureBasedCameraStabilizer
+Mp4FrameAnnotationSink
 ContainerAwareIdentityResolver
 ClothingChangeRobustIdentityResolver
 VioRayProjector
@@ -159,7 +433,7 @@ PersistentMemoryLayer
 LightingRobustEmbeddings
 ```
 
-Avoid hardcoding AirSim, TensorRT, PX4, YOLO, iceoryx, or a specific camera path into the core contracts.
+Avoid hardcoding AirSim, TensorRT, PX4, YOLO, iceoryx, OpenCV, GStreamer, FFmpeg, shared memory, or a specific camera path into the core contracts.
 
 ---
 
@@ -321,6 +595,55 @@ ReIdTracker
 ContainerAwareIdentityResolver
 ClothingChangeRobustIdentityResolver
 ```
+
+### 5.3.1 CameraStabilizer
+
+Camera stabilization is now an explicit pipeline provider after detection and before tracking.
+
+Current stage order:
+
+```text
+FramePacket
+    -> Detector
+    -> CameraStabilizer
+    -> Tracker
+    -> IdentityResolver
+    -> Projector3D
+```
+
+The stabilizer receives the current frame plus detections. This placement allows the stabilizer to use detected objects, keypoints, or future feature tracks to estimate camera motion and stabilize detections before tracker association.
+
+Current contract:
+
+```cpp
+struct StabilizedFrame {
+    FramePacket frame;
+    std::vector<Detection2D> detections;
+    bool transform_available;
+    double dx_px;
+    double dy_px;
+    double rotation_rad;
+    double confidence;
+};
+
+class CameraStabilizer {
+public:
+    virtual ~CameraStabilizer() = default;
+    virtual StabilizedFrame stabilize(
+        const FramePacket& frame,
+        const std::vector<Detection2D>& detections) = 0;
+};
+```
+
+Current provider:
+
+```text
+NullCameraStabilizer
+```
+
+`NullCameraStabilizer` is a pass-through implementation. It copies the input frame and detections unchanged and reports `transform_available = false`.
+
+Future providers may use optical flow, ORB/SIFT/SuperPoint-like features, IMU hints, homography estimation, static landmarks, or world-model landmarks.
 
 ### 5.4 EgoState
 
@@ -796,6 +1119,57 @@ Early apps should be able to emit JSON snapshots for tests and visualization:
 
 ---
 
+## 8.1 Visual Validation / Frame Annotation Contract
+
+The runtime now has a post-world-model annotation hook.
+
+Runtime order:
+
+```text
+FramePacket
+  -> perception pipeline
+  -> world model update
+  -> WorldSnapshot
+  -> FrameAnnotationSink
+```
+
+The annotation sink receives:
+
+```cpp
+struct AnnotationContext {
+    FramePacket frame;
+    PerceptionPipelineOutput perception;
+    WorldSnapshot world_snapshot;
+};
+```
+
+Current provider:
+
+```text
+NullFrameAnnotationSink
+```
+
+Future placeholder provider:
+
+```text
+Mp4FrameAnnotationSink
+```
+
+Config shape:
+
+```yaml
+frame_annotator: null
+
+# future:
+frame_annotator: mp4
+annotation_output_path: out/annotated.mp4
+annotation_output_fps: 5
+```
+
+The MP4 provider currently throws a clear not-implemented error and must remain optional. Do not add OpenCV, FFmpeg, or GStreamer as mandatory dependencies for unit tests. A future MP4 implementation should render world-model state onto processed frames and preserve raw input timing semantics so raw and annotated video can be watched side-by-side with the same mission duration.
+
+---
+
 ## 9. IPC Strategy
 
 Production IPC target:
@@ -848,6 +1222,8 @@ sensors:
 perception:
   detector:
     type: scripted
+  camera_stabilizer:
+    type: null
   tracker:
     type: iou
   identity_resolver:
@@ -870,6 +1246,12 @@ world_model:
     type: multires_height_map
   memory:
     type: disabled
+
+visualization:
+  frame_annotator:
+    type: null
+    output_path: out/annotated.mp4
+    output_fps: 5
 ```
 
 Future production-style config:
@@ -889,6 +1271,8 @@ perception:
   detector:
     type: yolo_tensorrt
     engine_path: models/detectors/yolo11_int8.engine
+  camera_stabilizer:
+    type: feature_homography
   tracker:
     type: reid_kalman
   identity_resolver:
@@ -912,6 +1296,12 @@ world_model:
   memory:
     type: persistent
     path: data/world_memory
+
+visualization:
+  frame_annotator:
+    type: mp4
+    output_path: out/annotated.mp4
+    output_fps: 10
 ```
 
 ---
@@ -960,23 +1350,152 @@ Unit tests pass under ctest
 CI, staging, and production smoke-validate the JSON contract
 ```
 
-### Milestone 2: Video and Simulation Input
+### Milestone 2: Video and Simulation Input ✅ In Progress
 
-Add:
+Milestone 2 is the current active milestone. Its purpose is to connect real/simulated frame sources into the core-stack while preserving provider modularity and keeping CI dependency-free.
+
+Completed in Milestone 2 so far:
 
 ```text
-RecordedVideoFrameSource
-MpegCameraSource
-AirSimFrameSource
-AirSimEgoStateProvider
-AirSimDepthProjector or AirSimGroundTruthDetector
-SimpleAppearanceConditionEstimator
+RecordedFrameSource
+Replay snapshot artifact app
+AirSim provider boundary
+AirSim export bridge
+Live AirSim RGB bridge
+Live AirSim ego bridge
+Persistent JSONL stream bridge
+BridgeTransport abstraction
+PipeBridgeTransport
+SharedMemoryBridgeTransport placeholder
+Binary framed RGB bridge
+simulation/run.sh core-stack orchestration
+simulation/run.sh flight-control/capture alignment
+CameraStabilizer provider slot
+NullCameraStabilizer
+FrameAnnotationSink provider slot
+NullFrameAnnotationSink
+Mp4FrameAnnotationSink placeholder
 ```
 
-Goal:
+Current key files:
 
 ```text
-Run the perception/world-model stack during an existing Colosseum/PX4 trajectory.
+apps/dedalus_replay_recording.cpp
+include/dedalus/simulation/bridge_transport.hpp
+src/simulation/bridge_transport.cpp
+include/dedalus/simulation/airsim_providers.hpp
+src/simulation/airsim_providers.cpp
+simulation/airsim-capture-frame.py
+simulation/airsim-capture-ego.py
+simulation/airsim-stream-frames.py
+simulation/airsim-stream-frames-binary.py
+tests/fixtures/airsim_bridge_ci_fake.py
+tests/fixtures/airsim_ego_bridge_ci_fake.py
+tests/fixtures/airsim_stream_bridge_ci_fake.py
+tests/fixtures/airsim_binary_bridge_ci_fake.py
+config/core_stack_airsim_binary_rgb_ego.yaml
+config/core_stack_airsim_binary_ci.yaml
+docs/binary_frame_bridge_protocol.md
+docs/bridge_transport_plugins.md
+docs/perception_stabilization_annotation.md
+```
+
+Current provider names:
+
+```text
+frame_source:
+  synthetic
+  video_only
+  recorded_frames
+  airsim
+
+ego_provider:
+  frame_hint
+  no_telemetry
+  airsim
+
+detector:
+  scripted
+  airsim_ground_truth
+
+camera_stabilizer:
+  null
+
+tracker:
+  simple_centroid
+
+identity_resolver:
+  appearance_only
+
+projector:
+  flat_ground
+  airsim_depth
+
+world_model:
+  in_memory
+
+frame_annotator:
+  null
+  mp4
+```
+
+Current important limitation:
+
+```text
+AirSimDepthProjector is still an explicit unavailable integration provider.
+AirSimGroundTruthDetector is still an explicit unavailable integration provider.
+Mp4FrameAnnotationSink is still an explicit unavailable/placeholder provider.
+SharedMemoryBridgeTransport is still an explicit unavailable/placeholder transport.
+```
+
+Current preferred AirSim frame processing path:
+
+```text
+AirSim / Colosseum
+  -> simulation/airsim-stream-frames-binary.py
+  -> PipeBridgeTransport
+  -> AirSimFrameSource
+  -> FramePacket
+  -> AirSimEgoStateProvider
+  -> PerceptionPipeline
+  -> InMemoryWorldModel
+  -> FrameAnnotationSink
+  -> WorldSnapshot JSON
+```
+
+Preferred command:
+
+```bash
+cd ~/dedalus/simulation
+
+./run.sh AirSimNH \
+  --with-flight-control \
+  --with-core-stack \
+  --core-sampling-fps 5 \
+  --core-max-frames 0
+```
+
+This launches:
+
+```text
+tmux session: dedalus-sim
+  main window: Colosseum/AirSim
+  px4 window: PX4 SITL
+  flight-control window: test-flight.py
+  core-stack window: dedalus_replay_recording
+```
+
+Milestone 2 remaining recommended work:
+
+```text
+1. Run full ctest and fix any compile/test fallout from provider changes.
+2. Implement a real visual annotation renderer behind FrameAnnotationSink.
+3. Add MP4 export without making OpenCV/FFmpeg/GStreamer mandatory in unit tests.
+4. Make ego telemetry persistent or co-streamed with frame data.
+5. Implement AirSimDepthProjector bridge/backend.
+6. Implement AirSimGroundTruthDetector bridge/backend.
+7. Add optional shared-memory ring-buffer transport after binary pipe protocol stabilizes.
+8. Add a real camera/media provider, using the same bridge/source-neutral contracts.
 ```
 
 ### Milestone 3: Tactical Obstacle Layer
@@ -1102,10 +1621,32 @@ The intended workflow is:
 cd ~/dedalus/simulation
 ./setup.sh --yes
 ./cleanup.sh --soft --yes
-./run.sh
+./run.sh AirSimNH
 ```
 
-Then in another terminal:
+For Milestone 2 core-stack integration, the preferred workflow is:
+
+```bash
+cd ~/dedalus
+
+cmake -S . -B build-staging \
+  -DDEDALUS_BUILD_APPS=ON \
+  -DDEDALUS_BUILD_TESTS=ON
+
+cmake --build build-staging -j$(nproc)
+
+cd simulation
+
+./run.sh AirSimNH \
+  --with-flight-control \
+  --with-core-stack \
+  --core-sampling-fps 5 \
+  --core-max-frames 0
+```
+
+This starts simulator, PX4, velocity-control, and core-stack capture in one tmux session.
+
+Manual flight test remains available:
 
 ```bash
 cd ~/dedalus/simulation
@@ -1113,7 +1654,7 @@ source ~/dedalus/venv/bin/activate
 python test-flight.py
 ```
 
-The simulation should now be used as an integration harness for the core-stack. Avoid coupling the core-stack directly to `test-flight.py`; instead, add adapters or tools that can observe/consume simulation frames while `test-flight.py` handles the known-good flight motion path.
+The simulation should now be used as an integration harness for the core-stack. `run.sh` may orchestrate `test-flight.py` and `dedalus_replay_recording` together, but the core-stack itself should remain decoupled from `test-flight.py`. The coupling should remain at orchestration/config level, not inside core perception/world-model contracts.
 
 ---
 
@@ -1214,7 +1755,9 @@ Current working order:
 6. Launch Colosseum / Unreal / AirSim first
 7. Wait for AirSim TCP server on 127.0.0.1:4560
 8. Launch PX4 SITL in tmux window named px4
-9. Keep Unreal process in foreground of main tmux window
+9. Optionally launch flight-control tmux window
+10. Optionally launch core-stack capture tmux window
+11. Keep Unreal process in foreground of main tmux window
 ```
 
 The critical point is:
@@ -1222,6 +1765,51 @@ The critical point is:
 ```text
 PX4 waits for simulator TCP 4560, so AirSim/Colosseum must be started first.
 ```
+
+Current core-stack orchestration options:
+
+```bash
+--with-core-stack
+--no-core-stack
+--with-flight-control
+--no-flight-control
+--flight-control px4
+--flight-trajectory trajectories/circle_figure8.json
+--flight-safe-height-m 8
+--control-start-delay-s 10
+--core-build-dir ../build-staging
+--core-config ../config/core_stack_airsim_binary_rgb_ego.yaml
+--core-output-dir ../out/airsim_run_<timestamp>
+--core-sampling-fps 5
+--core-max-frames 0
+```
+
+Timing rule:
+
+```text
+PX4 window starts
+sleep control-start-delay-s
+flight-control starts
+core-stack capture starts at the same scheduled time
+```
+
+`--core-max-frames 0` semantics:
+
+```text
+With --with-flight-control:
+  derive max frames from trajectory duration × core-sampling-fps.
+
+Without --with-flight-control:
+  run until stream ends.
+```
+
+`run.sh` generates:
+
+```text
+out/airsim_run_<timestamp>/core_stack_runtime.yaml
+```
+
+and rewrites bridge command `--rate-hz` to match `--core-sampling-fps`.
 
 Expected healthy AirSim log:
 
