@@ -5,8 +5,10 @@
 frame_source: synthetic
 ego_provider: frame_hint
 detector: scripted
+camera_stabilizer: null
 tracker: simple_centroid
 identity_resolver: appearance_only
 projector: flat_ground
 world_model: in_memory
+frame_annotator: null
 fallback_map_frame_id: map_local_0001
