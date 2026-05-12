@@ -35,6 +35,7 @@ public:
 private:
     FramePacket next_one_shot_frame();
     std::optional<FramePacket> next_stream_jsonl_frame();
+    std::optional<FramePacket> next_stream_binary_frame();
 
     AirSimProviderConfig config_;
     std::unique_ptr<BridgeTransport> transport_;
