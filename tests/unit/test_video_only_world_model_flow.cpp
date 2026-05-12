@@ -28,10 +28,11 @@ int main() {
     const dedalus::EgoState ego = *ego_estimate.ego;
 
     dedalus::ScriptedDetector detector;
+    dedalus::NullCameraStabilizer stabilizer;
     dedalus::SimpleCentroidTracker tracker;
     dedalus::AppearanceOnlyIdentityResolver identity_resolver;
     dedalus::FlatGroundProjector projector;
-    dedalus::PerceptionPipeline pipeline(detector, tracker, identity_resolver, projector);
+    dedalus::PerceptionPipeline pipeline(detector, stabilizer, tracker, identity_resolver, projector);
 
     const auto output = pipeline.process(*frame, ego);
     if (output.observations.size() != 1U) {
