@@ -6,10 +6,12 @@ namespace dedalus {
 
 PerceptionPipeline::PerceptionPipeline(
     Detector& detector,
+    CameraStabilizer& stabilizer,
     Tracker& tracker,
     IdentityResolver& identity_resolver,
     Projector3D& projector)
     : detector_(detector),
+      stabilizer_(stabilizer),
       tracker_(tracker),
       identity_resolver_(identity_resolver),
       projector_(projector) {}
@@ -17,9 +19,10 @@ PerceptionPipeline::PerceptionPipeline(
 PerceptionPipelineOutput PerceptionPipeline::process(const FramePacket& frame, const EgoState& ego) {
     PerceptionPipelineOutput output;
     output.detections = detector_.detect(frame);
-    output.tracks = tracker_.update(output.detections);
+    output.stabilized_frame = stabilizer_.stabilize(frame, output.detections);
+    output.tracks = tracker_.update(output.stabilized_frame.detections);
     output.identities = identity_resolver_.resolve(output.tracks);
-    output.observations = projector_.project(output.tracks, frame, ego);
+    output.observations = projector_.project(output.tracks, output.stabilized_frame.frame, ego);
     return output;
 }
 
@@ -34,6 +37,17 @@ std::vector<Detection2D> ScriptedDetector::detect(const FramePacket& frame) {
     person.faction = FactionLabel::Unknown;
     person.appearance = FeatureVector{0.1F, 0.4F, 0.8F};
     return {person};
+}
+
+StabilizedFrame NullCameraStabilizer::stabilize(
+    const FramePacket& frame,
+    const std::vector<Detection2D>& detections) {
+    StabilizedFrame stabilized;
+    stabilized.frame = frame;
+    stabilized.detections = detections;
+    stabilized.transform_available = false;
+    stabilized.confidence = 0.0;
+    return stabilized;
 }
 
 std::vector<Track2D> SimpleCentroidTracker::update(const std::vector<Detection2D>& detections) {
