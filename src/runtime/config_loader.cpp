@@ -36,6 +36,8 @@ void apply_config_value(CoreStackProviderConfig& config, const std::string& key,
         config.ego_provider = value;
     } else if (key == "detector") {
         config.detector = value;
+    } else if (key == "camera_stabilizer") {
+        config.camera_stabilizer = value;
     } else if (key == "tracker") {
         config.tracker = value;
     } else if (key == "identity_resolver") {
@@ -44,6 +46,12 @@ void apply_config_value(CoreStackProviderConfig& config, const std::string& key,
         config.projector = value;
     } else if (key == "world_model") {
         config.world_model = value;
+    } else if (key == "frame_annotator") {
+        config.frame_annotator = value;
+    } else if (key == "annotation_output_path") {
+        config.annotation_output_path = value;
+    } else if (key == "annotation_output_fps") {
+        config.annotation_output_fps = std::stod(value);
     } else if (key == "recorded_manifest_path") {
         config.recorded_manifest_path = value;
     } else if (key == "source_host") {
