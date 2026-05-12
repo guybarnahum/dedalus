@@ -1,0 +1,12 @@
+frame_source: synthetic
+ego_provider: frame_hint
+detector: scripted
+camera_stabilizer: null
+tracker: simple_centroid
+identity_resolver: appearance_only
+projector: flat_ground
+world_model: in_memory
+frame_annotator: null
+pipeline_timing_enabled: true
+pipeline_timing_output_path: out/profile/pipeline_profile.jsonl
+fallback_map_frame_id: map_local_0001
