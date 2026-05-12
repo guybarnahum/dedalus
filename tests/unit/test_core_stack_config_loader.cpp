@@ -15,8 +15,23 @@ int main() {
         return 1;
     }
 
+    if (config.pipeline_timing_enabled) {
+        std::cerr << "core_stack_ci should keep pipeline timing disabled by default\n";
+        return 1;
+    }
+
     if (config.fallback_map_frame_id.value != "map_local_0001") {
         std::cerr << "core_stack_ci config did not parse expected fallback map frame\n";
+        return 1;
+    }
+
+    const auto profile_config = dedalus::load_core_stack_config("config/core_stack_profile_ci.yaml");
+    if (!profile_config.pipeline_timing_enabled) {
+        std::cerr << "core_stack_profile_ci did not enable pipeline timing\n";
+        return 1;
+    }
+    if (profile_config.pipeline_timing_output_path != "out/profile/pipeline_profile.jsonl") {
+        std::cerr << "core_stack_profile_ci did not parse expected timing output path\n";
         return 1;
     }
 
