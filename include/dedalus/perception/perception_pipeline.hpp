@@ -14,6 +14,24 @@ public:
     virtual std::vector<Detection2D> detect(const FramePacket& frame) = 0;
 };
 
+struct StabilizedFrame {
+    FramePacket frame;
+    std::vector<Detection2D> detections;
+    bool transform_available{false};
+    double dx_px{0.0};
+    double dy_px{0.0};
+    double rotation_rad{0.0};
+    double confidence{0.0};
+};
+
+class CameraStabilizer {
+public:
+    virtual ~CameraStabilizer() = default;
+    virtual StabilizedFrame stabilize(
+        const FramePacket& frame,
+        const std::vector<Detection2D>& detections) = 0;
+};
+
 class Tracker {
 public:
     virtual ~Tracker() = default;
@@ -37,6 +55,7 @@ public:
 
 struct PerceptionPipelineOutput {
     std::vector<Detection2D> detections;
+    StabilizedFrame stabilized_frame;
     std::vector<Track2D> tracks;
     std::vector<IdentityHypothesis> identities;
     std::vector<Observation3D> observations;
@@ -46,6 +65,7 @@ class PerceptionPipeline {
 public:
     PerceptionPipeline(
         Detector& detector,
+        CameraStabilizer& stabilizer,
         Tracker& tracker,
         IdentityResolver& identity_resolver,
         Projector3D& projector);
@@ -54,6 +74,7 @@ public:
 
 private:
     Detector& detector_;
+    CameraStabilizer& stabilizer_;
     Tracker& tracker_;
     IdentityResolver& identity_resolver_;
     Projector3D& projector_;
@@ -62,6 +83,13 @@ private:
 class ScriptedDetector final : public Detector {
 public:
     std::vector<Detection2D> detect(const FramePacket& frame) override;
+};
+
+class NullCameraStabilizer final : public CameraStabilizer {
+public:
+    StabilizedFrame stabilize(
+        const FramePacket& frame,
+        const std::vector<Detection2D>& detections) override;
 };
 
 class SimpleCentroidTracker final : public Tracker {
