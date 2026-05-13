@@ -116,6 +116,29 @@ Current optimization slice:
   getMultirotorState().kinematics_estimated.
   Goal: reduce stream_binary_ego frame_source.next_frame latency while preserving
   the frame-attached ego contract.
+
+Future GPU-resident frame path:
+  Current Milestone 2 pipe/binary profiling shows frame_ego stdout_write_ms is only
+  about 5-6 ms p95 at 1280x720, while simGetImages is about 61 ms p95. Therefore
+  shared_memory transport or VRAM pointer passing is not the immediate Milestone 2
+  bottleneck. However, production perception should avoid CPU round trips by allowing
+  FramePacket to carry an optional source-neutral ImageBufferHandle for GPU-resident
+  frames.
+
+  The intended future direction is:
+    - keep ImageView::bytes as the dependency-free CPU fallback path;
+    - add an optional source-neutral ImageBufferHandle or equivalent descriptor;
+    - represent memory location abstractly, for example CpuHost, CpuPinned,
+      CudaDevice, CudaUnified, ExternalGpuHandle, SharedMemory, or Unknown;
+    - keep raw CUDA, EGL, NVMM, GStreamer, OpenCV, camera-SDK, or simulator-specific
+      handles out of the core FramePacket contract;
+    - interpret backend-specific GPU handles only through provider/accessor modules,
+      such as a future CudaImageAccessor, NvmmImageAccessor, or simulator plugin.
+
+  Do not prioritize shared_memory or VRAM handle passing in Milestone 2 unless
+  bridge-internal timing later shows stdout_write_ms / transport transfer dominating
+  frame_ego. The immediate measured bottleneck is AirSim image capture/extraction
+  through simGetImages, not pipe IPC.
 ```
 
 ### Current source-neutral bridge config contract
