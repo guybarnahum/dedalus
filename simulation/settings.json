@@ -14,6 +14,29 @@
 
   "ClockSpeed": 1.0,
 
+  "CameraDefaults": {
+    "CaptureSettings": [
+      {
+        "ImageType": 0,
+        "Width": 1920,
+        "Height": 1080,
+        "FOV_Degrees": 84,
+        "AutoExposureSpeed": 100,
+        "AutoExposureBias": 0,
+        "MotionBlurAmount": 0
+      },
+      {
+        "ImageType": 2,
+        "Width": 1920,
+        "Height": 1080,
+        "FOV_Degrees": 84,
+        "AutoExposureSpeed": 100,
+        "AutoExposureBias": 0,
+        "MotionBlurAmount": 0
+      }
+    ]
+  },
+
   "Vehicles": {
     "PX4": {
       "VehicleType": "PX4Multirotor",
@@ -26,6 +49,37 @@
       "TcpPort": 4560,
       "ControlIp": "127.0.0.1",
       "ControlPort": 14600,
+
+      "Cameras": {
+        "front_center": {
+          "X": 0.30,
+          "Y": 0.00,
+          "Z": -0.08,
+          "Pitch": 0.0,
+          "Roll": 0.0,
+          "Yaw": 0.0,
+          "CaptureSettings": [
+            {
+              "ImageType": 0,
+              "Width": 1920,
+              "Height": 1080,
+              "FOV_Degrees": 84,
+              "AutoExposureSpeed": 100,
+              "AutoExposureBias": 0,
+              "MotionBlurAmount": 0
+            },
+            {
+              "ImageType": 2,
+              "Width": 1920,
+              "Height": 1080,
+              "FOV_Degrees": 84,
+              "AutoExposureSpeed": 100,
+              "AutoExposureBias": 0,
+              "MotionBlurAmount": 0
+            }
+          ]
+        }
+      },
 
       "Parameters": {
         "COM_ARM_WO_GPS": 1,
