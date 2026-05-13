@@ -263,7 +263,7 @@ YELLOW  p95 ≤ 66.7 ms   ~15 FPS capable
 RED     p95  > 66.7 ms  below 15 FPS
 ```
 
-When bridge-internal timing is enabled (the default), a second breakdown table shows how each frame's time is spent inside the Python bridge (`sim_get_images_ms`, `ego_sample_ms`, `rgb_convert_ms`, `stdout_write_ms`, `sleep_ms`). This is produced by `scripts/summarize-bridge-timing.py` from a `bridge_timing.jsonl` written by the bridge script.
+When bridge-internal timing is enabled (the default), a second breakdown table shows how each frame's time is spent inside the Python bridge (`sim_get_images_ms`, `ego_sample_ms`, `rgb_convert_ms`, `stdout_write_ms`, `sleep_ms`). This is produced by `scripts/_summarize-bridge-timing.py` from a `bridge_timing.jsonl` written by the bridge script.
 
 All output lands in `out/airsim_bridge_latency_<timestamp>/`.
 

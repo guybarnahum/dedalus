@@ -139,5 +139,5 @@ if __name__ == "__main__":
     try:
         raise SystemExit(main())
     except Exception as exc:  # noqa: BLE001 - keep dependency-free CLI concise.
-        print(f"summarize-pipeline-profile: {exc}", file=sys.stderr)
+        print(f"_summarize-pipeline-profile: {exc}", file=sys.stderr)
         raise SystemExit(1)

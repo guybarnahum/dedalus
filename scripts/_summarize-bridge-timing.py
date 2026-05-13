@@ -120,5 +120,5 @@ if __name__ == "__main__":
     try:
         raise SystemExit(main())
     except Exception as exc:  # noqa: BLE001 - dependency-free CLI.
-        print(f"summarize-bridge-timing: {exc}", file=sys.stderr)
+        print(f"_summarize-bridge-timing: {exc}", file=sys.stderr)
         raise SystemExit(1)

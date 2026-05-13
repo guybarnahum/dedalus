@@ -15,8 +15,8 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 BUILD_DIR="$ROOT_DIR/build-staging"
 APP_PATH="$BUILD_DIR/apps/dedalus_replay_recording"
-SUMMARY_SCRIPT="$ROOT_DIR/scripts/summarize-pipeline-profile.py"
-BRIDGE_SUMMARY_SCRIPT="$ROOT_DIR/scripts/summarize-bridge-timing.py"
+SUMMARY_SCRIPT="$ROOT_DIR/scripts/_summarize-pipeline-profile.py"
+BRIDGE_SUMMARY_SCRIPT="$ROOT_DIR/scripts/_summarize-bridge-timing.py"
 
 FRAMES=300
 FPS=5
@@ -78,8 +78,8 @@ Absolute p95 latency capacity thresholds:
 
 Why this is .sh and not .py:
   The shell script orchestrates builds, CTest, temporary configs, app runs, and
-  progress. scripts/summarize-pipeline-profile.py and
-  scripts/summarize-bridge-timing.py are internal Python formatters invoked by
+  progress. scripts/_summarize-pipeline-profile.py and
+  scripts/_summarize-bridge-timing.py are internal Python formatters invoked by
   this script for consistent timing summaries.
 EOF
 }

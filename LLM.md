@@ -1352,8 +1352,8 @@ Metrics printed:
 bridge p95 / p99           frame_source.next_frame bucket (C++ capture/read)
 ego_provider p95           hot-path RPC cost; should be near 0 in frame_ego mode
 total runner p95           end-to-end per-frame cost
-stage summary              all pipeline stages via summarize-pipeline-profile.py
-bridge-internal timing     Python bridge breakdown via summarize-bridge-timing.py
+stage summary              all pipeline stages via _summarize-pipeline-profile.py
+bridge-internal timing     Python bridge breakdown via _summarize-bridge-timing.py
 ```
 
 Bridge-internal timing fields (from `--timing-jsonl` on the bridge side):
@@ -1367,7 +1367,7 @@ sleep_ms               rate-limiter sleep (0 in capacity mode)
 total_loop_ms          full bridge loop wall time
 ```
 
-The bridge timing JSONL is written by `simulation/airsim-stream-frames-binary.py --timing-jsonl <path>` and read by `scripts/summarize-bridge-timing.py`.
+The bridge timing JSONL is written by `simulation/airsim-stream-frames-binary.py --timing-jsonl <path>` and read by `scripts/_summarize-bridge-timing.py`.
 
 Capacity thresholds:
 
