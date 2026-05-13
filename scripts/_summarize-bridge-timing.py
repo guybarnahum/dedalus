@@ -8,6 +8,7 @@ The script intentionally has no third-party dependencies.
 from __future__ import annotations
 
 import argparse
+from collections import Counter
 import json
 import sys
 from pathlib import Path
@@ -37,6 +38,8 @@ def parse_args() -> argparse.Namespace:
         default="name",
     )
     parser.add_argument("--descending", action="store_true")
+    parser.add_argument("--expect-width", type=int, default=0)
+    parser.add_argument("--expect-height", type=int, default=0)
     return parser.parse_args()
 
 
@@ -76,6 +79,29 @@ def metric(values: list[float], name: str) -> float:
     raise ValueError(f"unknown metric: {name}")
 
 
+def print_resolution_summary(rows: list[dict], expect_width: int, expect_height: int) -> None:
+    counts: Counter[tuple[int, int]] = Counter()
+    for row in rows:
+        width = row.get("width")
+        height = row.get("height")
+        if isinstance(width, int) and isinstance(height, int):
+            counts[(width, height)] += 1
+    if not counts:
+        return
+
+    print("actual_resolution_counts: " + ", ".join(
+        f"{width}x{height}:{count}" for (width, height), count in counts.most_common()
+    ))
+    if expect_width > 0 and expect_height > 0:
+        print(f"expected_resolution: {expect_width}x{expect_height}")
+        expected = (expect_width, expect_height)
+        if expected not in counts or len(counts) != 1:
+            print(
+                "resolution_note: expected dimensions differ from bridge-reported dimensions; "
+                "profiler --width/--height are metadata and do not change AirSim capture settings."
+            )
+
+
 def main() -> int:
     args = parse_args()
     rows = load_rows(args.timing_jsonl)
@@ -104,6 +130,7 @@ def main() -> int:
         names.sort(key=lambda field: metric(values_by_field[field], args.sort), reverse=args.descending)
 
     print(f"frames: {len(rows)}")
+    print_resolution_summary(rows, args.expect_width, args.expect_height)
     for name in names:
         values = values_by_field[name]
         print(
