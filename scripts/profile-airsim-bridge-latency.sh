@@ -20,6 +20,8 @@ OUTPUT_ROOT="$ROOT_DIR/out/airsim_bridge_latency_$(date +%Y%m%d_%H%M%S)"
 SKIP_BUILD=0
 SKIP_CTEST=0
 RUN_PPM=1
+PROGRESS="auto"
+PROGRESS_PID=""
 
 usage() {
   cat <<'EOF'
@@ -39,6 +41,8 @@ Options:
   --skip-build            Skip cmake build.
   --skip-ctest            Skip CTest.
   --no-ppm                Only run bridge-only profile, skip ppm annotation profile.
+  --progress              Force progress monitor on.
+  --no-progress           Disable progress monitor.
   -h, --help              Show this help.
 
 The bridge latency proxy is frame_source.next_frame.
@@ -47,7 +51,9 @@ Absolute p95 latency capacity thresholds:
   YELLOW p95 <= 66.7 ms  approximately 15 FPS capable
   RED    p95  > 66.7 ms  below 15 FPS bridge/capture/read capacity
 
-The script also prints p99, max, and the requested-FPS frame-period budget.
+Progress is implemented outside the measured C++ pipeline. It polls the timing
+JSONL line count about once per second and prints one rewritten terminal line.
+It is disabled automatically when stdout is not a TTY.
 EOF
 }
 
@@ -65,6 +71,8 @@ while [[ $# -gt 0 ]]; do
     --skip-build) SKIP_BUILD=1; shift ;;
     --skip-ctest) SKIP_CTEST=1; shift ;;
     --no-ppm) RUN_PPM=0; shift ;;
+    --progress) PROGRESS="on"; shift ;;
+    --no-progress) PROGRESS="off"; shift ;;
     -h|--help) usage; exit 0 ;;
     *) echo "Unknown option: $1" >&2; usage; exit 2 ;;
   esac
@@ -85,6 +93,82 @@ raise SystemExit(0 if v > 0 else 1)
 PY
 }
 
+progress_enabled() {
+  if [[ "$PROGRESS" == "on" ]]; then
+    return 0
+  fi
+  if [[ "$PROGRESS" == "off" ]]; then
+    return 1
+  fi
+  [[ -t 1 ]]
+}
+
+count_profile_rows() {
+  local profile_path="$1"
+  if [[ -f "$profile_path" ]]; then
+    wc -l < "$profile_path" 2>/dev/null | tr -d '[:space:]'
+  else
+    printf '0'
+  fi
+}
+
+start_progress_monitor() {
+  local pass_name="$1"
+  local profile_path="$2"
+  local expected_frames="$3"
+
+  progress_enabled || return 0
+
+  (
+    local count=0
+    local percent=0
+    while true; do
+      count="$(count_profile_rows "$profile_path")"
+      if [[ "$count" =~ ^[0-9]+$ && "$expected_frames" -gt 0 ]]; then
+        percent=$(( count * 100 / expected_frames ))
+        if (( percent > 100 )); then percent=100; fi
+      else
+        percent=0
+      fi
+      printf '\r\033[K[airsim-bridge-profile] %s progress: %s/%s frames (%s%%)' \
+        "$pass_name" "$count" "$expected_frames" "$percent"
+      sleep 1
+    done
+  ) &
+  PROGRESS_PID="$!"
+}
+
+stop_progress_monitor() {
+  local pass_name="$1"
+  local profile_path="$2"
+  local expected_frames="$3"
+
+  if [[ -n "$PROGRESS_PID" ]]; then
+    kill "$PROGRESS_PID" 2>/dev/null || true
+    wait "$PROGRESS_PID" 2>/dev/null || true
+    PROGRESS_PID=""
+  fi
+
+  if progress_enabled; then
+    local final_count
+    final_count="$(count_profile_rows "$profile_path")"
+    printf '\r\033[K[airsim-bridge-profile] %s progress: %s/%s frames (done)\n' \
+      "$pass_name" "$final_count" "$expected_frames"
+  fi
+}
+
+cleanup_progress() {
+  if [[ -n "$PROGRESS_PID" ]]; then
+    kill "$PROGRESS_PID" 2>/dev/null || true
+    wait "$PROGRESS_PID" 2>/dev/null || true
+    PROGRESS_PID=""
+    if progress_enabled; then
+      printf '\r\033[K'
+    fi
+  fi
+}
+trap cleanup_progress EXIT INT TERM
+
 positive_int "$FRAMES" || fail "--frames must be a positive integer, got: $FRAMES"
 positive_number "$FPS" || fail "--fps must be a positive number, got: $FPS"
 
@@ -96,6 +180,11 @@ log "output root: $OUTPUT_ROOT"
 log "frames per pass: $FRAMES"
 log "sampling fps: $FPS"
 [[ -n "$WIDTH" && -n "$HEIGHT" ]] && log "expected resolution: ${WIDTH}x${HEIGHT}"
+if progress_enabled; then
+  log "progress monitor: enabled, external 1 Hz JSONL line-count polling"
+else
+  log "progress monitor: disabled"
+fi
 
 if [[ "$SKIP_BUILD" != "1" ]]; then
   log "building core stack"
@@ -161,11 +250,14 @@ run_profile() {
   local annotator="$2"
   local out_dir="$OUTPUT_ROOT/$name"
   local config_path
+  local profile_path="$out_dir/pipeline_profile.jsonl"
   config_path="$(write_config "$name" "$annotator")"
 
   log "running profile pass: $name ($annotator)"
-  rm -rf "$out_dir/snapshots" "$out_dir/annotations" "$out_dir/pipeline_profile.jsonl"
+  rm -rf "$out_dir/snapshots" "$out_dir/annotations" "$profile_path"
+  start_progress_monitor "$name" "$profile_path" "$FRAMES"
   "$APP_PATH" --config "$config_path" --output-dir "$out_dir/snapshots" --max-frames "$FRAMES"
+  stop_progress_monitor "$name" "$profile_path" "$FRAMES"
 }
 
 run_profile "bridge_only" "null"
