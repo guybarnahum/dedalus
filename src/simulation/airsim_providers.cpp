@@ -16,6 +16,7 @@ namespace {
 
 constexpr std::size_t kBinaryFrameHeaderSize = 56U;
 constexpr std::uint32_t kBinaryFrameVersion = 1U;
+constexpr std::uint32_t kBinaryFrameEgoVersion = 2U;
 constexpr std::uint32_t kBinaryPixelFormatRgb8 = 1U;
 constexpr char kBinaryFrameMagic[8] = {'D', 'E', 'D', 'F', 'R', 'M', '1', '\0'};
 
@@ -29,6 +30,7 @@ struct BinaryFrameHeader {
     std::uint32_t channels{0};
     std::uint32_t pixel_format{0};
     std::uint32_t payload_size{0};
+    std::uint32_t sidecar_size{0};
 };
 
 std::runtime_error unavailable(const char* provider_name) {
@@ -146,8 +148,10 @@ BinaryFrameHeader parse_binary_header(const std::string& header_bytes) {
     header.channels = read_u32_le(header_bytes, 40U);
     header.pixel_format = read_u32_le(header_bytes, 44U);
     header.payload_size = read_u32_le(header_bytes, 48U);
+    header.sidecar_size = read_u32_le(header_bytes, 52U);
 
-    if (header.header_size != kBinaryFrameHeaderSize || header.version != kBinaryFrameVersion) {
+    if (header.header_size != kBinaryFrameHeaderSize ||
+        (header.version != kBinaryFrameVersion && header.version != kBinaryFrameEgoVersion)) {
         throw std::runtime_error("binary frame header has unsupported version or header size");
     }
     if (header.width == 0U || header.height == 0U || header.channels != 3U || header.pixel_format != kBinaryPixelFormatRgb8) {
@@ -155,6 +159,9 @@ BinaryFrameHeader parse_binary_header(const std::string& header_bytes) {
     }
     if (header.payload_size != header.width * header.height * header.channels) {
         throw std::runtime_error("binary frame payload size does not match image shape");
+    }
+    if (header.version == kBinaryFrameVersion && header.sidecar_size != 0U) {
+        throw std::runtime_error("binary frame version 1 cannot carry a sidecar payload");
     }
 
     return header;
@@ -376,16 +383,29 @@ std::optional<FramePacket> AirSimFrameSource::next_stream_binary_frame() {
         throw std::runtime_error("binary stream ended before frame payload");
     }
 
+    std::string sidecar_payload;
+    if (header.sidecar_size > 0U) {
+        const auto sidecar = transport_->read_stream_bytes(command, header.sidecar_size);
+        if (!sidecar.has_value()) {
+            throw std::runtime_error("binary stream ended before frame sidecar payload");
+        }
+        sidecar_payload = *sidecar;
+    }
+
     ++next_frame_index_;
-    return frame_from_image(
+    auto frame = frame_from_image(
         config_,
         image_from_rgb_payload(header, *payload),
         FrameId{"binary_stream_frame_" + std::to_string(header.sequence)},
         TimePoint{header.timestamp_ns});
+    if (!sidecar_payload.empty()) {
+        frame.ego_hint = parse_ego_json(sidecar_payload, config_.map_frame_id, frame.timestamp);
+    }
+    return frame;
 }
 
 std::optional<FramePacket> AirSimFrameSource::next_frame() {
-    if (config_.bridge_mode == "stream_binary") {
+    if (config_.bridge_mode == "stream_binary" || config_.bridge_mode == "stream_binary_ego") {
         return next_stream_binary_frame();
     }
     if (config_.bridge_mode == "stream_jsonl") {
