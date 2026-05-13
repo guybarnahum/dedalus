@@ -50,8 +50,8 @@ Options:
   --paced                 Use --rate-hz FPS. Useful for mission-like pacing tests
   --frames N              Number of frames per profiling pass. Default: 300
   --fps FPS               Requested FPS / paced bridge FPS. Default: 5
-  --width W               Expected AirSim frame width. Optional throughput metadata
-  --height H              Expected AirSim frame height. Optional throughput metadata
+  --width W               Expected AirSim frame width. Optional throughput metadata/check only
+  --height H              Expected AirSim frame height. Optional throughput metadata/check only
   --host HOST             AirSim RPC host. Default: 127.0.0.1
   --rpc-port PORT         AirSim RPC port. Default: 41451
   --vehicle-name NAME     AirSim vehicle name. Default: PX4
@@ -70,6 +70,11 @@ Metrics:
   ego_provider.estimate shows whether ego telemetry is still a hot-path RPC.
   Bridge-internal timing, when enabled, breaks down the Python bridge into:
     sim_get_images_ms, ego_sample_ms, rgb_convert_ms, stdout_write_ms, sleep_ms.
+
+Note:
+  --width and --height do not change AirSim resolution. They are used for
+  throughput metadata and actual-resolution checks. Change simulation/settings.json
+  and restart AirSim to perform a real resolution sweep.
 
 Absolute p95 latency capacity thresholds:
   GREEN  p95 <= 33.3 ms  approximately 30 FPS capable
@@ -335,6 +340,13 @@ def stage_values(rows, stage):
     return values
 
 
+def bridge_summary_command(path):
+    command = [sys.executable, str(bridge_summary_script), str(path)]
+    if expected_width and expected_height:
+        command.extend(["--expect-width", expected_width, "--expect-height", expected_height])
+    return command
+
+
 def summarize_pass(pass_name):
     path = root / pass_name / "pipeline_profile.jsonl"
     if not path.exists():
@@ -363,7 +375,7 @@ def summarize_pass(pass_name):
     bridge_timing_path = root / pass_name / "bridge_timing.jsonl"
     if bridge_timing_enabled:
         print("bridge-internal timing:")
-        subprocess.run([sys.executable, str(bridge_summary_script), str(bridge_timing_path)], check=True)
+        subprocess.run(bridge_summary_command(bridge_timing_path), check=True)
 
     return {
         "pass": pass_name,
