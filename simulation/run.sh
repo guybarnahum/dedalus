@@ -27,6 +27,8 @@ CONTROL_START_DELAY_S="10"
 FLIGHT_CONTROL_MODE=""
 FLIGHT_TRAJECTORY="trajectories/circle_figure8.json"
 FLIGHT_SAFE_HEIGHT_M="8"
+AIRSIM_CAMERA_WIDTH=""
+AIRSIM_CAMERA_HEIGHT=""
 
 usage() {
     cat <<'EOF'
@@ -38,6 +40,7 @@ Examples:
   ./run.sh AirSimNH --with-core-stack
   ./run.sh AirSimNH --with-flight-control --with-core-stack --core-sampling-fps 5
   ./run.sh AirSimNH --with-flight-control --with-core-stack --core-max-frames 0
+  ./run.sh AirSimNH --airsim-camera-width 640 --airsim-camera-height 360
 
 Options:
   --with-core-stack             Start the C++ core-stack replay/capture side in a tmux window.
@@ -51,6 +54,10 @@ Options:
   --flight-safe-height-m M      test-flight.py --safe-height value. Default: 8
   --control-start-delay-s N     Delay after PX4 window launch before starting velocity-control and aligned capture.
                                 Default: 10
+  --airsim-camera-width W       Override AirSim camera CaptureSettings Width before launch.
+                                Requires simulator restart because AirSim reads settings.json at startup.
+  --airsim-camera-height H      Override AirSim camera CaptureSettings Height before launch.
+                                Requires simulator restart because AirSim reads settings.json at startup.
   --core-build-dir PATH         Build directory containing apps/dedalus_replay_recording.
                                 Default: ../build-staging
   --core-config PATH            Core-stack config template to use.
@@ -101,6 +108,14 @@ while [[ $# -gt 0 ]]; do
             CONTROL_START_DELAY_S="$2"
             shift 2
             ;;
+        --airsim-camera-width)
+            AIRSIM_CAMERA_WIDTH="$2"
+            shift 2
+            ;;
+        --airsim-camera-height)
+            AIRSIM_CAMERA_HEIGHT="$2"
+            shift 2
+            ;;
         --core-build-dir)
             CORE_BUILD_DIR="$2"
             shift 2
@@ -141,6 +156,21 @@ while [[ $# -gt 0 ]]; do
             ;;
     esac
 done
+
+if [[ -n "$AIRSIM_CAMERA_WIDTH" || -n "$AIRSIM_CAMERA_HEIGHT" ]]; then
+    if [[ -z "$AIRSIM_CAMERA_WIDTH" || -z "$AIRSIM_CAMERA_HEIGHT" ]]; then
+        echo "❌ --airsim-camera-width and --airsim-camera-height must be provided together."
+        exit 1
+    fi
+    if ! [[ "$AIRSIM_CAMERA_WIDTH" =~ ^[0-9]+$ && "$AIRSIM_CAMERA_HEIGHT" =~ ^[0-9]+$ ]]; then
+        echo "❌ AirSim camera width/height must be positive integers."
+        exit 1
+    fi
+    if [[ "$AIRSIM_CAMERA_WIDTH" -le 0 || "$AIRSIM_CAMERA_HEIGHT" -le 0 ]]; then
+        echo "❌ AirSim camera width/height must be positive integers."
+        exit 1
+    fi
+fi
 
 # ------------ VIDEO & DISPLAY CONFIGURATION --------
 SESSION_NAME="dedalus-sim"
@@ -261,6 +291,65 @@ output.write_text(
 PY
 }
 
+write_airsim_settings() {
+    local source_settings="$1"
+    local output_settings="$2"
+    local width="$3"
+    local height="$4"
+
+    python - "$source_settings" "$output_settings" "$width" "$height" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+source = Path(sys.argv[1])
+output = Path(sys.argv[2])
+width_arg = sys.argv[3]
+height_arg = sys.argv[4]
+
+data = json.loads(source.read_text(encoding="utf-8"))
+
+if width_arg and height_arg:
+    width = int(width_arg)
+    height = int(height_arg)
+
+    def update_capture_settings(owner):
+        settings = owner.get("CaptureSettings")
+        if not isinstance(settings, list):
+            return 0
+        changed = 0
+        for setting in settings:
+            if isinstance(setting, dict):
+                setting["Width"] = width
+                setting["Height"] = height
+                changed += 1
+        return changed
+
+    changed = 0
+    camera_defaults = data.get("CameraDefaults")
+    if isinstance(camera_defaults, dict):
+        changed += update_capture_settings(camera_defaults)
+
+    vehicles = data.get("Vehicles")
+    if isinstance(vehicles, dict):
+        for vehicle in vehicles.values():
+            if not isinstance(vehicle, dict):
+                continue
+            cameras = vehicle.get("Cameras")
+            if not isinstance(cameras, dict):
+                continue
+            for camera in cameras.values():
+                if isinstance(camera, dict):
+                    changed += update_capture_settings(camera)
+
+    if changed == 0:
+        raise SystemExit("no CameraDefaults or vehicle camera CaptureSettings found to update")
+
+output.parent.mkdir(parents=True, exist_ok=True)
+output.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
+PY
+}
+
 # ---------------- Traps & Cleanup ----------------
 cleanup() {
     echo -e "\n🛑 Shutting down simulation stack..."
@@ -282,6 +371,10 @@ trap cleanup SIGINT SIGTERM
 echo "🚀 Initiating Project Dedalus Simulation Stack..."
 echo "🌍 Target Environment: $TARGET_ENV"
 echo "⏰ Started at: $(date)"
+if [[ -n "$AIRSIM_CAMERA_WIDTH" && -n "$AIRSIM_CAMERA_HEIGHT" ]]; then
+    echo "📷 AirSim camera resolution override: ${AIRSIM_CAMERA_WIDTH}x${AIRSIM_CAMERA_HEIGHT}"
+    echo "   Note: AirSim reads settings.json at startup; restart is required for changes."
+fi
 if [[ "$WITH_FLIGHT_CONTROL" == "1" ]]; then
     echo "🕹️  Flight control: enabled"
     if [[ -n "$FLIGHT_CONTROL_MODE" ]]; then
@@ -315,8 +408,12 @@ fi
 echo "⚙️  Injecting Configuration (settings.json)..."
 mkdir -p ~/Documents/AirSim
 if [ -f "settings.json" ]; then
-    cp settings.json ~/Documents/AirSim/settings.json
-    echo "✅ Settings applied."
+    write_airsim_settings "settings.json" "$HOME/Documents/AirSim/settings.json" "$AIRSIM_CAMERA_WIDTH" "$AIRSIM_CAMERA_HEIGHT"
+    if [[ -n "$AIRSIM_CAMERA_WIDTH" && -n "$AIRSIM_CAMERA_HEIGHT" ]]; then
+        echo "✅ Settings applied with camera capture override ${AIRSIM_CAMERA_WIDTH}x${AIRSIM_CAMERA_HEIGHT}."
+    else
+        echo "✅ Settings applied."
+    fi
 else
     echo "❌ Missing simulation/settings.json"
     exit 1
