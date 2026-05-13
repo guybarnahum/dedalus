@@ -7,6 +7,7 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 BUILD_DIR="$ROOT_DIR/build-staging"
 APP_PATH="$BUILD_DIR/apps/dedalus_replay_recording"
+SUMMARY_SCRIPT="$ROOT_DIR/scripts/summarize-pipeline-profile.py"
 
 FRAMES=50
 FPS=5
@@ -54,6 +55,9 @@ Absolute p95 latency capacity thresholds:
 Progress is implemented outside the measured C++ pipeline. It polls the timing
 JSONL line count about once per second and prints one rewritten terminal line.
 It is disabled automatically when stdout is not a TTY.
+
+Stage summary formatting is delegated to scripts/summarize-pipeline-profile.py
+so ad-hoc and full-profile summaries stay identical.
 EOF
 }
 
@@ -186,6 +190,8 @@ else
   log "progress monitor: disabled"
 fi
 
+[[ -f "$SUMMARY_SCRIPT" ]] || fail "missing summary script: $SUMMARY_SCRIPT"
+
 if [[ "$SKIP_BUILD" != "1" ]]; then
   log "building core stack"
   cmake --build "$BUILD_DIR" -j"$(nproc 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || echo 4)"
@@ -264,8 +270,9 @@ run_profile "bridge_only" "null"
 [[ "$RUN_PPM" == "1" ]] && run_profile "with_ppm" "ppm_sequence"
 
 log "summarizing latency"
-python3 - "$OUTPUT_ROOT" "$FRAMES" "$FPS" "$WIDTH" "$HEIGHT" "$RUN_PPM" <<'PY'
+python3 - "$OUTPUT_ROOT" "$FRAMES" "$FPS" "$WIDTH" "$HEIGHT" "$RUN_PPM" "$SUMMARY_SCRIPT" <<'PY'
 import json
+import subprocess
 import sys
 from pathlib import Path
 
@@ -275,6 +282,7 @@ fps = float(sys.argv[3])
 expected_width = sys.argv[4]
 expected_height = sys.argv[5]
 run_ppm = sys.argv[6] == "1"
+summary_script = Path(sys.argv[7])
 
 GREEN = "\033[1;32m"
 YELLOW = "\033[1;33m"
@@ -351,7 +359,6 @@ def summarize(name):
 
     print()
     print(f"=== {name} ===")
-    print(f"frames: {len(rows)}")
     print(f"requested FPS: {fps:g}  frame period ms: {period_ms:.3f}")
     print("bridge/capture/read latency proxy: frame_source.next_frame")
     print(f"  mean_ms: {sum(bridge) / len(bridge) / 1000.0:.3f}")
@@ -374,14 +381,10 @@ def summarize(name):
     print(f"bridge share of timed total mean: {(sum(bridge) / max(1, sum(totals))) * 100.0:.1f}%")
 
     print("all stages:")
-    for stage, values in sorted(stages.items()):
-        print(
-            f"  {stage}: "
-            f"mean_ms={sum(values) / len(values) / 1000.0:.3f} "
-            f"p95_ms={percentile(values, 0.95) / 1000.0:.3f} "
-            f"p99_ms={percentile(values, 0.99) / 1000.0:.3f} "
-            f"max_ms={max(values) / 1000.0:.3f}"
-        )
+    subprocess.run(
+        [sys.executable, str(summary_script), str(path)],
+        check=True,
+    )
     return stages
 
 
