@@ -1296,6 +1296,91 @@ This closes the next validation gap before optional MP4 export, shared-memory tr
 
 ---
 
+## 8.4 AirSim Bridge Latency Profiler
+
+Milestone 2.14 adds a one-command AirSim bridge latency profiler:
+
+```text
+scripts/profile-airsim-bridge-latency.sh
+```
+
+AirSim must already be running. The script builds the core stack, runs CTest, generates temporary configs, captures N frames on each requested path, and prints a latency summary.
+
+Quick start:
+
+```bash
+./scripts/profile-airsim-bridge-latency.sh \
+  --frames 300 \
+  --width 1280 --height 720 \
+  --skip-build --skip-ctest
+```
+
+Key options:
+
+```text
+--mode MODE             separate-ego | frame-ego | both  (default: both)
+--capacity              Disable bridge pacing with --rate-hz 0  (default)
+--paced                 Use --rate-hz FPS. Tests mission-like pacing behavior
+--frames N              Frames per pass  (default: 300)
+--fps FPS               Requested / paced FPS  (default: 5)
+--width W / --height H  Optional throughput metadata for the summary
+--bridge-timing         Enable bridge-internal timing JSONL  (default)
+--no-bridge-timing      Disable bridge-internal timing JSONL
+--skip-build            Skip cmake build
+--skip-ctest            Skip CTest
+```
+
+Output structure per pass:
+
+```text
+out/airsim_bridge_latency_<timestamp>/
+  separate_ego/
+    core_stack_separate_ego.yaml
+    pipeline_profile.jsonl
+    bridge_timing.jsonl          # when --bridge-timing (default)
+    snapshots/
+  frame_ego/
+    core_stack_frame_ego.yaml
+    pipeline_profile.jsonl
+    bridge_timing.jsonl
+    snapshots/
+```
+
+Metrics printed:
+
+```text
+bridge p95 / p99           frame_source.next_frame bucket (C++ capture/read)
+ego_provider p95           hot-path RPC cost; should be near 0 in frame_ego mode
+total runner p95           end-to-end per-frame cost
+stage summary              all pipeline stages via summarize-pipeline-profile.py
+bridge-internal timing     Python bridge breakdown via summarize-bridge-timing.py
+```
+
+Bridge-internal timing fields (from `--timing-jsonl` on the bridge side):
+
+```text
+sim_get_images_ms      AirSim getImages() RPC
+ego_sample_ms          getMultirotorState() RPC (0 when --include-ego not used)
+rgb_convert_ms         pixel format conversion
+stdout_write_ms        binary frame write to stdout pipe
+sleep_ms               rate-limiter sleep (0 in capacity mode)
+total_loop_ms          full bridge loop wall time
+```
+
+The bridge timing JSONL is written by `simulation/airsim-stream-frames-binary.py --timing-jsonl <path>` and read by `scripts/summarize-bridge-timing.py`.
+
+Capacity thresholds:
+
+```text
+GREEN   p95 <= 33.3 ms    ~30 FPS capable
+YELLOW  p95 <= 66.7 ms    ~15 FPS capable
+RED     p95  > 66.7 ms    below 15 FPS bridge/capture/read capacity
+```
+
+Do not add third-party dependencies (Tracy, perfetto, OpenCV) to this path. The bridge timing JSONL uses the same dependency-free pattern as `pipeline_profile.jsonl`.
+
+---
+
 ## 9. IPC Strategy
 
 Production IPC target:

@@ -226,6 +226,47 @@ airsim_camera_name: front_center
 
 In the current dependency-free build, these direct AirSim providers are explicit stubs. Running this config will fail with a clear integration-provider unavailable error. That is intentional: it protects CI and unit tests from accidentally depending on AirSim/PX4/media libraries while preserving the exact provider names and config shape for the future direct backend.
 
+#### AirSim Bridge Latency Profiler
+
+With AirSim running, profile the binary bridge across both ingestion modes in one command:
+
+```bash
+./scripts/profile-airsim-bridge-latency.sh \
+  --frames 300 \
+  --width 1280 --height 720 \
+  --skip-build --skip-ctest
+```
+
+This runs two passes back to back:
+- **`separate_ego`** — `stream_binary` RGB bridge + `ego_provider: airsim` (separate RPC per frame)
+- **`frame_ego`** — `stream_binary_ego` RGB+ego co-stream + `ego_provider: frame_hint` (one RPC per frame)
+
+Key options:
+
+| Option | Description |
+|---|---|
+| `--mode MODE` | `separate-ego`, `frame-ego`, or `both` (default) |
+| `--capacity` | Disable bridge pacing; measures raw capture throughput (default) |
+| `--paced` | Use `--rate-hz FPS`; tests mission-like pacing |
+| `--frames N` | Frames per pass (default: 300) |
+| `--fps FPS` | FPS reference / paced rate (default: 5) |
+| `--bridge-timing` | Write bridge-internal timing JSONL (default on) |
+| `--no-bridge-timing` | Skip bridge-internal timing |
+| `--skip-build` | Skip cmake build |
+| `--skip-ctest` | Skip CTest |
+
+The script prints p95/p99 latency with colour-coded capacity ratings and a full stage breakdown:
+
+```text
+GREEN   p95 ≤ 33.3 ms   ~30 FPS capable
+YELLOW  p95 ≤ 66.7 ms   ~15 FPS capable
+RED     p95  > 66.7 ms  below 15 FPS
+```
+
+When bridge-internal timing is enabled (the default), a second breakdown table shows how each frame's time is spent inside the Python bridge (`sim_get_images_ms`, `ego_sample_ms`, `rgb_convert_ms`, `stdout_write_ms`, `sleep_ms`). This is produced by `scripts/summarize-bridge-timing.py` from a `bridge_timing.jsonl` written by the bridge script.
+
+All output lands in `out/airsim_bridge_latency_<timestamp>/`.
+
 ---
 
 ## CI/CD
