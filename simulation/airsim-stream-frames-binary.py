@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import struct
 import sys
 import time
@@ -90,7 +91,7 @@ def write_frame(
     height: int,
     payload: bytes,
     ego_payload: bytes = b"",
-) -> None:
+) -> bool:
     version = VERSION_RGB_EGO if ego_payload else VERSION_RGB_ONLY
     header = struct.pack(
         "<8sIIQqIIIIII",
@@ -106,11 +107,15 @@ def write_frame(
         len(payload),
         len(ego_payload),
     )
-    sys.stdout.buffer.write(header)
-    sys.stdout.buffer.write(payload)
-    if ego_payload:
-        sys.stdout.buffer.write(ego_payload)
-    sys.stdout.buffer.flush()
+    try:
+        sys.stdout.buffer.write(header)
+        sys.stdout.buffer.write(payload)
+        if ego_payload:
+            sys.stdout.buffer.write(ego_payload)
+        sys.stdout.buffer.flush()
+    except BrokenPipeError:
+        return False
+    return True
 
 
 def parse_args() -> argparse.Namespace:
@@ -148,7 +153,8 @@ def main() -> int:
         timestamp_ns = int(getattr(response, "time_stamp", 0) or time.time_ns())
         payload = rgb_bytes_from_response(response)
         ego_payload = ego_json_bytes(client, args.vehicle_name, timestamp_ns) if args.include_ego else b""
-        write_frame(sequence, timestamp_ns, int(response.width), int(response.height), payload, ego_payload)
+        if not write_frame(sequence, timestamp_ns, int(response.width), int(response.height), payload, ego_payload):
+            return 0
         if period_s > 0 and (args.count == 0 or sequence < args.count):
             time.sleep(period_s)
 
@@ -156,4 +162,20 @@ def main() -> int:
 
 
 if __name__ == "__main__":
-    raise SystemExit(main())
+    try:
+        raise SystemExit(main())
+    finally:
+        # Avoid the interpreter printing a second BrokenPipeError while flushing
+        # stdout during process teardown after the C++ consumer exits normally.
+        try:
+            sys.stdout.close()
+        except BrokenPipeError:
+            pass
+        except OSError:
+            pass
+        try:
+            devnull = os.open(os.devnull, os.O_WRONLY)
+            os.dup2(devnull, sys.stdout.fileno())
+            os.close(devnull)
+        except Exception:
+            pass
