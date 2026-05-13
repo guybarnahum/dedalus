@@ -1,0 +1,22 @@
+# Live AirSim binary RGB frame stream with frame-attached ego telemetry.
+# This avoids one separate AirSim ego RPC from C++ per processed frame by using
+# simulation/airsim-stream-frames-binary.py --include-ego and ego_provider=frame_hint.
+
+frame_source: airsim
+bridge_mode: stream_binary_ego
+bridge_transport: pipe
+bridge_command: python3 simulation/airsim-stream-frames-binary.py --host 127.0.0.1 --rpc-port 41451 --vehicle-name PX4 --camera-name front_center --count 0 --rate-hz 5 --include-ego
+ego_provider: frame_hint
+detector: scripted
+camera_stabilizer: null
+tracker: simple_centroid
+identity_resolver: appearance_only
+projector: flat_ground
+world_model: in_memory
+frame_annotator: null
+fallback_map_frame_id: map_airsim_binary_rgb_ego_hint_0001
+
+source_host: 127.0.0.1
+source_rpc_port: 41451
+vehicle_name: PX4
+vehicle_camera_name: front_center
