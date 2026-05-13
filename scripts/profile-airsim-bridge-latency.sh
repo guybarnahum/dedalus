@@ -16,6 +16,7 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 BUILD_DIR="$ROOT_DIR/build-staging"
 APP_PATH="$BUILD_DIR/apps/dedalus_replay_recording"
 SUMMARY_SCRIPT="$ROOT_DIR/scripts/summarize-pipeline-profile.py"
+BRIDGE_SUMMARY_SCRIPT="$ROOT_DIR/scripts/summarize-bridge-timing.py"
 
 FRAMES=300
 FPS=5
@@ -31,6 +32,7 @@ CAPACITY=1
 SKIP_BUILD=0
 SKIP_CTEST=0
 PROGRESS="auto"
+BRIDGE_TIMING=1
 
 usage() {
   cat <<'EOF'
@@ -59,11 +61,15 @@ Options:
   --skip-ctest            Skip CTest
   --progress              Force dedalus_replay_recording progress on
   --no-progress           Disable dedalus_replay_recording progress
+  --bridge-timing         Enable bridge-internal timing JSONL. Default
+  --no-bridge-timing      Disable bridge-internal timing JSONL
   -h, --help              Show this help
 
 Metrics:
-  frame_source.next_frame is the capture/bridge/read bucket.
+  frame_source.next_frame is the C++ capture/bridge/read bucket.
   ego_provider.estimate shows whether ego telemetry is still a hot-path RPC.
+  Bridge-internal timing, when enabled, breaks down the Python bridge into:
+    sim_get_images_ms, ego_sample_ms, rgb_convert_ms, stdout_write_ms, sleep_ms.
 
 Absolute p95 latency capacity thresholds:
   GREEN  p95 <= 33.3 ms  approximately 30 FPS capable
@@ -72,8 +78,9 @@ Absolute p95 latency capacity thresholds:
 
 Why this is .sh and not .py:
   The shell script orchestrates builds, CTest, temporary configs, app runs, and
-  progress. scripts/summarize-pipeline-profile.py is the internal Python
-  formatter invoked by this script for consistent timing summaries.
+  progress. scripts/summarize-pipeline-profile.py and
+  scripts/summarize-bridge-timing.py are internal Python formatters invoked by
+  this script for consistent timing summaries.
 EOF
 }
 
@@ -95,6 +102,8 @@ while [[ $# -gt 0 ]]; do
     --skip-ctest) SKIP_CTEST=1; shift ;;
     --progress) PROGRESS="on"; shift ;;
     --no-progress) PROGRESS="off"; shift ;;
+    --bridge-timing) BRIDGE_TIMING=1; shift ;;
+    --no-bridge-timing) BRIDGE_TIMING=0; shift ;;
     -h|--help) usage; exit 0 ;;
     *) echo "Unknown option: $1" >&2; usage; exit 2 ;;
   esac
@@ -128,6 +137,9 @@ positive_number "$FPS" || fail "--fps must be a positive number, got: $FPS"
 cd "$ROOT_DIR"
 OUTPUT_ROOT="$(mkdir -p "$OUTPUT_ROOT" && cd "$OUTPUT_ROOT" && pwd)"
 [[ -f "$SUMMARY_SCRIPT" ]] || fail "missing summary script: $SUMMARY_SCRIPT"
+if [[ "$BRIDGE_TIMING" == "1" ]]; then
+  [[ -f "$BRIDGE_SUMMARY_SCRIPT" ]] || fail "missing bridge summary script: $BRIDGE_SUMMARY_SCRIPT"
+fi
 
 RATE_HZ="$FPS"
 PROFILE_KIND="paced"
@@ -150,6 +162,7 @@ log "mode: $MODE"
 log "profile kind: $PROFILE_KIND (bridge --rate-hz $RATE_HZ)"
 log "frames per pass: $FRAMES"
 log "requested FPS reference: $FPS"
+log "bridge-internal timing: $([[ "$BRIDGE_TIMING" == "1" ]] && echo enabled || echo disabled)"
 [[ -n "$WIDTH" && -n "$HEIGHT" ]] && log "expected resolution: ${WIDTH}x${HEIGHT}"
 
 if [[ "$SKIP_BUILD" != "1" ]]; then
@@ -188,10 +201,14 @@ write_config() {
   local bridge_extra=""
   local ego_bridge_line="ego_bridge_command: python3 simulation/airsim-capture-ego.py --host $HOST --rpc-port $RPC_PORT --vehicle-name $VEHICLE_NAME --camera-name $CAMERA_NAME"
 
+  if [[ "$BRIDGE_TIMING" == "1" ]]; then
+    bridge_extra="$bridge_extra --timing-jsonl $out_dir/bridge_timing.jsonl"
+  fi
+
   if [[ "$pass_name" == "frame_ego" ]]; then
     bridge_mode="stream_binary_ego"
     ego_provider="frame_hint"
-    bridge_extra=" --include-ego"
+    bridge_extra=" --include-ego$bridge_extra"
     ego_bridge_line="# ego_bridge_command intentionally omitted: frame_hint uses FramePacket::ego_hint"
   fi
 
@@ -228,7 +245,7 @@ run_profile() {
   config_path="$(write_config "$pass_name")"
 
   log "running profile pass: $pass_name"
-  rm -rf "$out_dir/snapshots" "$profile_path"
+  rm -rf "$out_dir/snapshots" "$profile_path" "$out_dir/bridge_timing.jsonl"
   "$APP_PATH" \
     --config "$config_path" \
     --output-dir "$out_dir/snapshots" \
@@ -249,7 +266,7 @@ for pass_name in "${passes[@]}"; do
 done
 
 log "summarizing latency"
-python3 - "$OUTPUT_ROOT" "$FRAMES" "$FPS" "$WIDTH" "$HEIGHT" "$PROFILE_KIND" "$SUMMARY_SCRIPT" "${passes[@]}" <<'PY'
+python3 - "$OUTPUT_ROOT" "$FRAMES" "$FPS" "$WIDTH" "$HEIGHT" "$PROFILE_KIND" "$SUMMARY_SCRIPT" "$BRIDGE_TIMING" "$BRIDGE_SUMMARY_SCRIPT" "${passes[@]}" <<'PY'
 import json
 import subprocess
 import sys
@@ -262,7 +279,9 @@ expected_width = sys.argv[4]
 expected_height = sys.argv[5]
 profile_kind = sys.argv[6]
 summary_script = Path(sys.argv[7])
-passes = sys.argv[8:]
+bridge_timing_enabled = sys.argv[8] == "1"
+bridge_summary_script = Path(sys.argv[9])
+passes = sys.argv[10:]
 
 GREEN = "\033[1;32m"
 YELLOW = "\033[1;33m"
@@ -340,6 +359,12 @@ def summarize_pass(pass_name):
     print(f"total runner p95: {total_p95_ms:.3f} ms (~{implied_fps(total_p95_ms):.1f} FPS capacity)")
     print("stage summary:")
     subprocess.run([sys.executable, str(summary_script), str(path)], check=True)
+
+    bridge_timing_path = root / pass_name / "bridge_timing.jsonl"
+    if bridge_timing_enabled:
+        print("bridge-internal timing:")
+        subprocess.run([sys.executable, str(bridge_summary_script), str(bridge_timing_path)], check=True)
+
     return {
         "pass": pass_name,
         "bridge_p95_ms": bridge_p95_ms,
