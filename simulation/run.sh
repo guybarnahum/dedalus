@@ -222,7 +222,6 @@ SIM_DIR="colosseum_environments/${TARGET_ENV}_LinuxNoEditor"
 VENV_PATH="$HOME/dedalus/venv"
 AIRSIM_CANONICAL_SETTINGS_ABS="$(pwd)/settings.json"
 AIRSIM_RUNTIME_SETTINGS_ABS="/tmp/dedalus_airsim_settings_${TIMESTAMP}.json"
-AIRSIM_DOCUMENTS_SETTINGS_ABS="$HOME/Documents/AirSim/settings.json"
 REPO_ROOT_ABS="$(cd .. && pwd)"
 CORE_BUILD_DIR_ABS="$(cd "$CORE_BUILD_DIR" 2>/dev/null && pwd || true)"
 CORE_CONFIG_ABS="$(cd "$(dirname "$CORE_CONFIG")" && pwd)/$(basename "$CORE_CONFIG")"
@@ -409,10 +408,8 @@ fi
 
 # ---------------- 2. Apply Colosseum Settings ----------------
 echo "⚙️  Generating AirSim configuration from canonical settings.json..."
-mkdir -p "$HOME/Documents/AirSim"
 if [ -f "$AIRSIM_CANONICAL_SETTINGS_ABS" ]; then
     write_airsim_settings "$AIRSIM_CANONICAL_SETTINGS_ABS" "$AIRSIM_RUNTIME_SETTINGS_ABS" "$AIRSIM_CAMERA_WIDTH" "$AIRSIM_CAMERA_HEIGHT"
-    cp "$AIRSIM_RUNTIME_SETTINGS_ABS" "$AIRSIM_DOCUMENTS_SETTINGS_ABS"
     if [[ -n "$AIRSIM_CAMERA_WIDTH" && -n "$AIRSIM_CAMERA_HEIGHT" ]]; then
         echo "✅ Generated runtime settings with camera capture override ${AIRSIM_CAMERA_WIDTH}x${AIRSIM_CAMERA_HEIGHT}."
     else
@@ -420,7 +417,6 @@ if [ -f "$AIRSIM_CANONICAL_SETTINGS_ABS" ]; then
     fi
     echo "🧾 Canonical settings: $AIRSIM_CANONICAL_SETTINGS_ABS"
     echo "🧾 Runtime settings:   $AIRSIM_RUNTIME_SETTINGS_ABS"
-    echo "🧾 Inspect copy:       $AIRSIM_DOCUMENTS_SETTINGS_ABS"
     echo "   Launch will pass -settings=$AIRSIM_RUNTIME_SETTINGS_ABS."
 else
     echo "❌ Missing simulation/settings.json"
