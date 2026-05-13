@@ -42,7 +42,11 @@ Options:
   -h, --help              Show this help.
 
 The bridge latency proxy is frame_source.next_frame.
-If p95 approaches the frame period, pipe/binary may be a bottleneck.
+Thresholds are relative to the frame period:
+  GREEN  p95 < 50% of frame period
+  YELLOW p95 < 80% of frame period
+  RED    p95 >= 80% of frame period
+  HARD BOTTLENECK p95 >= 100% of frame period
 EOF
 }
 
@@ -179,6 +183,23 @@ expected_width = sys.argv[4]
 expected_height = sys.argv[5]
 run_ppm = sys.argv[6] == "1"
 
+GREEN = "\033[1;32m"
+YELLOW = "\033[1;33m"
+RED = "\033[1;31m"
+RESET = "\033[0m"
+
+
+def color_for_budget_ratio(ratio):
+    if ratio < 0.50:
+        return GREEN, "GREEN"
+    if ratio < 0.80:
+        return YELLOW, "YELLOW"
+    return RED, "RED"
+
+
+def color_text(text, color):
+    return f"{color}{text}{RESET}"
+
 
 def percentile(values, p):
     values = sorted(values)
@@ -208,14 +229,19 @@ def summarize(name):
     if not bridge:
         raise SystemExit(f"{name}: missing frame_source.next_frame")
 
+    period_ms = 1000.0 / fps
+    bridge_p95_ms = percentile(bridge, 0.95) / 1000.0
+    bridge_ratio = bridge_p95_ms / period_ms
+    color, label = color_for_budget_ratio(bridge_ratio)
+
     print()
     print(f"=== {name} ===")
     print(f"frames: {len(rows)}")
-    print(f"frame period ms at {fps:g} FPS: {1000.0 / fps:.3f}")
+    print(f"frame period ms at {fps:g} FPS: {period_ms:.3f}")
     print("bridge/capture/read latency proxy: frame_source.next_frame")
     print(f"  mean_ms: {sum(bridge) / len(bridge) / 1000.0:.3f}")
     print(f"  p50_ms:  {percentile(bridge, 0.50) / 1000.0:.3f}")
-    print(f"  p95_ms:  {percentile(bridge, 0.95) / 1000.0:.3f}")
+    print(f"  p95_ms:  {color_text(f'{bridge_p95_ms:.3f}', color)} ({color_text(label, color)}, {bridge_ratio * 100.0:.1f}% of frame period)")
     print(f"  max_ms:  {max(bridge) / 1000.0:.3f}")
     print("total timed runner stages")
     print(f"  mean_ms: {sum(totals) / len(totals) / 1000.0:.3f}")
@@ -251,16 +277,27 @@ if expected_width and expected_height:
 
 period_ms = 1000.0 / fps
 bridge_p95_ms = percentile(bridge_stages["frame_source.next_frame"], 0.95) / 1000.0
+ratio = bridge_p95_ms / period_ms
+color, label = color_for_budget_ratio(ratio)
+print()
+print("=== latency thresholds ===")
+print(f"GREEN:  p95 < 50% of frame period  (< {period_ms * 0.50:.3f} ms at {fps:g} FPS)")
+print(f"YELLOW: p95 < 80% of frame period  (< {period_ms * 0.80:.3f} ms at {fps:g} FPS)")
+print(f"RED:    p95 >= 80% of frame period (>= {period_ms * 0.80:.3f} ms at {fps:g} FPS)")
+print(f"HARD BOTTLENECK: p95 >= 100% of frame period (>= {period_ms:.3f} ms at {fps:g} FPS)")
+
 print()
 print("=== decision hint ===")
-print(f"bridge_only frame_source.next_frame p95_ms: {bridge_p95_ms:.3f}")
+print(f"bridge_only frame_source.next_frame p95_ms: {color_text(f'{bridge_p95_ms:.3f}', color)} ({color_text(label, color)}, {ratio * 100.0:.1f}% of frame period)")
 print(f"frame period ms: {period_ms:.3f}")
-if bridge_p95_ms < period_ms * 0.5:
-    print("OK: bridge p95 is comfortably below half the frame period; pipe/binary is likely fine for now.")
-elif bridge_p95_ms < period_ms:
-    print("WATCH: bridge p95 is below the frame period but not by much; profile again at target FPS/resolution.")
+if ratio < 0.50:
+    print(color_text("OK: bridge p95 is comfortably below half the frame period; pipe/binary is likely fine for now.", GREEN))
+elif ratio < 0.80:
+    print(color_text("WATCH: bridge p95 is usable but no longer cheap; retest at target FPS/resolution before increasing load.", YELLOW))
+elif ratio < 1.0:
+    print(color_text("RISK: bridge p95 is close to the frame period; shared memory or bridge optimization may soon be justified.", RED))
 else:
-    print("BOTTLENECK: bridge p95 exceeds the frame period; shared memory or bridge changes may be justified.")
+    print(color_text("BOTTLENECK: bridge p95 exceeds the frame period; shared memory or bridge changes are justified.", RED))
 print()
 print(f"artifacts: {root}")
 PY
