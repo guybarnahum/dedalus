@@ -124,5 +124,54 @@ int main() {
         return 1;
     }
 
+    const auto state_config = dedalus::load_core_stack_config("config/core_stack_airsim_binary_state_ci.yaml");
+    if (state_config.bridge_mode != "stream_binary_ego" || state_config.ego_provider != "frame_hint") {
+        std::cerr << "AirSim binary state config did not parse expected bridge mode/providers\n";
+        return 1;
+    }
+
+    auto state_providers = registry.create(state_config);
+    const auto state_frame_1 = state_providers.frame_source->next_frame();
+    const auto state_frame_2 = state_providers.frame_source->next_frame();
+    const auto state_frame_3 = state_providers.frame_source->next_frame();
+    if (!state_frame_1.has_value() || !state_frame_2.has_value() || state_frame_3.has_value()) {
+        std::cerr << "AirSim binary state bridge did not produce exactly two CI frames\n";
+        return 1;
+    }
+
+    if (!state_frame_1->ego_hint.has_value() || !state_frame_2->ego_hint.has_value()) {
+        std::cerr << "AirSim binary state bridge did not attach ego hints\n";
+        return 1;
+    }
+
+    const auto state_ego_estimate = state_providers.ego_provider->estimate(*state_frame_1);
+    if (!state_ego_estimate.ego.has_value() || !state_ego_estimate.telemetry_available ||
+        state_ego_estimate.confidence < 0.9F) {
+        std::cerr << "FrameHintEgoProvider did not use binary state sidecar\n";
+        return 1;
+    }
+
+    const auto state_ego = *state_ego_estimate.ego;
+    if (state_ego.map_frame_id.value != "map_airsim_binary_state_ci_0001" ||
+        state_ego.timestamp.timestamp_ns != 3000 ||
+        !nearly_equal(state_ego.local_T_body.position.x, 2.0) ||
+        !nearly_equal(state_ego.velocity_local.y, 6.0)) {
+        std::cerr << "AirSim binary state sidecar did not preserve expected ego values\n";
+        return 1;
+    }
+
+    dedalus::CoreStackRunner state_runner{registry.create(state_config)};
+    if (!state_runner.run_once()) {
+        std::cerr << "AirSim binary state runner failed\n";
+        return 1;
+    }
+    const auto state_snapshot = state_runner.snapshot();
+    if (state_snapshot.active_map_frame_id.value != "map_airsim_binary_state_ci_0001" ||
+        !nearly_equal(state_snapshot.ego.local_T_body.position.x, 2.0) ||
+        !nearly_equal(state_snapshot.ego.velocity_local.y, 6.0)) {
+        std::cerr << "AirSim binary state runner did not preserve frame-attached ego telemetry\n";
+        return 1;
+    }
+
     return 0;
 }
