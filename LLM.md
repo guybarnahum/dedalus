@@ -121,7 +121,10 @@ Future GPU-resident frame path:
   Current Milestone 2 pipe/binary profiling shows frame_ego stdout_write_ms is only
   about 5-6 ms p95 at 1280x720, while simGetImages is about 61 ms p95. Therefore
   shared_memory transport or VRAM pointer passing is not the immediate Milestone 2
-  bottleneck. However, production perception should avoid CPU round trips by allowing
+  bottleneck. A 640×360 capacity run confirmed this: reducing image size by 4× barely
+  changes frame_ego p95 latency (simGetImages remains ~57 ms p95, stdout_write remains
+  ~5-6 ms p95). AirSim image extraction/RPC overhead dominates over pipe transfer or
+  raw byte volume in the current bridge. However, production perception should avoid CPU round trips by allowing
   FramePacket to carry an optional source-neutral ImageBufferHandle for GPU-resident
   frames.
 
