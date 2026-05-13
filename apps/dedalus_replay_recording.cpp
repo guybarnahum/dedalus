@@ -1,3 +1,4 @@
+#include <chrono>
 #include <exception>
 #include <filesystem>
 #include <fstream>
@@ -7,6 +8,8 @@
 #include <sstream>
 #include <string>
 
+#include <unistd.h>
+
 #include "dedalus/runtime/config_loader.hpp"
 #include "dedalus/runtime/core_stack_runner.hpp"
 #include "dedalus/runtime/pipeline_profiler.hpp"
@@ -15,10 +18,91 @@
 
 namespace {
 
+enum class ProgressMode {
+    Auto,
+    On,
+    Off,
+};
+
 struct Args {
     std::string config_path{"config/core_stack_recorded_ci.yaml"};
     std::filesystem::path output_dir{"out/replay_snapshots"};
     int max_frames{0};
+    ProgressMode progress_mode{ProgressMode::Auto};
+};
+
+class ProgressReporter {
+public:
+    ProgressReporter(ProgressMode mode, int max_frames)
+        : enabled_(should_enable(mode)), max_frames_(max_frames), last_emit_(Clock::now()) {
+        if (enabled_) {
+            emit(0, false);
+        }
+    }
+
+    ~ProgressReporter() {
+        clear_line_if_needed();
+    }
+
+    void update(int frame_count) {
+        if (!enabled_) {
+            return;
+        }
+        const auto now = Clock::now();
+        if (now - last_emit_ < std::chrono::seconds{1} &&
+            !(max_frames_ > 0 && frame_count >= max_frames_)) {
+            return;
+        }
+        last_emit_ = now;
+        emit(frame_count, false);
+    }
+
+    void finish(int frame_count) {
+        if (!enabled_) {
+            return;
+        }
+        emit(frame_count, true);
+        std::cerr << '\n';
+        finished_ = true;
+    }
+
+private:
+    using Clock = std::chrono::steady_clock;
+
+    static bool should_enable(ProgressMode mode) {
+        if (mode == ProgressMode::On) {
+            return true;
+        }
+        if (mode == ProgressMode::Off) {
+            return false;
+        }
+        return isatty(STDERR_FILENO) != 0;
+    }
+
+    void clear_line_if_needed() {
+        if (enabled_ && !finished_) {
+            std::cerr << "\r\033[K";
+        }
+    }
+
+    void emit(int frame_count, bool done) const {
+        std::cerr << "\r\033[Kdedalus_replay_recording: processed " << frame_count;
+        if (max_frames_ > 0) {
+            const int percent = frame_count >= max_frames_ ? 100 : (frame_count * 100 / max_frames_);
+            std::cerr << "/" << max_frames_ << " frame(s) (" << percent << "%)";
+        } else {
+            std::cerr << " frame(s)";
+        }
+        if (done) {
+            std::cerr << " done";
+        }
+        std::cerr.flush();
+    }
+
+    bool enabled_{false};
+    int max_frames_{0};
+    Clock::time_point last_emit_;
+    bool finished_{false};
 };
 
 std::string zero_padded(int value, int width) {
@@ -50,6 +134,10 @@ Args parse_args(int argc, char** argv) {
             if (args.max_frames < 0) {
                 throw std::invalid_argument("--max-frames must be >= 0");
             }
+        } else if (arg == "--progress") {
+            args.progress_mode = ProgressMode::On;
+        } else if (arg == "--no-progress") {
+            args.progress_mode = ProgressMode::Off;
         } else {
             throw std::invalid_argument("unknown argument: " + arg);
         }
@@ -82,6 +170,8 @@ int main(int argc, char** argv) {
         }
         manifest << "# index path timestamp_ns active_map_frame_id\n";
 
+        ProgressReporter progress{args.progress_mode, args.max_frames};
+
         int frame_count = 0;
         while (args.max_frames == 0 || frame_count < args.max_frames) {
             if (!runner.run_once()) {
@@ -102,7 +192,10 @@ int main(int argc, char** argv) {
             manifest << frame_count << " " << snapshot_name << " "
                      << snapshot.timestamp.timestamp_ns << " "
                      << snapshot.active_map_frame_id.value << "\n";
+            progress.update(frame_count);
         }
+
+        progress.finish(frame_count);
 
         if (frame_count == 0) {
             std::cerr << "dedalus_replay_recording: no frames processed\n";
