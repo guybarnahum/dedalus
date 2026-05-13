@@ -42,11 +42,12 @@ Options:
   -h, --help              Show this help.
 
 The bridge latency proxy is frame_source.next_frame.
-Thresholds are relative to the frame period:
-  GREEN  p95 < 50% of frame period
-  YELLOW p95 < 80% of frame period
-  RED    p95 >= 80% of frame period
-  HARD BOTTLENECK p95 >= 100% of frame period
+Absolute p95 latency capacity thresholds:
+  GREEN  p95 <= 33.3 ms  approximately 30 FPS capable
+  YELLOW p95 <= 66.7 ms  approximately 15 FPS capable
+  RED    p95  > 66.7 ms  below 15 FPS bridge/capture/read capacity
+
+The script also prints p99, max, and the requested-FPS frame-period budget.
 EOF
 }
 
@@ -188,13 +189,27 @@ YELLOW = "\033[1;33m"
 RED = "\033[1;31m"
 RESET = "\033[0m"
 
+FPS_30_MS = 1000.0 / 30.0
+FPS_15_MS = 1000.0 / 15.0
+FPS_10_MS = 1000.0 / 10.0
+FPS_5_MS = 1000.0 / 5.0
 
-def color_for_budget_ratio(ratio):
+
+def color_for_absolute_latency_ms(latency_ms):
+    if latency_ms <= FPS_30_MS:
+        return GREEN, "GREEN", ">=30 FPS capacity"
+    if latency_ms <= FPS_15_MS:
+        return YELLOW, "YELLOW", ">=15 FPS capacity"
+    return RED, "RED", "<15 FPS capacity"
+
+
+def color_for_requested_budget(latency_ms, period_ms):
+    ratio = latency_ms / period_ms
     if ratio < 0.50:
-        return GREEN, "GREEN"
+        return GREEN, "GREEN", ratio
     if ratio < 0.80:
-        return YELLOW, "YELLOW"
-    return RED, "RED"
+        return YELLOW, "YELLOW", ratio
+    return RED, "RED", ratio
 
 
 def color_text(text, color):
@@ -214,6 +229,12 @@ def load_rows(path):
     return rows
 
 
+def implied_fps(latency_ms):
+    if latency_ms <= 0:
+        return float("inf")
+    return 1000.0 / latency_ms
+
+
 def summarize(name):
     path = root / name / "pipeline_profile.jsonl"
     if not path.exists():
@@ -230,22 +251,33 @@ def summarize(name):
         raise SystemExit(f"{name}: missing frame_source.next_frame")
 
     period_ms = 1000.0 / fps
+    bridge_p50_ms = percentile(bridge, 0.50) / 1000.0
     bridge_p95_ms = percentile(bridge, 0.95) / 1000.0
-    bridge_ratio = bridge_p95_ms / period_ms
-    color, label = color_for_budget_ratio(bridge_ratio)
+    bridge_p99_ms = percentile(bridge, 0.99) / 1000.0
+    abs_color, abs_label, capacity_label = color_for_absolute_latency_ms(bridge_p95_ms)
+    budget_color, budget_label, budget_ratio = color_for_requested_budget(bridge_p95_ms, period_ms)
 
     print()
     print(f"=== {name} ===")
     print(f"frames: {len(rows)}")
-    print(f"frame period ms at {fps:g} FPS: {period_ms:.3f}")
+    print(f"requested FPS: {fps:g}  frame period ms: {period_ms:.3f}")
     print("bridge/capture/read latency proxy: frame_source.next_frame")
     print(f"  mean_ms: {sum(bridge) / len(bridge) / 1000.0:.3f}")
-    print(f"  p50_ms:  {percentile(bridge, 0.50) / 1000.0:.3f}")
-    print(f"  p95_ms:  {color_text(f'{bridge_p95_ms:.3f}', color)} ({color_text(label, color)}, {bridge_ratio * 100.0:.1f}% of frame period)")
+    print(f"  p50_ms:  {bridge_p50_ms:.3f}  (~{implied_fps(bridge_p50_ms):.1f} FPS capacity)")
+    print(
+        f"  p95_ms:  {color_text(f'{bridge_p95_ms:.3f}', abs_color)} "
+        f"({color_text(abs_label, abs_color)}, {capacity_label}, ~{implied_fps(bridge_p95_ms):.1f} FPS capacity)"
+    )
+    print(f"  p99_ms:  {bridge_p99_ms:.3f}  (~{implied_fps(bridge_p99_ms):.1f} FPS capacity)")
     print(f"  max_ms:  {max(bridge) / 1000.0:.3f}")
+    print(
+        f"  requested-FPS budget: {color_text(budget_label, budget_color)} "
+        f"({budget_ratio * 100.0:.1f}% of {period_ms:.3f} ms frame period)"
+    )
     print("total timed runner stages")
     print(f"  mean_ms: {sum(totals) / len(totals) / 1000.0:.3f}")
     print(f"  p95_ms:  {percentile(totals, 0.95) / 1000.0:.3f}")
+    print(f"  p99_ms:  {percentile(totals, 0.99) / 1000.0:.3f}")
     print(f"  max_ms:  {max(totals) / 1000.0:.3f}")
     print(f"bridge share of timed total mean: {(sum(bridge) / max(1, sum(totals))) * 100.0:.1f}%")
 
@@ -255,6 +287,7 @@ def summarize(name):
             f"  {stage}: "
             f"mean_ms={sum(values) / len(values) / 1000.0:.3f} "
             f"p95_ms={percentile(values, 0.95) / 1000.0:.3f} "
+            f"p99_ms={percentile(values, 0.99) / 1000.0:.3f} "
             f"max_ms={max(values) / 1000.0:.3f}"
         )
     return stages
@@ -277,27 +310,40 @@ if expected_width and expected_height:
 
 period_ms = 1000.0 / fps
 bridge_p95_ms = percentile(bridge_stages["frame_source.next_frame"], 0.95) / 1000.0
-ratio = bridge_p95_ms / period_ms
-color, label = color_for_budget_ratio(ratio)
+bridge_p99_ms = percentile(bridge_stages["frame_source.next_frame"], 0.99) / 1000.0
+abs_color, abs_label, capacity_label = color_for_absolute_latency_ms(bridge_p95_ms)
+budget_color, budget_label, budget_ratio = color_for_requested_budget(bridge_p95_ms, period_ms)
 print()
-print("=== latency thresholds ===")
-print(f"GREEN:  p95 < 50% of frame period  (< {period_ms * 0.50:.3f} ms at {fps:g} FPS)")
-print(f"YELLOW: p95 < 80% of frame period  (< {period_ms * 0.80:.3f} ms at {fps:g} FPS)")
-print(f"RED:    p95 >= 80% of frame period (>= {period_ms * 0.80:.3f} ms at {fps:g} FPS)")
-print(f"HARD BOTTLENECK: p95 >= 100% of frame period (>= {period_ms:.3f} ms at {fps:g} FPS)")
+print("=== absolute latency thresholds, based on p95 ===")
+print(f"GREEN:  p95 <= {FPS_30_MS:.3f} ms  (30 FPS bridge/capture/read capacity)")
+print(f"YELLOW: p95 <= {FPS_15_MS:.3f} ms  (15 FPS bridge/capture/read capacity)")
+print(f"RED:    p95  > {FPS_15_MS:.3f} ms  (below 15 FPS bridge/capture/read capacity)")
+print(f"Reference: 10 FPS budget = {FPS_10_MS:.3f} ms, 5 FPS budget = {FPS_5_MS:.3f} ms")
+
+print()
+print("=== requested-FPS budget thresholds ===")
+print(f"GREEN:  p95 < 50% of requested frame period  (< {period_ms * 0.50:.3f} ms at {fps:g} FPS)")
+print(f"YELLOW: p95 < 80% of requested frame period  (< {period_ms * 0.80:.3f} ms at {fps:g} FPS)")
+print(f"RED:    p95 >= 80% of requested frame period (>= {period_ms * 0.80:.3f} ms at {fps:g} FPS)")
+print(f"HARD BOTTLENECK: p95 >= 100% of requested frame period (>= {period_ms:.3f} ms at {fps:g} FPS)")
 
 print()
 print("=== decision hint ===")
-print(f"bridge_only frame_source.next_frame p95_ms: {color_text(f'{bridge_p95_ms:.3f}', color)} ({color_text(label, color)}, {ratio * 100.0:.1f}% of frame period)")
-print(f"frame period ms: {period_ms:.3f}")
-if ratio < 0.50:
-    print(color_text("OK: bridge p95 is comfortably below half the frame period; pipe/binary is likely fine for now.", GREEN))
-elif ratio < 0.80:
-    print(color_text("WATCH: bridge p95 is usable but no longer cheap; retest at target FPS/resolution before increasing load.", YELLOW))
-elif ratio < 1.0:
-    print(color_text("RISK: bridge p95 is close to the frame period; shared memory or bridge optimization may soon be justified.", RED))
+print(
+    f"bridge_only frame_source.next_frame p95_ms: {color_text(f'{bridge_p95_ms:.3f}', abs_color)} "
+    f"({color_text(abs_label, abs_color)}, {capacity_label}, ~{implied_fps(bridge_p95_ms):.1f} FPS capacity)"
+)
+print(f"bridge_only frame_source.next_frame p99_ms: {bridge_p99_ms:.3f} (~{implied_fps(bridge_p99_ms):.1f} FPS capacity)")
+print(
+    f"requested-FPS budget: {color_text(budget_label, budget_color)} "
+    f"({budget_ratio * 100.0:.1f}% of {period_ms:.3f} ms frame period)"
+)
+if bridge_p95_ms <= FPS_30_MS:
+    print(color_text("OK: bridge p95 supports roughly 30 FPS capture/read capacity.", GREEN))
+elif bridge_p95_ms <= FPS_15_MS:
+    print(color_text("WATCH: bridge p95 supports roughly 15 FPS, but not 30 FPS. Good enough for 5-10 FPS validation; retest before higher-rate autonomy.", YELLOW))
 else:
-    print(color_text("BOTTLENECK: bridge p95 exceeds the frame period; shared memory or bridge changes are justified.", RED))
+    print(color_text("RISK: bridge p95 is below 15 FPS capacity. Shared memory, lower resolution, lower FPS, or bridge optimization may be justified.", RED))
 print()
 print(f"artifacts: {root}")
 PY
