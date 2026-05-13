@@ -26,9 +26,11 @@ from __future__ import annotations
 import argparse
 import json
 import os
+from pathlib import Path
 import struct
 import sys
 import time
+from typing import TextIO
 
 import airsim
 
@@ -37,6 +39,32 @@ VERSION_RGB_ONLY = 1
 VERSION_RGB_EGO = 2
 HEADER_SIZE = 56
 PIXEL_FORMAT_RGB8 = 1
+
+
+def elapsed_ms(start_ns: int, end_ns: int) -> float:
+    return (end_ns - start_ns) / 1_000_000.0
+
+
+class TimingJsonlWriter:
+    """Optional dependency-free bridge-internal timing writer."""
+
+    def __init__(self, path: str | None):
+        self._file: TextIO | None = None
+        if path:
+            output_path = Path(path)
+            output_path.parent.mkdir(parents=True, exist_ok=True)
+            self._file = output_path.open("w", encoding="utf-8")
+
+    def close(self) -> None:
+        if self._file is not None:
+            self._file.close()
+            self._file = None
+
+    def write(self, record: dict[str, object]) -> None:
+        if self._file is None:
+            return
+        self._file.write(json.dumps(record, separators=(",", ":")) + "\n")
+        self._file.flush()
 
 
 def rgb_bytes_from_response(response: object) -> bytes:
@@ -135,34 +163,89 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="Append ego telemetry JSON after each RGB payload using binary protocol version 2.",
     )
+    parser.add_argument(
+        "--timing-jsonl",
+        default="",
+        help="Optional path for bridge-internal timing JSONL records.",
+    )
     return parser.parse_args()
 
 
 def main() -> int:
     args = parse_args()
-    client = airsim.MultirotorClient(ip=args.host, port=args.rpc_port)
-    client.confirmConnection()
+    timing = TimingJsonlWriter(args.timing_jsonl or None)
+    try:
+        client = airsim.MultirotorClient(ip=args.host, port=args.rpc_port)
+        client.confirmConnection()
 
-    period_s = 0.0 if args.rate_hz <= 0 else 1.0 / args.rate_hz
-    sequence = 0
-    while args.count == 0 or sequence < args.count:
-        responses = client.simGetImages(
-            [airsim.ImageRequest(args.camera_name, airsim.ImageType.Scene, False, False)],
-            vehicle_name=args.vehicle_name,
-        )
-        if not responses:
-            raise RuntimeError("AirSim returned no image responses")
-        response = responses[0]
-        sequence += 1
-        timestamp_ns = int(getattr(response, "time_stamp", 0) or time.time_ns())
-        payload = rgb_bytes_from_response(response)
-        ego_payload = ego_json_bytes(client, args.vehicle_name, timestamp_ns) if args.include_ego else b""
-        if not write_frame(sequence, timestamp_ns, int(response.width), int(response.height), payload, ego_payload):
-            return 0
-        if period_s > 0 and (args.count == 0 or sequence < args.count):
-            time.sleep(period_s)
+        period_s = 0.0 if args.rate_hz <= 0 else 1.0 / args.rate_hz
+        sequence = 0
+        while args.count == 0 or sequence < args.count:
+            loop_start_ns = time.perf_counter_ns()
 
-    return 0
+            image_start_ns = time.perf_counter_ns()
+            responses = client.simGetImages(
+                [airsim.ImageRequest(args.camera_name, airsim.ImageType.Scene, False, False)],
+                vehicle_name=args.vehicle_name,
+            )
+            image_end_ns = time.perf_counter_ns()
+            if not responses:
+                raise RuntimeError("AirSim returned no image responses")
+
+            response = responses[0]
+            sequence += 1
+            timestamp_ns = int(getattr(response, "time_stamp", 0) or time.time_ns())
+
+            rgb_start_ns = time.perf_counter_ns()
+            payload = rgb_bytes_from_response(response)
+            rgb_end_ns = time.perf_counter_ns()
+
+            ego_start_ns = time.perf_counter_ns()
+            ego_payload = ego_json_bytes(client, args.vehicle_name, timestamp_ns) if args.include_ego else b""
+            ego_end_ns = time.perf_counter_ns()
+
+            write_start_ns = time.perf_counter_ns()
+            write_ok = write_frame(
+                sequence,
+                timestamp_ns,
+                int(response.width),
+                int(response.height),
+                payload,
+                ego_payload,
+            )
+            write_end_ns = time.perf_counter_ns()
+            if not write_ok:
+                return 0
+
+            sleep_ms = 0.0
+            if period_s > 0 and (args.count == 0 or sequence < args.count):
+                sleep_start_ns = time.perf_counter_ns()
+                time.sleep(period_s)
+                sleep_end_ns = time.perf_counter_ns()
+                sleep_ms = elapsed_ms(sleep_start_ns, sleep_end_ns)
+
+            loop_end_ns = time.perf_counter_ns()
+            timing.write(
+                {
+                    "sequence": sequence,
+                    "timestamp_ns": timestamp_ns,
+                    "width": int(response.width),
+                    "height": int(response.height),
+                    "payload_bytes": len(payload),
+                    "ego_bytes": len(ego_payload),
+                    "include_ego": bool(args.include_ego),
+                    "sim_get_images_ms": elapsed_ms(image_start_ns, image_end_ns),
+                    "rgb_convert_ms": elapsed_ms(rgb_start_ns, rgb_end_ns),
+                    "ego_sample_ms": elapsed_ms(ego_start_ns, ego_end_ns),
+                    "stdout_write_ms": elapsed_ms(write_start_ns, write_end_ns),
+                    "sleep_ms": sleep_ms,
+                    "total_loop_ms": elapsed_ms(loop_start_ns, loop_end_ns),
+                }
+            )
+
+        return 0
+    finally:
+        timing.close()
 
 
 if __name__ == "__main__":
