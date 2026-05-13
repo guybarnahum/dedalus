@@ -62,13 +62,17 @@ def rgb_bytes_from_response(response: object) -> bytes:
 
 
 def ego_json_bytes(client: airsim.MultirotorClient, vehicle_name: str, timestamp_ns: int) -> bytes:
+    # 2.14 optimization:
+    # Use one AirSim RPC per frame for ego telemetry. MultirotorState already
+    # carries kinematics_estimated position/orientation/velocity, so avoid an
+    # extra simGetVehiclePose() call in stream_binary_ego mode.
     state = client.getMultirotorState(vehicle_name=vehicle_name)
-    pose = client.simGetVehiclePose(vehicle_name=vehicle_name)
+    kin = state.kinematics_estimated
 
-    position = pose.position
-    orientation = airsim.to_eularian_angles(pose.orientation)
-    velocity = state.kinematics_estimated.linear_velocity
-    angular_velocity = state.kinematics_estimated.angular_velocity
+    position = kin.position
+    orientation = airsim.to_eularian_angles(kin.orientation)
+    velocity = kin.linear_velocity
+    angular_velocity = kin.angular_velocity
 
     payload = {
         "timestamp_ns": int(timestamp_ns),

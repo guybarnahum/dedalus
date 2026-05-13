@@ -104,6 +104,18 @@ Milestone 2 currently includes the following implemented slices:
 2E.8 — Dependency-free visual annotation output
   Implemented with PpmFrameAnnotationSink behind frame_annotator: ppm_sequence.
   The provider writes annotated PPM image sequences plus manifest.txt for visual validation.
+
+2E.9 — stream_binary_ego frame-attached ego sidecar path
+  Implemented through FramePacket::ego_hint + FrameHintEgoProvider.
+  Removes the separate airsim_ego_bridge_command runtime cost when using --include-ego.
+
+Current optimization slice:
+  Milestone 2.14 — optimize AirSim co-stream sampling.
+  First step: remove the extra simGetVehiclePose() RPC from
+  simulation/airsim-stream-frames-binary.py and derive pose/orientation from
+  getMultirotorState().kinematics_estimated.
+  Goal: reduce stream_binary_ego frame_source.next_frame latency while preserving
+  the frame-attached ego contract.
 ```
 
 ### Current source-neutral bridge config contract
@@ -1580,19 +1592,32 @@ frame ID, timestamp, active map frame, ego map frame, and simple debug markers f
 tactical exclusion zones, flight corridors, and landmarks.
 ```
 
-Current preferred AirSim frame processing path:
+Current preferred AirSim frame processing paths:
 
 ```text
-AirSim / Colosseum
-  -> simulation/airsim-stream-frames-binary.py
-  -> PipeBridgeTransport
-  -> AirSimFrameSource
-  -> FramePacket
-  -> AirSimEgoStateProvider
-  -> PerceptionPipeline
-  -> InMemoryWorldModel
-  -> FrameAnnotationSink
-  -> WorldSnapshot JSON
+1) RGB-only binary stream + separate ego provider:
+   AirSim / Colosseum
+     -> simulation/airsim-stream-frames-binary.py
+     -> PipeBridgeTransport
+     -> AirSimFrameSource
+     -> FramePacket
+     -> AirSimEgoStateProvider
+     -> PerceptionPipeline
+     -> InMemoryWorldModel
+     -> FrameAnnotationSink
+     -> WorldSnapshot JSON
+
+2) Preferred profiling/optimization path (avoids separate ego RPC from C++):
+   AirSim / Colosseum
+     -> simulation/airsim-stream-frames-binary.py --include-ego
+     -> PipeBridgeTransport
+     -> AirSimFrameSource
+     -> FramePacket::ego_hint
+     -> FrameHintEgoProvider
+     -> PerceptionPipeline
+     -> InMemoryWorldModel
+     -> FrameAnnotationSink
+     -> WorldSnapshot JSON
 ```
 
 Preferred command:
