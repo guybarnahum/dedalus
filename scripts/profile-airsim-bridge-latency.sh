@@ -9,8 +9,8 @@ set -euo pipefail
 #   frame_ego:    stream_binary_ego RGB+ego sidecar + ego_provider=frame_hint
 #
 # Capacity mode is the default. It sets bridge --rate-hz 0 so
-# frame_source.next_frame measures capture/read capacity instead of intentional
-# frame pacing sleep. Use --paced to profile requested-FPS pacing behavior.
+# frame_source wait/read timing measures capture/read capacity instead of
+# intentional frame pacing sleep. Use --paced to profile requested-FPS pacing behavior.
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 BUILD_DIR="$ROOT_DIR/build-staging"
@@ -66,7 +66,8 @@ Options:
   -h, --help              Show this help
 
 Metrics:
-  frame_source.next_frame is the C++ capture/bridge/read bucket.
+  frame_source.next_frame_wait is the main-thread wait for the prefetched frame.
+  frame_source.detail.* breaks down the background frame fetch/read path.
   ego_provider.estimate shows whether ego telemetry is still a hot-path RPC.
   Bridge-internal timing, when enabled, breaks down the Python bridge into:
     sim_get_images_ms, ego_sample_ms, rgb_convert_ms, stdout_write_ms, sleep_ms.
@@ -297,6 +298,8 @@ FPS_30_MS = 1000.0 / 30.0
 FPS_15_MS = 1000.0 / 15.0
 FPS_10_MS = 1000.0 / 10.0
 FPS_5_MS = 1000.0 / 5.0
+FRAME_WAIT_STAGE = "frame_source.next_frame_wait"
+LEGACY_FRAME_WAIT_STAGE = "frame_source.next_frame"
 
 
 def color_for_absolute_latency_ms(latency_ms):
@@ -329,6 +332,15 @@ def load_rows(path):
     return rows
 
 
+def choose_frame_wait_stage(rows):
+    stages = rows[0].get("stages", {}) if rows else {}
+    if FRAME_WAIT_STAGE in stages:
+        return FRAME_WAIT_STAGE
+    if LEGACY_FRAME_WAIT_STAGE in stages:
+        return LEGACY_FRAME_WAIT_STAGE
+    raise SystemExit(f"missing stage {FRAME_WAIT_STAGE} or {LEGACY_FRAME_WAIT_STAGE}")
+
+
 def stage_values(rows, stage):
     values = []
     for row in rows:
@@ -352,7 +364,8 @@ def summarize_pass(pass_name):
     if not path.exists():
         raise SystemExit(f"missing profile JSONL: {path}")
     rows = load_rows(path)
-    bridge = stage_values(rows, "frame_source.next_frame")
+    frame_wait_stage = choose_frame_wait_stage(rows)
+    bridge = stage_values(rows, frame_wait_stage)
     ego = stage_values(rows, "ego_provider.estimate")
     total = [row["total_us"] for row in rows]
 
@@ -365,8 +378,9 @@ def summarize_pass(pass_name):
     print()
     print(f"=== {pass_name} ===")
     print(f"profile kind: {profile_kind}")
-    print(f"bridge p95: {color_text(f'{bridge_p95_ms:.3f} ms', color)} ({color_text(label, color)}, {capacity}, ~{implied_fps(bridge_p95_ms):.1f} FPS capacity)")
-    print(f"bridge p99: {bridge_p99_ms:.3f} ms (~{implied_fps(bridge_p99_ms):.1f} FPS capacity)")
+    print(f"frame wait stage: {frame_wait_stage}")
+    print(f"bridge/main wait p95: {color_text(f'{bridge_p95_ms:.3f} ms', color)} ({color_text(label, color)}, {capacity}, ~{implied_fps(bridge_p95_ms):.1f} FPS capacity)")
+    print(f"bridge/main wait p99: {bridge_p99_ms:.3f} ms (~{implied_fps(bridge_p99_ms):.1f} FPS capacity)")
     print(f"ego_provider p95: {ego_p95_ms:.3f} ms")
     print(f"total runner p95: {total_p95_ms:.3f} ms (~{implied_fps(total_p95_ms):.1f} FPS capacity)")
     print("stage summary:")
@@ -399,7 +413,7 @@ if expected_width and expected_height:
     print(f"MiB/s at {fps:g} FPS: {mib * fps:.3f} for paced mode reference")
 
 print()
-print("=== absolute latency thresholds, based on frame_source.next_frame p95 ===")
+print("=== absolute latency thresholds, based on frame-source main wait p95 ===")
 print(f"GREEN:  p95 <= {FPS_30_MS:.3f} ms  (30 FPS bridge/capture/read capacity)")
 print(f"YELLOW: p95 <= {FPS_15_MS:.3f} ms  (15 FPS bridge/capture/read capacity)")
 print(f"RED:    p95  > {FPS_15_MS:.3f} ms  (below 15 FPS bridge/capture/read capacity)")
