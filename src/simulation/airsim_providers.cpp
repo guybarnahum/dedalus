@@ -167,7 +167,7 @@ BinaryFrameHeader parse_binary_header(const std::string& header_bytes) {
     return header;
 }
 
-ImageView image_from_rgb_payload(const BinaryFrameHeader& header, const std::string& payload) {
+ImageView image_from_rgb_payload(const BinaryFrameHeader& header, std::vector<std::uint8_t> payload) {
     if (payload.size() != header.payload_size) {
         throw std::runtime_error("binary frame payload has invalid size");
     }
@@ -176,7 +176,7 @@ ImageView image_from_rgb_payload(const BinaryFrameHeader& header, const std::str
     image.width = static_cast<int>(header.width);
     image.height = static_cast<int>(header.height);
     image.channels = static_cast<int>(header.channels);
-    image.bytes.assign(payload.begin(), payload.end());
+    image.bytes = std::move(payload);
     return image;
 }
 
@@ -378,7 +378,7 @@ std::optional<FramePacket> AirSimFrameSource::next_stream_binary_frame() {
     }
 
     const auto header = parse_binary_header(*header_bytes);
-    const auto payload = transport_->read_stream_bytes(command, header.payload_size);
+    auto payload = transport_->read_stream_byte_vector(command, header.payload_size);
     if (!payload.has_value()) {
         throw std::runtime_error("binary stream ended before frame payload");
     }
@@ -395,7 +395,7 @@ std::optional<FramePacket> AirSimFrameSource::next_stream_binary_frame() {
     ++next_frame_index_;
     auto frame = frame_from_image(
         config_,
-        image_from_rgb_payload(header, *payload),
+        image_from_rgb_payload(header, std::move(*payload)),
         FrameId{"binary_stream_frame_" + std::to_string(header.sequence)},
         TimePoint{header.timestamp_ns});
     if (!sidecar_payload.empty()) {
