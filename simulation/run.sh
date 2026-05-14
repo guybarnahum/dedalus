@@ -29,6 +29,7 @@ FLIGHT_TRAJECTORY="trajectories/circle_figure8.json"
 FLIGHT_SAFE_HEIGHT_M="8"
 AIRSIM_CAMERA_WIDTH=""
 AIRSIM_CAMERA_HEIGHT=""
+AIRSIM_SETTINGS_BACKUP_ABS=""
 
 usage() {
     cat <<'EOF'
@@ -54,10 +55,12 @@ Options:
   --flight-safe-height-m M      test-flight.py --safe-height value. Default: 8
   --control-start-delay-s N     Delay after PX4 window launch before starting velocity-control and aligned capture.
                                 Default: 10
-  --airsim-camera-width W       Override AirSim camera CaptureSettings Width before launch.
-                                Requires simulator restart because AirSim reads settings.json at startup.
-  --airsim-camera-height H      Override AirSim camera CaptureSettings Height before launch.
-                                Requires simulator restart because AirSim reads settings.json at startup.
+  --airsim-camera-width W       Patch launch-directory simulation/settings.json CaptureSettings Width before launch.
+                                A timestamped backup is written next to settings.json.
+                                Requires simulator restart because packaged AirSimNH reads settings.json at startup.
+  --airsim-camera-height H      Patch launch-directory simulation/settings.json CaptureSettings Height before launch.
+                                A timestamped backup is written next to settings.json.
+                                Requires simulator restart because packaged AirSimNH reads settings.json at startup.
   --core-build-dir PATH         Build directory containing apps/dedalus_replay_recording.
                                 Default: ../build-staging
   --core-config PATH            Core-stack config template to use.
@@ -221,7 +224,6 @@ S3_BUCKET="s3://dedalus-sim-assets-colosseum"
 SIM_DIR="colosseum_environments/${TARGET_ENV}_LinuxNoEditor"
 VENV_PATH="$HOME/dedalus/venv"
 AIRSIM_CANONICAL_SETTINGS_ABS="$(pwd)/settings.json"
-AIRSIM_RUNTIME_SETTINGS_ABS="/tmp/dedalus_airsim_settings_${TIMESTAMP}.json"
 REPO_ROOT_ABS="$(cd .. && pwd)"
 CORE_BUILD_DIR_ABS="$(cd "$CORE_BUILD_DIR" 2>/dev/null && pwd || true)"
 CORE_CONFIG_ABS="$(cd "$(dirname "$CORE_CONFIG")" && pwd)/$(basename "$CORE_CONFIG")"
@@ -293,62 +295,107 @@ output.write_text(
 PY
 }
 
-write_airsim_settings() {
-    local source_settings="$1"
-    local output_settings="$2"
-    local width="$3"
-    local height="$4"
+patch_airsim_settings_in_place() {
+    local settings_path="$1"
+    local width="$2"
+    local height="$3"
 
-    python - "$source_settings" "$output_settings" "$width" "$height" <<'PY'
+    python - "$settings_path" "$width" "$height" <<'PY'
 import json
 import sys
 from pathlib import Path
 
-source = Path(sys.argv[1])
-output = Path(sys.argv[2])
-width_arg = sys.argv[3]
-height_arg = sys.argv[4]
+path = Path(sys.argv[1])
+width = int(sys.argv[2])
+height = int(sys.argv[3])
 
-data = json.loads(source.read_text(encoding="utf-8"))
+data = json.loads(path.read_text(encoding="utf-8"))
 
-if width_arg and height_arg:
-    width = int(width_arg)
-    height = int(height_arg)
+def normalize_capture_settings(owner):
+    settings = owner.setdefault("CaptureSettings", [])
+    if not isinstance(settings, list):
+        raise SystemExit("CaptureSettings exists but is not a list")
 
-    def update_capture_settings(owner):
-        settings = owner.get("CaptureSettings")
-        if not isinstance(settings, list):
-            return 0
-        changed = 0
-        for setting in settings:
-            if isinstance(setting, dict):
-                setting["Width"] = width
-                setting["Height"] = height
-                changed += 1
-        return changed
+    by_type = {}
+    for setting in settings:
+        if isinstance(setting, dict) and "ImageType" in setting:
+            by_type[int(setting["ImageType"])] = setting
+
+    template = by_type.get(0)
+    if template is None:
+        template = {
+            "ImageType": 0,
+            "FOV_Degrees": 84,
+            "AutoExposureSpeed": 100,
+            "AutoExposureBias": 0,
+            "MotionBlurAmount": 0,
+        }
+        settings.append(template)
+        by_type[0] = template
 
     changed = 0
-    camera_defaults = data.get("CameraDefaults")
-    if isinstance(camera_defaults, dict):
-        changed += update_capture_settings(camera_defaults)
+    for image_type in (-1, 0, 2):
+        setting = by_type.get(image_type)
+        if setting is None:
+            setting = dict(template)
+            setting["ImageType"] = image_type
+            settings.append(setting)
+            by_type[image_type] = setting
 
-    vehicles = data.get("Vehicles")
-    if isinstance(vehicles, dict):
-        for vehicle in vehicles.values():
-            if not isinstance(vehicle, dict):
-                continue
-            cameras = vehicle.get("Cameras")
-            if not isinstance(cameras, dict):
-                continue
-            for camera in cameras.values():
-                if isinstance(camera, dict):
-                    changed += update_capture_settings(camera)
+        setting["Width"] = width
+        setting["Height"] = height
+        setting.setdefault("FOV_Degrees", template.get("FOV_Degrees", 84))
+        setting.setdefault("AutoExposureSpeed", template.get("AutoExposureSpeed", 100))
+        setting.setdefault("AutoExposureBias", template.get("AutoExposureBias", 0))
+        setting.setdefault("MotionBlurAmount", template.get("MotionBlurAmount", 0))
+        changed += 1
 
-    if changed == 0:
-        raise SystemExit("no CameraDefaults or vehicle camera CaptureSettings found to update")
+    settings.sort(
+        key=lambda item: int(item.get("ImageType", 999))
+        if isinstance(item, dict)
+        else 999
+    )
+    return changed
 
-output.parent.mkdir(parents=True, exist_ok=True)
-output.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
+changed = 0
+camera_defaults = data.setdefault("CameraDefaults", {})
+changed += normalize_capture_settings(camera_defaults)
+
+vehicles = data.get("Vehicles")
+if isinstance(vehicles, dict):
+    for vehicle in vehicles.values():
+        if not isinstance(vehicle, dict):
+            continue
+        cameras = vehicle.get("Cameras")
+        if not isinstance(cameras, dict):
+            continue
+        for camera in cameras.values():
+            if isinstance(camera, dict):
+                changed += normalize_capture_settings(camera)
+
+if changed == 0:
+    raise SystemExit("no CameraDefaults or vehicle camera CaptureSettings found to update")
+
+path.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
+
+print(f"patched_settings={path}")
+print(f"requested_resolution={width}x{height}")
+
+def print_owner(label, owner):
+    print(label)
+    for setting in owner.get("CaptureSettings", []):
+        if isinstance(setting, dict):
+            print(
+                f"  ImageType={setting.get('ImageType')} "
+                f"Width={setting.get('Width')} "
+                f"Height={setting.get('Height')} "
+                f"FOV={setting.get('FOV_Degrees')}"
+            )
+
+print_owner("CameraDefaults", data.get("CameraDefaults", {}))
+for vehicle_name, vehicle in data.get("Vehicles", {}).items():
+    for camera_name, camera in vehicle.get("Cameras", {}).items():
+        print_owner(f"Vehicles.{vehicle_name}.Cameras.{camera_name}", camera)
 PY
 }
 
@@ -366,6 +413,10 @@ cleanup() {
     pkill -9 -f "px4" || true
     pkill -9 -f "iox-roudi" || true
     echo "✅ Simulation terminated."
+    if [[ -n "$AIRSIM_SETTINGS_BACKUP_ABS" && -f "$AIRSIM_SETTINGS_BACKUP_ABS" ]]; then
+        echo "ℹ️  AirSim settings backup remains available at: $AIRSIM_SETTINGS_BACKUP_ABS"
+        echo "   Restore manually with: cp '$AIRSIM_SETTINGS_BACKUP_ABS' '$AIRSIM_CANONICAL_SETTINGS_ABS'"
+    fi
     exit 0
 }
 trap cleanup SIGINT SIGTERM
@@ -375,7 +426,8 @@ echo "🌍 Target Environment: $TARGET_ENV"
 echo "⏰ Started at: $(date)"
 if [[ -n "$AIRSIM_CAMERA_WIDTH" && -n "$AIRSIM_CAMERA_HEIGHT" ]]; then
     echo "📷 AirSim camera resolution override: ${AIRSIM_CAMERA_WIDTH}x${AIRSIM_CAMERA_HEIGHT}"
-    echo "   Note: AirSim reads settings.json at startup; restart is required for changes."
+    echo "   This packaged AirSimNH runtime honors launch-directory simulation/settings.json for Scene capture."
+    echo "   run.sh will patch that file in place and write a timestamped backup."
 fi
 if [[ "$WITH_FLIGHT_CONTROL" == "1" ]]; then
     echo "🕹️  Flight control: enabled"
@@ -407,17 +459,19 @@ else
 fi
 
 # ---------------- 2. Apply Colosseum Settings ----------------
-echo "⚙️  Generating AirSim configuration from canonical settings.json..."
+echo "⚙️  Preparing AirSim launch-directory settings.json..."
 if [ -f "$AIRSIM_CANONICAL_SETTINGS_ABS" ]; then
-    write_airsim_settings "$AIRSIM_CANONICAL_SETTINGS_ABS" "$AIRSIM_RUNTIME_SETTINGS_ABS" "$AIRSIM_CAMERA_WIDTH" "$AIRSIM_CAMERA_HEIGHT"
-    if [[ -n "$AIRSIM_CAMERA_WIDTH" && -n "$AIRSIM_CAMERA_HEIGHT" ]]; then
-        echo "✅ Generated runtime settings with camera capture override ${AIRSIM_CAMERA_WIDTH}x${AIRSIM_CAMERA_HEIGHT}."
-    else
-        echo "✅ Generated runtime settings."
-    fi
     echo "🧾 Canonical settings: $AIRSIM_CANONICAL_SETTINGS_ABS"
-    echo "🧾 Runtime settings:   $AIRSIM_RUNTIME_SETTINGS_ABS"
-    echo "   Launch will pass -settings=$AIRSIM_RUNTIME_SETTINGS_ABS."
+    if [[ -n "$AIRSIM_CAMERA_WIDTH" && -n "$AIRSIM_CAMERA_HEIGHT" ]]; then
+        AIRSIM_SETTINGS_BACKUP_ABS="${AIRSIM_CANONICAL_SETTINGS_ABS}.bak_${TIMESTAMP}"
+        cp "$AIRSIM_CANONICAL_SETTINGS_ABS" "$AIRSIM_SETTINGS_BACKUP_ABS"
+        echo "🧾 Settings backup:   $AIRSIM_SETTINGS_BACKUP_ABS"
+        patch_airsim_settings_in_place "$AIRSIM_CANONICAL_SETTINGS_ABS" "$AIRSIM_CAMERA_WIDTH" "$AIRSIM_CAMERA_HEIGHT"
+        echo "✅ Patched launch-directory settings.json for ${AIRSIM_CAMERA_WIDTH}x${AIRSIM_CAMERA_HEIGHT}."
+        echo "   Restore manually with: cp '$AIRSIM_SETTINGS_BACKUP_ABS' '$AIRSIM_CANONICAL_SETTINGS_ABS'"
+    else
+        echo "✅ Using canonical launch-directory settings.json unchanged."
+    fi
 else
     echo "❌ Missing simulation/settings.json"
     exit 1
@@ -446,7 +500,7 @@ if [ -z "$LAUNCH_EXE" ]; then
     cleanup
 fi
 
-"$LAUNCH_EXE" -windowed -ResX=1280 -ResY=720 -settings="$AIRSIM_RUNTIME_SETTINGS_ABS" &
+"$LAUNCH_EXE" -windowed -ResX=1280 -ResY=720 &
 SIM_PID=$!
 
 echo "⏳ Waiting for AirSim PX4 TCP server on port 4560..."
