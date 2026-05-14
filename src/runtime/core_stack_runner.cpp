@@ -1,6 +1,7 @@
 #include "dedalus/runtime/core_stack_runner.hpp"
 
 #include <chrono>
+#include <future>
 #include <utility>
 
 namespace dedalus {
@@ -18,21 +19,43 @@ CoreStackRunner::CoreStackRunner(CoreStackProviders providers)
     : CoreStackRunner(std::move(providers), nullptr) {}
 
 CoreStackRunner::CoreStackRunner(CoreStackProviders providers, std::unique_ptr<PipelineProfiler> timing_writer)
-    : providers_(std::move(providers)), timing_writer_(std::move(timing_writer)) {}
+    : providers_(std::move(providers)), timing_writer_(std::move(timing_writer)) {
+    start_prefetch();
+}
+
+CoreStackRunner::~CoreStackRunner() {
+    if (prefetched_frame_.valid()) {
+        (void)prefetched_frame_.get();
+    }
+}
+
+std::optional<FramePacket> CoreStackRunner::fetch_next_frame() {
+    return providers_.frame_source->next_frame();
+}
+
+void CoreStackRunner::start_prefetch() {
+    prefetched_frame_ = std::async(std::launch::async, [this]() {
+        return fetch_next_frame();
+    });
+}
 
 bool CoreStackRunner::run_once() {
     auto start = SteadyClock::now();
-    const auto frame = providers_.frame_source->next_frame();
-    const auto frame_source_duration_us = duration_us(start);
+    auto frame = prefetched_frame_.get();
+    const auto frame_source_wait_duration_us = duration_us(start);
 
     if (!frame.has_value()) {
         providers_.frame_annotator->finish();
         return false;
     }
 
+    // Start reading the next frame before processing this one. This overlaps the
+    // AirSim/sensor wait with ego/perception/world-model work for the current frame.
+    start_prefetch();
+
     if (timing_writer_) {
         timing_writer_->begin_frame(*frame);
-        timing_writer_->record_stage("frame_source.next_frame", frame_source_duration_us);
+        timing_writer_->record_stage("frame_source.next_frame_wait", frame_source_wait_duration_us);
         for (const auto& source_timing : frame->source_timings) {
             timing_writer_->record_stage(source_timing.name, source_timing.duration_us);
         }
