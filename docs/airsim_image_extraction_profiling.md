@@ -21,7 +21,21 @@ sim_get_images_ms p95 ~= 51-54 ms
 stdout_write_ms   p95 ~= 2.5-3 ms
 ```
 
-This suggests the current Milestone 2 AirSim path is dominated by AirSim image extraction / RPC / render readback behavior. Payload size still affects pipe/write cost, but `simGetImages` remains the dominant stage.
+At 640x360, after patching the launch-directory `simulation/settings.json` through `simulation/run.sh --airsim-camera-width 640 --airsim-camera-height 360`, a 600-frame capacity run validated the effective capture resolution and measured:
+
+```text
+actual_resolution_counts: 640x360:600
+frame_source.next_frame p95 ~= 35.317 ms
+frame_source.next_frame p99 ~= 69.087 ms
+sim_get_images_ms p95 ~= 35.146 ms
+sim_get_images_ms p99 ~= 68.919 ms
+stdout_write_ms p95 ~= 0.821 ms
+stdout_write_ms p99 ~= 0.986 ms
+total_loop_ms p95 ~= 36.490 ms
+total_loop_ms p99 ~= 70.109 ms
+```
+
+This suggests the current Milestone 2 AirSim path is dominated by AirSim image extraction / RPC / render readback behavior. Payload size still affects pipe/write cost, and reducing Scene resolution from 1280x720 to 640x360 materially reduces both `simGetImages` and pipe/write cost. At 640x360, p95 bridge/capture/read latency is close to 30 FPS capacity, while p99 still shows occasional simulator/RPC spikes.
 
 ## Packaged AirSimNH settings behavior
 
@@ -43,14 +57,20 @@ Treat this as an observed packaged-runtime anomaly, not a general AirSim contrac
 Current operational rule for this environment:
 
 ```text
-To change Scene RPC capture resolution, edit or patch simulation/settings.json,
+To change Scene RPC capture resolution, patch simulation/settings.json,
 then restart AirSim/Colosseum.
 
 Do not rely on -settings=/tmp/... for capture-resolution sweeps in this
 packaged AirSimNH environment.
 ```
 
-`simulation/run.sh --airsim-camera-width W --airsim-camera-height H` should therefore either patch `simulation/settings.json` with a backup/restore flow, or be removed/disabled until it is implemented using the launch-directory settings path. A generated `/tmp` settings file is still useful for inspection, but it should not be treated as effective for Scene capture resolution in this environment.
+`simulation/run.sh --airsim-camera-width W --airsim-camera-height H` now implements the validated path: it writes a timestamped backup of `simulation/settings.json`, patches launch-directory `simulation/settings.json` in place, and adds/updates `CaptureSettings` for `ImageType` -1, 0, and 2. A 640x360 run using this path produced `actual_resolution_counts: 640x360:600`, confirming that the override was effective for Scene RPC capture.
+
+The settings backup is left next to the canonical settings file. Restore manually when needed, for example:
+
+```bash
+cp simulation/settings.json.bak_<timestamp> simulation/settings.json
+```
 
 ## Real drone interpretation
 
@@ -94,4 +114,4 @@ Use the one-command profiler:
 
 The `--width` and `--height` arguments are metadata for throughput reporting and expectation checks. They do not change AirSim capture resolution.
 
-For this packaged AirSimNH environment, change `simulation/settings.json` and restart the simulator to perform a true resolution sweep. Confirm the effective result by checking the profiler's `actual_resolution_counts` line.
+For this packaged AirSimNH environment, use `simulation/run.sh --airsim-camera-width W --airsim-camera-height H` or edit `simulation/settings.json`, then restart the simulator to perform a true resolution sweep. Confirm the effective result by checking the profiler's `actual_resolution_counts` line.
