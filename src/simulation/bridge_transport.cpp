@@ -2,8 +2,10 @@
 
 #include <array>
 #include <cstdio>
+#include <cstdint>
 #include <stdexcept>
 #include <string>
+#include <vector>
 
 namespace dedalus {
 namespace {
@@ -94,6 +96,18 @@ std::optional<std::string> PipeBridgeTransport::read_stream_line(const std::stri
 }
 
 std::optional<std::string> PipeBridgeTransport::read_stream_bytes(const std::string& command, std::size_t byte_count) {
+    auto bytes = read_stream_byte_vector(command, byte_count);
+    if (!bytes.has_value()) {
+        return std::nullopt;
+    }
+    return std::string{
+        reinterpret_cast<const char*>(bytes->data()),
+        reinterpret_cast<const char*>(bytes->data()) + bytes->size()};
+}
+
+std::optional<std::vector<std::uint8_t>> PipeBridgeTransport::read_stream_byte_vector(
+    const std::string& command,
+    std::size_t byte_count) {
     if (impl_ == nullptr) {
         impl_ = new Impl{};
     }
@@ -105,10 +119,14 @@ std::optional<std::string> PipeBridgeTransport::read_stream_bytes(const std::str
         }
     }
 
-    std::string output(byte_count, '\0');
+    std::vector<std::uint8_t> output(byte_count);
     std::size_t total_read = 0U;
     while (total_read < byte_count) {
-        const std::size_t bytes_read = std::fread(output.data() + total_read, 1U, byte_count - total_read, impl_->stream_pipe);
+        const std::size_t bytes_read = std::fread(
+            output.data() + total_read,
+            1U,
+            byte_count - total_read,
+            impl_->stream_pipe);
         if (bytes_read > 0U) {
             total_read += bytes_read;
             continue;
@@ -151,6 +169,12 @@ std::optional<std::string> SharedMemoryBridgeTransport::read_stream_line(const s
 }
 
 std::optional<std::string> SharedMemoryBridgeTransport::read_stream_bytes(const std::string&, std::size_t) {
+    throw std::runtime_error("shared_memory bridge transport is not implemented yet");
+}
+
+std::optional<std::vector<std::uint8_t>> SharedMemoryBridgeTransport::read_stream_byte_vector(
+    const std::string&,
+    std::size_t) {
     throw std::runtime_error("shared_memory bridge transport is not implemented yet");
 }
 
