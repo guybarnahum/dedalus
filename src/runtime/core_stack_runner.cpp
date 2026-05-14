@@ -33,6 +33,9 @@ bool CoreStackRunner::run_once() {
     if (timing_writer_) {
         timing_writer_->begin_frame(*frame);
         timing_writer_->record_stage("frame_source.next_frame", frame_source_duration_us);
+        for (const auto& source_timing : frame->source_timings) {
+            timing_writer_->record_stage(source_timing.name, source_timing.duration_us);
+        }
     }
 
     start = SteadyClock::now();
