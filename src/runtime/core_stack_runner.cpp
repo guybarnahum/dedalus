@@ -25,7 +25,14 @@ CoreStackRunner::CoreStackRunner(CoreStackProviders providers, std::unique_ptr<P
 
 CoreStackRunner::~CoreStackRunner() {
     if (prefetched_frame_.valid()) {
-        (void)prefetched_frame_.get();
+        try {
+            (void)prefetched_frame_.get();
+        } catch (...) {
+            // A one-frame lookahead may still be waiting on the bridge when the
+            // runner is destroyed after a bounded --max-frames run. Shutdown-time
+            // speculative fetch failures should not abort a run that already
+            // produced the requested frames.
+        }
     }
 }
 
