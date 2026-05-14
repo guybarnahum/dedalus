@@ -1,7 +1,9 @@
 #pragma once
 
+#include <cstdint>
 #include <optional>
 #include <string>
+#include <vector>
 
 namespace dedalus {
 
@@ -12,6 +14,9 @@ public:
     virtual std::string request_once(const std::string& command) = 0;
     virtual std::optional<std::string> read_stream_line(const std::string& command) = 0;
     virtual std::optional<std::string> read_stream_bytes(const std::string& command, std::size_t byte_count) = 0;
+    virtual std::optional<std::vector<std::uint8_t>> read_stream_byte_vector(
+        const std::string& command,
+        std::size_t byte_count) = 0;
     virtual void close_stream() = 0;
 };
 
@@ -26,6 +31,9 @@ public:
     std::string request_once(const std::string& command) override;
     std::optional<std::string> read_stream_line(const std::string& command) override;
     std::optional<std::string> read_stream_bytes(const std::string& command, std::size_t byte_count) override;
+    std::optional<std::vector<std::uint8_t>> read_stream_byte_vector(
+        const std::string& command,
+        std::size_t byte_count) override;
     void close_stream() override;
 
 private:
@@ -38,6 +46,9 @@ public:
     std::string request_once(const std::string& command) override;
     std::optional<std::string> read_stream_line(const std::string& command) override;
     std::optional<std::string> read_stream_bytes(const std::string& command, std::size_t byte_count) override;
+    std::optional<std::vector<std::uint8_t>> read_stream_byte_vector(
+        const std::string& command,
+        std::size_t byte_count) override;
     void close_stream() override;
 };
 
