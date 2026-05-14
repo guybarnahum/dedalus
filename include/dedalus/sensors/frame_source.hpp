@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstdint>
+#include <memory>
 #include <optional>
 #include <string>
 #include <vector>
@@ -49,6 +50,23 @@ class FrameSource {
 public:
     virtual ~FrameSource() = default;
     virtual std::optional<FramePacket> next_frame() = 0;
+    virtual void request_stop() {}
+};
+
+class AsyncPrefetchFrameSource final : public FrameSource {
+public:
+    explicit AsyncPrefetchFrameSource(std::unique_ptr<FrameSource> inner);
+    ~AsyncPrefetchFrameSource() override;
+
+    AsyncPrefetchFrameSource(const AsyncPrefetchFrameSource&) = delete;
+    AsyncPrefetchFrameSource& operator=(const AsyncPrefetchFrameSource&) = delete;
+
+    std::optional<FramePacket> next_frame() override;
+    void request_stop() override;
+
+private:
+    struct Impl;
+    std::unique_ptr<Impl> impl_;
 };
 
 class SyntheticFrameSource final : public FrameSource {
