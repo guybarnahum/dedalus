@@ -2,7 +2,19 @@
 
 Milestone 2.18 defines the RAM shared-memory transport direction for the AirSim/core bridge.
 
-This is intentionally a design/protocol slice, not a premature implementation. The current `BridgeTransport` API returns `std::string` from `read_stream_bytes()`, so a transport implemented behind that exact API would still copy bytes into process-owned storage. A true no-extra-copy RAM transport requires a frame-view API that can expose a mapped memory region with lifetime semantics.
+This started as a design/protocol slice, then added one immediate copy reduction in the existing pipe/binary path. The current `BridgeTransport` API now supports reading stream payloads directly into `std::vector<std::uint8_t>` for paths that ultimately need an `ImageView::bytes` vector. This removes the large C++ payload copy that previously converted:
+
+```text
+pipe read -> std::string payload -> ImageView::bytes copy
+```
+
+into:
+
+```text
+pipe read -> std::vector<uint8_t> payload -> move into ImageView::bytes
+```
+
+A true no-extra-copy RAM shared-memory transport still requires a future frame-view API that can expose a mapped memory region with lifetime semantics.
 
 ## Motivation
 
@@ -31,6 +43,35 @@ The dominant current cost remains AirSim image extraction / RPC / render readbac
 
 This should not be confused with a future VRAM-resident frame path. The current AirSim Python bridge receives CPU bytes from `simGetImages`; uploading those bytes to GPU just to pass a pointer would add work. GPU-resident frames become useful when the producer can expose GPU-backed buffers directly, such as camera SDK buffers, NVMM, DMABUF, EGLImage, CUDA IPC, or a simulator plugin.
 
+## Current copy-reduction patch
+
+Milestone 2.18 added:
+
+```cpp
+virtual std::optional<std::vector<std::uint8_t>> read_stream_byte_vector(
+    const std::string& command,
+    std::size_t byte_count) = 0;
+```
+
+`PipeBridgeTransport::read_stream_byte_vector()` reads persistent bridge bytes directly into a `std::vector<std::uint8_t>`. `AirSimFrameSource::next_stream_binary_frame()` now uses that path for the large RGB payload and moves the resulting vector into `ImageView::bytes`.
+
+The binary header and ego sidecar still use `std::string` because they are tiny compared with image payloads. `stream_jsonl` and `one_shot_ppm` are unchanged because those debug/compat paths require JSON/base64 or PPM parsing anyway.
+
+Remaining unavoidable copies in the current AirSim path:
+
+```text
+AirSim / Unreal render target -> simGetImages CPU/Python bytes
+Python writes bytes to stdout pipe
+OS pipe buffering
+C++ fread into ImageView-owned vector
+```
+
+The avoided C++ copy was:
+
+```text
+std::string payload -> ImageView::bytes
+```
+
 ## Scope
 
 Milestone 2.18 target:
@@ -51,17 +92,11 @@ Non-goals for this slice:
 - making shared memory the default CI path
 ```
 
-## Required API evolution
+## Required API evolution for true shared memory
 
-The current API is byte-string oriented:
+The existing `read_stream_byte_vector()` path reduces one copy while preserving the current owning `ImageView::bytes` contract. It is not true no-copy shared memory.
 
-```cpp
-virtual std::optional<std::string> read_stream_bytes(
-    const std::string& command,
-    std::size_t byte_count) = 0;
-```
-
-That is correct for pipes, but it bakes a copy into the transport boundary. A no-extra-copy RAM path needs a frame-oriented view, for example:
+A no-extra-copy RAM path needs a frame-oriented borrowed view, for example:
 
 ```cpp
 struct BridgeFrameView {
@@ -135,7 +170,7 @@ Shared memory can reduce this part:
 
 ```text
 stdout_write_ms / pipe payload copy
-C++ pipe read into std::string
+C++ pipe read into owned frame storage
 ```
 
 It will not remove this part:
@@ -152,7 +187,7 @@ Expected benefit based on measured pipe write costs:
 1920x1080: about ~5-6 ms p95 saved
 ```
 
-That is useful, but not enough to justify a source-specific shortcut in core contracts.
+The immediate `read_stream_byte_vector()` patch saves only the extra C++ payload copy, not the Python stdout write or OS pipe transfer. The larger shared-memory transport is still useful, but it should be measured against the already-optimized pipe path.
 
 ## Implementation plan
 
@@ -162,19 +197,23 @@ Recommended stages:
 2.18A — protocol/design documentation
   Define CPU shared-memory frame transport semantics and API requirements.
 
-2.18B — transport API extension
+2.18B — immediate pipe/binary copy reduction
+  Add byte-vector bridge read path and move binary RGB payloads into ImageView::bytes.
+  Completed.
+
+2.18C — transport API extension for borrowed frame views
   Add a frame-view oriented transport path while keeping existing pipe methods.
   Pipe implementation may adapt by owning a buffer internally and returning a view.
 
-2.18C — Python shared-memory producer prototype
+2.18D — Python shared-memory producer prototype
   Add an optional AirSim bridge mode that creates a POSIX shared-memory segment
   and publishes DEDSHM1 slots.
 
-2.18D — C++ shared-memory consumer prototype
+2.18E — C++ shared-memory consumer prototype
   Implement SharedMemoryBridgeTransport behind bridge_transport: shared_memory.
   Keep pipe as default and keep CI dependency-light.
 
-2.18E — profiler comparison
+2.18F — profiler comparison
   Extend profile-airsim-bridge-latency.sh to compare pipe vs shared_memory at
   640x360, 1280x720, and 1920x1080.
 ```
