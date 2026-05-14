@@ -9,7 +9,7 @@ set -euo pipefail
 #   frame_ego:    stream_binary_ego RGB+ego sidecar + ego_provider=frame_hint
 #
 # Capacity mode is the default. It sets bridge --rate-hz 0 so
-# frame_source.next_frame measures capture/read capacity instead of intentional
+# frame_source.next_frame_wait measures capture/read capacity instead of intentional
 # frame pacing sleep. Use --paced to profile requested-FPS pacing behavior.
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -66,7 +66,7 @@ Options:
   -h, --help              Show this help
 
 Metrics:
-  frame_source.next_frame is the C++ capture/bridge/read bucket.
+  frame_source.next_frame_wait is the C++ capture/bridge/read bucket.
   ego_provider.estimate shows whether ego telemetry is still a hot-path RPC.
   Bridge-internal timing, when enabled, breaks down the Python bridge into:
     sim_get_images_ms, ego_sample_ms, rgb_convert_ms, stdout_write_ms, sleep_ms.
@@ -352,7 +352,7 @@ def summarize_pass(pass_name):
     if not path.exists():
         raise SystemExit(f"missing profile JSONL: {path}")
     rows = load_rows(path)
-    bridge = stage_values(rows, "frame_source.next_frame")
+    bridge = stage_values(rows, "frame_source.next_frame_wait")
     ego = stage_values(rows, "ego_provider.estimate")
     total = [row["total_us"] for row in rows]
 
@@ -399,7 +399,7 @@ if expected_width and expected_height:
     print(f"MiB/s at {fps:g} FPS: {mib * fps:.3f} for paced mode reference")
 
 print()
-print("=== absolute latency thresholds, based on frame_source.next_frame p95 ===")
+print("=== absolute latency thresholds, based on frame_source.next_frame_wait p95 ===")
 print(f"GREEN:  p95 <= {FPS_30_MS:.3f} ms  (30 FPS bridge/capture/read capacity)")
 print(f"YELLOW: p95 <= {FPS_15_MS:.3f} ms  (15 FPS bridge/capture/read capacity)")
 print(f"RED:    p95  > {FPS_15_MS:.3f} ms  (below 15 FPS bridge/capture/read capacity)")

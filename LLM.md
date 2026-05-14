@@ -114,7 +114,7 @@ Current optimization slice:
   First step: remove the extra simGetVehiclePose() RPC from
   simulation/airsim-stream-frames-binary.py and derive pose/orientation from
   getMultirotorState().kinematics_estimated.
-  Goal: reduce stream_binary_ego frame_source.next_frame latency while preserving
+  Goal: reduce stream_binary_ego frame_source.next_frame_wait latency while preserving
   the frame-attached ego contract.
 
 Future GPU-resident frame path:
@@ -1251,13 +1251,13 @@ The default is off. When enabled, `dedalus_replay_recording` creates a JSONL tim
 The profiler writes one JSON object per processed frame:
 
 ```json
-{"frame_id":"frame_0001","timestamp_ns":123456789,"total_us":962,"stages":{"frame_source.next_frame":437,"ego_provider.estimate":0,"perception_pipeline.process":497,"world_model.update_ego":0,"world_model.update_appearance":0,"world_model.ingest":23,"world_model.snapshot":5,"frame_annotator.annotate":0}}
+{"frame_id":"frame_0001","timestamp_ns":123456789,"total_us":962,"stages":{"frame_source.next_frame_wait":437,"ego_provider.estimate":0,"perception_pipeline.process":497,"world_model.update_ego":0,"world_model.update_appearance":0,"world_model.ingest":23,"world_model.snapshot":5,"frame_annotator.annotate":0}}
 ```
 
 Current stages:
 
 ```text
-frame_source.next_frame
+frame_source.next_frame_wait
 ego_provider.estimate
 perception_pipeline.process
 world_model.update_ego
@@ -1375,7 +1375,7 @@ out/airsim_bridge_latency_<timestamp>/
 Metrics printed:
 
 ```text
-bridge p95 / p99           frame_source.next_frame bucket (C++ capture/read)
+bridge p95 / p99           frame_source.next_frame_wait bucket (C++ capture/read)
 ego_provider p95           hot-path RPC cost; should be near 0 in frame_ego mode
 total runner p95           end-to-end per-frame cost
 stage summary              all pipeline stages via _summarize-pipeline-profile.py

@@ -9,7 +9,7 @@ import sys
 from pathlib import Path
 
 DETAIL_PREFIX = "frame_source.detail."
-FRAME_SOURCE_PARENT = "frame_source.next_frame"
+FRAME_SOURCE_PARENT = "frame_source.next_frame_wait"
 
 
 def parse_args() -> argparse.Namespace:

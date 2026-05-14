@@ -31,8 +31,8 @@ Recent AirSim bridge profiling shows that frame size matters:
 
 640x360 frame_ego, 600-frame capacity run:
   actual_resolution_counts: 640x360:600
-  frame_source.next_frame p95 ~= 35.317 ms
-  frame_source.next_frame p99 ~= 69.087 ms
+  frame_source.next_frame_wait p95 ~= 35.317 ms
+  frame_source.next_frame_wait p99 ~= 69.087 ms
   sim_get_images_ms p95 ~= 35.146 ms
   sim_get_images_ms p99 ~= 68.919 ms
   stdout_write_ms p95 ~= 0.821 ms

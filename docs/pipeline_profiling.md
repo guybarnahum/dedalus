@@ -26,7 +26,7 @@ config/core_stack_profile_ci.yaml
 The profiler writes one JSON object per processed frame:
 
 ```json
-{"frame_id":"frame_0001","timestamp_ns":123456789,"total_us":120,"stages":{"frame_source.next_frame":4,"ego_provider.estimate":2,"perception_pipeline.process":20,"world_model.update_ego":1,"world_model.ingest":30,"world_model.snapshot":12,"frame_annotator.annotate":3}}
+{"frame_id":"frame_0001","timestamp_ns":123456789,"total_us":120,"stages":{"frame_source.next_frame_wait":4,"ego_provider.estimate":2,"perception_pipeline.process":20,"world_model.update_ego":1,"world_model.ingest":30,"world_model.snapshot":12,"frame_annotator.annotate":3}}
 ```
 
 The `total_us` value is the sum of recorded stage durations for that frame. It is a per-stage timing summary, not a wall-clock guarantee for the full app loop because app-level snapshot JSON writes are currently outside `CoreStackRunner`.
@@ -36,7 +36,7 @@ The `total_us` value is the sum of recorded stage durations for that frame. It i
 Current coarse stages are:
 
 ```text
-frame_source.next_frame
+frame_source.next_frame_wait
 ego_provider.estimate
 perception_pipeline.process
 world_model.update_ego
@@ -107,7 +107,7 @@ PY
 For current Milestone 2 providers, the likely expensive stages are:
 
 ```text
-frame_source.next_frame       # AirSim bridge / pipe / binary read
+frame_source.next_frame_wait  # AirSim bridge / pipe / binary read
 frame_annotator.annotate      # PPM overlay + disk write
 world_model.snapshot          # snapshot copy cost
 ```
