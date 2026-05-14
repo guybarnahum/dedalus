@@ -1,6 +1,7 @@
 #include "dedalus/simulation/airsim_providers.hpp"
 
 #include <algorithm>
+#include <chrono>
 #include <cctype>
 #include <cstdint>
 #include <cstring>
@@ -13,6 +14,12 @@
 
 namespace dedalus {
 namespace {
+
+using SteadyClock = std::chrono::steady_clock;
+
+std::int64_t elapsed_us(const SteadyClock::time_point start) {
+    return std::chrono::duration_cast<std::chrono::microseconds>(SteadyClock::now() - start).count();
+}
 
 constexpr std::size_t kBinaryFrameHeaderSize = 56U;
 constexpr std::uint32_t kBinaryFrameVersion = 1U;
@@ -372,20 +379,31 @@ std::optional<FramePacket> AirSimFrameSource::next_stream_jsonl_frame() {
 
 std::optional<FramePacket> AirSimFrameSource::next_stream_binary_frame() {
     const auto command = build_bridge_command(config_, config_.bridge_command);
+    std::vector<FrameSourceTiming> timings;
+
+    auto start = SteadyClock::now();
     const auto header_bytes = transport_->read_stream_bytes(command, kBinaryFrameHeaderSize);
+    timings.push_back(FrameSourceTiming{"frame_source.detail.read_header", elapsed_us(start)});
     if (!header_bytes.has_value()) {
         return std::nullopt;
     }
 
+    start = SteadyClock::now();
     const auto header = parse_binary_header(*header_bytes);
+    timings.push_back(FrameSourceTiming{"frame_source.detail.parse_header", elapsed_us(start)});
+
+    start = SteadyClock::now();
     auto payload = transport_->read_stream_byte_vector(command, header.payload_size);
+    timings.push_back(FrameSourceTiming{"frame_source.detail.read_payload", elapsed_us(start)});
     if (!payload.has_value()) {
         throw std::runtime_error("binary stream ended before frame payload");
     }
 
     std::string sidecar_payload;
     if (header.sidecar_size > 0U) {
+        start = SteadyClock::now();
         const auto sidecar = transport_->read_stream_bytes(command, header.sidecar_size);
+        timings.push_back(FrameSourceTiming{"frame_source.detail.read_sidecar", elapsed_us(start)});
         if (!sidecar.has_value()) {
             throw std::runtime_error("binary stream ended before frame sidecar payload");
         }
@@ -393,14 +411,20 @@ std::optional<FramePacket> AirSimFrameSource::next_stream_binary_frame() {
     }
 
     ++next_frame_index_;
+    start = SteadyClock::now();
     auto frame = frame_from_image(
         config_,
         image_from_rgb_payload(header, std::move(*payload)),
         FrameId{"binary_stream_frame_" + std::to_string(header.sequence)},
         TimePoint{header.timestamp_ns});
+    timings.push_back(FrameSourceTiming{"frame_source.detail.construct_frame", elapsed_us(start)});
+
     if (!sidecar_payload.empty()) {
+        start = SteadyClock::now();
         frame.ego_hint = parse_ego_json(sidecar_payload, config_.map_frame_id, frame.timestamp);
+        timings.push_back(FrameSourceTiming{"frame_source.detail.parse_sidecar", elapsed_us(start)});
     }
+    frame.source_timings = std::move(timings);
     return frame;
 }
 
