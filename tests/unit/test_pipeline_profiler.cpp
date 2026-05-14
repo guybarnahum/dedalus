@@ -67,7 +67,7 @@ int main() {
         "\"frame_id\":\"frame_0001\"",
         "\"timestamp_ns\":123456789",
         "\"total_us\":",
-        "\"frame_source.next_frame\":",
+        "\"frame_source.next_frame_wait\":",
         "\"ego_provider.estimate\":",
         "\"perception_pipeline.process\":",
         "\"world_model.update_ego\":",
