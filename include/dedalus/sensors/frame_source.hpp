@@ -2,6 +2,7 @@
 
 #include <cstdint>
 #include <optional>
+#include <string>
 #include <vector>
 
 #include "dedalus/core/types.hpp"
@@ -14,6 +15,11 @@ struct ImageView {
     int height{0};
     int channels{0};
     std::vector<std::uint8_t> bytes;
+};
+
+struct FrameSourceTiming {
+    std::string name;
+    std::int64_t duration_us{0};
 };
 
 struct CameraIntrinsics {
@@ -36,6 +42,7 @@ struct FramePacket {
     std::optional<Pose3> camera_T_body;
     std::optional<EgoState> ego_hint;
     std::optional<AppearanceCondition> appearance_condition;
+    std::vector<FrameSourceTiming> source_timings;
 };
 
 class FrameSource {
