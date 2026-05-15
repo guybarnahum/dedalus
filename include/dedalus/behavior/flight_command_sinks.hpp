@@ -109,6 +109,9 @@ private:
             case FlightCommandKind::Takeoff:
                 out << "takeoff";
                 break;
+            case FlightCommandKind::Land:
+                out << "land";
+                break;
             case FlightCommandKind::Disarm:
                 out << "disarm";
                 break;
@@ -135,7 +138,9 @@ private:
 };
 
 struct Px4MavlinkCommandSinkConfig {
-    std::string endpoints{"udpin:127.0.0.1:14550,udpin:127.0.0.1:14540,udpin:127.0.0.1:14600"};
+    std::string endpoints{"udpout:127.0.0.1:14550,udpout:127.0.0.1:14540,udpout:127.0.0.1:14600"};
+    std::string px4_tmux_target{"dedalus-sim:px4"};
+    bool use_px4_shell_lifecycle{true};
     std::uint8_t source_system_id{255U};
     std::uint8_t source_component_id{190U};
     std::uint8_t target_system_id{1U};
