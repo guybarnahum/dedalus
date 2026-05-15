@@ -4,6 +4,7 @@
 #include <string>
 #include <vector>
 
+#include "dedalus/behavior/mission_controller.hpp"
 #include "dedalus/perception/perception_pipeline.hpp"
 #include "dedalus/sensors/ego_state_provider.hpp"
 #include "dedalus/sensors/frame_source.hpp"
@@ -36,6 +37,11 @@ struct CoreStackProviderConfig {
     std::string bridge_mode{"one_shot_ppm"};
     std::string ego_bridge_command{"python3 simulation/airsim-capture-ego.py"};
     MapFrameId fallback_map_frame_id{"map_local_0001"};
+
+    std::string mission_controller{"disabled"};
+    double mission_tick_hz{10.0};
+    std::string flight_command_sink{"disabled"};
+    MissionOptions mission_options;
 };
 
 struct CoreStackProviders {
@@ -63,6 +69,8 @@ public:
     [[nodiscard]] std::vector<std::string> projectors() const;
     [[nodiscard]] std::vector<std::string> world_models() const;
     [[nodiscard]] std::vector<std::string> frame_annotators() const;
+    [[nodiscard]] std::vector<std::string> mission_controllers() const;
+    [[nodiscard]] std::vector<std::string> flight_command_sinks() const;
 };
 
 }  // namespace dedalus
