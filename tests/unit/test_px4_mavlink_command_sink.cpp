@@ -10,6 +10,7 @@ int main() {
     config.max_velocity_mps = 2.0;
     config.takeoff_altitude_m = 8.0;
     config.set_offboard_on_velocity = false;
+    config.use_px4_shell_lifecycle = false;
 
     try {
         dedalus::Px4MavlinkCommandSink sink{config};
@@ -37,6 +38,14 @@ int main() {
         if (!result.success || result.status.find("vx=2") == std::string::npos ||
             result.status.find("vy=-2") == std::string::npos) {
             std::cerr << "unexpected bounded velocity result: " << result.status << "\n";
+            return 1;
+        }
+
+        dedalus::VelocityCommand land;
+        land.kind = dedalus::FlightCommandKind::Land;
+        result = sink.send(land);
+        if (!result.success || result.status.find("land") == std::string::npos) {
+            std::cerr << "unexpected land result: " << result.status << "\n";
             return 1;
         }
 
