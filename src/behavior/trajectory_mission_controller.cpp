@@ -164,8 +164,7 @@ MissionTickOutput TrajectoryMissionController::tick(const MissionTickInput& inpu
                 segment_index_ = 0U;
                 segment_elapsed_s_ = 0.0;
                 output.status = "takeoff_complete";
-            } else if (!takeoff_command_sent_ ||
-                       elapsed_at_least(takeoff_last_command_time_, input.now, config_.takeoff_retry_interval_s)) {
+            } else if (!takeoff_command_sent_) {
                 takeoff_command_sent_ = true;
                 takeoff_last_command_time_ = input.now;
                 output.command = command_with_kind(input.now, FlightCommandKind::Takeoff);
@@ -175,8 +174,10 @@ MissionTickOutput TrajectoryMissionController::tick(const MissionTickInput& inpu
                     input.now,
                     Vec3{0.0, 0.0, -std::abs(config_.takeoff_velocity_mps)});
                 output.status = "takeoff_climb";
-            } else {
+            } else if (elapsed_at_least(takeoff_last_command_time_, input.now, config_.takeoff_retry_interval_s)) {
                 output.status = "waiting_for_takeoff_climb";
+            } else {
+                output.status = "waiting_for_takeoff_command_settle";
             }
             break;
         case MissionLifecycleState::ExecuteMission:
