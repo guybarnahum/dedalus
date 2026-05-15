@@ -83,6 +83,7 @@ int main() {
     config.arm_timeout_s = 5.0;
     config.takeoff_retry_interval_s = 1.0;
     config.land_retry_interval_s = 1.0;
+    config.land_timeout_s = 10.0;
     config.disarm_retry_interval_s = 1.0;
     config.disarm_timeout_s = 5.0;
 
@@ -174,13 +175,17 @@ int main() {
         !require_command_kind(output, dedalus::FlightCommandKind::Land, "landing")) {
         return 1;
     }
+    if (output.status != "landing_command_sent") {
+        std::cerr << "controller should label first land command as landing_command_sent\n";
+        return 1;
+    }
 
     output = controller.tick(input_at(3.6, 2.1, true));
     if (!require_state(output, dedalus::MissionLifecycleState::Land, "waiting for landed telemetry")) {
         return 1;
     }
     if (output.command.has_value()) {
-        std::cerr << "controller should not re-emit land before retry interval\n";
+        std::cerr << "controller should not re-emit land while normal landing is in progress\n";
         return 1;
     }
 
@@ -216,6 +221,22 @@ int main() {
     }
     if (output.status != "complete") {
         std::cerr << "controller should report complete after disarmed telemetry\n";
+        return 1;
+    }
+
+    dedalus::TrajectoryMissionController land_timeout_controller{config};
+    output = land_timeout_controller.tick(input_at(0.0, 0.0, false));
+    output = land_timeout_controller.tick(input_at(0.1, 0.0, true));
+    output = land_timeout_controller.tick(input_at(0.2, 2.1, true));
+    output = land_timeout_controller.tick(input_at(1.3, 2.1, true));
+    output = land_timeout_controller.tick(input_at(1.4, 2.1, true));
+    output = land_timeout_controller.tick(input_at(1.5, 2.1, true));
+    output = land_timeout_controller.tick(input_at(12.0, 2.1, true));
+    if (!require_state(output, dedalus::MissionLifecycleState::Abort, "land timeout abort")) {
+        return 1;
+    }
+    if (output.status != "land_timeout") {
+        std::cerr << "controller should report land_timeout before abort\n";
         return 1;
     }
 
