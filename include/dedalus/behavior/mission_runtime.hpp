@@ -13,7 +13,7 @@ namespace dedalus {
 
 struct MissionRuntimeConfig {
     double tick_hz{10.0};
-    bool debug_logging{false};
+    int verbosity{0};
 };
 
 class MissionRuntime {
