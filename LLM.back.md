@@ -1,4 +1,3 @@
-
 # Dedalus LLM Historical Notes
 
 This file is the archive for older LLM handoff material, superseded debugging context, and milestone history.
@@ -137,6 +136,9 @@ Progression:
 2.19H — Explicit command kinds
 2.19I — Async command-outcome semantics
 2.19J — Flight-control intent overlay
+2.19K — Reliable armed telemetry
+2.19L — PX4 bridge mission parity
+2.19M — Quiet/verbose logs
 ```
 
 Critical design correction:
@@ -150,30 +152,94 @@ This correction happened after the system briefly used command-helper OK as if i
 
 ---
 
-## H7. Flight Control / PX4 Notes
+## H7. Superseded Flight Control Paths
 
-Current placeholder command split:
+The mission pipeline went through several control paths before the current working `px4_bridge` path.
+
+### H7.1 AirSim velocity helper path
+
+Earlier placeholder split:
 
 ```text
 Arm / Disarm:
   dispatched through PX4 shell using tmux send-keys
 
 Velocity:
-  dispatched through AirSim moveByVelocityAsync
+  dispatched through AirSim moveByVelocityAsync via simulation/airsim-send-velocity.py
 ```
 
-This is not yet the final robust PX4 control path.
-
-Likely future direction:
+Observed behavior:
 
 ```text
-PX4-native arm
-PX4-native takeoff or offboard entry
-MAVLink local-NED velocity setpoints
-PX4-native land/disarm
+- Arm could work.
+- Takeoff/climb behavior was inconsistent or incomplete.
+- Trajectory segments were not reliably executed by PX4 once PX4 owned control mode.
 ```
 
-AirSim `moveByVelocityAsync` may not be sufficient once PX4 owns control mode and arming state.
+Conclusion:
+
+```text
+AirSim moveByVelocityAsync is not the correct live mission control path for the PX4-backed Colosseum setup.
+```
+
+### H7.2 Native C++ MAVLink sink path
+
+A native C++ sink was introduced:
+
+```text
+src/behavior/px4_mavlink_command_sink.cpp
+```
+
+It attempted to encode MAVLink packets directly and send:
+
+```text
+COMMAND_LONG for lifecycle / mode commands
+SET_POSITION_TARGET_LOCAL_NED for velocity
+```
+
+Meaningful failure:
+
+```text
+simulation/test-flight.py worked, but the native sink did not reliably climb/execute trajectory.
+```
+
+Root cause category:
+
+```text
+The working `pymavlink` path owns endpoint binding, heartbeat peer learning, MAVLink1/MAVLink2 parsing, target routing, mode mapping, ACK handling, and message encoding. Reimplementing that in C++ created avoidable failure modes.
+```
+
+Conclusion:
+
+```text
+Do not make the native C++ MAVLink sink the default live path. Keep it experimental/deprecated unless there is a deliberate future effort to replace pymavlink with tested C++ MAVLink support.
+```
+
+### H7.3 Persistent Python PX4 bridge path
+
+The current working path uses:
+
+```text
+src/behavior/px4_bridge_command_sink.cpp
+simulation/px4-command-bridge.py
+```
+
+This preserves the C++ mission state machine while delegating flight-critical PX4/OFFBOARD control to the same `pymavlink` behavior proven in:
+
+```text
+simulation/test-flight.py
+```
+
+Important bridge fixes that made it match `test-flight.py`:
+
+```text
+- open MAVLink lazily after shell arm/takeoff, not during bridge construction
+- use PX4 shell for arm/takeoff/land/disarm
+- use pymavlink OFFBOARD priming and PX4 mode set
+- climb to safe height inside the bridge using LOCAL_POSITION_NED feedback
+- use a dedicated command MAVLink endpoint, typically udpin:127.0.0.1:14550
+- keep telemetry sidecar on separate endpoint(s)
+```
 
 ---
 
@@ -185,7 +251,13 @@ When a run shows:
 helper_output=OK
 ```
 
-that only means the helper dispatched something successfully.
+or:
+
+```text
+{"ok":true,"command":"..."}
+```
+
+that only means the helper/bridge dispatched something successfully.
 
 It does not prove:
 
@@ -201,7 +273,39 @@ Always check world-model telemetry truth.
 
 ---
 
-## H9. Archive Policy
+## H9. Verbosity Cleanup History
+
+`dedalus_mission_loop` gained verbosity flags:
+
+```text
+-v
+-vv
+-vvv
+--verbose
+```
+
+The intended contract is:
+
+```text
+default: high-level mission transitions and final summary
+-v: lifecycle / prep details
+-vv: command summaries and sampled snapshots
+-vvv / --verbose: full tick/sink/bridge tracing
+```
+
+As of the current handoff, the main C++ runtime obeys this contract, but subprocess output may still leak at verbosity 0 until the quiet-subprocess cleanup is fully landed and validated.
+
+Known noisy sources:
+
+```text
+- AirSim `confirmConnection()` output during prepare-session
+- `px4-command-bridge.py` safe-height progress samples
+- telemetry sidecar endpoint bind warnings, especially old 14600 fallback
+```
+
+---
+
+## H10. Archive Policy
 
 When `LLM.md` grows with stale history, move details here.
 
