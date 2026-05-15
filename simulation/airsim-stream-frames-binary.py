@@ -39,6 +39,7 @@ VERSION_RGB_ONLY = 1
 VERSION_RGB_EGO = 2
 HEADER_SIZE = 56
 PIXEL_FORMAT_RGB8 = 1
+MAVLINK_SAFETY_ARMED_FLAG = 128
 
 
 def elapsed_ms(start_ns: int, end_ns: int) -> float:
@@ -67,6 +68,72 @@ class TimingJsonlWriter:
         self._file.flush()
 
 
+class MavlinkArmedStateReader:
+    """Best-effort non-blocking armed-state reader from MAVLink heartbeats."""
+
+    def __init__(self, endpoints: list[str]):
+        self._connections: list[object] = []
+        self._last_armed: bool | None = None
+        self._mavutil = None
+
+        if not endpoints:
+            return
+
+        try:
+            from pymavlink import mavutil  # type: ignore
+        except Exception as exc:  # pragma: no cover - depends on sim host deps
+            print(
+                f"airsim-stream-frames-binary: pymavlink unavailable; "
+                f"MAVLink armed telemetry disabled: {exc}",
+                file=sys.stderr,
+            )
+            return
+
+        self._mavutil = mavutil
+        for endpoint in endpoints:
+            try:
+                connection = mavutil.mavlink_connection(
+                    endpoint,
+                    autoreconnect=True,
+                    source_system=255,
+                )
+                self._connections.append(connection)
+                print(
+                    f"airsim-stream-frames-binary: MAVLink armed telemetry listening on {endpoint}",
+                    file=sys.stderr,
+                )
+            except Exception as exc:  # pragma: no cover - depends on live ports
+                print(
+                    f"airsim-stream-frames-binary: failed to open MAVLink endpoint "
+                    f"{endpoint}: {exc}",
+                    file=sys.stderr,
+                )
+
+    def sample(self) -> tuple[bool, bool]:
+        for connection in self._connections:
+            while True:
+                try:
+                    msg = connection.recv_match(type="HEARTBEAT", blocking=False)
+                except Exception as exc:  # pragma: no cover - live transport only
+                    print(
+                        f"airsim-stream-frames-binary: MAVLink heartbeat read failed: {exc}",
+                        file=sys.stderr,
+                    )
+                    break
+                if msg is None:
+                    break
+                base_mode = int(getattr(msg, "base_mode", 0))
+                self._last_armed = bool(base_mode & MAVLINK_SAFETY_ARMED_FLAG)
+
+        if self._last_armed is None:
+            return False, False
+        return self._last_armed, True
+
+
+def parse_mavlink_endpoints(value: str) -> list[str]:
+    return [endpoint.strip() for endpoint in value.split(",") if endpoint.strip()]
+
+
 def rgb_bytes_from_response(response: object) -> bytes:
     width = int(response.width)
     height = int(response.height)
@@ -89,7 +156,12 @@ def rgb_bytes_from_response(response: object) -> bytes:
     )
 
 
-def ego_json_bytes(client: airsim.MultirotorClient, vehicle_name: str, timestamp_ns: int) -> bytes:
+def ego_json_bytes(
+    client: airsim.MultirotorClient,
+    vehicle_name: str,
+    timestamp_ns: int,
+    mavlink_armed_reader: MavlinkArmedStateReader | None = None,
+) -> bytes:
     # 2.14 optimization:
     # Use one AirSim RPC per frame for ego telemetry. MultirotorState already
     # carries kinematics_estimated position/orientation/velocity, so avoid an
@@ -105,6 +177,14 @@ def ego_json_bytes(client: airsim.MultirotorClient, vehicle_name: str, timestamp
     landed_state = int(getattr(state, "landed_state", 0))
     armed_valid = hasattr(state, "armed")
     armed = bool(getattr(state, "armed", False)) if armed_valid else False
+    armed_source = "airsim" if armed_valid else "none"
+
+    if mavlink_armed_reader is not None:
+        mavlink_armed, mavlink_armed_valid = mavlink_armed_reader.sample()
+        if mavlink_armed_valid:
+            armed = mavlink_armed
+            armed_valid = True
+            armed_source = "mavlink_heartbeat"
 
     payload = {
         "timestamp_ns": int(timestamp_ns),
@@ -119,6 +199,7 @@ def ego_json_bytes(client: airsim.MultirotorClient, vehicle_name: str, timestamp
         "landed_state": landed_state,
         "armed": armed,
         "armed_valid": armed_valid,
+        "armed_source": armed_source,
     }
     return json.dumps(payload, separators=(",", ":")).encode("utf-8")
 
@@ -171,6 +252,15 @@ def parse_args() -> argparse.Namespace:
         help="Append ego telemetry JSON after each RGB payload using binary protocol version 2.",
     )
     parser.add_argument(
+        "--mavlink-armed-endpoints",
+        default=os.environ.get("DEDALUS_MAVLINK_ARMED_ENDPOINTS", ""),
+        help=(
+            "Comma-separated pymavlink endpoints used to derive armed state "
+            "from HEARTBEAT base_mode. Example: "
+            "udpin:127.0.0.1:14550,udpin:127.0.0.1:14540"
+        ),
+    )
+    parser.add_argument(
         "--timing-jsonl",
         default="",
         help="Optional path for bridge-internal timing JSONL records.",
@@ -181,6 +271,9 @@ def parse_args() -> argparse.Namespace:
 def main() -> int:
     args = parse_args()
     timing = TimingJsonlWriter(args.timing_jsonl or None)
+    mavlink_armed_reader = MavlinkArmedStateReader(
+        parse_mavlink_endpoints(args.mavlink_armed_endpoints)
+    )
     try:
         client = airsim.MultirotorClient(ip=args.host, port=args.rpc_port)
         client.confirmConnection()
@@ -208,7 +301,11 @@ def main() -> int:
             rgb_end_ns = time.perf_counter_ns()
 
             ego_start_ns = time.perf_counter_ns()
-            ego_payload = ego_json_bytes(client, args.vehicle_name, timestamp_ns) if args.include_ego else b""
+            ego_payload = (
+                ego_json_bytes(client, args.vehicle_name, timestamp_ns, mavlink_armed_reader)
+                if args.include_ego
+                else b""
+            )
             ego_end_ns = time.perf_counter_ns()
 
             write_start_ns = time.perf_counter_ns()
