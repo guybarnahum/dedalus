@@ -245,7 +245,8 @@ int main(int argc, char** argv) {
             }
 
             ++frame_count;
-            const auto snapshot = runner.snapshot();
+            const auto latest = latest_snapshot->latest();
+            const auto snapshot = latest.has_value() ? *latest : runner.snapshot();
             if (frame_count <= 3 || frame_count % 30 == 0) {
                 std::cerr << "dedalus_mission_loop: world_snapshot frame=" << frame_count
                           << " ts=" << snapshot.timestamp.timestamp_ns
