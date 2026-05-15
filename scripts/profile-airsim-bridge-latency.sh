@@ -66,9 +66,11 @@ Options:
   -h, --help              Show this help
 
 Metrics:
+  total_us is measured run_once wall-clock time.
+  accounted_total_us is the sum of non-attribution stages.
+  accounting_delta_us is measured_total_us - accounted_total_us.
   frame_source.next_frame_wait is the main-thread wait for the prefetched frame.
-  frame_source.detail.* breaks down the background frame fetch/read path.
-  ego_provider.estimate shows whether ego telemetry is still a hot-path RPC.
+  frame_source.detail.* breaks down the background frame fetch/read path and is attribution only.
   Bridge-internal timing, when enabled, breaks down the Python bridge into:
     sim_get_images_ms, ego_sample_ms, rgb_convert_ms, stdout_write_ms, sleep_ms.
 
@@ -300,6 +302,7 @@ FPS_10_MS = 1000.0 / 10.0
 FPS_5_MS = 1000.0 / 5.0
 FRAME_WAIT_STAGE = "frame_source.next_frame_wait"
 LEGACY_FRAME_WAIT_STAGE = "frame_source.next_frame"
+ACCOUNTING_DELTA_WARN_MS = 1.0
 
 
 def color_for_absolute_latency_ms(latency_ms):
@@ -352,6 +355,18 @@ def stage_values(rows, stage):
     return values
 
 
+def row_values(rows, key, fallback_key=None):
+    values = []
+    for row in rows:
+        if key in row:
+            values.append(row[key])
+        elif fallback_key and fallback_key in row:
+            values.append(row[fallback_key])
+    if not values:
+        raise SystemExit(f"missing row key {key}")
+    return values
+
+
 def bridge_summary_command(path):
     command = [sys.executable, str(bridge_summary_script), str(path)]
     if expected_width and expected_height:
@@ -367,12 +382,16 @@ def summarize_pass(pass_name):
     frame_wait_stage = choose_frame_wait_stage(rows)
     bridge = stage_values(rows, frame_wait_stage)
     ego = stage_values(rows, "ego_provider.estimate")
-    total = [row["total_us"] for row in rows]
+    measured_total = row_values(rows, "total_us")
+    accounted_total = row_values(rows, "accounted_total_us", fallback_key="total_us")
+    accounting_delta = row_values(rows, "accounting_delta_us", fallback_key="total_us")
 
     bridge_p95_ms = percentile(bridge, 0.95) / 1000.0
     bridge_p99_ms = percentile(bridge, 0.99) / 1000.0
     ego_p95_ms = percentile(ego, 0.95) / 1000.0
-    total_p95_ms = percentile(total, 0.95) / 1000.0
+    measured_total_p95_ms = percentile(measured_total, 0.95) / 1000.0
+    accounted_total_p95_ms = percentile(accounted_total, 0.95) / 1000.0
+    delta_abs_p95_ms = percentile([abs(v) for v in accounting_delta], 0.95) / 1000.0
     color, label, capacity = color_for_absolute_latency_ms(bridge_p95_ms)
 
     print()
@@ -382,7 +401,11 @@ def summarize_pass(pass_name):
     print(f"bridge/main wait p95: {color_text(f'{bridge_p95_ms:.3f} ms', color)} ({color_text(label, color)}, {capacity}, ~{implied_fps(bridge_p95_ms):.1f} FPS capacity)")
     print(f"bridge/main wait p99: {bridge_p99_ms:.3f} ms (~{implied_fps(bridge_p99_ms):.1f} FPS capacity)")
     print(f"ego_provider p95: {ego_p95_ms:.3f} ms")
-    print(f"total runner p95: {total_p95_ms:.3f} ms (~{implied_fps(total_p95_ms):.1f} FPS capacity)")
+    print(f"measured runner p95: {measured_total_p95_ms:.3f} ms (~{implied_fps(measured_total_p95_ms):.1f} FPS capacity)")
+    print(f"accounted runner p95: {accounted_total_p95_ms:.3f} ms")
+    print(f"accounting delta abs p95: {delta_abs_p95_ms:.3f} ms")
+    if delta_abs_p95_ms > ACCOUNTING_DELTA_WARN_MS:
+        print(color_text(f"WARNING: measured/accounted p95 delta exceeds {ACCOUNTING_DELTA_WARN_MS:.1f} ms", YELLOW))
     print("stage summary:")
     subprocess.run([sys.executable, str(summary_script), str(path)], check=True)
 
@@ -396,7 +419,7 @@ def summarize_pass(pass_name):
         "bridge_p95_ms": bridge_p95_ms,
         "bridge_p99_ms": bridge_p99_ms,
         "ego_p95_ms": ego_p95_ms,
-        "total_p95_ms": total_p95_ms,
+        "total_p95_ms": measured_total_p95_ms,
     }
 
 results = [summarize_pass(pass_name) for pass_name in passes]
@@ -429,9 +452,9 @@ if len(results) == 2:
         print()
         print("=== comparison ===")
         print(f"ego_provider p95 reduction: {ego_saved:.3f} ms")
-        print(f"total runner p95 reduction: {total_saved:.3f} ms")
-        print(f"separate_ego total p95 capacity: ~{implied_fps(sep['total_p95_ms']):.1f} FPS")
-        print(f"frame_ego total p95 capacity:    ~{implied_fps(frm['total_p95_ms']):.1f} FPS")
+        print(f"measured runner p95 reduction: {total_saved:.3f} ms")
+        print(f"separate_ego measured p95 capacity: ~{implied_fps(sep['total_p95_ms']):.1f} FPS")
+        print(f"frame_ego measured p95 capacity:    ~{implied_fps(frm['total_p95_ms']):.1f} FPS")
 
 print()
 print(f"artifacts: {root}")
