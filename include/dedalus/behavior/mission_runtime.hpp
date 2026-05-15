@@ -3,6 +3,7 @@
 #include <atomic>
 #include <chrono>
 #include <memory>
+#include <optional>
 #include <thread>
 
 #include "dedalus/behavior/latest_world_snapshot.hpp"
@@ -49,6 +50,7 @@ private:
     std::thread thread_;
     std::size_t tick_count_{0U};
     MissionLifecycleState last_state_{MissionLifecycleState::Idle};
+    std::optional<FlightCommandResult> last_command_result_;
 };
 
 }  // namespace dedalus
