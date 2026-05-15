@@ -237,32 +237,36 @@ Safe height reached
 
 ## Artifacts
 
-The mission loop writes snapshot artifacts to the configured output directory.
+The mission loop writes debug and event artifacts to the configured output directory.
 
 Current artifacts:
 
 ```text
 snapshot_XXXX.json
 snapshot_manifest.txt
-```
-
-These are debug artifacts describing what the world model and mission handoff saw. They are not necessarily replay inputs.
-
-Recommended next artifact improvement:
-
-```text
 mission_events.jsonl
 ```
 
-Suggested event examples:
+`snapshot_XXXX.json` files describe what the world model and mission handoff saw. They are debug artifacts and are not necessarily replay inputs.
+
+`mission_events.jsonl` is the compact structured mission timeline. It is independent of console verbosity and is the preferred artifact for quick debugging.
+
+Representative events:
 
 ```json
-{"state":"Prepare","status":"arming"}
-{"command":"Arm","result":"ok"}
-{"state":"Takeoff","status":"armed_confirmed_by_ego"}
-{"state":"ExecuteMission","status":"trajectory_execute","segment":1}
-{"state":"Land","status":"landing_command_sent"}
-{"state":"Complete","status":"complete"}
+{"event":"runtime_start","tick_hz":10.000000}
+{"event":"state_transition","tick":1,"from":"Idle","to":"Prepare","status":"arming"}
+{"event":"command_dispatch","tick":1,"state":"Prepare","command":"Arm"}
+{"event":"command_result","tick":1,"state":"Prepare","command":"Arm","success":true}
+{"event":"state_transition","tick":42,"from":"Takeoff","to":"ExecuteMission","status":"takeoff_complete"}
+{"event":"state_transition","tick":901,"from":"Land","to":"Complete","status":"landed"}
+{"event":"runtime_stop","tick_count":902,"state":"Complete"}
+```
+
+Quick inspection:
+
+```bash
+tail -n 40 out/airsim_mission_snapshots/mission_events.jsonl
 ```
 
 ## Known traps
@@ -283,8 +287,8 @@ Suggested event examples:
 
 ```text
 1. Validate repeatable runs without restarting AirSim.
-2. Add mission_events.jsonl.
-3. Improve final mission summary.
+2. Improve final mission summary from mission_events.jsonl.
+3. Add a tiny mission-events inspection helper if manual tail/grep becomes repetitive.
 4. Factor common Python control helpers only after repeated-run stability is proven.
 5. Consider native C++ migration for AirSim frame/ego/session helpers, not PX4/MAVLink control first.
 ```
