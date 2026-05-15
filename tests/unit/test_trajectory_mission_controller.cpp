@@ -1,3 +1,6 @@
+#include <cmath>
+#include <filesystem>
+#include <fstream>
 #include <iostream>
 #include <optional>
 
@@ -54,6 +57,15 @@ bool require_command_kind(
     }
     if (output.command->kind != expected) {
         std::cerr << "unexpected command kind for " << label << "\n";
+        return false;
+    }
+    return true;
+}
+
+bool require_near(double actual, double expected, double tolerance, const char* label) {
+    if (std::abs(actual - expected) > tolerance) {
+        std::cerr << "unexpected value for " << label << ": got " << actual
+                  << ", expected " << expected << "\n";
         return false;
     }
     return true;
@@ -200,6 +212,60 @@ int main() {
         std::cerr << "controller should report complete after disarmed telemetry\n";
         return 1;
     }
+
+    const auto trajectory_path = std::filesystem::temp_directory_path() / "dedalus_test_keyframes_trajectory.json";
+    {
+        std::ofstream trajectory_file{trajectory_path};
+        trajectory_file << R"JSON({
+  "name": "unit_keyframes",
+  "rate_hz": 10,
+  "segments": [
+    {
+      "type": "velocity_keyframes",
+      "label": "interpolate",
+      "keyframes": [
+        { "t": 0, "vx_mps": 0.0, "vy_mps": 0.0, "vz_mps": 0.0 },
+        { "t": 6, "vx_mps": 1.0, "vy_mps": -2.0, "vz_mps": 0.5 }
+      ]
+    }
+  ]
+})JSON";
+    }
+
+    dedalus::MissionOptions options;
+    options.values["flight_safe_height_m"] = "2.0";
+    options.values["flight_trajectory_path"] = trajectory_path.string();
+    auto loaded_config = dedalus::load_trajectory_mission_config(options);
+    if (loaded_config.segments.size() != 1U || loaded_config.segments[0].keyframes.size() != 2U) {
+        std::cerr << "loaded trajectory did not preserve keyframes\n";
+        return 1;
+    }
+    if (!require_near(loaded_config.segments[0].duration_s, 6.0, 1e-6, "keyframe duration")) {
+        return 1;
+    }
+
+    dedalus::TrajectoryMissionController loaded_controller{loaded_config};
+    output = loaded_controller.tick(input_at(0.0, 0.0, false));
+    output = loaded_controller.tick(input_at(0.1, 0.0, true));
+    output = loaded_controller.tick(input_at(0.2, 2.1, true));
+    if (!require_state(output, dedalus::MissionLifecycleState::ExecuteMission, "loaded safe height")) {
+        return 1;
+    }
+    output = loaded_controller.tick(input_at(3.2, 2.1, true));
+    if (!require_state(output, dedalus::MissionLifecycleState::ExecuteMission, "loaded keyframe execute") ||
+        !require_command_kind(output, dedalus::FlightCommandKind::Velocity, "loaded keyframe execute")) {
+        return 1;
+    }
+    if (!require_near(output.command->velocity_local_mps.x, 0.5, 1e-6, "interpolated vx") ||
+        !require_near(output.command->velocity_local_mps.y, -1.0, 1e-6, "interpolated vy") ||
+        !require_near(output.command->velocity_local_mps.z, 0.25, 1e-6, "interpolated vz")) {
+        return 1;
+    }
+    output = loaded_controller.tick(input_at(6.4, 2.1, true));
+    if (!require_state(output, dedalus::MissionLifecycleState::GoHome, "loaded keyframe complete")) {
+        return 1;
+    }
+    std::filesystem::remove(trajectory_path);
 
     dedalus::TrajectoryMissionController finish_controller{config};
     output = finish_controller.tick(input_at(0.0, 0.0, false));
