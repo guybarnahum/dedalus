@@ -198,10 +198,23 @@ VelocityCommand TrajectoryMissionController::command_from_velocity(
     TimePoint timestamp,
     Vec3 velocity_local_mps) const {
     VelocityCommand command;
+    command.kind = FlightCommandKind::Velocity;
     command.timestamp = timestamp;
     command.velocity_local_mps = velocity_local_mps;
     command.yaw_rate_radps = 0.0;
     command.yaw_rate_valid = true;
+    command.yaw_valid = false;
+    return command;
+}
+
+VelocityCommand TrajectoryMissionController::command_with_kind(
+    TimePoint timestamp,
+    FlightCommandKind kind) const {
+    VelocityCommand command;
+    command.kind = kind;
+    command.timestamp = timestamp;
+    command.velocity_local_mps = Vec3{0.0, 0.0, 0.0};
+    command.yaw_rate_valid = false;
     command.yaw_valid = false;
     return command;
 }
@@ -268,8 +281,14 @@ MissionTickOutput TrajectoryMissionController::tick(const MissionTickInput& inpu
 
     switch (state_) {
         case MissionLifecycleState::Prepare:
-            state_ = MissionLifecycleState::Takeoff;
-            output.status = "prepared";
+            if (!arm_command_sent_) {
+                arm_command_sent_ = true;
+                output.command = command_with_kind(input.now, FlightCommandKind::Arm);
+                output.status = "arming";
+            } else {
+                state_ = MissionLifecycleState::Takeoff;
+                output.status = "armed";
+            }
             break;
         case MissionLifecycleState::Takeoff:
             if (height_m >= config_.safe_height_m) {
@@ -323,7 +342,13 @@ MissionTickOutput TrajectoryMissionController::tick(const MissionTickInput& inpu
             }
             break;
         case MissionLifecycleState::Complete:
-            output.status = "complete";
+            if (!disarm_command_sent_) {
+                disarm_command_sent_ = true;
+                output.command = command_with_kind(input.now, FlightCommandKind::Disarm);
+                output.status = "disarming";
+            } else {
+                output.status = "complete";
+            }
             break;
         case MissionLifecycleState::Abort:
             output.command = command_from_velocity(input.now, Vec3{0.0, 0.0, 0.0});
