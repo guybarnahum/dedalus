@@ -147,11 +147,63 @@ Do not reintroduce the hand-written native C++ MAVLink encoder as the default li
 
 ---
 
-## 3. Separation of Concerns
+## 3. Python Helpers vs Native C++ Decision
+
+AirSim itself does have a native C++ client API. Python helpers are not used because C++ cannot talk to AirSim.
+
+The current boundary decision is:
+
+```text
+- Keep the mission state machine, world model, runtime, and provider interfaces in C++.
+- Keep PX4/MAVLink/OFFBOARD mission control in the Python `px4-command-bridge.py` for now because it uses the same `pymavlink` behavior proven by `simulation/test-flight.py`.
+- Do not rewrite the working MAVLink control path in C++ while the mission is still being stabilized.
+```
+
+Important distinction:
+
+```text
+AirSim RPC control != PX4 control
+```
+
+AirSim C++ can eventually replace Python helpers for simulator-side concerns:
+
+```text
+- frame streaming
+- ego/state reads
+- session prep / API control
+```
+
+But PX4 trajectory control currently depends on the validated `pymavlink` path:
+
+```text
+- MAVLink heartbeat and target routing
+- PX4 mode mapping and COMMAND_ACK handling
+- OFFBOARD priming timing
+- LOCAL_POSITION_NED feedback climb
+- SET_POSITION_TARGET_LOCAL_NED velocity setpoints
+```
+
+Recommended migration order:
+
+```text
+1. Stabilize current `px4_bridge` mission path.
+2. Migrate AirSim frame/ego/session helpers to native C++ if needed.
+3. Only later consider a native C++ PX4/MAVLink backend using a real tested MAVLink library, not ad-hoc packet encoding.
+```
+
+Bottom line:
+
+```text
+Python is not required for AirSim access. It is currently required for the stable PX4/MAVLink mission-control path because `pymavlink` + `test-flight.py` is the proven implementation.
+```
+
+---
+
+## 4. Separation of Concerns
 
 Keep these three layers separate.
 
-### 3.1 Command intent
+### 4.1 Command intent
 
 Command intent records what the mission runtime requested or dispatched.
 
@@ -168,7 +220,7 @@ flight_control.arm_state = armed_confirmed
   Ego telemetry later confirmed the drone is armed.
 ```
 
-### 3.2 Telemetry truth
+### 4.2 Telemetry truth
 
 Telemetry truth comes from the vehicle/sim state represented in `WorldSnapshot.ego`.
 
@@ -181,7 +233,7 @@ ego.height_valid && ego.height_m >= safe_height
 ego.flight_status
 ```
 
-### 3.3 Mission lifecycle
+### 4.3 Mission lifecycle
 
 The mission state machine owns mission phase:
 
@@ -201,7 +253,7 @@ Do not collapse these layers.
 
 ---
 
-## 4. Current Milestone Journey — Milestone 2
+## 5. Current Milestone Journey — Milestone 2
 
 | Stage | Name | Status | Notes |
 |---|---|---:|---|
@@ -222,7 +274,7 @@ Do not collapse these layers.
 
 ---
 
-## 5. Next Stage
+## 6. Next Stage
 
 Recommended next active stage:
 
@@ -268,9 +320,9 @@ Immediate next tasks, in order:
 
 ---
 
-## 6. Commands
+## 7. Commands
 
-### 6.1 Build/test
+### 7.1 Build/test
 
 ```bash
 cd ~/dedalus
@@ -286,7 +338,7 @@ Expected current result:
 100% tests passed, 0 tests failed out of 18
 ```
 
-### 6.2 Standalone known-good test flight
+### 7.2 Standalone known-good test flight
 
 ```bash
 cd ~/dedalus
@@ -295,7 +347,7 @@ source venv/bin/activate
 python ./simulation/test-flight.py --trajectory trajectories/circle_figure8.json
 ```
 
-### 6.3 Start AirSim
+### 7.3 Start AirSim
 
 ```bash
 cd ~/dedalus/simulation
@@ -303,7 +355,7 @@ cd ~/dedalus/simulation
 ./run.sh AirSimNH --airsim-camera-width 640 --airsim-camera-height 360
 ```
 
-### 6.4 Run live mission loop
+### 7.4 Run live mission loop
 
 Quiet/default:
 
@@ -342,7 +394,7 @@ default: high-level mission state transitions + final summary
 
 ---
 
-## 7. Known Traps
+## 8. Known Traps
 
 ```text
 - Do not use dedalus_replay_mission. It was renamed to dedalus_mission_loop.
@@ -354,12 +406,13 @@ default: high-level mission state transitions + final summary
 - Do not make the native C++ MAVLink sink the default live path; use px4_bridge.
 - Do not debug the working mission by rewriting MAVLink packet encoding in C++.
 - Do not let the telemetry sidecar and command bridge fight over the same MAVLink endpoint.
+- Do not replace `px4-command-bridge.py` with native C++ until the mission is stable and a real tested MAVLink C++ backend is planned.
 - Do not refactor `test-flight.py` / `px4-command-bridge.py` until the mission path remains stable across repeated runs.
 ```
 
 ---
 
-## 8. Handoff Prompt Format
+## 9. Handoff Prompt Format
 
 Every new worker handoff should include:
 
@@ -377,7 +430,7 @@ Every new worker handoff should include:
 
 ---
 
-## 9. Pointers
+## 10. Pointers
 
 Detailed / historical context:
 
