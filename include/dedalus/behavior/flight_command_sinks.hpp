@@ -105,6 +105,9 @@ private:
             case FlightCommandKind::Arm:
                 out << "arm";
                 break;
+            case FlightCommandKind::Takeoff:
+                out << "takeoff";
+                break;
             case FlightCommandKind::Disarm:
                 out << "disarm";
                 break;
