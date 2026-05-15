@@ -51,6 +51,12 @@ struct VelocityCommand {
     bool yaw_valid{false};
 };
 
+struct FlightCommandResult {
+    FlightCommandKind kind{FlightCommandKind::Velocity};
+    bool success{false};
+    std::string status;
+};
+
 enum class MissionLifecycleState {
     Idle,
     Prepare,
@@ -88,6 +94,7 @@ inline const char* to_string(MissionLifecycleState state) {
 struct MissionTickInput {
     TimePoint now;
     WorldSnapshot snapshot;
+    std::optional<FlightCommandResult> last_command_result;
 };
 
 struct MissionTickOutput {
@@ -105,7 +112,7 @@ public:
 class FlightCommandSink {
 public:
     virtual ~FlightCommandSink() = default;
-    virtual void send(const VelocityCommand& command) = 0;
+    virtual FlightCommandResult send(const VelocityCommand& command) = 0;
 };
 
 }  // namespace dedalus
