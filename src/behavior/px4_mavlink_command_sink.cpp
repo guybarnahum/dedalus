@@ -5,13 +5,10 @@
 #include <sys/socket.h>
 #include <unistd.h>
 
-#include <array>
 #include <cerrno>
 #include <chrono>
 #include <cmath>
 #include <cstring>
-#include <iomanip>
-#include <optional>
 #include <sstream>
 #include <stdexcept>
 #include <string>
@@ -22,17 +19,12 @@ namespace dedalus {
 namespace {
 
 constexpr std::uint8_t kMavlinkV1Magic = 0xFEU;
-constexpr std::uint8_t kMavlinkComponentMissionPlanner = 190U;
-constexpr std::uint8_t kMavlinkComponentAutopilot1 = 1U;
 constexpr std::uint8_t kMavlinkFrameLocalNed = 1U;
-constexpr std::uint8_t kMavModeFlagCustomModeEnabled = 1U;
 constexpr std::uint16_t kMavCmdNavTakeoff = 22U;
 constexpr std::uint16_t kMavCmdComponentArmDisarm = 400U;
 constexpr std::uint16_t kMavCmdDoSetMode = 176U;
-constexpr std::uint16_t kMsgIdHeartbeat = 0U;
-constexpr std::uint16_t kMsgIdCommandLong = 76U;
-constexpr std::uint16_t kMsgIdSetPositionTargetLocalNed = 84U;
-constexpr std::uint8_t kCrcExtraHeartbeat = 50U;
+constexpr std::uint8_t kMsgIdCommandLong = 76U;
+constexpr std::uint8_t kMsgIdSetPositionTargetLocalNed = 84U;
 constexpr std::uint8_t kCrcExtraCommandLong = 152U;
 constexpr std::uint8_t kCrcExtraSetPositionTargetLocalNed = 143U;
 constexpr std::uint16_t kTypeMaskVelocityOnly =
