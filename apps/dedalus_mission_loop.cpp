@@ -1,3 +1,4 @@
+#include <algorithm>
 #include <chrono>
 #include <cstdlib>
 #include <exception>
@@ -36,6 +37,7 @@ struct Args {
     int max_frames{0};
     int shutdown_max_frames{300};
     ProgressMode progress_mode{ProgressMode::Auto};
+    int verbosity{0};
 };
 
 class ProgressReporter {
@@ -123,12 +125,24 @@ bool mission_finished(dedalus::MissionLifecycleState state) {
            state == dedalus::MissionLifecycleState::Abort;
 }
 
-int run_shell_command(const std::string& command) {
+int run_shell_command(const std::string& command, int verbosity) {
     if (command.empty() || command == "disabled") {
         return 0;
     }
-    std::cerr << "dedalus_mission_loop: prepare_session command=" << command << "\n";
+    if (verbosity >= 1) {
+        std::cerr << "dedalus_mission_loop: prepare_session command=" << command << "\n";
+    }
     return std::system(command.c_str());
+}
+
+int verbosity_from_flag(const std::string& arg) {
+    if (arg == "--verbose") {
+        return 3;
+    }
+    if (arg.size() >= 2U && arg[0] == '-' && arg[1] == 'v') {
+        return static_cast<int>(std::min<std::size_t>(3U, arg.size() - 1U));
+    }
+    return -1;
 }
 
 Args parse_args(int argc, char** argv) {
@@ -167,7 +181,12 @@ Args parse_args(int argc, char** argv) {
         } else if (arg == "--no-progress") {
             args.progress_mode = ProgressMode::Off;
         } else {
-            throw std::invalid_argument("unknown argument: " + arg);
+            const int parsed_verbosity = verbosity_from_flag(arg);
+            if (parsed_verbosity >= 0) {
+                args.verbosity = std::max(args.verbosity, parsed_verbosity);
+            } else {
+                throw std::invalid_argument("unknown argument: " + arg);
+            }
         }
     }
 
@@ -187,7 +206,9 @@ std::unique_ptr<dedalus::MissionController> create_mission_controller(
 }
 
 std::unique_ptr<dedalus::FlightCommandSink> create_flight_command_sink(
-    const dedalus::CoreStackProviderConfig& config) {
+    const dedalus::CoreStackProviderConfig& config,
+    int verbosity) {
+    const bool sink_debug_logging = verbosity >= 3;
     if (config.flight_command_sink == "disabled") {
         return std::make_unique<dedalus::NullFlightCommandSink>();
     }
@@ -201,7 +222,7 @@ std::unique_ptr<dedalus::FlightCommandSink> create_flight_command_sink(
         sink_config.bridge_command = config.mission_options.get_or(
             "flight_velocity_command_bridge",
             sink_config.bridge_command);
-        sink_config.debug_logging = true;
+        sink_config.debug_logging = sink_debug_logging;
         return std::make_unique<dedalus::AirSimVelocityCommandSink>(sink_config);
     }
     if (config.flight_command_sink == "px4_bridge") {
@@ -211,7 +232,7 @@ std::unique_ptr<dedalus::FlightCommandSink> create_flight_command_sink(
         sink_config.bridge_command = config.mission_options.get_or(
             "flight_px4_command_bridge",
             sink_config.bridge_command);
-        sink_config.debug_logging = true;
+        sink_config.debug_logging = sink_debug_logging;
         return std::make_unique<dedalus::Px4BridgeCommandSink>(sink_config);
     }
     if (config.flight_command_sink == "px4_mavlink") {
@@ -241,7 +262,7 @@ std::unique_ptr<dedalus::FlightCommandSink> create_flight_command_sink(
         sink_config.set_offboard_on_velocity = config.mission_options.get_or(
             "flight_mavlink_set_offboard_on_velocity",
             "true") != "false";
-        sink_config.debug_logging = true;
+        sink_config.debug_logging = sink_debug_logging;
         return std::make_unique<dedalus::Px4MavlinkCommandSink>(sink_config);
     }
     throw std::invalid_argument("unknown flight_command_sink: " + config.flight_command_sink);
@@ -265,13 +286,14 @@ int main(int argc, char** argv) {
         std::cerr << "dedalus_mission_loop: frame_source=" << config.frame_source
                   << " bridge_mode=" << config.bridge_mode
                   << " flight_sink=" << config.flight_command_sink
+                  << " verbosity=" << args.verbosity
                   << "\n";
-        if (config.frame_source == "airsim") {
+        if (config.frame_source == "airsim" && args.verbosity >= 1) {
             std::cerr << "dedalus_mission_loop: using LIVE AirSim bridge frames; snapshots are debug artifacts, not replay input\n";
         }
 
         const auto prepare_command = config.mission_options.get_or("flight_prepare_session_command", "");
-        if (run_shell_command(prepare_command) != 0) {
+        if (run_shell_command(prepare_command, args.verbosity) != 0) {
             throw std::runtime_error("flight prepare session command failed");
         }
 
@@ -285,10 +307,10 @@ int main(int argc, char** argv) {
         auto controller = create_mission_controller(config);
         if (controller) {
             mission_runtime = std::make_unique<dedalus::MissionRuntime>(
-                dedalus::MissionRuntimeConfig{.tick_hz = config.mission_tick_hz, .debug_logging = true},
+                dedalus::MissionRuntimeConfig{.tick_hz = config.mission_tick_hz, .verbosity = args.verbosity},
                 latest_snapshot,
                 std::move(controller),
-                create_flight_command_sink(config));
+                create_flight_command_sink(config, args.verbosity));
             mission_runtime->start();
             std::cout << "Mission runtime: " << config.mission_controller
                       << " @ " << config.mission_tick_hz << " Hz"
@@ -338,7 +360,7 @@ int main(int argc, char** argv) {
             ++frame_count;
             const auto latest = latest_snapshot->latest();
             const auto snapshot = latest.has_value() ? *latest : runner.snapshot();
-            if (frame_count <= 3 || frame_count % 30 == 0) {
+            if (args.verbosity >= 2 && (frame_count <= 3 || frame_count % 30 == 0)) {
                 std::cerr << "dedalus_mission_loop: world_snapshot frame=" << frame_count
                           << " ts=" << snapshot.timestamp.timestamp_ns
                           << " ego_height_m=" << snapshot.ego.height_m
