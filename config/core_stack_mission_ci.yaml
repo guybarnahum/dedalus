@@ -1,0 +1,18 @@
+frame_source: synthetic
+ego_provider: frame_hint
+detector: scripted
+camera_stabilizer: null
+tracker: simple_centroid
+identity_resolver: appearance_only
+projector: flat_ground
+world_model: in_memory
+frame_annotator: null
+fallback_map_frame_id: map_mission_ci_0001
+
+mission_controller: trajectory_mission
+mission_tick_hz: 10
+flight_command_sink: disabled
+mission_options.flight_control_mode: px4
+mission_options.flight_safe_height_m: 8
+mission_options.flight_home_policy: initial_ego_pose
+mission_options.flight_max_velocity_mps: 5
