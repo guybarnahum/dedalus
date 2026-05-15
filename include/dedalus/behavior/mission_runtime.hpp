@@ -2,8 +2,11 @@
 
 #include <atomic>
 #include <chrono>
+#include <fstream>
 #include <memory>
+#include <mutex>
 #include <optional>
+#include <string>
 #include <thread>
 
 #include "dedalus/behavior/latest_world_snapshot.hpp"
@@ -14,6 +17,7 @@ namespace dedalus {
 struct MissionRuntimeConfig {
     double tick_hz{10.0};
     int verbosity{0};
+    std::string event_log_path{};
 };
 
 class MissionRuntime {
@@ -42,6 +46,7 @@ public:
 
 private:
     void loop();
+    void write_event(std::string json_fields);
     [[nodiscard]] TimePoint now_timepoint() const;
 
     MissionRuntimeConfig config_;
@@ -54,6 +59,8 @@ private:
     std::size_t tick_count_{0U};
     MissionLifecycleState last_state_{MissionLifecycleState::Idle};
     std::optional<FlightCommandResult> last_command_result_;
+    std::ofstream event_log_;
+    mutable std::mutex event_log_mutex_;
 };
 
 }  // namespace dedalus
