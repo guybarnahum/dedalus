@@ -189,4 +189,11 @@ if(Python3_Interpreter_FOUND)
             ${PROJECT_SOURCE_DIR}
             ${PROJECT_BINARY_DIR}
     )
+    add_test(
+        NAME replay_mission_smoke
+        COMMAND ${Python3_EXECUTABLE}
+            ${PROJECT_SOURCE_DIR}/tests/integration/test_replay_mission_smoke.py
+            ${PROJECT_SOURCE_DIR}
+            ${PROJECT_BINARY_DIR}
+    )
 endif()
