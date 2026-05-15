@@ -13,6 +13,7 @@ namespace {
 constexpr double kPi = 3.14159265358979323846;
 constexpr double kMinArrivedDistanceM = 0.5;
 constexpr double kLandHeightM = 0.25;
+constexpr double kTakeoffVelocityAssistHeightM = 0.5;
 
 std::string read_text_file(const std::string& path) {
     std::ifstream input{path};
@@ -181,6 +182,7 @@ TrajectoryMissionConfig load_trajectory_mission_config(const MissionOptions& opt
     config.land_velocity_mps = std::stod(options.get_or("flight_land_velocity_mps", "0.5"));
     config.arm_retry_interval_s = std::stod(options.get_or("flight_arm_retry_interval_s", "1.0"));
     config.arm_timeout_s = std::stod(options.get_or("flight_arm_timeout_s", "10.0"));
+    config.takeoff_retry_interval_s = std::stod(options.get_or("flight_takeoff_retry_interval_s", "1.0"));
     config.disarm_retry_interval_s = std::stod(options.get_or("flight_disarm_retry_interval_s", "1.0"));
     config.disarm_timeout_s = std::stod(options.get_or("flight_disarm_timeout_s", "10.0"));
     config.home_policy = options.get_or("flight_home_policy", "initial_ego_pose");
@@ -291,6 +293,7 @@ MissionTickOutput TrajectoryMissionController::tick(const MissionTickInput& inpu
         case MissionLifecycleState::Prepare:
             if (ego.armed_valid && ego.armed) {
                 state_ = MissionLifecycleState::Takeoff;
+                state_start_ = input.now;
                 output.status = "armed_confirmed_by_ego";
             } else if (elapsed_at_least(state_start_, input.now, config_.arm_timeout_s)) {
                 state_ = MissionLifecycleState::Abort;
@@ -311,11 +314,19 @@ MissionTickOutput TrajectoryMissionController::tick(const MissionTickInput& inpu
                 segment_index_ = 0U;
                 segment_elapsed_s_ = 0.0;
                 output.status = "takeoff_complete";
-            } else {
+            } else if (!takeoff_command_sent_ ||
+                       elapsed_at_least(takeoff_last_command_time_, input.now, config_.takeoff_retry_interval_s)) {
+                takeoff_command_sent_ = true;
+                takeoff_last_command_time_ = input.now;
+                output.command = command_with_kind(input.now, FlightCommandKind::Takeoff);
+                output.status = "takeoff_request";
+            } else if (height_m >= kTakeoffVelocityAssistHeightM) {
                 output.command = command_from_velocity(
                     input.now,
                     Vec3{0.0, 0.0, -std::abs(config_.takeoff_velocity_mps)});
                 output.status = "takeoff_climb";
+            } else {
+                output.status = "waiting_for_takeoff_climb";
             }
             break;
         case MissionLifecycleState::ExecuteMission:
