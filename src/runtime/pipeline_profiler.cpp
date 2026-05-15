@@ -2,10 +2,17 @@
 
 #include <filesystem>
 #include <stdexcept>
+#include <string_view>
 #include <utility>
 
 namespace dedalus {
 namespace {
+
+constexpr std::string_view kFrameSourceDetailPrefix = "frame_source.detail.";
+
+bool is_attribution_only_stage(const std::string& name) {
+    return name.rfind(std::string{kFrameSourceDetailPrefix}, 0U) == 0U;
+}
 
 std::string escape_json_string(const std::string& value) {
     std::string escaped;
@@ -79,7 +86,9 @@ void PipelineProfiler::end_frame() {
 
     std::int64_t total_us = 0;
     for (const auto& stage : current_frame_.stages) {
-        total_us += stage.duration_us;
+        if (!is_attribution_only_stage(stage.name)) {
+            total_us += stage.duration_us;
+        }
     }
 
     output_ << '{'
