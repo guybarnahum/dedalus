@@ -65,6 +65,7 @@ bool MissionRuntime::tick_once() {
     MissionTickInput input;
     input.now = now_timepoint();
     input.snapshot = *snapshot;
+    input.last_command_result = last_command_result_;
     if (input.snapshot.timestamp.timestamp_ns > 0) {
         input.now = input.snapshot.timestamp;
     }
@@ -79,20 +80,33 @@ bool MissionRuntime::tick_once() {
                   << " state=" << to_string(output.state)
                   << " status=" << output.status
                   << " ego_height_m=" << input.snapshot.ego.height_m
-                  << " command=" << (output.command.has_value() ? "yes" : "no")
-                  << "\n";
+                  << " command=" << (output.command.has_value() ? "yes" : "no");
+        if (input.last_command_result.has_value()) {
+            std::cerr << " last_result=" << to_string(input.last_command_result->kind)
+                      << ":" << (input.last_command_result->success ? "ok" : "failed");
+        }
+        std::cerr << "\n";
     }
 
     if (output.command.has_value()) {
         if (config_.debug_logging) {
             const auto& v = output.command->velocity_local_mps;
-            std::cerr << "dedalus_mission: send_velocity vx=" << v.x
+            std::cerr << "dedalus_mission: send_command kind=" << to_string(output.command->kind)
+                      << " vx=" << v.x
                       << " vy=" << v.y
                       << " vz=" << v.z
                       << " yaw_rate=" << output.command->yaw_rate_radps
                       << "\n";
         }
-        sink_->send(*output.command);
+        last_command_result_ = sink_->send(*output.command);
+        if (config_.debug_logging) {
+            std::cerr << "dedalus_mission: command_result kind=" << to_string(last_command_result_->kind)
+                      << " success=" << (last_command_result_->success ? "true" : "false")
+                      << " status=" << last_command_result_->status;
+            if (last_command_result_->status.empty() || last_command_result_->status.back() != '\n') {
+                std::cerr << "\n";
+            }
+        }
     }
 
     return true;
