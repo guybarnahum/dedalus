@@ -61,6 +61,10 @@ int main() {
     arm.kind = dedalus::FlightCommandKind::Arm;
     sink.send(arm);
 
+    dedalus::VelocityCommand takeoff;
+    takeoff.kind = dedalus::FlightCommandKind::Takeoff;
+    sink.send(takeoff);
+
     dedalus::VelocityCommand command;
     command.kind = dedalus::FlightCommandKind::Velocity;
     command.velocity_local_mps = dedalus::Vec3{3.0, -3.0, 1.5};
@@ -72,8 +76,8 @@ int main() {
     disarm.kind = dedalus::FlightCommandKind::Disarm;
     sink.send(disarm);
 
-    if (fake_transport_ptr->commands.size() != 3U) {
-        std::cerr << "AirSimVelocityCommandSink did not send exactly three commands\n";
+    if (fake_transport_ptr->commands.size() != 4U) {
+        std::cerr << "AirSimVelocityCommandSink did not send exactly four commands\n";
         return 1;
     }
 
@@ -83,7 +87,13 @@ int main() {
         return 1;
     }
 
-    const auto& rendered = fake_transport_ptr->commands[1];
+    if (!contains(fake_transport_ptr->commands[1], "--command takeoff")) {
+        std::cerr << "takeoff command missing --command takeoff\n";
+        std::cerr << fake_transport_ptr->commands[1] << "\n";
+        return 1;
+    }
+
+    const auto& rendered = fake_transport_ptr->commands[2];
     const std::string required_tokens[] = {
         "python3 simulation/airsim-send-velocity.py",
         "--command velocity",
@@ -104,9 +114,9 @@ int main() {
         }
     }
 
-    if (!contains(fake_transport_ptr->commands[2], "--command disarm")) {
+    if (!contains(fake_transport_ptr->commands[3], "--command disarm")) {
         std::cerr << "disarm command missing --command disarm\n";
-        std::cerr << fake_transport_ptr->commands[2] << "\n";
+        std::cerr << fake_transport_ptr->commands[3] << "\n";
         return 1;
     }
 
