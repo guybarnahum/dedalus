@@ -6,13 +6,15 @@ shells out to this script instead of linking the AirSim Python/RPC stack.
 
 Mission lifecycle ownership lives in the mission controller:
 - Prepare emits an explicit arm command.
+- Takeoff emits an explicit takeoff command and waits for ego height.
 - Flight states emit velocity commands.
 - Complete emits an explicit disarm command.
 
-For the PX4-backed Colosseum/AirSim setup, arming/disarming is dispatched through
-the PX4 shell because this AirSim server rejects the Python client's armDisarm
-RPC with a vehicle-name argument. The mission state machine confirms the result
-asynchronously from ego/PX4 telemetry in the world model.
+For the PX4-backed Colosseum/AirSim setup, arming/disarming/takeoff are dispatched
+through the PX4 shell because this AirSim server rejects the Python client's
+armDisarm RPC with a vehicle-name argument and AirSim velocity OK is not vehicle
+state truth. The mission state machine confirms the result asynchronously from
+ego/PX4 telemetry in the world model.
 """
 
 from __future__ import annotations
@@ -27,7 +29,7 @@ import airsim
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--command", choices=("arm", "disarm", "velocity"), default="velocity")
+    parser.add_argument("--command", choices=("arm", "takeoff", "disarm", "velocity"), default="velocity")
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--rpc-port", type=int, default=41451)
     parser.add_argument("--vehicle-name", default="PX4")
@@ -64,6 +66,11 @@ def main() -> int:
     if args.command == "arm":
         px4_shell(args.px4_tmux_target, "commander arm")
         print(f"OK command=arm dispatch=px4_shell target={args.px4_tmux_target}")
+        return 0
+
+    if args.command == "takeoff":
+        px4_shell(args.px4_tmux_target, "commander takeoff")
+        print(f"OK command=takeoff dispatch=px4_shell target={args.px4_tmux_target}")
         return 0
 
     if args.command == "disarm":
