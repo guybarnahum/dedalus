@@ -43,7 +43,7 @@ public:
         }
     }
 
-    void send(const VelocityCommand& command) override {
+    FlightCommandResult send(const VelocityCommand& command) override {
         const auto rendered_command = build_command(command);
         if (config_.debug_logging) {
             const auto v = bounded_velocity(command.velocity_local_mps);
@@ -55,6 +55,7 @@ public:
                       << " helper=" << rendered_command
                       << "\n";
         }
+
         const auto output = transport_->request_once(rendered_command);
         if (config_.debug_logging) {
             std::cerr << "dedalus_flight_sink: helper_output=" << output;
@@ -62,9 +63,15 @@ public:
                 std::cerr << "\n";
             }
         }
-        if (output.find("OK") == std::string::npos) {
+
+        FlightCommandResult result;
+        result.kind = command.kind;
+        result.status = output;
+        result.success = output.find("OK") != std::string::npos;
+        if (!result.success) {
             throw std::runtime_error("AirSim command helper did not report OK: " + output);
         }
+        return result;
     }
 
 private:
@@ -125,7 +132,9 @@ private:
 
 class NullFlightCommandSink final : public FlightCommandSink {
 public:
-    void send(const VelocityCommand&) override {}
+    FlightCommandResult send(const VelocityCommand& command) override {
+        return FlightCommandResult{command.kind, true, "OK null flight command sink"};
+    }
 };
 
 }  // namespace dedalus
