@@ -4,31 +4,21 @@ import time
 import argparse
 import traceback
 import subprocess
-import json
-import math
 from pathlib import Path
 
 from pymavlink import mavutil
 
+from velocity_trajectory import (
+    load_trajectory,
+    segment_duration,
+    segment_velocity,
+    validate_trajectory_file as validate_velocity_trajectory_file,
+)
+
 
 DEFAULT_VEHICLE = "PX4"
 DEFAULT_PX4_TMUX_TARGET = "dedalus-sim:px4"
-
-DEFAULT_TRAJECTORY_DICT = {
-    "name": "default_takeoff_hover_land",
-    "description": "Simple takeoff, hover, land sequence.",
-    "rate_hz": 10,
-    "segments": [
-        {
-            "type": "hold",
-            "label": "hover",
-            "duration_s": 10,
-            "vx_mps": 0.0,
-            "vy_mps": 0.0,
-            "vz_mps": 0.0,
-        }
-    ],
-}
+SIMULATION_DIR = Path(__file__).resolve().parent
 
 DEFAULT_MAVLINK_ENDPOINTS = [
     "udpin:127.0.0.1:14550",
@@ -193,139 +183,14 @@ def px4_land_via_shell(target):
 
 
 def validate_trajectory_file(path):
-    """
-    Validate that a trajectory file is valid JSON and contains 'segments'.
-    Returns the path if valid; raises argparse.ArgumentTypeError if not.
-    """
-    trajectory_path = Path(path)
-    if not trajectory_path.is_absolute():
-        trajectory_path = Path(__file__).resolve().parent / trajectory_path
-
-    if not trajectory_path.exists():
-        raise argparse.ArgumentTypeError(f"Trajectory file not found: {trajectory_path}")
-
     try:
-        with trajectory_path.open("r", encoding="utf-8") as f:
-            data = json.load(f)
-        if "segments" not in data:
-            raise argparse.ArgumentTypeError(
-                f"Trajectory file missing 'segments' key: {trajectory_path}"
-            )
-        return path
-    except json.JSONDecodeError as e:
-        raise argparse.ArgumentTypeError(
-            f"Invalid JSON in trajectory file {trajectory_path}: {e}"
-        )
-    except Exception as e:
-        raise argparse.ArgumentTypeError(f"Error reading trajectory file {trajectory_path}: {e}")
-
-
-def load_trajectory(path):
-    # If path is None or empty, use the default hardcoded trajectory.
-    if not path:
-        return DEFAULT_TRAJECTORY_DICT
-
-    # Otherwise load from file.
-    trajectory_path = Path(path)
-    if not trajectory_path.is_absolute():
-        trajectory_path = Path(__file__).resolve().parent / trajectory_path
-
-    with trajectory_path.open("r", encoding="utf-8") as f:
-        data = json.load(f)
-
-    if "segments" not in data:
-        raise ValueError(f"Trajectory file missing 'segments': {trajectory_path}")
-
-    return data
-
-
-def lerp(a, b, u):
-    return a + (b - a) * u
-
-
-def interpolate_keyframes(keyframes, t):
-    if not keyframes:
-        return 0.0, 0.0, 0.0
-
-    if t <= keyframes[0]["t"]:
-        k = keyframes[0]
-        return k.get("vx_mps", 0.0), k.get("vy_mps", 0.0), k.get("vz_mps", 0.0)
-
-    if t >= keyframes[-1]["t"]:
-        k = keyframes[-1]
-        return k.get("vx_mps", 0.0), k.get("vy_mps", 0.0), k.get("vz_mps", 0.0)
-
-    for i in range(len(keyframes) - 1):
-        a = keyframes[i]
-        b = keyframes[i + 1]
-        if a["t"] <= t <= b["t"]:
-            span = max(b["t"] - a["t"], 1e-6)
-            u = (t - a["t"]) / span
-            return (
-                lerp(a.get("vx_mps", 0.0), b.get("vx_mps", 0.0), u),
-                lerp(a.get("vy_mps", 0.0), b.get("vy_mps", 0.0), u),
-                lerp(a.get("vz_mps", 0.0), b.get("vz_mps", 0.0), u),
-            )
-
-    k = keyframes[-1]
-    return k.get("vx_mps", 0.0), k.get("vy_mps", 0.0), k.get("vz_mps", 0.0)
-
-
-def segment_velocity(segment, t):
-    typ = segment.get("type")
-
-    if typ == "hold":
-        return (
-            segment.get("vx_mps", 0.0),
-            segment.get("vy_mps", 0.0),
-            segment.get("vz_mps", 0.0),
-        )
-
-    if typ == "velocity_keyframes":
-        return interpolate_keyframes(segment["keyframes"], t)
-
-    if typ == "circle_velocity":
-        duration = float(segment["duration_s"])
-        speed = float(segment.get("speed_mps", 2.0))
-        radius = float(segment.get("radius_m", 10.0))
-        direction = segment.get("direction", "cw").lower()
-        vz = float(segment.get("vz_mps", 0.0))
-
-        omega = speed / max(radius, 1e-6)
-        theta = omega * t
-        sign = -1.0 if direction == "cw" else 1.0
-
-        # NED horizontal velocity tangent to a circle.
-        vx = speed * math.cos(theta)
-        vy = sign * speed * math.sin(theta)
-
-        # Make duration roughly match one full loop if user did not tune it exactly.
-        _ = duration
-        return vx, vy, vz
-
-    if typ == "figure8_velocity":
-        duration = float(segment["duration_s"])
-        speed = float(segment.get("speed_mps", 2.0))
-        scale = float(segment.get("scale_m", 10.0))
-        vz = float(segment.get("vz_mps", 0.0))
-
-        # Lemniscate-inspired velocity field.
-        # x = A sin(theta), y = A sin(theta) cos(theta)
-        # We scale derivatives so the speed remains near requested speed.
-        theta = 2.0 * math.pi * t / max(duration, 1e-6)
-        dx = scale * math.cos(theta)
-        dy = scale * math.cos(2.0 * theta)
-        norm = max(math.hypot(dx, dy), 1e-6)
-
-        vx = speed * dx / norm
-        vy = speed * dy / norm
-        return vx, vy, vz
-
-    raise ValueError(f"Unknown trajectory segment type: {typ}")
+        return validate_velocity_trajectory_file(path, base_dir=SIMULATION_DIR)
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError(str(exc)) from exc
 
 
 def play_velocity_trajectory(client, vehicle_name, trajectory_path):
-    trajectory = load_trajectory(trajectory_path)
+    trajectory = load_trajectory(trajectory_path, base_dir=SIMULATION_DIR)
     rate_hz = float(trajectory.get("rate_hz", 10))
     dt = 1.0 / max(rate_hz, 1.0)
 
@@ -336,11 +201,7 @@ def play_velocity_trajectory(client, vehicle_name, trajectory_path):
     for seg_idx, segment in enumerate(trajectory["segments"], start=1):
         label = segment.get("label", segment.get("type", f"segment-{seg_idx}"))
         typ = segment.get("type")
-
-        if typ == "velocity_keyframes":
-            duration = float(segment["keyframes"][-1]["t"])
-        else:
-            duration = float(segment.get("duration_s", 0))
+        duration = segment_duration(segment)
 
         if duration <= 0:
             print(f"Skipping empty segment: {label}")
@@ -713,7 +574,7 @@ def prime_mavlink_offboard_velocity(mav, duration_s=2.0, hz=20):
 
 
 def play_mavlink_velocity_trajectory(mav, trajectory_path):
-    trajectory = load_trajectory(trajectory_path)
+    trajectory = load_trajectory(trajectory_path, base_dir=SIMULATION_DIR)
     rate_hz = float(trajectory.get("rate_hz", 10))
     dt = 1.0 / max(rate_hz, 1.0)
 
@@ -724,11 +585,7 @@ def play_mavlink_velocity_trajectory(mav, trajectory_path):
     for seg_idx, segment in enumerate(trajectory["segments"], start=1):
         label = segment.get("label", segment.get("type", f"segment-{seg_idx}"))
         typ = segment.get("type")
-
-        if typ == "velocity_keyframes":
-            duration = float(segment["keyframes"][-1]["t"])
-        else:
-            duration = float(segment.get("duration_s", 0))
+        duration = segment_duration(segment)
 
         if duration <= 0:
             print(f"Skipping empty segment: {label}")

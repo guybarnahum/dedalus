@@ -33,6 +33,7 @@ struct Args {
     std::string config_path{"config/core_stack_trajectory_mission_placeholder.yaml"};
     std::filesystem::path output_dir{"out/mission_loop_snapshots"};
     int max_frames{0};
+    int shutdown_max_frames{300};
     ProgressMode progress_mode{ProgressMode::Auto};
 };
 
@@ -116,6 +117,11 @@ std::string zero_padded(int value, int width) {
     return out.str();
 }
 
+bool mission_finished(dedalus::MissionLifecycleState state) {
+    return state == dedalus::MissionLifecycleState::Complete ||
+           state == dedalus::MissionLifecycleState::Abort;
+}
+
 Args parse_args(int argc, char** argv) {
     Args args;
 
@@ -138,6 +144,14 @@ Args parse_args(int argc, char** argv) {
             args.max_frames = std::stoi(argv[++i]);
             if (args.max_frames < 0) {
                 throw std::invalid_argument("--max-frames must be >= 0");
+            }
+        } else if (arg == "--shutdown-max-frames") {
+            if (i + 1 >= argc) {
+                throw std::invalid_argument("--shutdown-max-frames requires a value");
+            }
+            args.shutdown_max_frames = std::stoi(argv[++i]);
+            if (args.shutdown_max_frames < 0) {
+                throw std::invalid_argument("--shutdown-max-frames must be >= 0");
             }
         } else if (arg == "--progress") {
             args.progress_mode = ProgressMode::On;
@@ -239,13 +253,37 @@ int main(int argc, char** argv) {
         ProgressReporter progress{args.progress_mode, args.max_frames};
 
         int frame_count = 0;
-        while (args.max_frames == 0 || frame_count < args.max_frames) {
+        int shutdown_frame_count = 0;
+        bool finish_requested = false;
+        while (true) {
+            const bool frame_limit_reached = args.max_frames > 0 && frame_count >= args.max_frames;
+            if (frame_limit_reached && mission_runtime && !finish_requested) {
+                finish_requested = true;
+                mission_runtime->request_finish();
+                std::cerr << "dedalus_mission_loop: max frame limit reached; requesting graceful mission finish\n";
+            }
+            if (frame_limit_reached && !mission_runtime) {
+                break;
+            }
+            if (finish_requested) {
+                if (mission_finished(mission_runtime->last_state())) {
+                    break;
+                }
+                if (shutdown_frame_count >= args.shutdown_max_frames) {
+                    std::cerr << "dedalus_mission_loop: graceful shutdown frame budget exhausted; stopping at mission state="
+                              << dedalus::to_string(mission_runtime->last_state()) << "\n";
+                    break;
+                }
+                ++shutdown_frame_count;
+            }
+
             if (!runner.run_once()) {
                 break;
             }
 
             ++frame_count;
-            const auto snapshot = runner.snapshot();
+            const auto latest = latest_snapshot->latest();
+            const auto snapshot = latest.has_value() ? *latest : runner.snapshot();
             if (frame_count <= 3 || frame_count % 30 == 0) {
                 std::cerr << "dedalus_mission_loop: world_snapshot frame=" << frame_count
                           << " ts=" << snapshot.timestamp.timestamp_ns
@@ -274,6 +312,7 @@ int main(int argc, char** argv) {
             std::this_thread::sleep_for(std::chrono::milliseconds{100});
             mission_runtime->stop();
             std::cout << "Mission ticks: " << mission_runtime->tick_count() << "\n";
+            std::cout << "Mission final state: " << dedalus::to_string(mission_runtime->last_state()) << "\n";
         }
 
         if (frame_count == 0) {
@@ -283,6 +322,9 @@ int main(int argc, char** argv) {
 
         std::cout << "Wrote " << frame_count << " snapshot(s) to " << args.output_dir << "\n";
         std::cout << "Manifest: " << manifest_path << "\n";
+        if (finish_requested) {
+            std::cout << "Graceful shutdown frames: " << shutdown_frame_count << "\n";
+        }
         if (config.pipeline_timing_enabled) {
             std::cout << "Pipeline timing: " << config.pipeline_timing_output_path << "\n";
         }

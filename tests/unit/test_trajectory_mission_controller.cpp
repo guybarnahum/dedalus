@@ -1,3 +1,6 @@
+#include <cmath>
+#include <filesystem>
+#include <fstream>
 #include <iostream>
 #include <optional>
 
@@ -21,11 +24,16 @@ dedalus::WorldSnapshot snapshot_at_height(double height_m, bool armed, bool arme
     return snapshot;
 }
 
-dedalus::MissionTickInput input_at(double seconds, double height_m, bool armed, bool armed_valid = true) {
+dedalus::MissionTickInput input_at(
+    double seconds,
+    double height_m,
+    bool armed,
+    bool armed_valid = true,
+    bool finish_requested = false) {
     auto snapshot = snapshot_at_height(height_m, armed, armed_valid);
     snapshot.timestamp = dedalus::TimePoint{static_cast<dedalus::Nanoseconds>(seconds * 1'000'000'000.0)};
     snapshot.ego.timestamp = snapshot.timestamp;
-    return dedalus::MissionTickInput{snapshot.timestamp, snapshot, std::nullopt};
+    return dedalus::MissionTickInput{snapshot.timestamp, snapshot, std::nullopt, finish_requested};
 }
 
 bool require_state(
@@ -54,6 +62,15 @@ bool require_command_kind(
     return true;
 }
 
+bool require_near(double actual, double expected, double tolerance, const char* label) {
+    if (std::abs(actual - expected) > tolerance) {
+        std::cerr << "unexpected value for " << label << ": got " << actual
+                  << ", expected " << expected << "\n";
+        return false;
+    }
+    return true;
+}
+
 }  // namespace
 
 int main() {
@@ -64,6 +81,7 @@ int main() {
     config.land_velocity_mps = 0.5;
     config.arm_retry_interval_s = 1.0;
     config.arm_timeout_s = 5.0;
+    config.takeoff_retry_interval_s = 1.0;
     config.disarm_retry_interval_s = 1.0;
     config.disarm_timeout_s = 5.0;
 
@@ -74,7 +92,7 @@ int main() {
     hold.vx_mps = 0.0;
     hold.vy_mps = 0.0;
     hold.vz_mps = 0.0;
-    config.segments.push_back(hold);
+    config.trajectory = dedalus::VelocityTrajectory{{hold}};
 
     dedalus::TrajectoryMissionController controller{config};
 
@@ -105,8 +123,23 @@ int main() {
     }
 
     output = controller.tick(input_at(1.3, 0.0, true));
-    if (!require_state(output, dedalus::MissionLifecycleState::Takeoff, "takeoff low height") ||
-        !require_command_kind(output, dedalus::FlightCommandKind::Velocity, "takeoff low height")) {
+    if (!require_state(output, dedalus::MissionLifecycleState::Takeoff, "takeoff request") ||
+        !require_command_kind(output, dedalus::FlightCommandKind::Takeoff, "takeoff request")) {
+        return 1;
+    }
+
+    output = controller.tick(input_at(1.8, 0.0, true));
+    if (!require_state(output, dedalus::MissionLifecycleState::Takeoff, "waiting for takeoff climb")) {
+        return 1;
+    }
+    if (output.command.has_value()) {
+        std::cerr << "controller should not re-emit takeoff before retry interval\n";
+        return 1;
+    }
+
+    output = controller.tick(input_at(1.9, 0.6, true));
+    if (!require_state(output, dedalus::MissionLifecycleState::Takeoff, "takeoff velocity assist") ||
+        !require_command_kind(output, dedalus::FlightCommandKind::Velocity, "takeoff velocity assist")) {
         return 1;
     }
     if (output.command->velocity_local_mps.z >= 0.0) {
@@ -114,28 +147,28 @@ int main() {
         return 1;
     }
 
-    output = controller.tick(input_at(1.4, 2.1, true));
+    output = controller.tick(input_at(2.0, 2.1, true));
     if (!require_state(output, dedalus::MissionLifecycleState::ExecuteMission, "safe height reached")) {
         return 1;
     }
 
-    output = controller.tick(input_at(1.5, 2.1, true));
+    output = controller.tick(input_at(2.1, 2.1, true));
     if (!require_state(output, dedalus::MissionLifecycleState::ExecuteMission, "execute trajectory") ||
         !require_command_kind(output, dedalus::FlightCommandKind::Velocity, "execute trajectory")) {
         return 1;
     }
 
-    output = controller.tick(input_at(2.7, 2.1, true));
+    output = controller.tick(input_at(3.3, 2.1, true));
     if (!require_state(output, dedalus::MissionLifecycleState::GoHome, "trajectory complete")) {
         return 1;
     }
 
-    output = controller.tick(input_at(2.8, 2.1, true));
+    output = controller.tick(input_at(3.4, 2.1, true));
     if (!require_state(output, dedalus::MissionLifecycleState::Land, "home reached")) {
         return 1;
     }
 
-    output = controller.tick(input_at(2.9, 2.1, true));
+    output = controller.tick(input_at(3.5, 2.1, true));
     if (!require_state(output, dedalus::MissionLifecycleState::Land, "landing") ||
         !require_command_kind(output, dedalus::FlightCommandKind::Velocity, "landing")) {
         return 1;
@@ -145,18 +178,18 @@ int main() {
         return 1;
     }
 
-    output = controller.tick(input_at(3.0, 0.0, true));
+    output = controller.tick(input_at(3.6, 0.0, true));
     if (!require_state(output, dedalus::MissionLifecycleState::Complete, "landed")) {
         return 1;
     }
 
-    output = controller.tick(input_at(3.1, 0.0, true));
+    output = controller.tick(input_at(3.7, 0.0, true));
     if (!require_state(output, dedalus::MissionLifecycleState::Complete, "disarm request") ||
         !require_command_kind(output, dedalus::FlightCommandKind::Disarm, "disarm request")) {
         return 1;
     }
 
-    output = controller.tick(input_at(3.6, 0.0, true));
+    output = controller.tick(input_at(4.2, 0.0, true));
     if (!require_state(output, dedalus::MissionLifecycleState::Complete, "waiting before disarm retry interval")) {
         return 1;
     }
@@ -165,18 +198,119 @@ int main() {
         return 1;
     }
 
-    output = controller.tick(input_at(4.2, 0.0, true));
+    output = controller.tick(input_at(4.8, 0.0, true));
     if (!require_state(output, dedalus::MissionLifecycleState::Complete, "disarm retry") ||
         !require_command_kind(output, dedalus::FlightCommandKind::Disarm, "disarm retry")) {
         return 1;
     }
 
-    output = controller.tick(input_at(4.3, 0.0, false));
+    output = controller.tick(input_at(4.9, 0.0, false));
     if (!require_state(output, dedalus::MissionLifecycleState::Complete, "disarm confirmed complete")) {
         return 1;
     }
     if (output.status != "complete") {
         std::cerr << "controller should report complete after disarmed telemetry\n";
+        return 1;
+    }
+
+    const auto trajectory_path = std::filesystem::temp_directory_path() / "dedalus_test_keyframes_trajectory.json";
+    {
+        std::ofstream trajectory_file{trajectory_path};
+        trajectory_file << R"JSON({
+  "name": "unit_keyframes",
+  "rate_hz": 10,
+  "segments": [
+    {
+      "type": "velocity_keyframes",
+      "label": "interpolate",
+      "keyframes": [
+        { "t": 0, "vx_mps": 0.0, "vy_mps": 0.0, "vz_mps": 0.0 },
+        { "t": 6, "vx_mps": 1.0, "vy_mps": -2.0, "vz_mps": 0.5 }
+      ]
+    }
+  ]
+})JSON";
+    }
+
+    dedalus::MissionOptions options;
+    options.values["flight_safe_height_m"] = "2.0";
+    options.values["flight_trajectory_path"] = trajectory_path.string();
+    auto loaded_config = dedalus::load_trajectory_mission_config(options);
+    if (loaded_config.trajectory.size() != 1U || loaded_config.trajectory.segment(0).keyframes.size() != 2U) {
+        std::cerr << "loaded trajectory did not preserve keyframes\n";
+        return 1;
+    }
+    if (!require_near(loaded_config.trajectory.segment(0).duration_s, 6.0, 1e-6, "keyframe duration")) {
+        return 1;
+    }
+    const auto direct_velocity = loaded_config.trajectory.velocity_at(0U, 3.0);
+    if (!require_near(direct_velocity.x, 0.5, 1e-6, "direct interpolated vx") ||
+        !require_near(direct_velocity.y, -1.0, 1e-6, "direct interpolated vy") ||
+        !require_near(direct_velocity.z, 0.25, 1e-6, "direct interpolated vz")) {
+        return 1;
+    }
+
+    dedalus::TrajectoryMissionController loaded_controller{loaded_config};
+    output = loaded_controller.tick(input_at(0.0, 0.0, false));
+    output = loaded_controller.tick(input_at(0.1, 0.0, true));
+    output = loaded_controller.tick(input_at(0.2, 2.1, true));
+    if (!require_state(output, dedalus::MissionLifecycleState::ExecuteMission, "loaded safe height")) {
+        return 1;
+    }
+    output = loaded_controller.tick(input_at(3.2, 2.1, true));
+    if (!require_state(output, dedalus::MissionLifecycleState::ExecuteMission, "loaded keyframe execute") ||
+        !require_command_kind(output, dedalus::FlightCommandKind::Velocity, "loaded keyframe execute")) {
+        return 1;
+    }
+    if (!require_near(output.command->velocity_local_mps.x, 0.5, 1e-6, "interpolated vx") ||
+        !require_near(output.command->velocity_local_mps.y, -1.0, 1e-6, "interpolated vy") ||
+        !require_near(output.command->velocity_local_mps.z, 0.25, 1e-6, "interpolated vz")) {
+        return 1;
+    }
+    output = loaded_controller.tick(input_at(6.4, 2.1, true));
+    if (!require_state(output, dedalus::MissionLifecycleState::GoHome, "loaded keyframe complete")) {
+        return 1;
+    }
+    std::filesystem::remove(trajectory_path);
+
+    dedalus::TrajectoryMissionController finish_controller{config};
+    output = finish_controller.tick(input_at(0.0, 0.0, false));
+    if (!require_state(output, dedalus::MissionLifecycleState::Prepare, "finish initial arm") ||
+        !require_command_kind(output, dedalus::FlightCommandKind::Arm, "finish initial arm")) {
+        return 1;
+    }
+    output = finish_controller.tick(input_at(0.1, 0.0, true));
+    if (!require_state(output, dedalus::MissionLifecycleState::Takeoff, "finish armed transition")) {
+        return 1;
+    }
+    output = finish_controller.tick(input_at(0.2, 2.1, true));
+    if (!require_state(output, dedalus::MissionLifecycleState::ExecuteMission, "finish safe height")) {
+        return 1;
+    }
+    output = finish_controller.tick(input_at(0.3, 2.1, true, true, true));
+    if (!require_state(output, dedalus::MissionLifecycleState::GoHome, "finish requested go home")) {
+        return 1;
+    }
+    output = finish_controller.tick(input_at(0.4, 2.1, true, true, true));
+    if (!require_state(output, dedalus::MissionLifecycleState::Land, "finish requested home reached")) {
+        return 1;
+    }
+    output = finish_controller.tick(input_at(0.5, 2.1, true, true, true));
+    if (!require_state(output, dedalus::MissionLifecycleState::Land, "finish requested landing") ||
+        !require_command_kind(output, dedalus::FlightCommandKind::Velocity, "finish requested landing")) {
+        return 1;
+    }
+    output = finish_controller.tick(input_at(0.6, 0.0, true, true, true));
+    if (!require_state(output, dedalus::MissionLifecycleState::Complete, "finish requested landed")) {
+        return 1;
+    }
+    output = finish_controller.tick(input_at(0.7, 0.0, true, true, true));
+    if (!require_state(output, dedalus::MissionLifecycleState::Complete, "finish requested disarm") ||
+        !require_command_kind(output, dedalus::FlightCommandKind::Disarm, "finish requested disarm")) {
+        return 1;
+    }
+    output = finish_controller.tick(input_at(0.8, 0.0, false, true, true));
+    if (!require_state(output, dedalus::MissionLifecycleState::Complete, "finish requested complete")) {
         return 1;
     }
 

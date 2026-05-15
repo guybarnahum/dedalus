@@ -11,7 +11,7 @@ fallback_map_frame_id: map_airsim_mission_0001
 
 bridge_mode: stream_binary_ego
 bridge_transport: pipe
-bridge_command: python3 simulation/airsim-stream-frames-binary.py --include-ego --rate-hz 5
+bridge_command: python3 simulation/airsim-stream-frames-binary.py --include-ego --rate-hz 5 --mavlink-armed-endpoints udpin:127.0.0.1:14550,udpin:127.0.0.1:14540,udpin:127.0.0.1:14600
 source_host: 127.0.0.1
 source_rpc_port: 41451
 vehicle_name: PX4
@@ -25,3 +25,6 @@ mission_options.flight_safe_height_m: 8
 mission_options.flight_velocity_command_bridge: DEDALUS_FLIGHT_SAFE_HEIGHT_M=8 DEDALUS_MAVLINK_EGO_ENDPOINTS=udpin:127.0.0.1:14550,udpin:127.0.0.1:14540,udpin:127.0.0.1:14600 python3 simulation/airsim-send-velocity.py
 mission_options.flight_trajectory_path: simulation/trajectories/circle_figure8.json
 mission_options.flight_home_policy: initial_ego_pose
+mission_options.flight_arm_retry_interval_s: 4.0
+mission_options.flight_arm_timeout_s: 30.0
+mission_options.flight_takeoff_retry_interval_s: 4.0
