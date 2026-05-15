@@ -265,7 +265,58 @@ RED     p95  > 66.7 ms  below 15 FPS
 
 When bridge-internal timing is enabled (the default), a second breakdown table shows how each frame's time is spent inside the Python bridge (`sim_get_images_ms`, `ego_sample_ms`, `rgb_convert_ms`, `stdout_write_ms`, `sleep_ms`). This is produced by `scripts/_summarize-bridge-timing.py` from a `bridge_timing.jsonl` written by the bridge script.
 
+Current validated 640x360 `frame_ego` capacity baseline, after async one-frame prefetch and measured/accounted profile accounting:
+
+```text
+actual_resolution_counts: 640x360:600
+bridge/main wait p95:     30.220 ms  (GREEN, ~33.1 FPS capacity)
+measured runner p95:      31.129 ms  (~32.1 FPS capacity)
+accounted runner p95:     30.343 ms
+accounting delta abs p95:  0.989 ms
+
+background_fetch_detail:
+  read_header p95:        30.519 ms
+  read_payload p95:        0.856 ms
+
+bridge-internal timing:
+  sim_get_images_ms p95:  29.933 ms
+  stdout_write_ms p95:     0.870 ms
+```
+
+This confirms that 640x360 `frame_ego` is inside the 30 FPS p95 budget. The remaining dominant cost is AirSim `simGetImages` / render readback / RPC, not C++ parsing, frame construction, or payload transfer. `frame_source.detail.*` timings are background-fetch attribution only and are excluded from `accounted_total_us` to avoid double-counting overlapped work.
+
 All output lands in `out/airsim_bridge_latency_<timestamp>/`.
+
+### Behavior / Flight Pipeline Direction
+
+The next integration goal is to close the loop from perception and world-model state into flight behavior:
+
+```text
+FrameSource
+  -> PerceptionPipeline
+  -> WorldModel
+  -> BehaviorPipeline
+  -> FlightCommandSink
+  -> AirSim / PX4 SITL velocity control
+```
+
+The behavior pipeline should consume `WorldSnapshot` or a future `EffectiveWorldView` and emit bounded kinematic intents, not direct motor or attitude commands. PX4 remains responsible for stabilization, estimator fusion, arming, motor control, and low-level failsafes.
+
+Initial placeholder behavior should mirror `simulation/test-flight.py`: it reads the existing trajectory JSON format and emits velocity vectors at a configured rate while ignoring the world model. That gives a complete perception -> world-model -> behavior -> flight-control path before higher-level autonomy is ready.
+
+Proposed initial config shape:
+
+```yaml
+behavior_pipeline: trajectory
+behavior_trajectory_path: simulation/trajectories/circle_figure8.json
+behavior_rate_hz: 10
+
+flight_command_sink: airsim_velocity
+flight_control_mode: px4
+flight_safe_height_m: 8
+```
+
+Implementation plan and safety notes are captured in [docs/behavior_flight_pipeline_plan.md](docs/behavior_flight_pipeline_plan.md).
 
 ---
 
