@@ -22,7 +22,27 @@ struct MissionOptions {
     }
 };
 
+enum class FlightCommandKind {
+    Velocity,
+    Arm,
+    Disarm,
+};
+
+inline const char* to_string(FlightCommandKind kind) {
+    switch (kind) {
+        case FlightCommandKind::Velocity:
+            return "Velocity";
+        case FlightCommandKind::Arm:
+            return "Arm";
+        case FlightCommandKind::Disarm:
+            return "Disarm";
+        default:
+            return "Unknown";
+    }
+}
+
 struct VelocityCommand {
+    FlightCommandKind kind{FlightCommandKind::Velocity};
     TimePoint timestamp;
     Vec3 velocity_local_mps;
     double yaw_rate_radps{0.0};
