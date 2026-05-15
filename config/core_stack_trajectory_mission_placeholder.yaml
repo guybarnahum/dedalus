@@ -1,0 +1,26 @@
+frame_source: airsim
+ego_provider: frame_hint
+detector: scripted
+camera_stabilizer: null
+tracker: simple_centroid
+identity_resolver: appearance_only
+projector: flat_ground
+world_model: in_memory
+frame_annotator: null
+fallback_map_frame_id: map_airsim_mission_0001
+
+bridge_mode: stream_binary_ego
+bridge_transport: pipe
+bridge_command: python3 simulation/airsim-stream-frames-binary.py --include-ego --rate-hz 5
+source_host: 127.0.0.1
+source_rpc_port: 41451
+vehicle_name: PX4
+vehicle_camera_name: front_center
+
+mission_controller: trajectory_mission
+mission_tick_hz: 10
+flight_command_sink: airsim_velocity
+mission_options.flight_control_mode: px4
+mission_options.flight_safe_height_m: 8
+mission_options.flight_trajectory_path: simulation/trajectories/circle_figure8.json
+mission_options.flight_home_policy: initial_ego_pose
