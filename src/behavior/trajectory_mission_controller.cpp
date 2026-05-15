@@ -50,6 +50,7 @@ TrajectoryMissionConfig load_trajectory_mission_config(const MissionOptions& opt
     config.arm_retry_interval_s = std::stod(options.get_or("flight_arm_retry_interval_s", "1.0"));
     config.arm_timeout_s = std::stod(options.get_or("flight_arm_timeout_s", "10.0"));
     config.takeoff_retry_interval_s = std::stod(options.get_or("flight_takeoff_retry_interval_s", "1.0"));
+    config.land_retry_interval_s = std::stod(options.get_or("flight_land_retry_interval_s", "1.0"));
     config.disarm_retry_interval_s = std::stod(options.get_or("flight_disarm_retry_interval_s", "1.0"));
     config.disarm_timeout_s = std::stod(options.get_or("flight_disarm_timeout_s", "10.0"));
     config.home_policy = options.get_or("flight_home_policy", "initial_ego_pose");
@@ -217,11 +218,13 @@ MissionTickOutput TrajectoryMissionController::tick(const MissionTickInput& inpu
                 state_ = MissionLifecycleState::Complete;
                 state_start_ = input.now;
                 output.status = "landed";
-            } else {
-                output.command = command_from_velocity(
-                    input.now,
-                    Vec3{0.0, 0.0, std::abs(config_.land_velocity_mps)});
+            } else if (!land_command_sent_ || elapsed_at_least(land_last_command_time_, input.now, config_.land_retry_interval_s)) {
+                land_command_sent_ = true;
+                land_last_command_time_ = input.now;
+                output.command = command_with_kind(input.now, FlightCommandKind::Land);
                 output.status = "landing";
+            } else {
+                output.status = "waiting_for_landed_telemetry";
             }
             break;
         case MissionLifecycleState::Complete:
