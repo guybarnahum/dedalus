@@ -9,7 +9,7 @@ import sys
 from pathlib import Path
 
 DETAIL_PREFIX = "frame_source.detail."
-FRAME_SOURCE_PARENT = "frame_source.next_frame"
+FRAME_SOURCE_PARENTS = {"frame_source.next_frame", "frame_source.next_frame_wait"}
 
 
 def parse_args() -> argparse.Namespace:
@@ -112,19 +112,25 @@ def print_hierarchical(names: list[str], stage_values: dict[str, list[int]], sor
     detail_names = [name for name in names if name.startswith(DETAIL_PREFIX)]
     top_level = [name for name in names if not name.startswith(DETAIL_PREFIX)]
     emitted: set[str] = set()
+    printed_detail_block = False
 
     for name in sorted_names(top_level, stage_values, sort_by, descending):
         print(format_stage(name, stage_values[name]))
         emitted.add(name)
-        if name == FRAME_SOURCE_PARENT:
+        if name in FRAME_SOURCE_PARENTS and detail_names and not printed_detail_block:
+            print("\tbackground_fetch_detail (attribution only; excluded from total_us):")
             for detail in sorted_names(detail_names, stage_values, sort_by, descending):
                 short = detail[len(DETAIL_PREFIX):]
-                print(format_stage(short, stage_values[detail], indent="\t"))
+                print(format_stage(short, stage_values[detail], indent="\t\t"))
                 emitted.add(detail)
+            printed_detail_block = True
 
     for name in sorted_names([name for name in names if name not in emitted], stage_values, sort_by, descending):
         if name.startswith(DETAIL_PREFIX):
-            print(format_stage(name[len(DETAIL_PREFIX):], stage_values[name], indent="\t"))
+            if not printed_detail_block:
+                print("\tbackground_fetch_detail (attribution only; excluded from total_us):")
+                printed_detail_block = True
+            print(format_stage(name[len(DETAIL_PREFIX):], stage_values[name], indent="\t\t"))
         else:
             print(format_stage(name, stage_values[name]))
 
