@@ -224,6 +224,23 @@ state=Complete status=landed
 state=Complete status=complete
 ```
 
+The final console summary is generated from `mission_events.jsonl` and should look like:
+
+```text
+Mission summary:
+  final_state: Complete
+  ticks: 902
+  events: 1234
+  state_path: Idle -> Prepare -> Takeoff -> ExecuteMission -> GoHome -> Land -> Complete
+  commands:
+    Arm: ok=1 failed=0
+    Takeoff: ok=1 failed=0
+    Velocity: ok=900 failed=0
+    Land: ok=1 failed=0
+    Disarm: ok=1 failed=0
+  failures: 0
+```
+
 With `--verbose`, bridge-level details should include:
 
 ```text
@@ -249,7 +266,7 @@ mission_events.jsonl
 
 `snapshot_XXXX.json` files describe what the world model and mission handoff saw. They are debug artifacts and are not necessarily replay inputs.
 
-`mission_events.jsonl` is the compact structured mission timeline. It is independent of console verbosity and is the preferred artifact for quick debugging.
+`mission_events.jsonl` is the compact structured mission timeline. It is independent of console verbosity and is the source artifact used to generate the final console summary.
 
 Representative events:
 
@@ -287,8 +304,7 @@ tail -n 40 out/airsim_mission_snapshots/mission_events.jsonl
 
 ```text
 1. Validate repeatable runs without restarting AirSim.
-2. Improve final mission summary from mission_events.jsonl.
-3. Add a tiny mission-events inspection helper if manual tail/grep becomes repetitive.
-4. Factor common Python control helpers only after repeated-run stability is proven.
-5. Consider native C++ migration for AirSim frame/ego/session helpers, not PX4/MAVLink control first.
+2. Add a tiny mission-events inspection helper if manual tail/grep becomes repetitive.
+3. Factor common Python control helpers only after repeated-run stability is proven.
+4. Consider native C++ migration for AirSim frame/ego/session helpers, not PX4/MAVLink control first.
 ```
