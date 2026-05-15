@@ -153,4 +153,12 @@ std::vector<std::string> ProviderRegistry::frame_annotators() const {
     return {"null", "ppm_sequence", "mp4"};
 }
 
+std::vector<std::string> ProviderRegistry::mission_controllers() const {
+    return {"disabled", "trajectory_mission"};
+}
+
+std::vector<std::string> ProviderRegistry::flight_command_sinks() const {
+    return {"disabled", "airsim_velocity"};
+}
+
 }  // namespace dedalus
