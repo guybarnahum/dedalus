@@ -8,6 +8,13 @@
 
 namespace dedalus {
 
+struct TrajectoryKeyframe {
+    double t_s{0.0};
+    double vx_mps{0.0};
+    double vy_mps{0.0};
+    double vz_mps{0.0};
+};
+
 struct TrajectorySegment {
     std::string type{"hold"};
     std::string label;
@@ -19,6 +26,7 @@ struct TrajectorySegment {
     double radius_m{1.0};
     double scale_m{1.0};
     std::string direction{"ccw"};
+    std::vector<TrajectoryKeyframe> keyframes;
 };
 
 struct TrajectoryMissionConfig {
