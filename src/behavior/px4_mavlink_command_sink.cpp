@@ -8,6 +8,7 @@
 #include <cerrno>
 #include <chrono>
 #include <cmath>
+#include <cstdlib>
 #include <cstring>
 #include <sstream>
 #include <stdexcept>
@@ -20,6 +21,7 @@ namespace {
 
 constexpr std::uint8_t kMavlinkV1Magic = 0xFEU;
 constexpr std::uint8_t kMavlinkFrameLocalNed = 1U;
+constexpr std::uint16_t kMavCmdNavLand = 21U;
 constexpr std::uint16_t kMavCmdNavTakeoff = 22U;
 constexpr std::uint16_t kMavCmdComponentArmDisarm = 400U;
 constexpr std::uint16_t kMavCmdDoSetMode = 176U;
@@ -41,6 +43,19 @@ struct Endpoint {
     sockaddr_in address{};
     std::string text;
 };
+
+std::string shell_quote(const std::string& value) {
+    std::string quoted = "'";
+    for (const char ch : value) {
+        if (ch == '\'') {
+            quoted += "'\\''";
+        } else {
+            quoted += ch;
+        }
+    }
+    quoted += "'";
+    return quoted;
+}
 
 std::vector<std::string> split_csv(const std::string& value) {
     std::vector<std::string> output;
@@ -179,7 +194,7 @@ std::vector<std::uint8_t> command_long_payload(
     append_u16(payload, command);
     payload.push_back(target_system);
     payload.push_back(target_component);
-    payload.push_back(0U); // confirmation
+    payload.push_back(0U);
     return payload;
 }
 
@@ -191,17 +206,17 @@ std::vector<std::uint8_t> set_position_target_local_ned_payload(
     std::vector<std::uint8_t> payload;
     payload.reserve(53U);
     append_u32(payload, time_boot_ms);
-    append_float(payload, 0.0F); // x
-    append_float(payload, 0.0F); // y
-    append_float(payload, 0.0F); // z
+    append_float(payload, 0.0F);
+    append_float(payload, 0.0F);
+    append_float(payload, 0.0F);
     append_float(payload, static_cast<float>(velocity_mps.x));
     append_float(payload, static_cast<float>(velocity_mps.y));
     append_float(payload, static_cast<float>(velocity_mps.z));
-    append_float(payload, 0.0F); // afx
-    append_float(payload, 0.0F); // afy
-    append_float(payload, 0.0F); // afz
-    append_float(payload, 0.0F); // yaw
-    append_float(payload, 0.0F); // yaw_rate ignored by mask for now
+    append_float(payload, 0.0F);
+    append_float(payload, 0.0F);
+    append_float(payload, 0.0F);
+    append_float(payload, 0.0F);
+    append_float(payload, 0.0F);
     append_u16(payload, kTypeMaskVelocityOnly);
     payload.push_back(target_system);
     payload.push_back(target_component);
@@ -273,6 +288,15 @@ struct Px4MavlinkCommandSink::Impl {
         }
     }
 
+    void run_px4_shell(const std::string& command) const {
+        const std::string rendered =
+            "tmux send-keys -t " + shell_quote(config.px4_tmux_target) + " " + shell_quote(command) + " C-m";
+        const int rc = std::system(rendered.c_str());
+        if (rc != 0) {
+            throw std::runtime_error("PX4 shell command failed: " + command);
+        }
+    }
+
     void send_command_long(std::uint16_t command, float p1 = 0.0F, float p2 = 0.0F, float p3 = 0.0F, float p4 = 0.0F, float p5 = 0.0F, float p6 = 0.0F, float p7 = 0.0F) {
         const auto payload = command_long_payload(
             config.target_system_id,
@@ -289,8 +313,6 @@ struct Px4MavlinkCommandSink::Impl {
     }
 
     void send_offboard_mode() {
-        // PX4 custom mode tuple for OFFBOARD, matching pymavlink's mode_mapping():
-        // base_mode=29, main_mode=6, sub_mode=0.
         send_command_long(kMavCmdDoSetMode, 29.0F, 6.0F, 0.0F);
         offboard_requested = true;
     }
@@ -340,23 +362,50 @@ Px4MavlinkCommandSink::~Px4MavlinkCommandSink() = default;
 FlightCommandResult Px4MavlinkCommandSink::send(const VelocityCommand& command) {
     switch (command.kind) {
         case FlightCommandKind::Arm:
-            impl_->send_command_long(kMavCmdComponentArmDisarm, 1.0F, 0.0F);
-            if (impl_->config.debug_logging) {
-                std::cerr << "dedalus_px4_mavlink_sink: command=Arm endpoint_count=" << impl_->endpoints.size() << "\n";
+            if (impl_->config.use_px4_shell_lifecycle) {
+                impl_->run_px4_shell("commander arm");
+            } else {
+                impl_->send_command_long(kMavCmdComponentArmDisarm, 1.0F, 0.0F);
             }
-            return impl_->result(command.kind, "OK mavlink command=arm");
+            if (impl_->config.debug_logging) {
+                std::cerr << "dedalus_px4_mavlink_sink: command=Arm dispatch="
+                          << (impl_->config.use_px4_shell_lifecycle ? "px4_shell" : "mavlink") << "\n";
+            }
+            return impl_->result(command.kind, impl_->config.use_px4_shell_lifecycle ? "OK px4_shell command=arm" : "OK mavlink command=arm");
         case FlightCommandKind::Takeoff:
-            impl_->send_command_long(kMavCmdNavTakeoff, 0.0F, 0.0F, 0.0F, NAN, 0.0F, 0.0F, static_cast<float>(impl_->config.takeoff_altitude_m));
-            if (impl_->config.debug_logging) {
-                std::cerr << "dedalus_px4_mavlink_sink: command=Takeoff altitude_m=" << impl_->config.takeoff_altitude_m << "\n";
+            if (impl_->config.use_px4_shell_lifecycle) {
+                impl_->run_px4_shell("commander takeoff");
+            } else {
+                impl_->send_command_long(kMavCmdNavTakeoff, 0.0F, 0.0F, 0.0F, NAN, 0.0F, 0.0F, static_cast<float>(impl_->config.takeoff_altitude_m));
             }
-            return impl_->result(command.kind, "OK mavlink command=takeoff");
+            if (impl_->config.debug_logging) {
+                std::cerr << "dedalus_px4_mavlink_sink: command=Takeoff dispatch="
+                          << (impl_->config.use_px4_shell_lifecycle ? "px4_shell" : "mavlink")
+                          << " altitude_m=" << impl_->config.takeoff_altitude_m << "\n";
+            }
+            return impl_->result(command.kind, impl_->config.use_px4_shell_lifecycle ? "OK px4_shell command=takeoff" : "OK mavlink command=takeoff");
+        case FlightCommandKind::Land:
+            if (impl_->config.use_px4_shell_lifecycle) {
+                impl_->run_px4_shell("commander land");
+            } else {
+                impl_->send_command_long(kMavCmdNavLand, 0.0F, 0.0F, 0.0F, NAN, 0.0F, 0.0F, 0.0F);
+            }
+            if (impl_->config.debug_logging) {
+                std::cerr << "dedalus_px4_mavlink_sink: command=Land dispatch="
+                          << (impl_->config.use_px4_shell_lifecycle ? "px4_shell" : "mavlink") << "\n";
+            }
+            return impl_->result(command.kind, impl_->config.use_px4_shell_lifecycle ? "OK px4_shell command=land" : "OK mavlink command=land");
         case FlightCommandKind::Disarm:
-            impl_->send_command_long(kMavCmdComponentArmDisarm, 0.0F, 0.0F);
-            if (impl_->config.debug_logging) {
-                std::cerr << "dedalus_px4_mavlink_sink: command=Disarm\n";
+            if (impl_->config.use_px4_shell_lifecycle) {
+                impl_->run_px4_shell("commander disarm");
+            } else {
+                impl_->send_command_long(kMavCmdComponentArmDisarm, 0.0F, 0.0F);
             }
-            return impl_->result(command.kind, "OK mavlink command=disarm");
+            if (impl_->config.debug_logging) {
+                std::cerr << "dedalus_px4_mavlink_sink: command=Disarm dispatch="
+                          << (impl_->config.use_px4_shell_lifecycle ? "px4_shell" : "mavlink") << "\n";
+            }
+            return impl_->result(command.kind, impl_->config.use_px4_shell_lifecycle ? "OK px4_shell command=disarm" : "OK mavlink command=disarm");
         case FlightCommandKind::Velocity:
         default: {
             const auto velocity = impl_->bounded_velocity(command.velocity_local_mps);
