@@ -24,3 +24,6 @@ mission_options.flight_control_mode: px4
 mission_options.flight_safe_height_m: 8
 mission_options.flight_trajectory_path: simulation/trajectories/circle_figure8.json
 mission_options.flight_home_policy: initial_ego_pose
+mission_options.flight_arm_retry_interval_s: 4.0
+mission_options.flight_arm_timeout_s: 30.0
+mission_options.flight_takeoff_retry_interval_s: 4.0
