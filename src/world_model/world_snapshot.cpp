@@ -177,6 +177,28 @@ const char* to_string(EgoFlightStatus value) {
     }
 }
 
+const char* to_string(FlightControlArmState value) {
+    switch (value) {
+        case FlightControlArmState::Disarmed:
+            return "disarmed";
+        case FlightControlArmState::ArmRequested:
+            return "arm_requested";
+        case FlightControlArmState::ArmedConfirmed:
+            return "armed_confirmed";
+        case FlightControlArmState::DisarmRequested:
+            return "disarm_requested";
+        case FlightControlArmState::DisarmedConfirmed:
+            return "disarmed_confirmed";
+        case FlightControlArmState::ArmFailed:
+            return "arm_failed";
+        case FlightControlArmState::DisarmFailed:
+            return "disarm_failed";
+        case FlightControlArmState::Unknown:
+        default:
+            return "unknown";
+    }
+}
+
 const char* bool_string(bool value) {
     return value ? "true" : "false";
 }
@@ -249,6 +271,14 @@ std::string to_json(const WorldSnapshot& snapshot) {
         out << ",\n    \"home_timestamp_ns\": " << snapshot.ego.home_timestamp->timestamp_ns;
     }
     out << "\n";
+    out << "  },\n";
+
+    out << "  \"flight_control\": {\n";
+    out << "    \"arm_state\": \"" << to_string(snapshot.flight_control.arm_state) << "\",\n";
+    out << "    \"updated_at_ns\": " << snapshot.flight_control.updated_at.timestamp_ns << ",\n";
+    out << "    \"last_arm_request_at_ns\": " << snapshot.flight_control.last_arm_request_at.timestamp_ns << ",\n";
+    out << "    \"last_disarm_request_at_ns\": " << snapshot.flight_control.last_disarm_request_at.timestamp_ns << ",\n";
+    out << "    \"status\": \"" << escape_json(snapshot.flight_control.status) << "\"\n";
     out << "  },\n";
 
     out << "  \"agents\": [";
