@@ -50,12 +50,12 @@ The next major integration goal is to close the loop from perception and world-m
 FrameSource
   -> PerceptionPipeline
   -> WorldModel
-  -> async Behavior / Mission State Machine
+  -> async MissionController loop
   -> FlightCommandSink
   -> AirSim / PX4 SITL velocity control
 ```
 
-The behavior pipeline is not just a synchronous post-world-model function. It is an async loop that watches the changing world model, maintains mission lifecycle state, and emits bounded kinematic intents when the current state requires action.
+The behavior/mission system is not a synchronous post-world-model function. It is one runtime loop that watches the changing world model, maintains mission lifecycle state, and emits bounded kinematic intents when the current state requires action.
 
 Initial command shape:
 
@@ -65,9 +65,27 @@ velocity vector + yaw/yaw-rate intent
 
 PX4 / the flight controller remains responsible for stabilization, estimator fusion, arming, motor control, low-level failsafes, and flight safety.
 
+## Ego state in the world model
+
+The world model must contain the drone ego state as first-class state, not only external detections. Mission controllers need ego state to make takeoff, landing, go-home, and failsafe decisions.
+
+Minimum ego fields for the first flight loop:
+
+```text
+- ego pose / position in local coordinates
+- height / altitude above takeoff or local frame
+- velocity
+- attitude if available
+- home / initial pose policy state
+- freshness / confidence
+- armed / airborne / landed status when available
+```
+
+External objects should be representable relative to the drone. Landmarks may also carry map locations so the drone can place itself relative to stable observed features. For the first trajectory mission, ego height and home/initial pose are the key world-model inputs.
+
 ## Behavior pipeline semantics
 
-The behavior pipeline should be modeled as a mission lifecycle state machine attached to the runtime by config.
+The mission controller should be modeled as a lifecycle state machine attached to the single async behavior loop.
 
 It should scan the latest world-model snapshot or effective world view at its own tick rate, not necessarily once per camera frame. It may respond to changes in:
 
@@ -97,40 +115,44 @@ Any active state
   -> Abort / Failsafe
 ```
 
-The state machine owns mission intent and lifecycle transitions. The flight command sink only executes already-bounded commands; it should not decide mission phase.
+The mission controller owns mission intent and lifecycle transitions. The flight command sink only executes already-bounded commands; it should not decide mission phase.
 
 ## Config-selected mission controller
 
-The config should declare which mission state machine to instantiate and attach to the system.
+There is one in-process async mission runtime loop, so runtime selection does not need to be exposed in config. Config should only select the mission controller, its tick rate, the flight command sink, and controller-specific options.
 
 Proposed initial shape:
 
 ```yaml
-behavior_pipeline: mission_state_machine
-behavior_state_machine: trajectory_mission
-behavior_tick_hz: 10
-behavior_trajectory_path: simulation/trajectories/circle_figure8.json
-
+mission_controller: trajectory_mission
+mission_tick_hz: 10
 flight_command_sink: airsim_velocity
-flight_control_mode: px4
-flight_safe_height_m: 8
-flight_home_policy: initial_ego_pose
+
+mission_options:
+  flight_control_mode: px4
+  flight_safe_height_m: 8
+  flight_trajectory_path: simulation/trajectories/circle_figure8.json
+  flight_home_policy: initial_ego_pose
 ```
 
-Provider naming intent:
+Naming intent:
 
 ```text
-behavior_pipeline: mission_state_machine
-  Creates the async behavior loop wrapper.
+mission_controller
+  Selects the concrete mission lifecycle state machine.
 
-behavior_state_machine: trajectory_mission
-  Creates the concrete mission lifecycle state machine.
+mission_tick_hz
+  Controls the fixed-rate async behavior loop.
 
-flight_command_sink: airsim_velocity
-  Sends bounded velocity commands into AirSim/PX4 SITL.
+flight_command_sink
+  Selects where bounded velocity commands are sent.
+
+mission_options
+  Passed to the selected mission_controller. These options configure mission logic;
+  they do not change how the async runtime loop is scheduled or executed.
 ```
 
-The state machine name should be the extension point for future mission controllers, for example:
+The mission controller name should be the extension point for future mission logic, for example:
 
 ```text
 trajectory_mission
@@ -141,21 +163,22 @@ return_home_mission
 search_pattern_mission
 ```
 
-## Initial placeholder behavior provider
+## Initial placeholder mission controller
 
-The first implementation should be a `trajectory_mission` state machine that mirrors the current `simulation/test-flight.py` behavior.
+The first implementation should be a `trajectory_mission` controller that mirrors the current `simulation/test-flight.py` behavior.
 
 Purpose:
 
 ```text
-- exercise the full perception -> world_model -> behavior -> flight-control loop
-- keep behavior config-driven
+- exercise the full perception -> world_model -> mission_controller -> flight-control loop
+- keep mission behavior config-driven
 - preserve the test-flight trajectory format and operational knowledge
 - validate async behavior ticks separately from camera-frame ticks
-- avoid coupling early behavior work to incomplete world-model semantics
+- validate ego state in the world model for takeoff, go-home, and land
+- avoid coupling early behavior work to incomplete object/landmark semantics
 ```
 
-The placeholder should still accept the latest `WorldSnapshot` or `EffectiveWorldView` input so the interface shape is future-ready, but the trajectory mission can initially ignore most world-model content.
+The placeholder should accept the latest `WorldSnapshot` or `EffectiveWorldView` input. It can initially ignore most non-ego world-model content, but it should use ego height and home/initial pose when possible.
 
 Trajectory mission lifecycle:
 
@@ -171,7 +194,7 @@ Takeoff
   Climb to the configured safe height or wait for ego altitude to satisfy the takeoff condition.
 
 ExecuteMission
-  Play the configured trajectory JSON and emit velocity commands at behavior_tick_hz.
+  Play the configured trajectory JSON and emit velocity commands at mission_tick_hz.
 
 GoHome
   Return toward the initial/home ego pose or configured home policy.
@@ -187,9 +210,9 @@ Abort / Failsafe
   Emit hold/stop or hand off to safety logic.
 ```
 
-## Future behavior providers
+## Future mission controllers
 
-After the trajectory placeholder is working, additional mission state machines can consume world-model state:
+After the trajectory placeholder is working, additional mission controllers can consume world-model state:
 
 ```text
 hold_position_mission
@@ -202,7 +225,7 @@ search_pattern_mission
 intercept_or_shadow_mission
 ```
 
-These should remain behind stable behavior interfaces and be selected by config.
+These should remain behind stable mission interfaces and be selected by config.
 
 ## Suggested C++ contracts
 
@@ -229,28 +252,21 @@ enum class MissionLifecycleState {
     Abort
 };
 
-struct BehaviorTickInput {
+struct MissionTickInput {
     TimePoint now;
     WorldSnapshot snapshot;
 };
 
-struct BehaviorTickOutput {
+struct MissionTickOutput {
     MissionLifecycleState state;
     std::optional<VelocityCommand> command;
     std::string status;
 };
 
-class MissionStateMachine {
+class MissionController {
 public:
-    virtual ~MissionStateMachine() = default;
-    virtual BehaviorTickOutput tick(const BehaviorTickInput& input) = 0;
-};
-
-class BehaviorRuntime {
-public:
-    virtual ~BehaviorRuntime() = default;
-    virtual void start() = 0;
-    virtual void stop() = 0;
+    virtual ~MissionController() = default;
+    virtual MissionTickOutput tick(const MissionTickInput& input) = 0;
 };
 
 class FlightCommandSink {
@@ -260,11 +276,21 @@ public:
 };
 ```
 
+The async mission runtime is an implementation detail, not a config-selected provider:
+
+```text
+MissionRuntime
+  owns one async loop
+  ticks the selected MissionController at mission_tick_hz
+  reads latest WorldSnapshot
+  forwards optional VelocityCommand to FlightCommandSink
+```
+
 The trajectory placeholder can be implemented as:
 
 ```text
-TrajectoryMissionStateMachine
-  reads test-flight.py-compatible trajectory JSON
+TrajectoryMissionController
+  reads test-flight.py-compatible trajectory JSON from mission_options.flight_trajectory_path
   advances by monotonic time or mission elapsed time
   watches latest WorldSnapshot for ego/home/altitude readiness
   outputs VelocityCommand during ExecuteMission
@@ -280,55 +306,59 @@ AirSimVelocityCommandSink
 
 ## Runtime threading model
 
-The behavior runtime should be asynchronous relative to the frame pipeline:
+The mission runtime should be asynchronous relative to the frame pipeline:
 
 ```text
 Perception/core-stack loop:
   frame -> perception -> world_model.update -> latest snapshot published
 
-Behavior loop:
-  at behavior_tick_hz:
+Mission loop:
+  at mission_tick_hz:
     read latest snapshot
-    state_machine.tick(snapshot)
+    mission_controller.tick(snapshot)
     if command: flight_command_sink.send(command)
 ```
 
 The first implementation can use an in-process latest-snapshot handoff. Later versions can move to a proper bus or shared-memory channel.
 
-Avoid blocking frame ingestion on behavior decisions. Avoid blocking behavior ticks on camera frame timing unless explicitly configured.
+Avoid blocking frame ingestion on mission decisions. Avoid blocking mission ticks on camera frame timing unless explicitly configured for debugging.
 
 ## Safety and priority rule
 
-The behavior pipeline should never bypass command arbitration. Long-term command priority remains:
+The mission controller should never bypass command arbitration. Long-term command priority remains:
 
 ```text
 Hardware Kill Switch
   > Human RC Override
   > Safety Constraint Layer
-  > Behavior / AI Planner Intent
+  > Mission Controller Intent
 ```
 
-For the placeholder trajectory provider, keep outputs bounded and explicit. Do not add aggressive autonomy, intercept logic, or target-following behavior until the command path, safety layer, and world-model semantics are validated.
+For the placeholder trajectory controller, keep outputs bounded and explicit. Do not add aggressive autonomy, intercept logic, or target-following behavior until the command path, safety layer, and world-model semantics are validated.
 
 ## Recommended milestone split
 
 ```text
-2.19A — Behavior/flight contracts and config loader keys
-  Add VelocityCommand, MissionStateMachine, BehaviorRuntime, and FlightCommandSink contracts.
-  Add config keys and provider registry placeholders.
+2.19A — Mission/flight contracts and config loader keys
+  Add VelocityCommand, MissionController, MissionRuntime, and FlightCommandSink contracts.
+  Add config keys: mission_controller, mission_tick_hz, mission_options, flight_command_sink.
 
-2.19B — TrajectoryMissionStateMachine
+2.19B — Ego state in WorldModel
+  Ensure latest drone ego state is represented in the world model with enough altitude/home status
+  for takeoff, go-home, and landing decisions.
+
+2.19C — TrajectoryMissionController
   Parse the existing trajectory JSON format and emit velocity commands from ExecuteMission.
-  Accept latest WorldSnapshot input and use ego/home state only where needed.
+  Accept latest WorldSnapshot input and use ego/home state where needed.
 
-2.19C — AirSimVelocityCommandSink placeholder
+2.19D — AirSimVelocityCommandSink placeholder
   Send velocity commands to AirSim/PX4 SITL using the proven test-flight semantics.
 
-2.19D — Async runtime wiring
-  Add a behavior loop that scans latest world-model snapshots at behavior_tick_hz.
-  Keep behavior asynchronous from frame ingestion and perception.
+2.19E — Async runtime wiring
+  Add a mission loop that scans latest world-model snapshots at mission_tick_hz.
+  Keep mission control asynchronous from frame ingestion and perception.
 
-2.19E — Integration profile
+2.19F — Integration profile
   Run: live frame -> perception -> world model -> async trajectory mission -> AirSim/PX4 velocity control.
   Keep the old test-flight.py harness as an operational/debug baseline.
 ```
