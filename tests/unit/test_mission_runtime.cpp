@@ -14,6 +14,7 @@ public:
     dedalus::MissionTickOutput tick(const dedalus::MissionTickInput& input) override {
         ++ticks;
         last_height_m = input.snapshot.ego.height_m;
+        last_result = input.last_command_result;
         dedalus::MissionTickOutput output;
         output.state = dedalus::MissionLifecycleState::ExecuteMission;
         output.status = "counting";
@@ -26,12 +27,14 @@ public:
 
     int ticks{0};
     double last_height_m{0.0};
+    std::optional<dedalus::FlightCommandResult> last_result;
 };
 
 class RecordingSink final : public dedalus::FlightCommandSink {
 public:
-    void send(const dedalus::VelocityCommand& command) override {
+    dedalus::FlightCommandResult send(const dedalus::VelocityCommand& command) override {
         commands.push_back(command);
+        return dedalus::FlightCommandResult{command.kind, true, "OK recording sink"};
     }
 
     std::vector<dedalus::VelocityCommand> commands;
@@ -90,6 +93,10 @@ int main() {
         std::cerr << "MissionRuntime did not tick the controller exactly once\n";
         return 1;
     }
+    if (controller_ptr->last_result.has_value()) {
+        std::cerr << "MissionRuntime should not pass a command result before the first command\n";
+        return 1;
+    }
     if (controller_ptr->last_height_m <= 0.0) {
         std::cerr << "MissionRuntime did not pass mission-ready ego height to controller\n";
         return 1;
@@ -98,7 +105,17 @@ int main() {
         std::cerr << "MissionRuntime did not forward controller command to sink\n";
         return 1;
     }
-    if (runtime.tick_count() != 1U || runtime.last_state() != dedalus::MissionLifecycleState::ExecuteMission) {
+
+    if (!runtime.tick_once()) {
+        std::cerr << "MissionRuntime did not tick a second time with available snapshot\n";
+        return 1;
+    }
+    if (!controller_ptr->last_result.has_value() || !controller_ptr->last_result->success) {
+        std::cerr << "MissionRuntime did not pass successful command result to next controller tick\n";
+        return 1;
+    }
+
+    if (runtime.tick_count() != 2U || runtime.last_state() != dedalus::MissionLifecycleState::ExecuteMission) {
         std::cerr << "MissionRuntime did not expose expected tick count/state\n";
         return 1;
     }
