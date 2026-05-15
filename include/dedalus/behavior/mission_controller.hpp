@@ -25,6 +25,7 @@ struct MissionOptions {
 enum class FlightCommandKind {
     Velocity,
     Arm,
+    Takeoff,
     Disarm,
 };
 
@@ -34,6 +35,8 @@ inline const char* to_string(FlightCommandKind kind) {
             return "Velocity";
         case FlightCommandKind::Arm:
             return "Arm";
+        case FlightCommandKind::Takeoff:
+            return "Takeoff";
         case FlightCommandKind::Disarm:
             return "Disarm";
         default:
