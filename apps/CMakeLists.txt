@@ -31,13 +31,13 @@ target_link_libraries(dedalus_replay_recording
 
 target_compile_features(dedalus_replay_recording PRIVATE cxx_std_20)
 
-add_executable(dedalus_replay_mission
-    dedalus_replay_mission.cpp
+add_executable(dedalus_mission_loop
+    dedalus_mission_loop.cpp
 )
 
-target_link_libraries(dedalus_replay_mission
+target_link_libraries(dedalus_mission_loop
     PRIVATE
         dedalus_core
 )
 
-target_compile_features(dedalus_replay_mission PRIVATE cxx_std_20)
+target_compile_features(dedalus_mission_loop PRIVATE cxx_std_20)
