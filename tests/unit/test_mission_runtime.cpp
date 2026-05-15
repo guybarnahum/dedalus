@@ -1,5 +1,9 @@
+#include <filesystem>
+#include <fstream>
 #include <iostream>
 #include <optional>
+#include <sstream>
+#include <string>
 #include <vector>
 
 #include "dedalus/behavior/latest_world_snapshot.hpp"
@@ -40,6 +44,16 @@ public:
     std::vector<dedalus::VelocityCommand> commands;
 };
 
+bool file_contains(const std::filesystem::path& path, const std::string& needle) {
+    std::ifstream input{path};
+    if (!input) {
+        return false;
+    }
+    std::ostringstream buffer;
+    buffer << input.rdbuf();
+    return buffer.str().find(needle) != std::string::npos;
+}
+
 }  // namespace
 
 int main() {
@@ -77,48 +91,68 @@ int main() {
     auto* controller_ptr = controller.get();
     auto sink = std::make_unique<RecordingSink>();
     auto* sink_ptr = sink.get();
+    const auto event_log_path = std::filesystem::temp_directory_path() / "dedalus_mission_runtime_events_test.jsonl";
+    std::filesystem::remove(event_log_path);
 
-    dedalus::MissionRuntime runtime{
-        dedalus::MissionRuntimeConfig{.tick_hz = 10.0},
-        latest_snapshot,
-        std::move(controller),
-        std::move(sink)};
+    {
+        dedalus::MissionRuntime runtime{
+            dedalus::MissionRuntimeConfig{
+                .tick_hz = 10.0,
+                .verbosity = 0,
+                .event_log_path = event_log_path.string()},
+            latest_snapshot,
+            std::move(controller),
+            std::move(sink)};
 
-    if (!runtime.tick_once()) {
-        std::cerr << "MissionRuntime did not tick with available snapshot\n";
-        return 1;
+        runtime.start();
+        runtime.stop();
+
+        if (!runtime.tick_once()) {
+            std::cerr << "MissionRuntime did not tick with available snapshot\n";
+            return 1;
+        }
+
+        if (controller_ptr->ticks != 1) {
+            std::cerr << "MissionRuntime did not tick the controller exactly once\n";
+            return 1;
+        }
+        if (controller_ptr->last_result.has_value()) {
+            std::cerr << "MissionRuntime should not pass a command result before the first command\n";
+            return 1;
+        }
+        if (controller_ptr->last_height_m <= 0.0) {
+            std::cerr << "MissionRuntime did not pass mission-ready ego height to controller\n";
+            return 1;
+        }
+        if (sink_ptr->commands.size() != 1U) {
+            std::cerr << "MissionRuntime did not forward controller command to sink\n";
+            return 1;
+        }
+
+        if (!runtime.tick_once()) {
+            std::cerr << "MissionRuntime did not tick a second time with available snapshot\n";
+            return 1;
+        }
+        if (!controller_ptr->last_result.has_value() || !controller_ptr->last_result->success) {
+            std::cerr << "MissionRuntime did not pass successful command result to next controller tick\n";
+            return 1;
+        }
+
+        if (runtime.tick_count() != 2U || runtime.last_state() != dedalus::MissionLifecycleState::ExecuteMission) {
+            std::cerr << "MissionRuntime did not expose expected tick count/state\n";
+            return 1;
+        }
     }
 
-    if (controller_ptr->ticks != 1) {
-        std::cerr << "MissionRuntime did not tick the controller exactly once\n";
+    if (!file_contains(event_log_path, "\"event\":\"runtime_start\"") ||
+        !file_contains(event_log_path, "\"event\":\"runtime_stop\"") ||
+        !file_contains(event_log_path, "\"event\":\"state_transition\"") ||
+        !file_contains(event_log_path, "\"event\":\"command_dispatch\"") ||
+        !file_contains(event_log_path, "\"event\":\"command_result\"")) {
+        std::cerr << "MissionRuntime event log missing expected event records\n";
         return 1;
     }
-    if (controller_ptr->last_result.has_value()) {
-        std::cerr << "MissionRuntime should not pass a command result before the first command\n";
-        return 1;
-    }
-    if (controller_ptr->last_height_m <= 0.0) {
-        std::cerr << "MissionRuntime did not pass mission-ready ego height to controller\n";
-        return 1;
-    }
-    if (sink_ptr->commands.size() != 1U) {
-        std::cerr << "MissionRuntime did not forward controller command to sink\n";
-        return 1;
-    }
-
-    if (!runtime.tick_once()) {
-        std::cerr << "MissionRuntime did not tick a second time with available snapshot\n";
-        return 1;
-    }
-    if (!controller_ptr->last_result.has_value() || !controller_ptr->last_result->success) {
-        std::cerr << "MissionRuntime did not pass successful command result to next controller tick\n";
-        return 1;
-    }
-
-    if (runtime.tick_count() != 2U || runtime.last_state() != dedalus::MissionLifecycleState::ExecuteMission) {
-        std::cerr << "MissionRuntime did not expose expected tick count/state\n";
-        return 1;
-    }
+    std::filesystem::remove(event_log_path);
 
     auto empty_snapshots = std::make_shared<dedalus::LatestWorldSnapshot>();
     auto empty_runtime = dedalus::MissionRuntime{
