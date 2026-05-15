@@ -178,6 +178,7 @@ std::unique_ptr<dedalus::FlightCommandSink> create_flight_command_sink(
         sink_config.bridge_command = config.mission_options.get_or(
             "flight_velocity_command_bridge",
             sink_config.bridge_command);
+        sink_config.debug_logging = true;
         return std::make_unique<dedalus::AirSimVelocityCommandSink>(sink_config);
     }
     throw std::invalid_argument("unknown flight_command_sink: " + config.flight_command_sink);
@@ -198,6 +199,14 @@ int main(int argc, char** argv) {
             timing_writer = std::make_unique<dedalus::PipelineProfiler>(config.pipeline_timing_output_path);
         }
 
+        std::cerr << "dedalus_replay_mission: frame_source=" << config.frame_source
+                  << " bridge_mode=" << config.bridge_mode
+                  << " flight_sink=" << config.flight_command_sink
+                  << "\n";
+        if (config.frame_source == "airsim") {
+            std::cerr << "dedalus_replay_mission: using LIVE AirSim bridge frames; snapshots are debug artifacts, not replay input\n";
+        }
+
         auto latest_snapshot = std::make_shared<dedalus::LatestWorldSnapshot>();
         dedalus::CoreStackRunner runner{
             registry.create(config),
@@ -208,7 +217,7 @@ int main(int argc, char** argv) {
         auto controller = create_mission_controller(config);
         if (controller) {
             mission_runtime = std::make_unique<dedalus::MissionRuntime>(
-                dedalus::MissionRuntimeConfig{.tick_hz = config.mission_tick_hz},
+                dedalus::MissionRuntimeConfig{.tick_hz = config.mission_tick_hz, .debug_logging = true},
                 latest_snapshot,
                 std::move(controller),
                 create_flight_command_sink(config));
@@ -237,6 +246,13 @@ int main(int argc, char** argv) {
 
             ++frame_count;
             const auto snapshot = runner.snapshot();
+            if (frame_count <= 3 || frame_count % 30 == 0) {
+                std::cerr << "dedalus_replay_mission: world_snapshot frame=" << frame_count
+                          << " ts=" << snapshot.timestamp.timestamp_ns
+                          << " ego_height_m=" << snapshot.ego.height_m
+                          << " agents=" << snapshot.agents.size()
+                          << "\n";
+            }
             const auto snapshot_name = "snapshot_" + zero_padded(frame_count, 4) + ".json";
             const auto snapshot_path = args.output_dir / snapshot_name;
 
