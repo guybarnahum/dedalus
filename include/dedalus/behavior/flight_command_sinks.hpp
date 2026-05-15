@@ -47,7 +47,8 @@ public:
         const auto rendered_command = build_command(command);
         if (config_.debug_logging) {
             const auto v = bounded_velocity(command.velocity_local_mps);
-            std::cerr << "dedalus_flight_sink: airsim_velocity vx=" << v.x
+            std::cerr << "dedalus_flight_sink: command=" << to_string(command.kind)
+                      << " vx=" << v.x
                       << " vy=" << v.y
                       << " vz=" << v.z
                       << " duration_s=" << config_.command_duration_s
@@ -62,7 +63,7 @@ public:
             }
         }
         if (output.find("OK") == std::string::npos) {
-            throw std::runtime_error("AirSim velocity command helper did not report OK: " + output);
+            throw std::runtime_error("AirSim command helper did not report OK: " + output);
         }
     }
 
@@ -92,7 +93,20 @@ private:
         const Vec3 velocity = bounded_velocity(command.velocity_local_mps);
         std::ostringstream out;
         out << config_.bridge_command
-            << " --host " << shell_quote(config_.host)
+            << " --command ";
+        switch (command.kind) {
+            case FlightCommandKind::Arm:
+                out << "arm";
+                break;
+            case FlightCommandKind::Disarm:
+                out << "disarm";
+                break;
+            case FlightCommandKind::Velocity:
+            default:
+                out << "velocity";
+                break;
+        }
+        out << " --host " << shell_quote(config_.host)
             << " --rpc-port " << config_.rpc_port
             << " --vehicle-name " << shell_quote(config_.vehicle_name)
             << " --vx " << velocity.x
