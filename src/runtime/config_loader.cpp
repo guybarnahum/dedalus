@@ -39,6 +39,11 @@ bool parse_bool(const std::string& value) {
     throw std::invalid_argument("invalid boolean config value: " + value);
 }
 
+std::string mission_option_key_from(const std::string& key) {
+    constexpr auto prefix = "mission_options.";
+    return key.substr(std::string{prefix}.size());
+}
+
 void apply_config_value(CoreStackProviderConfig& config, const std::string& key, const std::string& value) {
     if (key == "frame_source") {
         config.frame_source = value;
@@ -86,6 +91,18 @@ void apply_config_value(CoreStackProviderConfig& config, const std::string& key,
         config.ego_bridge_command = value;
     } else if (key == "fallback_map_frame_id") {
         config.fallback_map_frame_id = MapFrameId{value};
+    } else if (key == "mission_controller") {
+        config.mission_controller = value;
+    } else if (key == "mission_tick_hz") {
+        config.mission_tick_hz = std::stod(value);
+    } else if (key == "flight_command_sink") {
+        config.flight_command_sink = value;
+    } else if (key.rfind("mission_options.", 0U) == 0U) {
+        const auto option_key = mission_option_key_from(key);
+        if (option_key.empty()) {
+            throw std::invalid_argument("empty mission_options key");
+        }
+        config.mission_options.values[option_key] = value;
     } else {
         throw std::invalid_argument("unknown core-stack config key: " + key);
     }
