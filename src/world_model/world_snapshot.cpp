@@ -165,8 +165,32 @@ const char* to_string(WeatherMode value) {
     }
 }
 
+const char* to_string(EgoFlightStatus value) {
+    switch (value) {
+        case EgoFlightStatus::Landed:
+            return "landed";
+        case EgoFlightStatus::Airborne:
+            return "airborne";
+        case EgoFlightStatus::Unknown:
+        default:
+            return "unknown";
+    }
+}
+
+const char* bool_string(bool value) {
+    return value ? "true" : "false";
+}
+
 void write_vec3(std::ostringstream& out, const Vec3& value) {
     out << "[" << value.x << "," << value.y << "," << value.z << "]";
+}
+
+void write_pose3(std::ostringstream& out, const Pose3& value) {
+    out << "{\"position_local\":";
+    write_vec3(out, value.position);
+    out << ",\"rotation_rpy\":";
+    write_vec3(out, value.rotation_rpy);
+    out << "}";
 }
 
 void write_bounds3(std::ostringstream& out, const Bounds3& value) {
@@ -197,11 +221,33 @@ std::string to_json(const WorldSnapshot& snapshot) {
     out << "  },\n";
 
     out << "  \"ego\": {\n";
+    out << "    \"timestamp_ns\": " << snapshot.ego.timestamp.timestamp_ns << ",\n";
+    out << "    \"map_frame_id\": \"" << escape_json(snapshot.ego.map_frame_id.value) << "\",\n";
     out << "    \"position_local\": ";
     write_vec3(out, snapshot.ego.local_T_body.position);
     out << ",\n";
+    out << "    \"rotation_rpy\": ";
+    write_vec3(out, snapshot.ego.local_T_body.rotation_rpy);
+    out << ",\n";
     out << "    \"velocity_local\": ";
     write_vec3(out, snapshot.ego.velocity_local);
+    out << ",\n";
+    out << "    \"angular_velocity_body\": ";
+    write_vec3(out, snapshot.ego.angular_velocity_body);
+    out << ",\n";
+    out << "    \"height_m\": " << snapshot.ego.height_m << ",\n";
+    out << "    \"height_valid\": " << bool_string(snapshot.ego.height_valid) << ",\n";
+    out << "    \"armed\": " << bool_string(snapshot.ego.armed) << ",\n";
+    out << "    \"armed_valid\": " << bool_string(snapshot.ego.armed_valid) << ",\n";
+    out << "    \"flight_status\": \"" << to_string(snapshot.ego.flight_status) << "\",\n";
+    out << "    \"confidence\": " << snapshot.ego.confidence;
+    if (snapshot.ego.home_T_body.has_value()) {
+        out << ",\n    \"home_pose\": ";
+        write_pose3(out, *snapshot.ego.home_T_body);
+    }
+    if (snapshot.ego.home_timestamp.has_value()) {
+        out << ",\n    \"home_timestamp_ns\": " << snapshot.ego.home_timestamp->timestamp_ns;
+    }
     out << "\n";
     out << "  },\n";
 
