@@ -92,7 +92,9 @@ int main() {
     auto sink = std::make_unique<RecordingSink>();
     auto* sink_ptr = sink.get();
     const auto event_log_path = std::filesystem::temp_directory_path() / "dedalus_mission_runtime_events_test.jsonl";
+    const auto lifecycle_log_path = std::filesystem::temp_directory_path() / "dedalus_mission_runtime_lifecycle_test.jsonl";
     std::filesystem::remove(event_log_path);
+    std::filesystem::remove(lifecycle_log_path);
 
     {
         dedalus::MissionRuntime runtime{
@@ -103,9 +105,6 @@ int main() {
             latest_snapshot,
             std::move(controller),
             std::move(sink)};
-
-        runtime.start();
-        runtime.stop();
 
         if (!runtime.tick_once()) {
             std::cerr << "MissionRuntime did not tick with available snapshot\n";
@@ -144,26 +143,37 @@ int main() {
         }
     }
 
-    if (!file_contains(event_log_path, "\"event\":\"runtime_start\"") ||
-        !file_contains(event_log_path, "\"event\":\"runtime_stop\"") ||
-        !file_contains(event_log_path, "\"event\":\"state_transition\"") ||
+    if (!file_contains(event_log_path, "\"event\":\"state_transition\"") ||
         !file_contains(event_log_path, "\"event\":\"command_dispatch\"") ||
         !file_contains(event_log_path, "\"event\":\"command_result\"")) {
-        std::cerr << "MissionRuntime event log missing expected event records\n";
+        std::cerr << "MissionRuntime event log missing expected deterministic event records\n";
         return 1;
     }
     std::filesystem::remove(event_log_path);
 
     auto empty_snapshots = std::make_shared<dedalus::LatestWorldSnapshot>();
-    auto empty_runtime = dedalus::MissionRuntime{
-        dedalus::MissionRuntimeConfig{.tick_hz = 10.0},
-        empty_snapshots,
-        std::make_unique<CountingController>(),
-        std::make_unique<RecordingSink>()};
-    if (empty_runtime.tick_once()) {
-        std::cerr << "MissionRuntime ticked without an available snapshot\n";
+    {
+        auto empty_runtime = dedalus::MissionRuntime{
+            dedalus::MissionRuntimeConfig{
+                .tick_hz = 10.0,
+                .verbosity = 0,
+                .event_log_path = lifecycle_log_path.string()},
+            empty_snapshots,
+            std::make_unique<CountingController>(),
+            std::make_unique<RecordingSink>()};
+        empty_runtime.start();
+        empty_runtime.stop();
+        if (empty_runtime.tick_once()) {
+            std::cerr << "MissionRuntime ticked without an available snapshot\n";
+            return 1;
+        }
+    }
+    if (!file_contains(lifecycle_log_path, "\"event\":\"runtime_start\"") ||
+        !file_contains(lifecycle_log_path, "\"event\":\"runtime_stop\"")) {
+        std::cerr << "MissionRuntime lifecycle event log missing start/stop events\n";
         return 1;
     }
+    std::filesystem::remove(lifecycle_log_path);
 
     return 0;
 }
