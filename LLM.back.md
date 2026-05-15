@@ -243,7 +243,56 @@ Important bridge fixes that made it match `test-flight.py`:
 
 ---
 
-## H8. Historical Debugging Rule
+## H8. Python Helpers vs Native C++ Rationale
+
+AirSim has a native C++ client API. Python helpers are not used because AirSim is Python-only.
+
+The important split is:
+
+```text
+AirSim RPC / simulator interaction != PX4 flight-control interaction
+```
+
+AirSim-side tasks are plausible native C++ migration targets:
+
+```text
+- frame streaming
+- ego/state reads
+- session prep / API control
+- GPS/state checks
+```
+
+PX4/MAVLink mission control is different. The current working path depends on `pymavlink`, because it already handles the details that broke the native C++ experiment:
+
+```text
+- heartbeat and target system/component routing
+- MAVLink1/MAVLink2 framing
+- PX4 mode mapping
+- COMMAND_ACK behavior
+- OFFBOARD priming timing
+- LOCAL_POSITION_NED feedback climb
+- SET_POSITION_TARGET_LOCAL_NED velocity setpoints
+- UDP endpoint ownership semantics
+```
+
+Decision:
+
+```text
+Keep the C++ autonomy core, world model, mission runtime, and mission state machine.
+Keep the PX4/MAVLink/OFFBOARD bridge in Python until mission behavior is repeatedly stable.
+If reducing helpers is desired, migrate AirSim frame/ego/session helpers to native C++ first.
+Only later consider a native C++ PX4/MAVLink backend, and only with a real tested MAVLink library rather than ad-hoc packet encoding.
+```
+
+Bottom line:
+
+```text
+Python is not required for AirSim access. It is currently the stable choice for PX4/MAVLink mission control because `pymavlink` plus `simulation/test-flight.py` is the proven implementation.
+```
+
+---
+
+## H9. Historical Debugging Rule
 
 When a run shows:
 
@@ -273,7 +322,7 @@ Always check world-model telemetry truth.
 
 ---
 
-## H9. Verbosity Cleanup History
+## H10. Verbosity Cleanup History
 
 `dedalus_mission_loop` gained verbosity flags:
 
@@ -305,7 +354,7 @@ Known noisy sources:
 
 ---
 
-## H10. Archive Policy
+## H11. Archive Policy
 
 When `LLM.md` grows with stale history, move details here.
 
