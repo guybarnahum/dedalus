@@ -1,8 +1,17 @@
+#include <cmath>
 #include <iostream>
 
 #include "dedalus/runtime/config_loader.hpp"
 #include "dedalus/runtime/core_stack_runner.hpp"
 #include "dedalus/runtime/provider_registry.hpp"
+
+namespace {
+
+bool near(double lhs, double rhs) {
+    return std::abs(lhs - rhs) < 1.0e-9;
+}
+
+}  // namespace
 
 int main() {
     const auto config = dedalus::load_core_stack_config("config/core_stack_ci.yaml");
@@ -35,6 +44,28 @@ int main() {
         return 1;
     }
 
+    const auto mission_config = dedalus::load_core_stack_config("config/core_stack_trajectory_mission_placeholder.yaml");
+    if (mission_config.mission_controller != "trajectory_mission") {
+        std::cerr << "mission placeholder did not parse mission_controller\n";
+        return 1;
+    }
+    if (!near(mission_config.mission_tick_hz, 10.0)) {
+        std::cerr << "mission placeholder did not parse mission_tick_hz\n";
+        return 1;
+    }
+    if (mission_config.flight_command_sink != "airsim_velocity") {
+        std::cerr << "mission placeholder did not parse flight_command_sink\n";
+        return 1;
+    }
+    if (mission_config.mission_options.get_or("flight_control_mode", "") != "px4" ||
+        mission_config.mission_options.get_or("flight_safe_height_m", "") != "8" ||
+        mission_config.mission_options.get_or("flight_trajectory_path", "") !=
+            "simulation/trajectories/circle_figure8.json" ||
+        mission_config.mission_options.get_or("flight_home_policy", "") != "initial_ego_pose") {
+        std::cerr << "mission placeholder did not parse expected mission_options.* values\n";
+        return 1;
+    }
+
     dedalus::ProviderRegistry registry;
     dedalus::CoreStackRunner runner{registry.create(config)};
     if (!runner.run_once()) {
@@ -45,6 +76,18 @@ int main() {
     const auto snapshot = runner.snapshot();
     if (snapshot.active_map_frame_id.value != "map_local_0001" || snapshot.agents.empty()) {
         std::cerr << "config-composed snapshot missing expected state\n";
+        return 1;
+    }
+
+    const auto mission_controllers = registry.mission_controllers();
+    if (mission_controllers.empty()) {
+        std::cerr << "mission controller registry list is empty\n";
+        return 1;
+    }
+
+    const auto flight_sinks = registry.flight_command_sinks();
+    if (flight_sinks.empty()) {
+        std::cerr << "flight command sink registry list is empty\n";
         return 1;
     }
 
