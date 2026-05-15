@@ -1,5 +1,6 @@
 #include "dedalus/runtime/pipeline_profiler.hpp"
 
+#include <cmath>
 #include <filesystem>
 #include <stdexcept>
 #include <string_view>
@@ -79,22 +80,37 @@ void PipelineProfiler::record_stage(std::string name, const std::int64_t duratio
     current_frame_.stages.push_back(PipelineStageTiming{std::move(name), duration_us});
 }
 
+void PipelineProfiler::set_measured_total(const std::int64_t duration_us) {
+    if (!frame_open_) {
+        return;
+    }
+
+    current_frame_.measured_total_us = duration_us;
+}
+
 void PipelineProfiler::end_frame() {
     if (!frame_open_) {
         return;
     }
 
-    std::int64_t total_us = 0;
+    std::int64_t accounted_total_us = 0;
     for (const auto& stage : current_frame_.stages) {
         if (!is_attribution_only_stage(stage.name)) {
-            total_us += stage.duration_us;
+            accounted_total_us += stage.duration_us;
         }
     }
+
+    const std::int64_t measured_total_us = current_frame_.measured_total_us > 0
+        ? current_frame_.measured_total_us
+        : accounted_total_us;
+    const std::int64_t accounting_delta_us = measured_total_us - accounted_total_us;
 
     output_ << '{'
             << "\"frame_id\":\"" << escape_json_string(current_frame_.frame_id) << "\",";
     output_ << "\"timestamp_ns\":" << current_frame_.timestamp_ns << ',';
-    output_ << "\"total_us\":" << total_us << ',';
+    output_ << "\"total_us\":" << measured_total_us << ',';
+    output_ << "\"accounted_total_us\":" << accounted_total_us << ',';
+    output_ << "\"accounting_delta_us\":" << accounting_delta_us << ',';
     output_ << "\"stages\":{";
 
     for (std::size_t i = 0; i < current_frame_.stages.size(); ++i) {
