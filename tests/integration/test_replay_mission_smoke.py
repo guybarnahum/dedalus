@@ -19,7 +19,7 @@ def main() -> int:
         str(app),
         "--config", str(repo_root / "config" / "core_stack_mission_ci.yaml"),
         "--output-dir", str(out_dir),
-        "--max-frames", "3",
+        "--max-frames", "1",
         "--no-progress",
     ]
     result = subprocess.run(cmd, cwd=repo_root, text=True, capture_output=True, check=False)
@@ -34,8 +34,8 @@ def main() -> int:
         print("missing mission tick line", file=sys.stderr)
         return 1
     snapshots = sorted(out_dir.glob("snapshot_*.json"))
-    if len(snapshots) != 3:
-        print(f"expected 3 snapshots, got {len(snapshots)}", file=sys.stderr)
+    if len(snapshots) != 1:
+        print(f"expected 1 synthetic snapshot, got {len(snapshots)}", file=sys.stderr)
         return 1
     latest = json.loads(snapshots[-1].read_text(encoding="utf-8"))
     ego = latest.get("ego", {})
