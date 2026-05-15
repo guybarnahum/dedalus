@@ -308,11 +308,15 @@ int main(int argc, char** argv) {
             std::move(timing_writer),
             latest_snapshot};
 
+        const auto mission_events_path = args.output_dir / "mission_events.jsonl";
         std::unique_ptr<dedalus::MissionRuntime> mission_runtime;
         auto controller = create_mission_controller(config);
         if (controller) {
             mission_runtime = std::make_unique<dedalus::MissionRuntime>(
-                dedalus::MissionRuntimeConfig{.tick_hz = config.mission_tick_hz, .verbosity = args.verbosity},
+                dedalus::MissionRuntimeConfig{
+                    .tick_hz = config.mission_tick_hz,
+                    .verbosity = args.verbosity,
+                    .event_log_path = mission_events_path.string()},
                 latest_snapshot,
                 std::move(controller),
                 create_flight_command_sink(config, args.verbosity));
@@ -402,6 +406,9 @@ int main(int argc, char** argv) {
 
         std::cout << "Wrote " << frame_count << " snapshot(s) to " << args.output_dir << "\n";
         std::cout << "Manifest: " << manifest_path << "\n";
+        if (mission_runtime) {
+            std::cout << "Mission events: " << mission_events_path << "\n";
+        }
         if (finish_requested) {
             std::cout << "Graceful shutdown frames: " << shutdown_frame_count << "\n";
         }
