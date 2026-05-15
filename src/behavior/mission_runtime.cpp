@@ -80,6 +80,7 @@ bool MissionRuntime::tick_once() {
                   << " state=" << to_string(output.state)
                   << " status=" << output.status
                   << " ego_height_m=" << input.snapshot.ego.height_m
+                  << " flight_control=" << static_cast<int>(input.snapshot.flight_control.arm_state)
                   << " command=" << (output.command.has_value() ? "yes" : "no");
         if (input.last_command_result.has_value()) {
             std::cerr << " last_result=" << to_string(input.last_command_result->kind)
@@ -98,7 +99,24 @@ bool MissionRuntime::tick_once() {
                       << " yaw_rate=" << output.command->yaw_rate_radps
                       << "\n";
         }
-        last_command_result_ = sink_->send(*output.command);
+        try {
+            last_command_result_ = sink_->send(*output.command);
+            if (last_command_result_->success) {
+                snapshots_->mark_command_dispatched(
+                    output.command->kind,
+                    input.now,
+                    last_command_result_->status);
+            } else {
+                snapshots_->mark_command_failed(
+                    output.command->kind,
+                    input.now,
+                    last_command_result_->status);
+            }
+        } catch (const std::exception& ex) {
+            last_command_result_ = FlightCommandResult{output.command->kind, false, ex.what()};
+            snapshots_->mark_command_failed(output.command->kind, input.now, ex.what());
+            throw;
+        }
         if (config_.debug_logging) {
             std::cerr << "dedalus_mission: command_result kind=" << to_string(last_command_result_->kind)
                       << " success=" << (last_command_result_->success ? "true" : "false")
