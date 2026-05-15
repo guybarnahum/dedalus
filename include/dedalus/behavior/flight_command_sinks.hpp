@@ -137,6 +137,30 @@ private:
     std::unique_ptr<BridgeTransport> transport_;
 };
 
+struct Px4BridgeCommandSinkConfig {
+    std::string bridge_command{"python3 simulation/px4-command-bridge.py"};
+    double command_duration_s{0.1};
+    double max_velocity_mps{5.0};
+    bool debug_logging{false};
+};
+
+class Px4BridgeCommandSink final : public FlightCommandSink {
+public:
+    explicit Px4BridgeCommandSink(Px4BridgeCommandSinkConfig config);
+    ~Px4BridgeCommandSink() override;
+
+    Px4BridgeCommandSink(const Px4BridgeCommandSink&) = delete;
+    Px4BridgeCommandSink& operator=(const Px4BridgeCommandSink&) = delete;
+    Px4BridgeCommandSink(Px4BridgeCommandSink&&) = delete;
+    Px4BridgeCommandSink& operator=(Px4BridgeCommandSink&&) = delete;
+
+    FlightCommandResult send(const VelocityCommand& command) override;
+
+private:
+    struct Impl;
+    std::unique_ptr<Impl> impl_;
+};
+
 struct Px4MavlinkCommandSinkConfig {
     std::string endpoints{"udpout:127.0.0.1:14550,udpout:127.0.0.1:14540,udpout:127.0.0.1:14600"};
     std::string px4_tmux_target{"dedalus-sim:px4"};
