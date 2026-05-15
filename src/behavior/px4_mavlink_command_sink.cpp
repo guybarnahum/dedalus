@@ -2,6 +2,7 @@
 
 #include <arpa/inet.h>
 #include <netinet/in.h>
+#include <sys/select.h>
 #include <sys/socket.h>
 #include <unistd.h>
 
@@ -25,23 +26,28 @@ constexpr std::uint16_t kMavCmdNavLand = 21U;
 constexpr std::uint16_t kMavCmdNavTakeoff = 22U;
 constexpr std::uint16_t kMavCmdComponentArmDisarm = 400U;
 constexpr std::uint16_t kMavCmdDoSetMode = 176U;
+constexpr std::uint8_t kMsgIdHeartbeat = 0U;
 constexpr std::uint8_t kMsgIdCommandLong = 76U;
 constexpr std::uint8_t kMsgIdSetPositionTargetLocalNed = 84U;
 constexpr std::uint8_t kCrcExtraCommandLong = 152U;
 constexpr std::uint8_t kCrcExtraSetPositionTargetLocalNed = 143U;
 constexpr std::uint16_t kTypeMaskVelocityOnly =
-    (1U << 0U) |  // x ignore
-    (1U << 1U) |  // y ignore
-    (1U << 2U) |  // z ignore
-    (1U << 6U) |  // ax ignore
-    (1U << 7U) |  // ay ignore
-    (1U << 8U) |  // az ignore
-    (1U << 10U) | // yaw ignore
-    (1U << 11U);  // yaw-rate ignore
+    (1U << 0U) |
+    (1U << 1U) |
+    (1U << 2U) |
+    (1U << 6U) |
+    (1U << 7U) |
+    (1U << 8U) |
+    (1U << 10U) |
+    (1U << 11U);
 
 struct Endpoint {
-    sockaddr_in address{};
+    sockaddr_in configured_address{};
+    sockaddr_in learned_peer{};
     std::string text;
+    int socket_fd{-1};
+    bool bind_and_learn{false};
+    bool has_learned_peer{false};
 };
 
 std::string shell_quote(const std::string& value) {
@@ -75,10 +81,13 @@ std::vector<std::string> split_csv(const std::string& value) {
 Endpoint parse_endpoint(std::string endpoint) {
     constexpr auto udpout_prefix = "udpout:";
     constexpr auto udpin_prefix = "udpin:";
+    Endpoint parsed;
     if (endpoint.rfind(udpout_prefix, 0U) == 0U) {
         endpoint = endpoint.substr(std::strlen(udpout_prefix));
+        parsed.bind_and_learn = false;
     } else if (endpoint.rfind(udpin_prefix, 0U) == 0U) {
         endpoint = endpoint.substr(std::strlen(udpin_prefix));
+        parsed.bind_and_learn = true;
     }
 
     const auto colon = endpoint.rfind(':');
@@ -91,11 +100,10 @@ Endpoint parse_endpoint(std::string endpoint) {
         throw std::invalid_argument("MAVLink endpoint port out of range: " + endpoint);
     }
 
-    Endpoint parsed;
-    parsed.text = host + ":" + std::to_string(port);
-    parsed.address.sin_family = AF_INET;
-    parsed.address.sin_port = htons(static_cast<std::uint16_t>(port));
-    if (inet_pton(AF_INET, host.c_str(), &parsed.address.sin_addr) != 1) {
+    parsed.text = (parsed.bind_and_learn ? "udpin:" : "udpout:") + host + ":" + std::to_string(port);
+    parsed.configured_address.sin_family = AF_INET;
+    parsed.configured_address.sin_port = htons(static_cast<std::uint16_t>(port));
+    if (inet_pton(AF_INET, host.c_str(), &parsed.configured_address.sin_addr) != 1) {
         throw std::invalid_argument("MAVLink endpoint host must be an IPv4 address: " + host);
     }
     return parsed;
@@ -230,6 +238,12 @@ std::uint32_t time_boot_ms() {
         std::chrono::duration_cast<std::chrono::milliseconds>(now).count() & 0xFFFFFFFFU);
 }
 
+std::string sockaddr_to_string(const sockaddr_in& address) {
+    char ip[INET_ADDRSTRLEN]{};
+    inet_ntop(AF_INET, &address.sin_addr, ip, sizeof(ip));
+    return std::string{ip} + ":" + std::to_string(ntohs(address.sin_port));
+}
+
 }  // namespace
 
 struct Px4MavlinkCommandSink::Impl {
@@ -242,23 +256,35 @@ struct Px4MavlinkCommandSink::Impl {
             throw std::invalid_argument("Px4MavlinkCommandSink requires positive max_velocity_mps");
         }
 
-        for (const auto& endpoint : split_csv(this->config.endpoints)) {
-            endpoints.push_back(parse_endpoint(endpoint));
+        for (const auto& endpoint_text : split_csv(this->config.endpoints)) {
+            auto endpoint = parse_endpoint(endpoint_text);
+            endpoint.socket_fd = ::socket(AF_INET, SOCK_DGRAM, 0);
+            if (endpoint.socket_fd < 0) {
+                throw std::runtime_error("failed to create MAVLink UDP socket: " + std::string(std::strerror(errno)));
+            }
+            if (endpoint.bind_and_learn) {
+                int reuse = 1;
+                (void)::setsockopt(endpoint.socket_fd, SOL_SOCKET, SO_REUSEADDR, &reuse, sizeof(reuse));
+                if (::bind(
+                        endpoint.socket_fd,
+                        reinterpret_cast<const sockaddr*>(&endpoint.configured_address),
+                        sizeof(endpoint.configured_address)) < 0) {
+                    throw std::runtime_error("failed to bind MAVLink UDP endpoint " + endpoint.text + ": " + std::strerror(errno));
+                }
+            }
+            endpoints.push_back(endpoint);
         }
         if (endpoints.empty()) {
             throw std::invalid_argument("Px4MavlinkCommandSink requires at least one endpoint");
         }
-
-        socket_fd = ::socket(AF_INET, SOCK_DGRAM, 0);
-        if (socket_fd < 0) {
-            throw std::runtime_error("failed to create MAVLink UDP socket: " + std::string(std::strerror(errno)));
-        }
     }
 
     ~Impl() {
-        if (socket_fd >= 0) {
-            ::close(socket_fd);
-            socket_fd = -1;
+        for (auto& endpoint : endpoints) {
+            if (endpoint.socket_fd >= 0) {
+                ::close(endpoint.socket_fd);
+                endpoint.socket_fd = -1;
+            }
         }
     }
 
@@ -270,21 +296,84 @@ struct Px4MavlinkCommandSink::Impl {
         return velocity;
     }
 
+    void learn_peer_if_needed(Endpoint& endpoint) {
+        if (!endpoint.bind_and_learn || endpoint.has_learned_peer) {
+            return;
+        }
+
+        const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds{4};
+        while (std::chrono::steady_clock::now() < deadline) {
+            fd_set read_set;
+            FD_ZERO(&read_set);
+            FD_SET(endpoint.socket_fd, &read_set);
+            timeval timeout{};
+            timeout.tv_sec = 0;
+            timeout.tv_usec = 200000;
+            const int ready = ::select(endpoint.socket_fd + 1, &read_set, nullptr, nullptr, &timeout);
+            if (ready < 0) {
+                throw std::runtime_error("select failed on MAVLink endpoint " + endpoint.text + ": " + std::strerror(errno));
+            }
+            if (ready == 0) {
+                continue;
+            }
+
+            std::uint8_t buffer[512]{};
+            sockaddr_in peer{};
+            socklen_t peer_len = sizeof(peer);
+            const auto received = ::recvfrom(
+                endpoint.socket_fd,
+                buffer,
+                sizeof(buffer),
+                0,
+                reinterpret_cast<sockaddr*>(&peer),
+                &peer_len);
+            if (received < 6) {
+                continue;
+            }
+            if (buffer[0] != kMavlinkV1Magic) {
+                continue;
+            }
+            const std::uint8_t message_id = buffer[5];
+            if (message_id != kMsgIdHeartbeat) {
+                continue;
+            }
+            endpoint.learned_peer = peer;
+            endpoint.has_learned_peer = true;
+            if (config.debug_logging) {
+                std::cerr << "dedalus_px4_mavlink_sink: learned_peer endpoint=" << endpoint.text
+                          << " peer=" << sockaddr_to_string(peer)
+                          << " system=" << static_cast<int>(buffer[3])
+                          << " component=" << static_cast<int>(buffer[4])
+                          << "\n";
+            }
+            return;
+        }
+
+        throw std::runtime_error("timed out waiting for MAVLink heartbeat on " + endpoint.text);
+    }
+
     void send_packet(const std::vector<std::uint8_t>& packet) {
-        for (const auto& endpoint : endpoints) {
+        bool sent_any = false;
+        for (auto& endpoint : endpoints) {
+            learn_peer_if_needed(endpoint);
+            const sockaddr_in& destination = endpoint.bind_and_learn ? endpoint.learned_peer : endpoint.configured_address;
             const auto sent = ::sendto(
-                socket_fd,
+                endpoint.socket_fd,
                 packet.data(),
                 packet.size(),
                 0,
-                reinterpret_cast<const sockaddr*>(&endpoint.address),
-                sizeof(endpoint.address));
+                reinterpret_cast<const sockaddr*>(&destination),
+                sizeof(destination));
             if (sent < 0) {
-                throw std::runtime_error("failed to send MAVLink UDP packet to " + endpoint.text + ": " + std::strerror(errno));
+                throw std::runtime_error("failed to send MAVLink UDP packet via " + endpoint.text + ": " + std::strerror(errno));
             }
             if (static_cast<std::size_t>(sent) != packet.size()) {
-                throw std::runtime_error("short MAVLink UDP send to " + endpoint.text);
+                throw std::runtime_error("short MAVLink UDP send via " + endpoint.text);
             }
+            sent_any = true;
+        }
+        if (!sent_any) {
+            throw std::runtime_error("no MAVLink endpoints available for send");
         }
     }
 
@@ -349,7 +438,6 @@ struct Px4MavlinkCommandSink::Impl {
 
     Px4MavlinkCommandSinkConfig config;
     std::vector<Endpoint> endpoints;
-    int socket_fd{-1};
     std::uint8_t next_sequence{0U};
     bool offboard_requested{false};
 };
