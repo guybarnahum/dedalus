@@ -14,12 +14,6 @@ constexpr double kPi = 3.14159265358979323846;
 constexpr double kMinArrivedDistanceM = 0.5;
 constexpr double kLandHeightM = 0.25;
 
-bool command_succeeded(
-    const std::optional<FlightCommandResult>& result,
-    FlightCommandKind kind) {
-    return result.has_value() && result->kind == kind && result->success;
-}
-
 std::string read_text_file(const std::string& path) {
     std::ifstream input{path};
     if (!input) {
@@ -160,6 +154,10 @@ double seconds_between(TimePoint start, TimePoint end) {
     return static_cast<double>(end.timestamp_ns - start.timestamp_ns) / 1'000'000'000.0;
 }
 
+bool elapsed_at_least(TimePoint start, TimePoint end, double seconds) {
+    return seconds_between(start, end) >= seconds;
+}
+
 double norm_xy(const Vec3& value) {
     return std::sqrt(value.x * value.x + value.y * value.y);
 }
@@ -181,6 +179,10 @@ TrajectoryMissionConfig load_trajectory_mission_config(const MissionOptions& opt
     config.takeoff_velocity_mps = std::stod(options.get_or("flight_takeoff_velocity_mps", "1.0"));
     config.go_home_velocity_mps = std::stod(options.get_or("flight_go_home_velocity_mps", "1.0"));
     config.land_velocity_mps = std::stod(options.get_or("flight_land_velocity_mps", "0.5"));
+    config.arm_retry_interval_s = std::stod(options.get_or("flight_arm_retry_interval_s", "1.0"));
+    config.arm_timeout_s = std::stod(options.get_or("flight_arm_timeout_s", "10.0"));
+    config.disarm_retry_interval_s = std::stod(options.get_or("flight_disarm_retry_interval_s", "1.0"));
+    config.disarm_timeout_s = std::stod(options.get_or("flight_disarm_timeout_s", "10.0"));
     config.home_policy = options.get_or("flight_home_policy", "initial_ego_pose");
 
     const auto trajectory_path = options.get_or("flight_trajectory_path", "");
@@ -287,15 +289,19 @@ MissionTickOutput TrajectoryMissionController::tick(const MissionTickInput& inpu
 
     switch (state_) {
         case MissionLifecycleState::Prepare:
-            if (!arm_command_sent_) {
+            if (ego.armed_valid && ego.armed) {
+                state_ = MissionLifecycleState::Takeoff;
+                output.status = "armed_confirmed_by_ego";
+            } else if (elapsed_at_least(state_start_, input.now, config_.arm_timeout_s)) {
+                state_ = MissionLifecycleState::Abort;
+                output.status = "arm_timeout";
+            } else if (!arm_command_sent_ || elapsed_at_least(arm_last_command_time_, input.now, config_.arm_retry_interval_s)) {
                 arm_command_sent_ = true;
+                arm_last_command_time_ = input.now;
                 output.command = command_with_kind(input.now, FlightCommandKind::Arm);
                 output.status = "arming";
-            } else if (command_succeeded(input.last_command_result, FlightCommandKind::Arm)) {
-                state_ = MissionLifecycleState::Takeoff;
-                output.status = "armed";
             } else {
-                output.status = "waiting_for_arm_confirmation";
+                output.status = ego.armed_valid ? "waiting_for_armed_state" : "waiting_for_armed_telemetry";
             }
             break;
         case MissionLifecycleState::Takeoff:
@@ -341,6 +347,7 @@ MissionTickOutput TrajectoryMissionController::tick(const MissionTickInput& inpu
         case MissionLifecycleState::Land:
             if (height_m <= kLandHeightM) {
                 state_ = MissionLifecycleState::Complete;
+                state_start_ = input.now;
                 output.status = "landed";
             } else {
                 output.command = command_from_velocity(
@@ -350,14 +357,18 @@ MissionTickOutput TrajectoryMissionController::tick(const MissionTickInput& inpu
             }
             break;
         case MissionLifecycleState::Complete:
-            if (!disarm_command_sent_) {
+            if (ego.armed_valid && !ego.armed) {
+                output.status = "complete";
+            } else if (elapsed_at_least(state_start_, input.now, config_.disarm_timeout_s)) {
+                state_ = MissionLifecycleState::Abort;
+                output.status = "disarm_timeout";
+            } else if (!disarm_command_sent_ || elapsed_at_least(disarm_last_command_time_, input.now, config_.disarm_retry_interval_s)) {
                 disarm_command_sent_ = true;
+                disarm_last_command_time_ = input.now;
                 output.command = command_with_kind(input.now, FlightCommandKind::Disarm);
                 output.status = "disarming";
-            } else if (command_succeeded(input.last_command_result, FlightCommandKind::Disarm)) {
-                output.status = "complete";
             } else {
-                output.status = "waiting_for_disarm_confirmation";
+                output.status = ego.armed_valid ? "waiting_for_disarmed_state" : "waiting_for_disarmed_telemetry";
             }
             break;
         case MissionLifecycleState::Abort:
@@ -367,6 +378,7 @@ MissionTickOutput TrajectoryMissionController::tick(const MissionTickInput& inpu
         case MissionLifecycleState::Idle:
         default:
             state_ = MissionLifecycleState::Prepare;
+            state_start_ = input.now;
             output.status = "idle";
             break;
     }
