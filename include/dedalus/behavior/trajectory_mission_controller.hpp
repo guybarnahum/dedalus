@@ -26,6 +26,10 @@ struct TrajectoryMissionConfig {
     double takeoff_velocity_mps{1.0};
     double go_home_velocity_mps{1.0};
     double land_velocity_mps{0.5};
+    double arm_retry_interval_s{1.0};
+    double arm_timeout_s{10.0};
+    double disarm_retry_interval_s{1.0};
+    double disarm_timeout_s{10.0};
     std::string home_policy{"initial_ego_pose"};
     std::vector<TrajectorySegment> segments;
 };
@@ -53,6 +57,8 @@ private:
     MissionLifecycleState state_{MissionLifecycleState::Idle};
     TimePoint mission_start_;
     TimePoint state_start_;
+    TimePoint arm_last_command_time_;
+    TimePoint disarm_last_command_time_;
     bool mission_started_{false};
     bool home_initialized_{false};
     bool arm_command_sent_{false};
