@@ -6,10 +6,12 @@
 #include <fstream>
 #include <iomanip>
 #include <iostream>
+#include <map>
 #include <memory>
 #include <sstream>
 #include <string>
 #include <thread>
+#include <vector>
 
 #include <unistd.h>
 
@@ -38,6 +40,22 @@ struct Args {
     int shutdown_max_frames{300};
     ProgressMode progress_mode{ProgressMode::Auto};
     int verbosity{0};
+};
+
+struct CommandCounts {
+    int ok{0};
+    int failed{0};
+};
+
+struct MissionEventSummary {
+    bool valid{false};
+    int event_count{0};
+    int tick_count{0};
+    int failure_count{0};
+    std::string final_state{"unknown"};
+    std::vector<std::string> state_path;
+    std::map<std::string, CommandCounts> commands;
+    std::vector<std::string> failures;
 };
 
 class ProgressReporter {
@@ -123,6 +141,188 @@ std::string zero_padded(int value, int width) {
 bool mission_finished(dedalus::MissionLifecycleState state) {
     return state == dedalus::MissionLifecycleState::Complete ||
            state == dedalus::MissionLifecycleState::Abort;
+}
+
+std::string json_string_field(const std::string& line, const std::string& key) {
+    const std::string marker = "\"" + key + "\":";
+    const auto marker_pos = line.find(marker);
+    if (marker_pos == std::string::npos) {
+        return {};
+    }
+    const auto open = line.find('"', marker_pos + marker.size());
+    if (open == std::string::npos) {
+        return {};
+    }
+    std::string value;
+    bool escaped = false;
+    for (std::size_t i = open + 1U; i < line.size(); ++i) {
+        const char ch = line[i];
+        if (escaped) {
+            switch (ch) {
+                case 'n':
+                    value.push_back('\n');
+                    break;
+                case 'r':
+                    value.push_back('\r');
+                    break;
+                case 't':
+                    value.push_back('\t');
+                    break;
+                default:
+                    value.push_back(ch);
+                    break;
+            }
+            escaped = false;
+            continue;
+        }
+        if (ch == '\\') {
+            escaped = true;
+            continue;
+        }
+        if (ch == '"') {
+            return value;
+        }
+        value.push_back(ch);
+    }
+    return {};
+}
+
+int json_int_field(const std::string& line, const std::string& key, int fallback = 0) {
+    const std::string marker = "\"" + key + "\":";
+    const auto marker_pos = line.find(marker);
+    if (marker_pos == std::string::npos) {
+        return fallback;
+    }
+    const auto start = marker_pos + marker.size();
+    std::size_t end = start;
+    while (end < line.size() && (line[end] == '-' || (line[end] >= '0' && line[end] <= '9'))) {
+        ++end;
+    }
+    if (end == start) {
+        return fallback;
+    }
+    try {
+        return std::stoi(line.substr(start, end - start));
+    } catch (...) {
+        return fallback;
+    }
+}
+
+bool json_bool_field(const std::string& line, const std::string& key, bool fallback = false) {
+    const std::string marker = "\"" + key + "\":";
+    const auto marker_pos = line.find(marker);
+    if (marker_pos == std::string::npos) {
+        return fallback;
+    }
+    const auto start = marker_pos + marker.size();
+    if (line.compare(start, 4U, "true") == 0) {
+        return true;
+    }
+    if (line.compare(start, 5U, "false") == 0) {
+        return false;
+    }
+    return fallback;
+}
+
+void append_state_if_new(std::vector<std::string>& states, const std::string& state) {
+    if (state.empty()) {
+        return;
+    }
+    if (states.empty() || states.back() != state) {
+        states.push_back(state);
+    }
+}
+
+std::string join_states(const std::vector<std::string>& states) {
+    std::ostringstream out;
+    for (std::size_t i = 0; i < states.size(); ++i) {
+        if (i > 0U) {
+            out << " -> ";
+        }
+        out << states[i];
+    }
+    return out.str();
+}
+
+MissionEventSummary read_mission_event_summary(const std::filesystem::path& path) {
+    MissionEventSummary summary;
+    std::ifstream input{path};
+    if (!input) {
+        return summary;
+    }
+
+    std::string line;
+    while (std::getline(input, line)) {
+        if (line.empty()) {
+            continue;
+        }
+        summary.valid = true;
+        ++summary.event_count;
+        const auto event = json_string_field(line, "event");
+        if (event == "state_transition") {
+            append_state_if_new(summary.state_path, json_string_field(line, "from"));
+            const auto to = json_string_field(line, "to");
+            append_state_if_new(summary.state_path, to);
+            summary.final_state = to.empty() ? summary.final_state : to;
+            summary.tick_count = std::max(summary.tick_count, json_int_field(line, "tick", summary.tick_count));
+        } else if (event == "command_result") {
+            const auto command = json_string_field(line, "command");
+            if (!command.empty()) {
+                auto& counts = summary.commands[command];
+                if (json_bool_field(line, "success", false)) {
+                    ++counts.ok;
+                } else {
+                    ++counts.failed;
+                    ++summary.failure_count;
+                    summary.failures.push_back(command + ": " + json_string_field(line, "status"));
+                }
+            }
+            summary.tick_count = std::max(summary.tick_count, json_int_field(line, "tick", summary.tick_count));
+        } else if (event == "command_exception") {
+            ++summary.failure_count;
+            const auto command = json_string_field(line, "command");
+            const auto error = json_string_field(line, "error");
+            summary.failures.push_back((command.empty() ? std::string{"command"} : command) + ": " + error);
+            summary.tick_count = std::max(summary.tick_count, json_int_field(line, "tick", summary.tick_count));
+        } else if (event == "runtime_stop") {
+            const auto state = json_string_field(line, "state");
+            if (!state.empty()) {
+                summary.final_state = state;
+                append_state_if_new(summary.state_path, state);
+            }
+            summary.tick_count = std::max(summary.tick_count, json_int_field(line, "tick_count", summary.tick_count));
+        } else if (event == "finish_requested") {
+            summary.tick_count = std::max(summary.tick_count, json_int_field(line, "tick", summary.tick_count));
+        }
+    }
+
+    return summary;
+}
+
+void print_mission_event_summary(const std::filesystem::path& path) {
+    const auto summary = read_mission_event_summary(path);
+    if (!summary.valid) {
+        std::cout << "Mission summary: unavailable; no event records found\n";
+        return;
+    }
+
+    std::cout << "Mission summary:\n";
+    std::cout << "  final_state: " << summary.final_state << "\n";
+    std::cout << "  ticks: " << summary.tick_count << "\n";
+    std::cout << "  events: " << summary.event_count << "\n";
+    if (!summary.state_path.empty()) {
+        std::cout << "  state_path: " << join_states(summary.state_path) << "\n";
+    }
+    if (!summary.commands.empty()) {
+        std::cout << "  commands:\n";
+        for (const auto& [command, counts] : summary.commands) {
+            std::cout << "    " << command << ": ok=" << counts.ok << " failed=" << counts.failed << "\n";
+        }
+    }
+    std::cout << "  failures: " << summary.failure_count << "\n";
+    for (const auto& failure : summary.failures) {
+        std::cout << "    - " << failure << "\n";
+    }
 }
 
 int run_shell_command(const std::string& command, int verbosity) {
@@ -395,8 +595,7 @@ int main(int argc, char** argv) {
         if (mission_runtime) {
             std::this_thread::sleep_for(std::chrono::milliseconds{100});
             mission_runtime->stop();
-            std::cout << "Mission ticks: " << mission_runtime->tick_count() << "\n";
-            std::cout << "Mission final state: " << dedalus::to_string(mission_runtime->last_state()) << "\n";
+            print_mission_event_summary(mission_events_path);
         }
 
         if (frame_count == 0) {
