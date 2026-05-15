@@ -1,6 +1,7 @@
 #pragma once
 
 #include <algorithm>
+#include <cstdint>
 #include <iostream>
 #include <memory>
 #include <sstream>
@@ -131,6 +132,36 @@ private:
 
     AirSimVelocityCommandSinkConfig config_;
     std::unique_ptr<BridgeTransport> transport_;
+};
+
+struct Px4MavlinkCommandSinkConfig {
+    std::string endpoints{"udpin:127.0.0.1:14550,udpin:127.0.0.1:14540,udpin:127.0.0.1:14600"};
+    std::uint8_t source_system_id{255U};
+    std::uint8_t source_component_id{190U};
+    std::uint8_t target_system_id{1U};
+    std::uint8_t target_component_id{1U};
+    double command_duration_s{0.1};
+    double max_velocity_mps{5.0};
+    double takeoff_altitude_m{8.0};
+    bool set_offboard_on_velocity{true};
+    bool debug_logging{false};
+};
+
+class Px4MavlinkCommandSink final : public FlightCommandSink {
+public:
+    explicit Px4MavlinkCommandSink(Px4MavlinkCommandSinkConfig config);
+    ~Px4MavlinkCommandSink() override;
+
+    Px4MavlinkCommandSink(const Px4MavlinkCommandSink&) = delete;
+    Px4MavlinkCommandSink& operator=(const Px4MavlinkCommandSink&) = delete;
+    Px4MavlinkCommandSink(Px4MavlinkCommandSink&&) = delete;
+    Px4MavlinkCommandSink& operator=(Px4MavlinkCommandSink&&) = delete;
+
+    FlightCommandResult send(const VelocityCommand& command) override;
+
+private:
+    struct Impl;
+    std::unique_ptr<Impl> impl_;
 };
 
 class NullFlightCommandSink final : public FlightCommandSink {

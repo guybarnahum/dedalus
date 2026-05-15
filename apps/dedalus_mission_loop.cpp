@@ -195,6 +195,30 @@ std::unique_ptr<dedalus::FlightCommandSink> create_flight_command_sink(
         sink_config.debug_logging = true;
         return std::make_unique<dedalus::AirSimVelocityCommandSink>(sink_config);
     }
+    if (config.flight_command_sink == "px4_mavlink") {
+        dedalus::Px4MavlinkCommandSinkConfig sink_config;
+        sink_config.command_duration_s = 1.0 / config.mission_tick_hz;
+        sink_config.max_velocity_mps = std::stod(config.mission_options.get_or("flight_max_velocity_mps", "5.0"));
+        sink_config.endpoints = config.mission_options.get_or(
+            "flight_mavlink_command_endpoints",
+            sink_config.endpoints);
+        sink_config.target_system_id = static_cast<std::uint8_t>(std::stoi(
+            config.mission_options.get_or("flight_mavlink_target_system_id", "1")));
+        sink_config.target_component_id = static_cast<std::uint8_t>(std::stoi(
+            config.mission_options.get_or("flight_mavlink_target_component_id", "1")));
+        sink_config.source_system_id = static_cast<std::uint8_t>(std::stoi(
+            config.mission_options.get_or("flight_mavlink_source_system_id", "255")));
+        sink_config.source_component_id = static_cast<std::uint8_t>(std::stoi(
+            config.mission_options.get_or("flight_mavlink_source_component_id", "190")));
+        sink_config.takeoff_altitude_m = std::stod(config.mission_options.get_or(
+            "flight_safe_height_m",
+            "8.0"));
+        sink_config.set_offboard_on_velocity = config.mission_options.get_or(
+            "flight_mavlink_set_offboard_on_velocity",
+            "true") != "false";
+        sink_config.debug_logging = true;
+        return std::make_unique<dedalus::Px4MavlinkCommandSink>(sink_config);
+    }
     throw std::invalid_argument("unknown flight_command_sink: " + config.flight_command_sink);
 }
 
