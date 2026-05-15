@@ -64,6 +64,7 @@ int main() {
     config.land_velocity_mps = 0.5;
     config.arm_retry_interval_s = 1.0;
     config.arm_timeout_s = 5.0;
+    config.takeoff_retry_interval_s = 1.0;
     config.disarm_retry_interval_s = 1.0;
     config.disarm_timeout_s = 5.0;
 
@@ -105,8 +106,23 @@ int main() {
     }
 
     output = controller.tick(input_at(1.3, 0.0, true));
-    if (!require_state(output, dedalus::MissionLifecycleState::Takeoff, "takeoff low height") ||
-        !require_command_kind(output, dedalus::FlightCommandKind::Velocity, "takeoff low height")) {
+    if (!require_state(output, dedalus::MissionLifecycleState::Takeoff, "takeoff request") ||
+        !require_command_kind(output, dedalus::FlightCommandKind::Takeoff, "takeoff request")) {
+        return 1;
+    }
+
+    output = controller.tick(input_at(1.8, 0.0, true));
+    if (!require_state(output, dedalus::MissionLifecycleState::Takeoff, "waiting for takeoff climb")) {
+        return 1;
+    }
+    if (output.command.has_value()) {
+        std::cerr << "controller should not re-emit takeoff before retry interval\n";
+        return 1;
+    }
+
+    output = controller.tick(input_at(1.9, 0.6, true));
+    if (!require_state(output, dedalus::MissionLifecycleState::Takeoff, "takeoff velocity assist") ||
+        !require_command_kind(output, dedalus::FlightCommandKind::Velocity, "takeoff velocity assist")) {
         return 1;
     }
     if (output.command->velocity_local_mps.z >= 0.0) {
@@ -114,28 +130,28 @@ int main() {
         return 1;
     }
 
-    output = controller.tick(input_at(1.4, 2.1, true));
+    output = controller.tick(input_at(2.0, 2.1, true));
     if (!require_state(output, dedalus::MissionLifecycleState::ExecuteMission, "safe height reached")) {
         return 1;
     }
 
-    output = controller.tick(input_at(1.5, 2.1, true));
+    output = controller.tick(input_at(2.1, 2.1, true));
     if (!require_state(output, dedalus::MissionLifecycleState::ExecuteMission, "execute trajectory") ||
         !require_command_kind(output, dedalus::FlightCommandKind::Velocity, "execute trajectory")) {
         return 1;
     }
 
-    output = controller.tick(input_at(2.7, 2.1, true));
+    output = controller.tick(input_at(3.3, 2.1, true));
     if (!require_state(output, dedalus::MissionLifecycleState::GoHome, "trajectory complete")) {
         return 1;
     }
 
-    output = controller.tick(input_at(2.8, 2.1, true));
+    output = controller.tick(input_at(3.4, 2.1, true));
     if (!require_state(output, dedalus::MissionLifecycleState::Land, "home reached")) {
         return 1;
     }
 
-    output = controller.tick(input_at(2.9, 2.1, true));
+    output = controller.tick(input_at(3.5, 2.1, true));
     if (!require_state(output, dedalus::MissionLifecycleState::Land, "landing") ||
         !require_command_kind(output, dedalus::FlightCommandKind::Velocity, "landing")) {
         return 1;
@@ -145,18 +161,18 @@ int main() {
         return 1;
     }
 
-    output = controller.tick(input_at(3.0, 0.0, true));
+    output = controller.tick(input_at(3.6, 0.0, true));
     if (!require_state(output, dedalus::MissionLifecycleState::Complete, "landed")) {
         return 1;
     }
 
-    output = controller.tick(input_at(3.1, 0.0, true));
+    output = controller.tick(input_at(3.7, 0.0, true));
     if (!require_state(output, dedalus::MissionLifecycleState::Complete, "disarm request") ||
         !require_command_kind(output, dedalus::FlightCommandKind::Disarm, "disarm request")) {
         return 1;
     }
 
-    output = controller.tick(input_at(3.6, 0.0, true));
+    output = controller.tick(input_at(4.2, 0.0, true));
     if (!require_state(output, dedalus::MissionLifecycleState::Complete, "waiting before disarm retry interval")) {
         return 1;
     }
@@ -165,13 +181,13 @@ int main() {
         return 1;
     }
 
-    output = controller.tick(input_at(4.2, 0.0, true));
+    output = controller.tick(input_at(4.8, 0.0, true));
     if (!require_state(output, dedalus::MissionLifecycleState::Complete, "disarm retry") ||
         !require_command_kind(output, dedalus::FlightCommandKind::Disarm, "disarm retry")) {
         return 1;
     }
 
-    output = controller.tick(input_at(4.3, 0.0, false));
+    output = controller.tick(input_at(4.9, 0.0, false));
     if (!require_state(output, dedalus::MissionLifecycleState::Complete, "disarm confirmed complete")) {
         return 1;
     }
