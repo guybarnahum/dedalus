@@ -1,5 +1,6 @@
 #include "dedalus/behavior/mission_runtime.hpp"
 
+#include <iostream>
 #include <stdexcept>
 
 namespace dedalus {
@@ -36,6 +37,9 @@ void MissionRuntime::start() {
     if (!running_.compare_exchange_strong(expected, true)) {
         return;
     }
+    if (config_.debug_logging) {
+        std::cerr << "dedalus_mission: starting async loop @ " << config_.tick_hz << " Hz\n";
+    }
     thread_ = std::thread([this]() { loop(); });
 }
 
@@ -44,11 +48,17 @@ void MissionRuntime::stop() {
     if (thread_.joinable()) {
         thread_.join();
     }
+    if (config_.debug_logging) {
+        std::cerr << "dedalus_mission: stopped after " << tick_count_ << " tick(s)\n";
+    }
 }
 
 bool MissionRuntime::tick_once() {
     const auto snapshot = snapshots_->latest();
     if (!snapshot.has_value()) {
+        if (config_.debug_logging && tick_count_ == 0U) {
+            std::cerr << "dedalus_mission: waiting for first WorldSnapshot\n";
+        }
         return false;
     }
 
@@ -60,10 +70,28 @@ bool MissionRuntime::tick_once() {
     }
 
     const auto output = controller_->tick(input);
+    const auto previous_state = last_state_;
     last_state_ = output.state;
     ++tick_count_;
 
+    if (config_.debug_logging && (previous_state != output.state || tick_count_ <= 3U || output.command.has_value())) {
+        std::cerr << "dedalus_mission: tick=" << tick_count_
+                  << " state=" << to_string(output.state)
+                  << " status=" << output.status
+                  << " ego_height_m=" << input.snapshot.ego.height_m
+                  << " command=" << (output.command.has_value() ? "yes" : "no")
+                  << "\n";
+    }
+
     if (output.command.has_value()) {
+        if (config_.debug_logging) {
+            const auto& v = output.command->velocity_local_mps;
+            std::cerr << "dedalus_mission: send_velocity vx=" << v.x
+                      << " vy=" << v.y
+                      << " vz=" << v.z
+                      << " yaw_rate=" << output.command->yaw_rate_radps
+                      << "\n";
+        }
         sink_->send(*output.command);
     }
 
