@@ -98,6 +98,7 @@ struct MissionTickInput {
     TimePoint now;
     WorldSnapshot snapshot;
     std::optional<FlightCommandResult> last_command_result;
+    bool finish_requested{false};
 };
 
 struct MissionTickOutput {
