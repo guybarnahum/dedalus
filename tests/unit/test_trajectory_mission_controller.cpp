@@ -82,6 +82,7 @@ int main() {
     config.arm_retry_interval_s = 1.0;
     config.arm_timeout_s = 5.0;
     config.takeoff_retry_interval_s = 1.0;
+    config.land_retry_interval_s = 1.0;
     config.disarm_retry_interval_s = 1.0;
     config.disarm_timeout_s = 5.0;
 
@@ -170,26 +171,31 @@ int main() {
 
     output = controller.tick(input_at(3.5, 2.1, true));
     if (!require_state(output, dedalus::MissionLifecycleState::Land, "landing") ||
-        !require_command_kind(output, dedalus::FlightCommandKind::Velocity, "landing")) {
-        return 1;
-    }
-    if (output.command->velocity_local_mps.z <= 0.0) {
-        std::cerr << "land command should descend in NED coordinates with positive z velocity\n";
+        !require_command_kind(output, dedalus::FlightCommandKind::Land, "landing")) {
         return 1;
     }
 
-    output = controller.tick(input_at(3.6, 0.0, true));
-    if (!require_state(output, dedalus::MissionLifecycleState::Complete, "landed")) {
+    output = controller.tick(input_at(3.6, 2.1, true));
+    if (!require_state(output, dedalus::MissionLifecycleState::Land, "waiting for landed telemetry")) {
+        return 1;
+    }
+    if (output.command.has_value()) {
+        std::cerr << "controller should not re-emit land before retry interval\n";
         return 1;
     }
 
     output = controller.tick(input_at(3.7, 0.0, true));
+    if (!require_state(output, dedalus::MissionLifecycleState::Complete, "landed")) {
+        return 1;
+    }
+
+    output = controller.tick(input_at(3.8, 0.0, true));
     if (!require_state(output, dedalus::MissionLifecycleState::Complete, "disarm request") ||
         !require_command_kind(output, dedalus::FlightCommandKind::Disarm, "disarm request")) {
         return 1;
     }
 
-    output = controller.tick(input_at(4.2, 0.0, true));
+    output = controller.tick(input_at(4.3, 0.0, true));
     if (!require_state(output, dedalus::MissionLifecycleState::Complete, "waiting before disarm retry interval")) {
         return 1;
     }
@@ -198,13 +204,13 @@ int main() {
         return 1;
     }
 
-    output = controller.tick(input_at(4.8, 0.0, true));
+    output = controller.tick(input_at(4.9, 0.0, true));
     if (!require_state(output, dedalus::MissionLifecycleState::Complete, "disarm retry") ||
         !require_command_kind(output, dedalus::FlightCommandKind::Disarm, "disarm retry")) {
         return 1;
     }
 
-    output = controller.tick(input_at(4.9, 0.0, false));
+    output = controller.tick(input_at(5.0, 0.0, false));
     if (!require_state(output, dedalus::MissionLifecycleState::Complete, "disarm confirmed complete")) {
         return 1;
     }
@@ -297,7 +303,7 @@ int main() {
     }
     output = finish_controller.tick(input_at(0.5, 2.1, true, true, true));
     if (!require_state(output, dedalus::MissionLifecycleState::Land, "finish requested landing") ||
-        !require_command_kind(output, dedalus::FlightCommandKind::Velocity, "finish requested landing")) {
+        !require_command_kind(output, dedalus::FlightCommandKind::Land, "finish requested landing")) {
         return 1;
     }
     output = finish_controller.tick(input_at(0.6, 0.0, true, true, true));
