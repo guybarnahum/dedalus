@@ -3,6 +3,10 @@
 
 This helper keeps the C++ core dependency-light: the C++ AirSimVelocityCommandSink
 shells out to this script instead of linking the AirSim Python/RPC stack.
+
+For the mission-loop placeholder, velocity commands may be issued while the vehicle
+is still landed. By default this helper enables API control and arms before sending
+the velocity command so the Takeoff state can actually lift the vehicle.
 """
 
 from __future__ import annotations
@@ -25,6 +29,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--duration", type=float, default=0.1)
     parser.add_argument("--yaw-rate", type=float, default=0.0)
     parser.add_argument("--no-join", action="store_true", help="Do not block waiting for the async AirSim command to complete.")
+    parser.add_argument("--no-enable-api-control", action="store_true", help="Do not call enableApiControl(True) before sending velocity.")
+    parser.add_argument("--no-arm", action="store_true", help="Do not call armDisarm(True) before sending velocity.")
     return parser.parse_args()
 
 
@@ -46,6 +52,14 @@ def main() -> int:
     client = airsim.MultirotorClient(ip=args.host, port=args.rpc_port)
     client.confirmConnection()
 
+    api_control_enabled = False
+    armed = False
+    if not args.no_enable_api_control:
+        client.enableApiControl(True, vehicle_name=args.vehicle_name)
+        api_control_enabled = True
+    if not args.no_arm:
+        armed = bool(client.armDisarm(True, vehicle_name=args.vehicle_name))
+
     task = client.moveByVelocityAsync(
         args.vx,
         args.vy,
@@ -60,6 +74,8 @@ def main() -> int:
     print(
         "OK "
         f"vehicle={args.vehicle_name} "
+        f"api_control={api_control_enabled} "
+        f"armed={armed} "
         f"velocity=({args.vx:.3f},{args.vy:.3f},{args.vz:.3f}) "
         f"duration={args.duration:.3f} "
         f"yaw_rate={args.yaw_rate:.3f}"
