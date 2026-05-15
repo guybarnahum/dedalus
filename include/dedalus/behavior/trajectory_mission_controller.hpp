@@ -2,32 +2,11 @@
 
 #include <cstddef>
 #include <string>
-#include <vector>
 
 #include "dedalus/behavior/mission_controller.hpp"
+#include "dedalus/behavior/velocity_trajectory.hpp"
 
 namespace dedalus {
-
-struct TrajectoryKeyframe {
-    double t_s{0.0};
-    double vx_mps{0.0};
-    double vy_mps{0.0};
-    double vz_mps{0.0};
-};
-
-struct TrajectorySegment {
-    std::string type{"hold"};
-    std::string label;
-    double duration_s{0.0};
-    double vx_mps{0.0};
-    double vy_mps{0.0};
-    double vz_mps{0.0};
-    double speed_mps{0.0};
-    double radius_m{1.0};
-    double scale_m{1.0};
-    std::string direction{"ccw"};
-    std::vector<TrajectoryKeyframe> keyframes;
-};
 
 struct TrajectoryMissionConfig {
     double safe_height_m{8.0};
@@ -40,7 +19,7 @@ struct TrajectoryMissionConfig {
     double disarm_retry_interval_s{1.0};
     double disarm_timeout_s{10.0};
     std::string home_policy{"initial_ego_pose"};
-    std::vector<TrajectorySegment> segments;
+    VelocityTrajectory trajectory{VelocityTrajectory::default_hold()};
 };
 
 TrajectoryMissionConfig load_trajectory_mission_config(const MissionOptions& options);
