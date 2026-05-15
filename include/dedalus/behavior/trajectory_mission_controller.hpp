@@ -17,6 +17,7 @@ struct TrajectoryMissionConfig {
     double arm_timeout_s{10.0};
     double takeoff_retry_interval_s{1.0};
     double land_retry_interval_s{1.0};
+    double land_timeout_s{60.0};
     double disarm_retry_interval_s{1.0};
     double disarm_timeout_s{10.0};
     std::string home_policy{"initial_ego_pose"};
