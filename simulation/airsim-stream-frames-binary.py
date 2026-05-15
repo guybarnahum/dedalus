@@ -68,12 +68,14 @@ class TimingJsonlWriter:
         self._file.flush()
 
 
-class MavlinkArmedStateReader:
-    """Best-effort non-blocking armed-state reader from MAVLink heartbeats."""
+class MavlinkEgoTelemetryReader:
+    """Best-effort non-blocking ego telemetry reader from MAVLink."""
 
     def __init__(self, endpoints: list[str]):
         self._connections: list[object] = []
         self._last_armed: bool | None = None
+        self._last_local_position: tuple[float, float, float] | None = None
+        self._last_local_velocity: tuple[float, float, float] | None = None
         self._mavutil = None
 
         if not endpoints:
@@ -84,7 +86,7 @@ class MavlinkArmedStateReader:
         except Exception as exc:  # pragma: no cover - depends on sim host deps
             print(
                 f"airsim-stream-frames-binary: pymavlink unavailable; "
-                f"MAVLink armed telemetry disabled: {exc}",
+                f"MAVLink ego telemetry disabled: {exc}",
                 file=sys.stderr,
             )
             return
@@ -99,7 +101,7 @@ class MavlinkArmedStateReader:
                 )
                 self._connections.append(connection)
                 print(
-                    f"airsim-stream-frames-binary: MAVLink armed telemetry listening on {endpoint}",
+                    f"airsim-stream-frames-binary: MAVLink ego telemetry listening on {endpoint}",
                     file=sys.stderr,
                 )
             except Exception as exc:  # pragma: no cover - depends on live ports
@@ -109,25 +111,53 @@ class MavlinkArmedStateReader:
                     file=sys.stderr,
                 )
 
-    def sample(self) -> tuple[bool, bool]:
+    def sample(self) -> dict[str, object]:
         for connection in self._connections:
             while True:
                 try:
-                    msg = connection.recv_match(type="HEARTBEAT", blocking=False)
+                    msg = connection.recv_match(blocking=False)
                 except Exception as exc:  # pragma: no cover - live transport only
                     print(
-                        f"airsim-stream-frames-binary: MAVLink heartbeat read failed: {exc}",
+                        f"airsim-stream-frames-binary: MAVLink read failed: {exc}",
                         file=sys.stderr,
                     )
                     break
                 if msg is None:
                     break
-                base_mode = int(getattr(msg, "base_mode", 0))
-                self._last_armed = bool(base_mode & MAVLINK_SAFETY_ARMED_FLAG)
 
-        if self._last_armed is None:
-            return False, False
-        return self._last_armed, True
+                msg_type = msg.get_type()
+                if msg_type == "HEARTBEAT":
+                    base_mode = int(getattr(msg, "base_mode", 0))
+                    self._last_armed = bool(base_mode & MAVLINK_SAFETY_ARMED_FLAG)
+                elif msg_type == "LOCAL_POSITION_NED":
+                    self._last_local_position = (
+                        float(getattr(msg, "x", 0.0)),
+                        float(getattr(msg, "y", 0.0)),
+                        float(getattr(msg, "z", 0.0)),
+                    )
+                    self._last_local_velocity = (
+                        float(getattr(msg, "vx", 0.0)),
+                        float(getattr(msg, "vy", 0.0)),
+                        float(getattr(msg, "vz", 0.0)),
+                    )
+
+        payload: dict[str, object] = {}
+        if self._last_armed is not None:
+            payload["armed"] = self._last_armed
+            payload["armed_valid"] = True
+            payload["armed_source"] = "mavlink_heartbeat"
+        if self._last_local_position is not None:
+            payload["position"] = list(self._last_local_position)
+            payload["position_valid"] = True
+            payload["position_source"] = "mavlink_local_position_ned"
+            payload["height_m"] = max(0.0, -self._last_local_position[2])
+            payload["height_valid"] = True
+            payload["landed_state"] = 2 if -self._last_local_position[2] > 0.25 else 1
+        if self._last_local_velocity is not None:
+            payload["velocity"] = list(self._last_local_velocity)
+            payload["velocity_valid"] = True
+            payload["velocity_source"] = "mavlink_local_position_ned"
+        return payload
 
 
 def parse_mavlink_endpoints(value: str) -> list[str]:
@@ -160,7 +190,7 @@ def ego_json_bytes(
     client: airsim.MultirotorClient,
     vehicle_name: str,
     timestamp_ns: int,
-    mavlink_armed_reader: MavlinkArmedStateReader | None = None,
+    mavlink_ego_reader: MavlinkEgoTelemetryReader | None = None,
 ) -> bytes:
     # 2.14 optimization:
     # Use one AirSim RPC per frame for ego telemetry. MultirotorState already
@@ -179,18 +209,17 @@ def ego_json_bytes(
     armed = bool(getattr(state, "armed", False)) if armed_valid else False
     armed_source = "airsim" if armed_valid else "none"
 
-    if mavlink_armed_reader is not None:
-        mavlink_armed, mavlink_armed_valid = mavlink_armed_reader.sample()
-        if mavlink_armed_valid:
-            armed = mavlink_armed
-            armed_valid = True
-            armed_source = "mavlink_heartbeat"
-
     payload = {
         "timestamp_ns": int(timestamp_ns),
         "position": [float(position.x_val), float(position.y_val), float(position.z_val)],
+        "position_valid": False,
+        "position_source": "airsim_multirotor_state",
+        "height_m": max(0.0, -float(position.z_val)),
+        "height_valid": False,
         "rotation_rpy": [float(orientation[0]), float(orientation[1]), float(orientation[2])],
         "velocity": [float(velocity.x_val), float(velocity.y_val), float(velocity.z_val)],
+        "velocity_valid": False,
+        "velocity_source": "airsim_multirotor_state",
         "angular_velocity": [
             float(angular_velocity.x_val),
             float(angular_velocity.y_val),
@@ -201,6 +230,10 @@ def ego_json_bytes(
         "armed_valid": armed_valid,
         "armed_source": armed_source,
     }
+
+    if mavlink_ego_reader is not None:
+        payload.update(mavlink_ego_reader.sample())
+
     return json.dumps(payload, separators=(",", ":")).encode("utf-8")
 
 
@@ -254,9 +287,14 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--mavlink-armed-endpoints",
         default=os.environ.get("DEDALUS_MAVLINK_ARMED_ENDPOINTS", ""),
+        help="Deprecated alias for --mavlink-ego-endpoints.",
+    )
+    parser.add_argument(
+        "--mavlink-ego-endpoints",
+        default=os.environ.get("DEDALUS_MAVLINK_EGO_ENDPOINTS", ""),
         help=(
-            "Comma-separated pymavlink endpoints used to derive armed state "
-            "from HEARTBEAT base_mode. Example: "
+            "Comma-separated pymavlink endpoints used to derive ego telemetry "
+            "from HEARTBEAT and LOCAL_POSITION_NED. Example: "
             "udpin:127.0.0.1:14550,udpin:127.0.0.1:14540"
         ),
     )
@@ -271,9 +309,8 @@ def parse_args() -> argparse.Namespace:
 def main() -> int:
     args = parse_args()
     timing = TimingJsonlWriter(args.timing_jsonl or None)
-    mavlink_armed_reader = MavlinkArmedStateReader(
-        parse_mavlink_endpoints(args.mavlink_armed_endpoints)
-    )
+    endpoint_string = args.mavlink_ego_endpoints or args.mavlink_armed_endpoints
+    mavlink_ego_reader = MavlinkEgoTelemetryReader(parse_mavlink_endpoints(endpoint_string))
     try:
         client = airsim.MultirotorClient(ip=args.host, port=args.rpc_port)
         client.confirmConnection()
@@ -302,7 +339,7 @@ def main() -> int:
 
             ego_start_ns = time.perf_counter_ns()
             ego_payload = (
-                ego_json_bytes(client, args.vehicle_name, timestamp_ns, mavlink_armed_reader)
+                ego_json_bytes(client, args.vehicle_name, timestamp_ns, mavlink_ego_reader)
                 if args.include_ego
                 else b""
             )
