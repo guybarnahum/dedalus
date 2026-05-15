@@ -5,24 +5,13 @@ This bridge intentionally follows the known-good control path in
 simulation/test-flight.py:
 
   - PX4 shell for lifecycle commands: arm, takeoff, land, disarm
-  - pymavlink connection created with mavutil.mavlink_connection(...)
+  - pymavlink connection created lazily after shell takeoff, before OFFBOARD
   - zero-velocity OFFBOARD priming before the first velocity command
   - MAV_CMD_DO_SET_MODE for PX4 OFFBOARD mode
+  - LOCAL_POSITION_NED feedback climb to safe height
   - SET_POSITION_TARGET_LOCAL_NED for velocity setpoints
 
 Protocol: JSON lines on stdin/stdout.
-
-Input examples:
-  {"command":"arm"}
-  {"command":"takeoff"}
-  {"command":"velocity","vx":1.0,"vy":0.0,"vz":0.0,"duration":0.1}
-  {"command":"land"}
-  {"command":"disarm"}
-  {"command":"shutdown"}
-
-Output examples:
-  {"ok":true,"command":"velocity","status":"sent"}
-  {"ok":false,"command":"velocity","error":"..."}
 """
 
 from __future__ import annotations
@@ -37,7 +26,7 @@ from pathlib import Path
 from pymavlink import mavutil
 
 SIMULATION_DIR = Path(__file__).resolve().parent
-DEFAULT_ENDPOINTS = "udpin:127.0.0.1:14550,udpin:127.0.0.1:14540,udpin:127.0.0.1:14600"
+DEFAULT_ENDPOINTS = "udpin:127.0.0.1:14550"
 DEFAULT_PX4_TMUX_TARGET = "dedalus-sim:px4"
 
 
@@ -85,8 +74,14 @@ def connect_mavlink(endpoints: list[str], timeout_s: float = 4.0):
     raise RuntimeError(f"No usable MAVLink endpoint found. Last error: {last_error}")
 
 
+def mavlink_get_local_position(mav, timeout_s: float = 2.0):
+    msg = mav.recv_match(type="LOCAL_POSITION_NED", blocking=True, timeout=timeout_s)
+    if msg is None:
+        raise TimeoutError("Timed out waiting for LOCAL_POSITION_NED sample")
+    return msg
+
+
 def mavlink_send_velocity_local_ned(mav, vx: float, vy: float, vz: float) -> None:
-    """Send velocity-only local-NED setpoint exactly like test-flight.py."""
     type_mask = (
         mavutil.mavlink.POSITION_TARGET_TYPEMASK_X_IGNORE
         | mavutil.mavlink.POSITION_TARGET_TYPEMASK_Y_IGNORE
@@ -128,7 +123,6 @@ def prime_mavlink_offboard_velocity(mav, duration_s: float = 2.0, hz: float = 20
 
 
 def mavlink_set_px4_mode(mav, mode_name: str, timeout_s: float = 3.0) -> bool:
-    """Set PX4 custom mode exactly like test-flight.py."""
     mapping = mav.mode_mapping()
     if not mapping or mode_name not in mapping:
         raise RuntimeError(f"PX4 mode '{mode_name}' not found. Known modes: {mapping}")
@@ -171,29 +165,85 @@ def mavlink_set_px4_mode(mav, mode_name: str, timeout_s: float = 3.0) -> bool:
     return True
 
 
+def climb_to_safe_height_mavlink(
+    mav,
+    safe_height_m: float,
+    timeout_s: float = 20.0,
+    min_margin_m: float = 0.35,
+) -> float:
+    target_z = -abs(safe_height_m)
+    deadline = time.time() + timeout_s
+    last_height = 0.0
+    log(f"Climbing to safe height: {safe_height_m:.1f}m AGL target_z={target_z:.2f}")
+
+    while time.time() < deadline:
+        pos = mavlink_get_local_position(mav, timeout_s=1.0)
+        last_height = -float(pos.z)
+        remaining = float(pos.z) - target_z
+        if remaining <= min_margin_m:
+            log(f"Safe height reached: local_z={pos.z:.2f}, height≈{-pos.z:.2f}m")
+            for _ in range(5):
+                mavlink_send_velocity_local_ned(mav, 0.0, 0.0, 0.0)
+                time.sleep(0.05)
+            return max(0.0, last_height)
+
+        climb_vz = -min(1.5, max(0.35, remaining * 0.4))
+        mavlink_send_velocity_local_ned(mav, 0.0, 0.0, climb_vz)
+        log(
+            f"safe_height_progress local_z={pos.z:.2f} "
+            f"height≈{-pos.z:.2f}m remaining={remaining:.2f}m vz={climb_vz:.2f}"
+        )
+        time.sleep(0.1)
+
+    raise RuntimeError(
+        f"Timed out climbing to safe height {safe_height_m:.1f}m; "
+        f"last_height={last_height:.2f}m"
+    )
+
+
 class Px4CommandBridge:
     def __init__(self, args: argparse.Namespace):
         self.args = args
-        self.mav = connect_mavlink(parse_endpoint_csv(args.mavlink_endpoints), timeout_s=args.mavlink_timeout)
+        self.mav = None
         self.offboard_ready = False
+        self.safe_height_reached = False
 
     def close(self) -> None:
         try:
             if self.mav is not None:
                 self.mav.close()
+                self.mav = None
         except Exception:
             pass
+
+    def ensure_mavlink(self):
+        if self.mav is None:
+            self.mav = connect_mavlink(parse_endpoint_csv(self.args.mavlink_endpoints), timeout_s=self.args.mavlink_timeout)
+        return self.mav
 
     def ensure_offboard(self) -> None:
         if self.offboard_ready:
             return
+        mav = self.ensure_mavlink()
         prime_mavlink_offboard_velocity(
-            self.mav,
+            mav,
             duration_s=self.args.offboard_prime_s,
             hz=self.args.offboard_prime_hz,
         )
-        mavlink_set_px4_mode(self.mav, "OFFBOARD")
+        mavlink_set_px4_mode(mav, "OFFBOARD")
         self.offboard_ready = True
+
+    def ensure_safe_height(self) -> None:
+        if self.safe_height_reached or self.args.safe_height <= 0.0:
+            return
+        self.ensure_offboard()
+        reached = climb_to_safe_height_mavlink(
+            self.ensure_mavlink(),
+            safe_height_m=self.args.safe_height,
+            timeout_s=self.args.safe_height_timeout_s,
+        )
+        self.safe_height_reached = True
+        log(f"safe_height_complete reached_height={reached:.2f}m")
 
     def handle(self, request: dict[str, object]) -> dict[str, object]:
         command = str(request.get("command", ""))
@@ -206,11 +256,11 @@ class Px4CommandBridge:
             time.sleep(self.args.takeoff_settle_s)
             return {"ok": True, "command": command, "status": "px4_shell takeoff"}
         if command == "velocity":
-            self.ensure_offboard()
+            self.ensure_safe_height()
             vx = float(request.get("vx", 0.0))
             vy = float(request.get("vy", 0.0))
             vz = float(request.get("vz", 0.0))
-            mavlink_send_velocity_local_ned(self.mav, vx, vy, vz)
+            mavlink_send_velocity_local_ned(self.ensure_mavlink(), vx, vy, vz)
             return {
                 "ok": True,
                 "command": command,
@@ -223,6 +273,7 @@ class Px4CommandBridge:
             px4_shell("commander land", self.args.px4_tmux_target)
             time.sleep(self.args.land_settle_s)
             self.offboard_ready = False
+            self.safe_height_reached = False
             return {"ok": True, "command": command, "status": "px4_shell land"}
         if command == "disarm":
             px4_shell("commander disarm", self.args.px4_tmux_target)
@@ -237,6 +288,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--mavlink-endpoints", default=DEFAULT_ENDPOINTS)
     parser.add_argument("--mavlink-timeout", type=float, default=4.0)
     parser.add_argument("--px4-tmux-target", default=DEFAULT_PX4_TMUX_TARGET)
+    parser.add_argument("--safe-height", type=float, default=8.0)
+    parser.add_argument("--safe-height-timeout-s", type=float, default=20.0)
     parser.add_argument("--offboard-prime-s", type=float, default=2.0)
     parser.add_argument("--offboard-prime-hz", type=float, default=20.0)
     parser.add_argument("--arm-settle-s", type=float, default=2.0)
