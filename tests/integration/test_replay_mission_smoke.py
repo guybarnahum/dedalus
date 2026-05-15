@@ -11,8 +11,8 @@ from pathlib import Path
 def main() -> int:
     repo_root = Path(sys.argv[1])
     build_dir = Path(sys.argv[2])
-    app = build_dir / "apps" / "dedalus_replay_mission"
-    out_dir = repo_root / "out" / "test_replay_mission_smoke"
+    app = build_dir / "apps" / "dedalus_mission_loop"
+    out_dir = repo_root / "out" / "test_mission_loop_smoke"
     if out_dir.exists():
         shutil.rmtree(out_dir)
     cmd = [
