@@ -42,6 +42,9 @@ private:
     [[nodiscard]] VelocityCommand command_from_velocity(
         TimePoint timestamp,
         Vec3 velocity_local_mps) const;
+    [[nodiscard]] VelocityCommand command_with_kind(
+        TimePoint timestamp,
+        FlightCommandKind kind) const;
     [[nodiscard]] VelocityCommand trajectory_command(TimePoint timestamp) const;
     [[nodiscard]] bool trajectory_complete() const;
     void advance_segment_if_needed();
@@ -52,6 +55,8 @@ private:
     TimePoint state_start_;
     bool mission_started_{false};
     bool home_initialized_{false};
+    bool arm_command_sent_{false};
+    bool disarm_command_sent_{false};
     Pose3 home_pose_;
     std::size_t segment_index_{0U};
     double segment_elapsed_s_{0.0};
