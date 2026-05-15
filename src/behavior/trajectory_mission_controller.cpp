@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cctype>
 #include <fstream>
 #include <sstream>
 #include <stdexcept>
@@ -29,6 +30,58 @@ std::string strip_json_string(std::string value) {
     value.erase(std::remove(value.begin(), value.end(), '"'), value.end());
     value.erase(std::remove(value.begin(), value.end(), '\''), value.end());
     return value;
+}
+
+std::string lower_string(std::string value) {
+    for (char& ch : value) {
+        ch = static_cast<char>(std::tolower(static_cast<unsigned char>(ch)));
+    }
+    return value;
+}
+
+std::size_t find_matching_delim(
+    const std::string& text,
+    std::size_t open_pos,
+    char open_ch,
+    char close_ch) {
+    int depth = 0;
+    bool in_string = false;
+    bool escaped = false;
+    for (std::size_t i = open_pos; i < text.size(); ++i) {
+        const char ch = text[i];
+        if (escaped) {
+            escaped = false;
+            continue;
+        }
+        if (ch == '\\') {
+            escaped = true;
+            continue;
+        }
+        if (ch == '"') {
+            in_string = !in_string;
+            continue;
+        }
+        if (in_string) {
+            continue;
+        }
+        if (ch == open_ch) {
+            ++depth;
+        } else if (ch == close_ch) {
+            --depth;
+            if (depth == 0) {
+                return i;
+            }
+        }
+    }
+    throw std::runtime_error("trajectory JSON has unmatched delimiter");
+}
+
+std::size_t find_matching_brace(const std::string& text, std::size_t open_pos) {
+    return find_matching_delim(text, open_pos, '{', '}');
+}
+
+std::size_t find_matching_bracket(const std::string& text, std::size_t open_pos) {
+    return find_matching_delim(text, open_pos, '[', ']');
 }
 
 std::string find_string_or(const std::string& body, const std::string& key, const std::string& fallback) {
@@ -67,50 +120,53 @@ double find_number_or(const std::string& body, const std::string& key, double fa
     return std::stod(body.substr(value_start, value_end - value_start));
 }
 
-std::size_t find_matching_brace(const std::string& text, std::size_t open_pos) {
-    int depth = 0;
-    bool in_string = false;
-    bool escaped = false;
-    for (std::size_t i = open_pos; i < text.size(); ++i) {
-        const char ch = text[i];
-        if (escaped) {
-            escaped = false;
-            continue;
-        }
-        if (ch == '\\') {
-            escaped = true;
-            continue;
-        }
-        if (ch == '"') {
-            in_string = !in_string;
-            continue;
-        }
-        if (in_string) {
-            continue;
-        }
-        if (ch == '{') {
-            ++depth;
-        } else if (ch == '}') {
-            --depth;
-            if (depth == 0) {
-                return i;
-            }
-        }
+std::vector<TrajectoryKeyframe> parse_keyframes(const std::string& segment_body) {
+    std::vector<TrajectoryKeyframe> keyframes;
+    const auto keyframes_pos = segment_body.find("\"keyframes\"");
+    if (keyframes_pos == std::string::npos) {
+        return keyframes;
     }
-    throw std::runtime_error("trajectory JSON has unmatched object brace");
+    const auto array_open = segment_body.find('[', keyframes_pos);
+    if (array_open == std::string::npos) {
+        throw std::runtime_error("trajectory keyframes field is missing an array");
+    }
+    const auto array_close = find_matching_bracket(segment_body, array_open);
+
+    std::size_t cursor = array_open + 1U;
+    while (cursor < array_close) {
+        const auto object_open = segment_body.find('{', cursor);
+        if (object_open == std::string::npos || object_open > array_close) {
+            break;
+        }
+        const auto object_close = find_matching_brace(segment_body, object_open);
+        const std::string body = segment_body.substr(object_open, object_close - object_open + 1U);
+
+        TrajectoryKeyframe keyframe;
+        keyframe.t_s = find_number_or(body, "t", 0.0);
+        keyframe.vx_mps = find_number_or(body, "vx_mps", 0.0);
+        keyframe.vy_mps = find_number_or(body, "vy_mps", 0.0);
+        keyframe.vz_mps = find_number_or(body, "vz_mps", 0.0);
+        keyframes.push_back(keyframe);
+        cursor = object_close + 1U;
+    }
+
+    std::sort(keyframes.begin(), keyframes.end(), [](const auto& lhs, const auto& rhs) {
+        return lhs.t_s < rhs.t_s;
+    });
+    return keyframes;
 }
 
 std::vector<TrajectorySegment> parse_segments(const std::string& text) {
     std::vector<TrajectorySegment> segments;
     const auto segments_pos = text.find("\"segments\"");
     if (segments_pos == std::string::npos) {
-        return segments;
+        throw std::runtime_error("trajectory JSON missing required 'segments' array");
     }
     const auto array_open = text.find('[', segments_pos);
-    const auto array_close = text.find(']', array_open);
-    if (array_open == std::string::npos || array_close == std::string::npos) {
+    if (array_open == std::string::npos) {
         throw std::runtime_error("trajectory JSON has invalid segments array");
     }
+    const auto array_close = find_matching_bracket(text, array_open);
 
     std::size_t cursor = array_open + 1U;
     while (cursor < array_close) {
@@ -131,18 +187,19 @@ std::vector<TrajectorySegment> parse_segments(const std::string& text) {
         segment.speed_mps = find_number_or(body, "speed_mps", 0.0);
         segment.radius_m = find_number_or(body, "radius_m", 1.0);
         segment.scale_m = find_number_or(body, "scale_m", segment.radius_m);
-        segment.direction = find_string_or(body, "direction", "ccw");
+        segment.direction = lower_string(find_string_or(body, "direction", "ccw"));
+        segment.keyframes = parse_keyframes(body);
 
         if (segment.type == "velocity_keyframes") {
-            segment.duration_s = find_number_or(body, "t", segment.duration_s);
-            const auto last_t_marker = body.rfind("\"t\"");
-            if (last_t_marker != std::string::npos) {
-                const auto tail = body.substr(last_t_marker);
-                segment.duration_s = find_number_or(tail, "t", segment.duration_s);
+            if (segment.keyframes.empty()) {
+                throw std::runtime_error("trajectory velocity_keyframes segment missing keyframes");
             }
+            segment.duration_s = segment.keyframes.back().t_s;
         }
         if (segment.duration_s <= 0.0) {
-            segment.duration_s = 1.0;
+            // Match test-flight behavior: skip empty segments by not adding them.
+            cursor = object_close + 1U;
+            continue;
         }
 
         segments.push_back(segment);
@@ -170,6 +227,37 @@ Vec3 velocity_toward_xy(const Vec3& from, const Vec3& to, double speed_mps) {
         return Vec3{0.0, 0.0, 0.0};
     }
     return Vec3{delta.x / distance * speed_mps, delta.y / distance * speed_mps, 0.0};
+}
+
+double lerp(double a, double b, double u) {
+    return a + (b - a) * u;
+}
+
+Vec3 interpolate_keyframes(const std::vector<TrajectoryKeyframe>& keyframes, double t_s) {
+    if (keyframes.empty()) {
+        return Vec3{0.0, 0.0, 0.0};
+    }
+    if (t_s <= keyframes.front().t_s) {
+        return Vec3{keyframes.front().vx_mps, keyframes.front().vy_mps, keyframes.front().vz_mps};
+    }
+    if (t_s >= keyframes.back().t_s) {
+        return Vec3{keyframes.back().vx_mps, keyframes.back().vy_mps, keyframes.back().vz_mps};
+    }
+
+    for (std::size_t i = 0; i + 1U < keyframes.size(); ++i) {
+        const auto& a = keyframes[i];
+        const auto& b = keyframes[i + 1U];
+        if (a.t_s <= t_s && t_s <= b.t_s) {
+            const double span = std::max(b.t_s - a.t_s, 1e-6);
+            const double u = (t_s - a.t_s) / span;
+            return Vec3{
+                lerp(a.vx_mps, b.vx_mps, u),
+                lerp(a.vy_mps, b.vy_mps, u),
+                lerp(a.vz_mps, b.vz_mps, u)};
+        }
+    }
+
+    return Vec3{keyframes.back().vx_mps, keyframes.back().vy_mps, keyframes.back().vz_mps};
 }
 
 }  // namespace
@@ -233,26 +321,31 @@ VelocityCommand TrajectoryMissionController::trajectory_command(TimePoint timest
     const auto& segment = config_.segments.at(segment_index_);
     Vec3 velocity{segment.vx_mps, segment.vy_mps, segment.vz_mps};
 
-    if (segment.type == "circle_velocity") {
-        const double direction = segment.direction == "cw" ? -1.0 : 1.0;
-        const double speed = segment.speed_mps > 0.0 ? segment.speed_mps : 1.0;
-        const double radius = std::max(segment.radius_m, 1.0);
-        const double omega = direction * speed / radius;
-        const double theta = omega * segment_elapsed_s_;
-        velocity.x = -std::sin(theta) * speed;
-        velocity.y = std::cos(theta) * speed * direction;
+    if (segment.type == "hold") {
+        velocity = Vec3{segment.vx_mps, segment.vy_mps, segment.vz_mps};
+    } else if (segment.type == "velocity_keyframes") {
+        velocity = interpolate_keyframes(segment.keyframes, segment_elapsed_s_);
+    } else if (segment.type == "circle_velocity") {
+        const double speed = segment.speed_mps > 0.0 ? segment.speed_mps : 2.0;
+        const double radius = std::max(segment.radius_m, 1e-6);
+        const double sign = segment.direction == "cw" ? -1.0 : 1.0;
+        const double theta = speed / radius * segment_elapsed_s_;
+        velocity.x = speed * std::cos(theta);
+        velocity.y = sign * speed * std::sin(theta);
         velocity.z = segment.vz_mps;
     } else if (segment.type == "figure8_velocity") {
-        const double speed = segment.speed_mps > 0.0 ? segment.speed_mps : 1.0;
-        const double scale = std::max(segment.scale_m, 1.0);
-        const double theta = speed / scale * segment_elapsed_s_;
-        velocity.x = std::cos(theta) * speed;
-        velocity.y = std::cos(2.0 * theta) * speed * 0.5;
+        const double duration = std::max(segment.duration_s, 1e-6);
+        const double speed = segment.speed_mps > 0.0 ? segment.speed_mps : 2.0;
+        const double scale = std::max(segment.scale_m, 1e-6);
+        const double theta = 2.0 * kPi * segment_elapsed_s_ / duration;
+        const double dx = scale * std::cos(theta);
+        const double dy = scale * std::cos(2.0 * theta);
+        const double norm = std::max(std::hypot(dx, dy), 1e-6);
+        velocity.x = speed * dx / norm;
+        velocity.y = speed * dy / norm;
         velocity.z = segment.vz_mps;
-    } else if (segment.type == "velocity_keyframes") {
-        velocity.x = segment.vx_mps;
-        velocity.y = segment.vy_mps;
-        velocity.z = segment.vz_mps;
+    } else {
+        throw std::runtime_error("unknown trajectory segment type: " + segment.type);
     }
 
     return command_from_velocity(timestamp, velocity);
