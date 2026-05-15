@@ -92,7 +92,7 @@ int main() {
     hold.vx_mps = 0.0;
     hold.vy_mps = 0.0;
     hold.vz_mps = 0.0;
-    config.segments.push_back(hold);
+    config.trajectory = dedalus::VelocityTrajectory{{hold}};
 
     dedalus::TrajectoryMissionController controller{config};
 
@@ -236,11 +236,17 @@ int main() {
     options.values["flight_safe_height_m"] = "2.0";
     options.values["flight_trajectory_path"] = trajectory_path.string();
     auto loaded_config = dedalus::load_trajectory_mission_config(options);
-    if (loaded_config.segments.size() != 1U || loaded_config.segments[0].keyframes.size() != 2U) {
+    if (loaded_config.trajectory.size() != 1U || loaded_config.trajectory.segment(0).keyframes.size() != 2U) {
         std::cerr << "loaded trajectory did not preserve keyframes\n";
         return 1;
     }
-    if (!require_near(loaded_config.segments[0].duration_s, 6.0, 1e-6, "keyframe duration")) {
+    if (!require_near(loaded_config.trajectory.segment(0).duration_s, 6.0, 1e-6, "keyframe duration")) {
+        return 1;
+    }
+    const auto direct_velocity = loaded_config.trajectory.velocity_at(0U, 3.0);
+    if (!require_near(direct_velocity.x, 0.5, 1e-6, "direct interpolated vx") ||
+        !require_near(direct_velocity.y, -1.0, 1e-6, "direct interpolated vy") ||
+        !require_near(direct_velocity.z, 0.25, 1e-6, "direct interpolated vz")) {
         return 1;
     }
 
