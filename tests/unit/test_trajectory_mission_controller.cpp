@@ -57,7 +57,7 @@ int main() {
     dedalus::TrajectoryMissionController controller{config};
 
     auto output = controller.tick(input_at(0.0, 0.0));
-    if (!require_state(output, dedalus::MissionLifecycleState::Prepare, "initial tick")) {
+    if (!require_state(output, dedalus::MissionLifecycleState::Takeoff, "initial tick")) {
         return 1;
     }
 
