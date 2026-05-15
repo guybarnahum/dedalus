@@ -26,6 +26,7 @@ enum class FlightCommandKind {
     Velocity,
     Arm,
     Takeoff,
+    Land,
     Disarm,
 };
 
@@ -37,6 +38,8 @@ inline const char* to_string(FlightCommandKind kind) {
             return "Arm";
         case FlightCommandKind::Takeoff:
             return "Takeoff";
+        case FlightCommandKind::Land:
+            return "Land";
         case FlightCommandKind::Disarm:
             return "Disarm";
         default:
