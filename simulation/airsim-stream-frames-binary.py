@@ -102,6 +102,10 @@ def ego_json_bytes(client: airsim.MultirotorClient, vehicle_name: str, timestamp
     velocity = kin.linear_velocity
     angular_velocity = kin.angular_velocity
 
+    landed_state = int(getattr(state, "landed_state", 0))
+    armed_valid = hasattr(state, "armed")
+    armed = bool(getattr(state, "armed", False)) if armed_valid else False
+
     payload = {
         "timestamp_ns": int(timestamp_ns),
         "position": [float(position.x_val), float(position.y_val), float(position.z_val)],
@@ -112,6 +116,9 @@ def ego_json_bytes(client: airsim.MultirotorClient, vehicle_name: str, timestamp
             float(angular_velocity.y_val),
             float(angular_velocity.z_val),
         ],
+        "landed_state": landed_state,
+        "armed": armed,
+        "armed_valid": armed_valid,
     }
     return json.dumps(payload, separators=(",", ":")).encode("utf-8")
 
@@ -257,12 +264,4 @@ if __name__ == "__main__":
         try:
             sys.stdout.close()
         except BrokenPipeError:
-            pass
-        except OSError:
-            pass
-        try:
-            devnull = os.open(os.devnull, os.O_WRONLY)
-            os.dup2(devnull, sys.stdout.fileno())
-            os.close(devnull)
-        except Exception:
             pass
