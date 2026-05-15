@@ -291,7 +291,11 @@ MissionTickOutput TrajectoryMissionController::tick(const MissionTickInput& inpu
 
     switch (state_) {
         case MissionLifecycleState::Prepare:
-            if (ego.armed_valid && ego.armed) {
+            if (input.finish_requested && ego.armed_valid && !ego.armed) {
+                state_ = MissionLifecycleState::Complete;
+                state_start_ = input.now;
+                output.status = "finish_requested_before_arm";
+            } else if (ego.armed_valid && ego.armed) {
                 state_ = MissionLifecycleState::Takeoff;
                 state_start_ = input.now;
                 output.status = "armed_confirmed_by_ego";
@@ -308,7 +312,11 @@ MissionTickOutput TrajectoryMissionController::tick(const MissionTickInput& inpu
             }
             break;
         case MissionLifecycleState::Takeoff:
-            if (height_m >= config_.safe_height_m) {
+            if (input.finish_requested) {
+                state_ = height_m > kLandHeightM ? MissionLifecycleState::Land : MissionLifecycleState::Complete;
+                state_start_ = input.now;
+                output.status = height_m > kLandHeightM ? "finish_requested_land" : "finish_requested_complete";
+            } else if (height_m >= config_.safe_height_m) {
                 state_ = MissionLifecycleState::ExecuteMission;
                 state_start_ = input.now;
                 segment_index_ = 0U;
@@ -330,15 +338,21 @@ MissionTickOutput TrajectoryMissionController::tick(const MissionTickInput& inpu
             }
             break;
         case MissionLifecycleState::ExecuteMission:
-            segment_elapsed_s_ += dt_s;
-            advance_segment_if_needed();
-            if (trajectory_complete()) {
+            if (input.finish_requested) {
                 state_ = MissionLifecycleState::GoHome;
                 state_start_ = input.now;
-                output.status = "trajectory_complete";
+                output.status = "finish_requested_go_home";
             } else {
-                output.command = trajectory_command(input.now);
-                output.status = "trajectory_execute";
+                segment_elapsed_s_ += dt_s;
+                advance_segment_if_needed();
+                if (trajectory_complete()) {
+                    state_ = MissionLifecycleState::GoHome;
+                    state_start_ = input.now;
+                    output.status = "trajectory_complete";
+                } else {
+                    output.command = trajectory_command(input.now);
+                    output.status = "trajectory_execute";
+                }
             }
             break;
         case MissionLifecycleState::GoHome: {
