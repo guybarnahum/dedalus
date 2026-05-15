@@ -1,5 +1,6 @@
 add_library(dedalus_core
     behavior/mission_runtime.cpp
+    behavior/px4_mavlink_command_sink.cpp
     behavior/trajectory_mission_controller.cpp
     behavior/velocity_trajectory.cpp
     sensors/ego_state_provider.cpp
