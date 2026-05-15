@@ -303,6 +303,19 @@ Nanoseconds parse_json_i64(const std::string& json, const std::string& key) {
     return static_cast<Nanoseconds>(std::stoll(token));
 }
 
+double parse_json_double_or(const std::string& json, const std::string& key, double fallback) {
+    const std::string marker = "\"" + key + "\":";
+    const auto marker_pos = json.find(marker);
+    if (marker_pos == std::string::npos) {
+        return fallback;
+    }
+
+    const auto value_start = marker_pos + marker.size();
+    const auto value_end = json.find_first_of(",}\n\r\t ", value_start);
+    const auto token = json.substr(value_start, value_end == std::string::npos ? std::string::npos : value_end - value_start);
+    return std::stod(token);
+}
+
 std::optional<bool> parse_json_bool_optional(const std::string& json, const std::string& key) {
     const std::string marker = "\"" + key + "\":";
     const auto marker_pos = json.find(marker);
@@ -333,6 +346,12 @@ EgoState parse_ego_json(const std::string& json, const MapFrameId& map_frame_id,
     ego.local_T_body.rotation_rpy = to_vec3(parse_json_number_array(json, "rotation_rpy", 3U));
     ego.velocity_local = to_vec3(parse_json_number_array(json, "velocity", 3U));
     ego.angular_velocity_body = to_vec3(parse_json_number_array(json, "angular_velocity", 3U));
+    ego.height_m = parse_json_double_or(json, "height_m", -ego.local_T_body.position.z);
+    if (const auto height_valid = parse_json_bool_optional(json, "height_valid")) {
+        ego.height_valid = *height_valid;
+    } else {
+        ego.height_valid = true;
+    }
     if (const auto armed = parse_json_bool_optional(json, "armed")) {
         ego.armed = *armed;
         ego.armed_valid = true;
@@ -340,6 +359,9 @@ EgoState parse_ego_json(const std::string& json, const MapFrameId& map_frame_id,
     if (const auto armed_valid = parse_json_bool_optional(json, "armed_valid")) {
         ego.armed_valid = *armed_valid;
     }
+    ego.flight_status = ego.height_valid && ego.height_m > 0.25
+        ? EgoFlightStatus::Airborne
+        : EgoFlightStatus::Landed;
     ego.map_frame_id = map_frame_id;
     return ego;
 }
