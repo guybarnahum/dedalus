@@ -47,6 +47,8 @@ void CoreStackRunner::start_prefetch() {
 }
 
 bool CoreStackRunner::run_once() {
+    const auto run_once_start = SteadyClock::now();
+
     auto start = SteadyClock::now();
     auto frame = prefetched_frame_.get();
     const auto frame_source_wait_duration_us = duration_us(start);
@@ -75,6 +77,7 @@ bool CoreStackRunner::run_once() {
     }
     if (!ego_estimate.ego.has_value()) {
         if (timing_writer_) {
+            timing_writer_->set_measured_total(duration_us(run_once_start));
             timing_writer_->end_frame();
         }
         return false;
@@ -128,6 +131,7 @@ bool CoreStackRunner::run_once() {
     providers_.frame_annotator->annotate(annotation);
     if (timing_writer_) {
         timing_writer_->record_stage("frame_annotator.annotate", duration_us(start));
+        timing_writer_->set_measured_total(duration_us(run_once_start));
         timing_writer_->end_frame();
     }
 
