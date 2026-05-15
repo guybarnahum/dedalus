@@ -14,6 +14,12 @@ constexpr double kPi = 3.14159265358979323846;
 constexpr double kMinArrivedDistanceM = 0.5;
 constexpr double kLandHeightM = 0.25;
 
+bool command_succeeded(
+    const std::optional<FlightCommandResult>& result,
+    FlightCommandKind kind) {
+    return result.has_value() && result->kind == kind && result->success;
+}
+
 std::string read_text_file(const std::string& path) {
     std::ifstream input{path};
     if (!input) {
@@ -285,9 +291,11 @@ MissionTickOutput TrajectoryMissionController::tick(const MissionTickInput& inpu
                 arm_command_sent_ = true;
                 output.command = command_with_kind(input.now, FlightCommandKind::Arm);
                 output.status = "arming";
-            } else {
+            } else if (command_succeeded(input.last_command_result, FlightCommandKind::Arm)) {
                 state_ = MissionLifecycleState::Takeoff;
                 output.status = "armed";
+            } else {
+                output.status = "waiting_for_arm_confirmation";
             }
             break;
         case MissionLifecycleState::Takeoff:
@@ -346,8 +354,10 @@ MissionTickOutput TrajectoryMissionController::tick(const MissionTickInput& inpu
                 disarm_command_sent_ = true;
                 output.command = command_with_kind(input.now, FlightCommandKind::Disarm);
                 output.status = "disarming";
-            } else {
+            } else if (command_succeeded(input.last_command_result, FlightCommandKind::Disarm)) {
                 output.status = "complete";
+            } else {
+                output.status = "waiting_for_disarm_confirmation";
             }
             break;
         case MissionLifecycleState::Abort:
