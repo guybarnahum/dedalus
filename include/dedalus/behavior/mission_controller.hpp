@@ -42,6 +42,29 @@ enum class MissionLifecycleState {
     Abort,
 };
 
+inline const char* to_string(MissionLifecycleState state) {
+    switch (state) {
+        case MissionLifecycleState::Idle:
+            return "Idle";
+        case MissionLifecycleState::Prepare:
+            return "Prepare";
+        case MissionLifecycleState::Takeoff:
+            return "Takeoff";
+        case MissionLifecycleState::ExecuteMission:
+            return "ExecuteMission";
+        case MissionLifecycleState::GoHome:
+            return "GoHome";
+        case MissionLifecycleState::Land:
+            return "Land";
+        case MissionLifecycleState::Complete:
+            return "Complete";
+        case MissionLifecycleState::Abort:
+            return "Abort";
+        default:
+            return "Unknown";
+    }
+}
+
 struct MissionTickInput {
     TimePoint now;
     WorldSnapshot snapshot;
