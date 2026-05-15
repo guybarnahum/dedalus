@@ -57,20 +57,36 @@ int main() {
     auto* fake_transport_ptr = fake_transport.get();
     dedalus::AirSimVelocityCommandSink sink{config, std::move(fake_transport)};
 
+    dedalus::VelocityCommand arm;
+    arm.kind = dedalus::FlightCommandKind::Arm;
+    sink.send(arm);
+
     dedalus::VelocityCommand command;
+    command.kind = dedalus::FlightCommandKind::Velocity;
     command.velocity_local_mps = dedalus::Vec3{3.0, -3.0, 1.5};
     command.yaw_rate_radps = 0.25;
     command.yaw_rate_valid = true;
     sink.send(command);
 
-    if (fake_transport_ptr->commands.size() != 1U) {
-        std::cerr << "AirSimVelocityCommandSink did not send exactly one command\n";
+    dedalus::VelocityCommand disarm;
+    disarm.kind = dedalus::FlightCommandKind::Disarm;
+    sink.send(disarm);
+
+    if (fake_transport_ptr->commands.size() != 3U) {
+        std::cerr << "AirSimVelocityCommandSink did not send exactly three commands\n";
         return 1;
     }
 
-    const auto& rendered = fake_transport_ptr->commands.front();
+    if (!contains(fake_transport_ptr->commands[0], "--command arm")) {
+        std::cerr << "arm command missing --command arm\n";
+        std::cerr << fake_transport_ptr->commands[0] << "\n";
+        return 1;
+    }
+
+    const auto& rendered = fake_transport_ptr->commands[1];
     const std::string required_tokens[] = {
         "python3 simulation/airsim-send-velocity.py",
+        "--command velocity",
         "--host '127.0.0.1'",
         "--rpc-port 41451",
         "--vehicle-name 'PX4'",
@@ -86,6 +102,12 @@ int main() {
             std::cerr << rendered << "\n";
             return 1;
         }
+    }
+
+    if (!contains(fake_transport_ptr->commands[2], "--command disarm")) {
+        std::cerr << "disarm command missing --command disarm\n";
+        std::cerr << fake_transport_ptr->commands[2] << "\n";
+        return 1;
     }
 
     bool threw = false;
