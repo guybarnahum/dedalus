@@ -1,6 +1,7 @@
 add_library(dedalus_core
     behavior/mission_runtime.cpp
     behavior/trajectory_mission_controller.cpp
+    behavior/velocity_trajectory.cpp
     sensors/ego_state_provider.cpp
     sensors/recorded_frame_source.cpp
     sensors/replay_frame_source.cpp
