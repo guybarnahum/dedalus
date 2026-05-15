@@ -23,6 +23,7 @@ import argparse
 import math
 import subprocess
 import sys
+import time
 
 import airsim
 
@@ -40,6 +41,18 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--yaw-rate", type=float, default=0.0)
     parser.add_argument("--no-join", action="store_true", help="Do not block waiting for the async AirSim command to complete.")
     parser.add_argument("--no-enable-api-control", action="store_true", help="Do not call enableApiControl(True) for velocity commands.")
+    parser.add_argument(
+        "--prearm-warmup-count",
+        type=int,
+        default=8,
+        help="Number of zero-velocity AirSim setpoints to send before PX4 shell arm.",
+    )
+    parser.add_argument(
+        "--prearm-warmup-duration",
+        type=float,
+        default=0.25,
+        help="Duration in seconds for each pre-arm zero-velocity warmup setpoint.",
+    )
     parser.add_argument("--px4-tmux-target", default="dedalus-sim:px4")
     return parser.parse_args()
 
@@ -53,6 +66,26 @@ def px4_shell(target: str, command: str) -> None:
     subprocess.run(["tmux", "send-keys", "-t", target, command, "C-m"], check=True)
 
 
+def make_client(args: argparse.Namespace) -> airsim.MultirotorClient:
+    client = airsim.MultirotorClient(ip=args.host, port=args.rpc_port)
+    client.confirmConnection()
+    return client
+
+
+def enable_api_control(client: airsim.MultirotorClient, vehicle_name: str) -> bool:
+    client.enableApiControl(True, vehicle_name=vehicle_name)
+    try:
+        return bool(client.isApiControlEnabled(vehicle_name=vehicle_name))
+    except Exception:  # noqa: BLE001 - older AirSim builds may not expose this reliably.
+        return True
+
+
+def prearm_warmup(client: airsim.MultirotorClient, vehicle_name: str, count: int, duration_s: float) -> None:
+    for _ in range(max(0, count)):
+        client.moveByVelocityAsync(0, 0, 0, duration_s, vehicle_name=vehicle_name).join()
+        time.sleep(0.1)
+
+
 def main() -> int:
     args = parse_args()
     validate_finite("vx", args.vx)
@@ -60,17 +93,36 @@ def main() -> int:
     validate_finite("vz", args.vz)
     validate_finite("duration", args.duration)
     validate_finite("yaw_rate", args.yaw_rate)
+    validate_finite("prearm_warmup_duration", args.prearm_warmup_duration)
     if args.duration <= 0:
         raise ValueError("duration must be positive")
+    if args.prearm_warmup_duration <= 0:
+        raise ValueError("prearm warmup duration must be positive")
 
     if args.command == "arm":
+        client = make_client(args)
+        api_control_enabled = enable_api_control(client, args.vehicle_name)
+        prearm_warmup(
+            client,
+            args.vehicle_name,
+            args.prearm_warmup_count,
+            args.prearm_warmup_duration,
+        )
         px4_shell(args.px4_tmux_target, "commander arm")
-        print(f"OK command=arm dispatch=px4_shell target={args.px4_tmux_target}")
+        print(
+            f"OK command=arm dispatch=px4_shell target={args.px4_tmux_target} "
+            f"api_control={api_control_enabled} warmup_count={args.prearm_warmup_count}"
+        )
         return 0
 
     if args.command == "takeoff":
+        client = make_client(args)
+        api_control_enabled = enable_api_control(client, args.vehicle_name)
         px4_shell(args.px4_tmux_target, "commander takeoff")
-        print(f"OK command=takeoff dispatch=px4_shell target={args.px4_tmux_target}")
+        print(
+            f"OK command=takeoff dispatch=px4_shell target={args.px4_tmux_target} "
+            f"api_control={api_control_enabled}"
+        )
         return 0
 
     if args.command == "disarm":
@@ -78,13 +130,11 @@ def main() -> int:
         print(f"OK command=disarm dispatch=px4_shell target={args.px4_tmux_target}")
         return 0
 
-    client = airsim.MultirotorClient(ip=args.host, port=args.rpc_port)
-    client.confirmConnection()
+    client = make_client(args)
 
     api_control_enabled = False
     if not args.no_enable_api_control:
-        client.enableApiControl(True, vehicle_name=args.vehicle_name)
-        api_control_enabled = True
+        api_control_enabled = enable_api_control(client, args.vehicle_name)
 
     task = client.moveByVelocityAsync(
         args.vx,
