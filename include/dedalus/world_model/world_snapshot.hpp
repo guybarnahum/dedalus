@@ -29,6 +29,25 @@ enum class EgoFlightStatus {
     Airborne,
 };
 
+enum class FlightControlArmState {
+    Unknown,
+    Disarmed,
+    ArmRequested,
+    ArmedConfirmed,
+    DisarmRequested,
+    DisarmedConfirmed,
+    ArmFailed,
+    DisarmFailed,
+};
+
+struct FlightControlState {
+    FlightControlArmState arm_state{FlightControlArmState::Unknown};
+    TimePoint updated_at;
+    TimePoint last_arm_request_at;
+    TimePoint last_disarm_request_at;
+    std::string status;
+};
+
 struct EgoState {
     TimePoint timestamp;
     Pose3 local_T_body;
@@ -147,6 +166,7 @@ struct UncertainRegion {
 struct WorldSnapshot {
     TimePoint timestamp;
     EgoState ego;
+    FlightControlState flight_control;
     MapFrameId active_map_frame_id{"map_unknown"};
     AppearanceCondition appearance_condition;
 
