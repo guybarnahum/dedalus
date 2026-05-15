@@ -1,4 +1,5 @@
 #include <chrono>
+#include <cstdlib>
 #include <exception>
 #include <filesystem>
 #include <fstream>
@@ -122,6 +123,14 @@ bool mission_finished(dedalus::MissionLifecycleState state) {
            state == dedalus::MissionLifecycleState::Abort;
 }
 
+int run_shell_command(const std::string& command) {
+    if (command.empty() || command == "disabled") {
+        return 0;
+    }
+    std::cerr << "dedalus_mission_loop: prepare_session command=" << command << "\n";
+    return std::system(command.c_str());
+}
+
 Args parse_args(int argc, char** argv) {
     Args args;
 
@@ -202,6 +211,12 @@ std::unique_ptr<dedalus::FlightCommandSink> create_flight_command_sink(
         sink_config.endpoints = config.mission_options.get_or(
             "flight_mavlink_command_endpoints",
             sink_config.endpoints);
+        sink_config.px4_tmux_target = config.mission_options.get_or(
+            "flight_px4_tmux_target",
+            sink_config.px4_tmux_target);
+        sink_config.use_px4_shell_lifecycle = config.mission_options.get_or(
+            "flight_use_px4_shell_lifecycle",
+            "true") != "false";
         sink_config.target_system_id = static_cast<std::uint8_t>(std::stoi(
             config.mission_options.get_or("flight_mavlink_target_system_id", "1")));
         sink_config.target_component_id = static_cast<std::uint8_t>(std::stoi(
@@ -243,6 +258,11 @@ int main(int argc, char** argv) {
                   << "\n";
         if (config.frame_source == "airsim") {
             std::cerr << "dedalus_mission_loop: using LIVE AirSim bridge frames; snapshots are debug artifacts, not replay input\n";
+        }
+
+        const auto prepare_command = config.mission_options.get_or("flight_prepare_session_command", "");
+        if (run_shell_command(prepare_command) != 0) {
+            throw std::runtime_error("flight prepare session command failed");
         }
 
         auto latest_snapshot = std::make_shared<dedalus::LatestWorldSnapshot>();
@@ -332,7 +352,6 @@ int main(int argc, char** argv) {
 
         progress.finish(frame_count);
         if (mission_runtime) {
-            // Let the mission loop observe the final published snapshot before shutdown.
             std::this_thread::sleep_for(std::chrono::milliseconds{100});
             mission_runtime->stop();
             std::cout << "Mission ticks: " << mission_runtime->tick_count() << "\n";
