@@ -130,6 +130,19 @@ def prime_mavlink_offboard_velocity(mav, duration_s: float = 2.0, hz: float = 20
         time.sleep(dt)
 
 
+def mavlink_zero_velocity_settle(mav, duration_s: float, hz: float = 10.0) -> int:
+    if duration_s <= 0.0:
+        return 0
+    dt = 1.0 / max(hz, 1.0)
+    end = time.time() + duration_s
+    count = 0
+    while time.time() < end:
+        mavlink_send_velocity_local_ned(mav, 0.0, 0.0, 0.0)
+        count += 1
+        time.sleep(dt)
+    return count
+
+
 def mavlink_set_px4_mode(mav, mode_name: str, timeout_s: float = 3.0) -> bool:
     mapping = mav.mode_mapping()
     if not mapping or mode_name not in mapping:
@@ -199,8 +212,9 @@ def climb_to_safe_height_mavlink(
         mavlink_send_velocity_local_ned(mav, 0.0, 0.0, climb_vz)
         log(
             f"safe_height_progress local_z={pos.z:.2f} "
-            f"height≈{-pos.z:.2f}m remaining={remaining:.2f}m vz={climb_vz:.2f}"
-            , level=3)
+            f"height≈{-pos.z:.2f}m remaining={remaining:.2f}m vz={climb_vz:.2f}",
+            level=3,
+        )
         time.sleep(0.1)
 
     raise RuntimeError(
@@ -223,6 +237,28 @@ class Px4CommandBridge:
                 self.mav = None
         except Exception:
             pass
+        self.offboard_ready = False
+        self.safe_height_reached = False
+
+    def shutdown_cleanup(self) -> dict[str, object]:
+        settle_count = 0
+        had_mavlink = self.mav is not None
+        try:
+            if self.mav is not None:
+                settle_count = mavlink_zero_velocity_settle(
+                    self.mav,
+                    duration_s=self.args.shutdown_zero_s,
+                    hz=self.args.shutdown_zero_hz,
+                )
+        finally:
+            self.close()
+        return {
+            "ok": True,
+            "command": "shutdown",
+            "status": "shutdown_cleanup",
+            "mavlink_active": had_mavlink,
+            "zero_velocity_count": settle_count,
+        }
 
     def ensure_mavlink(self):
         if self.mav is None:
@@ -287,7 +323,7 @@ class Px4CommandBridge:
             px4_shell("commander disarm", self.args.px4_tmux_target)
             return {"ok": True, "command": command, "status": "px4_shell disarm"}
         if command == "shutdown":
-            return {"ok": True, "command": command, "status": "shutdown"}
+            return self.shutdown_cleanup()
         raise ValueError(f"unknown command: {command}")
 
 
@@ -303,6 +339,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--arm-settle-s", type=float, default=2.0)
     parser.add_argument("--takeoff-settle-s", type=float, default=8.0)
     parser.add_argument("--land-settle-s", type=float, default=8.0)
+    parser.add_argument("--shutdown-zero-s", type=float, default=0.5)
+    parser.add_argument("--shutdown-zero-hz", type=float, default=10.0)
     return parser.parse_args()
 
 
