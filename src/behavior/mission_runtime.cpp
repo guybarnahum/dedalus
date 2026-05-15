@@ -53,6 +53,13 @@ void MissionRuntime::stop() {
     }
 }
 
+void MissionRuntime::request_finish() {
+    finish_requested_.store(true);
+    if (config_.debug_logging) {
+        std::cerr << "dedalus_mission: finish requested\n";
+    }
+}
+
 bool MissionRuntime::tick_once() {
     const auto snapshot = snapshots_->latest();
     if (!snapshot.has_value()) {
@@ -66,6 +73,7 @@ bool MissionRuntime::tick_once() {
     input.now = now_timepoint();
     input.snapshot = *snapshot;
     input.last_command_result = last_command_result_;
+    input.finish_requested = finish_requested_.load();
     if (input.snapshot.timestamp.timestamp_ns > 0) {
         input.now = input.snapshot.timestamp;
     }
@@ -81,6 +89,7 @@ bool MissionRuntime::tick_once() {
                   << " status=" << output.status
                   << " ego_height_m=" << input.snapshot.ego.height_m
                   << " flight_control=" << static_cast<int>(input.snapshot.flight_control.arm_state)
+                  << " finish_requested=" << (input.finish_requested ? "true" : "false")
                   << " command=" << (output.command.has_value() ? "yes" : "no");
         if (input.last_command_result.has_value()) {
             std::cerr << " last_result=" << to_string(input.last_command_result->kind)
@@ -132,6 +141,10 @@ bool MissionRuntime::tick_once() {
 
 bool MissionRuntime::running() const {
     return running_.load();
+}
+
+bool MissionRuntime::finish_requested() const {
+    return finish_requested_.load();
 }
 
 std::size_t MissionRuntime::tick_count() const {
