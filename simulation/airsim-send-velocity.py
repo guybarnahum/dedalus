@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Send one explicit flight command to AirSim.
+"""Send one explicit flight command to AirSim/PX4.
 
 This helper keeps the C++ core dependency-light: the C++ AirSimVelocityCommandSink
 shells out to this script instead of linking the AirSim Python/RPC stack.
@@ -8,12 +8,18 @@ Mission lifecycle ownership lives in the mission controller:
 - Prepare emits an explicit arm command.
 - Flight states emit velocity commands.
 - Complete emits an explicit disarm command.
+
+For the PX4-backed Colosseum/AirSim setup, arming/disarming is dispatched through
+the PX4 shell because this AirSim server rejects the Python client's armDisarm
+RPC with a vehicle-name argument. The mission state machine confirms the result
+asynchronously from ego/PX4 telemetry in the world model.
 """
 
 from __future__ import annotations
 
 import argparse
 import math
+import subprocess
 import sys
 
 import airsim
@@ -31,13 +37,18 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--duration", type=float, default=0.1)
     parser.add_argument("--yaw-rate", type=float, default=0.0)
     parser.add_argument("--no-join", action="store_true", help="Do not block waiting for the async AirSim command to complete.")
-    parser.add_argument("--no-enable-api-control", action="store_true", help="Do not call enableApiControl(True) for arm/velocity commands.")
+    parser.add_argument("--no-enable-api-control", action="store_true", help="Do not call enableApiControl(True) for velocity commands.")
+    parser.add_argument("--px4-tmux-target", default="dedalus-sim:px4")
     return parser.parse_args()
 
 
 def validate_finite(name: str, value: float) -> None:
     if not math.isfinite(value):
         raise ValueError(f"{name} must be finite, got {value!r}")
+
+
+def px4_shell(target: str, command: str) -> None:
+    subprocess.run(["tmux", "send-keys", "-t", target, command, "C-m"], check=True)
 
 
 def main() -> int:
@@ -50,23 +61,23 @@ def main() -> int:
     if args.duration <= 0:
         raise ValueError("duration must be positive")
 
+    if args.command == "arm":
+        px4_shell(args.px4_tmux_target, "commander arm")
+        print(f"OK command=arm dispatch=px4_shell target={args.px4_tmux_target}")
+        return 0
+
+    if args.command == "disarm":
+        px4_shell(args.px4_tmux_target, "commander disarm")
+        print(f"OK command=disarm dispatch=px4_shell target={args.px4_tmux_target}")
+        return 0
+
     client = airsim.MultirotorClient(ip=args.host, port=args.rpc_port)
     client.confirmConnection()
 
     api_control_enabled = False
-    if args.command in {"arm", "velocity"} and not args.no_enable_api_control:
+    if not args.no_enable_api_control:
         client.enableApiControl(True, vehicle_name=args.vehicle_name)
         api_control_enabled = True
-
-    if args.command == "arm":
-        armed = bool(client.armDisarm(True, vehicle_name=args.vehicle_name))
-        print(f"OK command=arm vehicle={args.vehicle_name} api_control={api_control_enabled} armed={armed}")
-        return 0
-
-    if args.command == "disarm":
-        disarmed = bool(client.armDisarm(False, vehicle_name=args.vehicle_name))
-        print(f"OK command=disarm vehicle={args.vehicle_name} disarmed={disarmed}")
-        return 0
 
     task = client.moveByVelocityAsync(
         args.vx,
