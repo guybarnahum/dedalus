@@ -1,8 +1,17 @@
+#include <cmath>
 #include <iostream>
 
 #include "dedalus/perception/perception_pipeline.hpp"
 #include "dedalus/sensors/frame_source.hpp"
 #include "dedalus/world_model/in_memory_world_model.hpp"
+
+namespace {
+
+bool near(double lhs, double rhs) {
+    return std::abs(lhs - rhs) < 1.0e-9;
+}
+
+}  // namespace
 
 int main() {
     dedalus::SyntheticFrameSource frame_source;
@@ -46,6 +55,27 @@ int main() {
     world_model.ingest(output);
 
     const auto snapshot = world_model.snapshot();
+    if (snapshot.ego.map_frame_id.value != ego.map_frame_id.value) {
+        std::cerr << "world model ego map frame did not match input ego\n";
+        return 1;
+    }
+    if (!snapshot.ego.height_valid || !near(snapshot.ego.height_m, -ego.local_T_body.position.z)) {
+        std::cerr << "world model did not derive valid ego height from local pose\n";
+        return 1;
+    }
+    if (snapshot.ego.flight_status != dedalus::EgoFlightStatus::Airborne) {
+        std::cerr << "world model did not derive airborne ego status\n";
+        return 1;
+    }
+    if (!snapshot.ego.home_T_body.has_value() || !snapshot.ego.home_timestamp.has_value()) {
+        std::cerr << "world model did not preserve ego home pose/timestamp\n";
+        return 1;
+    }
+    if (snapshot.ego.confidence <= 0.0F) {
+        std::cerr << "world model did not expose ego confidence\n";
+        return 1;
+    }
+
     if (snapshot.agents.size() != 1U) {
         std::cerr << "world model did not emit expected agent\n";
         return 1;
