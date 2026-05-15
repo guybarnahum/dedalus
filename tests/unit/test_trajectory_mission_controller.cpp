@@ -1,4 +1,5 @@
 #include <iostream>
+#include <optional>
 
 #include "dedalus/behavior/trajectory_mission_controller.hpp"
 
@@ -18,11 +19,18 @@ dedalus::WorldSnapshot snapshot_at_height(double height_m) {
     return snapshot;
 }
 
-dedalus::MissionTickInput input_at(double seconds, double height_m) {
+dedalus::MissionTickInput input_at(
+    double seconds,
+    double height_m,
+    std::optional<dedalus::FlightCommandResult> result = std::nullopt) {
     auto snapshot = snapshot_at_height(height_m);
     snapshot.timestamp = dedalus::TimePoint{static_cast<dedalus::Nanoseconds>(seconds * 1'000'000'000.0)};
     snapshot.ego.timestamp = snapshot.timestamp;
-    return dedalus::MissionTickInput{snapshot.timestamp, snapshot};
+    return dedalus::MissionTickInput{snapshot.timestamp, snapshot, std::move(result)};
+}
+
+dedalus::FlightCommandResult ok_result(dedalus::FlightCommandKind kind) {
+    return dedalus::FlightCommandResult{kind, true, "OK test command"};
 }
 
 bool require_state(
@@ -78,11 +86,20 @@ int main() {
     }
 
     output = controller.tick(input_at(0.1, 0.0));
+    if (!require_state(output, dedalus::MissionLifecycleState::Prepare, "waiting without arm confirmation")) {
+        return 1;
+    }
+    if (output.command.has_value()) {
+        std::cerr << "controller should not re-emit arm while waiting for confirmation\n";
+        return 1;
+    }
+
+    output = controller.tick(input_at(0.2, 0.0, ok_result(dedalus::FlightCommandKind::Arm)));
     if (!require_state(output, dedalus::MissionLifecycleState::Takeoff, "armed transition")) {
         return 1;
     }
 
-    output = controller.tick(input_at(0.2, 0.0));
+    output = controller.tick(input_at(0.3, 0.0));
     if (!require_state(output, dedalus::MissionLifecycleState::Takeoff, "takeoff low height") ||
         !require_command_kind(output, dedalus::FlightCommandKind::Velocity, "takeoff low height")) {
         return 1;
@@ -92,28 +109,28 @@ int main() {
         return 1;
     }
 
-    output = controller.tick(input_at(0.3, 2.1));
+    output = controller.tick(input_at(0.4, 2.1));
     if (!require_state(output, dedalus::MissionLifecycleState::ExecuteMission, "safe height reached")) {
         return 1;
     }
 
-    output = controller.tick(input_at(0.4, 2.1));
+    output = controller.tick(input_at(0.5, 2.1));
     if (!require_state(output, dedalus::MissionLifecycleState::ExecuteMission, "execute trajectory") ||
         !require_command_kind(output, dedalus::FlightCommandKind::Velocity, "execute trajectory")) {
         return 1;
     }
 
-    output = controller.tick(input_at(1.6, 2.1));
+    output = controller.tick(input_at(1.7, 2.1));
     if (!require_state(output, dedalus::MissionLifecycleState::GoHome, "trajectory complete")) {
         return 1;
     }
 
-    output = controller.tick(input_at(1.7, 2.1));
+    output = controller.tick(input_at(1.8, 2.1));
     if (!require_state(output, dedalus::MissionLifecycleState::Land, "home reached")) {
         return 1;
     }
 
-    output = controller.tick(input_at(1.8, 2.1));
+    output = controller.tick(input_at(1.9, 2.1));
     if (!require_state(output, dedalus::MissionLifecycleState::Land, "landing") ||
         !require_command_kind(output, dedalus::FlightCommandKind::Velocity, "landing")) {
         return 1;
@@ -123,14 +140,32 @@ int main() {
         return 1;
     }
 
-    output = controller.tick(input_at(1.9, 0.0));
+    output = controller.tick(input_at(2.0, 0.0));
     if (!require_state(output, dedalus::MissionLifecycleState::Complete, "landed")) {
         return 1;
     }
 
-    output = controller.tick(input_at(2.0, 0.0));
+    output = controller.tick(input_at(2.1, 0.0));
     if (!require_state(output, dedalus::MissionLifecycleState::Complete, "disarm after landed") ||
         !require_command_kind(output, dedalus::FlightCommandKind::Disarm, "disarm after landed")) {
+        return 1;
+    }
+
+    output = controller.tick(input_at(2.2, 0.0));
+    if (!require_state(output, dedalus::MissionLifecycleState::Complete, "waiting without disarm confirmation")) {
+        return 1;
+    }
+    if (output.command.has_value()) {
+        std::cerr << "controller should not re-emit disarm while waiting for confirmation\n";
+        return 1;
+    }
+
+    output = controller.tick(input_at(2.3, 0.0, ok_result(dedalus::FlightCommandKind::Disarm)));
+    if (!require_state(output, dedalus::MissionLifecycleState::Complete, "disarm confirmed complete")) {
+        return 1;
+    }
+    if (output.status != "complete") {
+        std::cerr << "controller should report complete after disarm confirmation\n";
         return 1;
     }
 
