@@ -34,6 +34,10 @@ def log(message: str) -> None:
     print(f"px4-command-bridge: {message}", file=sys.stderr, flush=True)
 
 
+def emit(response: dict[str, object]) -> None:
+    print(json.dumps(response, separators=(",", ":")), flush=True)
+
+
 def parse_endpoint_csv(raw: str) -> list[str]:
     return [item.strip() for item in raw.split(",") if item.strip()]
 
@@ -302,7 +306,7 @@ def main() -> int:
     args = parse_args()
     bridge = Px4CommandBridge(args)
     try:
-        print(json.dumps({"ok": True, "command": "ready", "status": "bridge ready"}), flush=True)
+        emit({"ok": True, "command": "ready", "status": "bridge ready"})
         for line in sys.stdin:
             line = line.strip()
             if not line:
@@ -312,7 +316,7 @@ def main() -> int:
                 response = bridge.handle(request)
             except Exception as exc:  # noqa: BLE001 - protocol should report errors as JSON.
                 response = {"ok": False, "command": "error", "error": str(exc)}
-            print(json.dumps(response, separators=(",", ":")), flush=True)
+            emit(response)
             if response.get("command") == "shutdown":
                 break
         return 0
@@ -324,6 +328,6 @@ if __name__ == "__main__":
     try:
         raise SystemExit(main())
     except Exception as exc:  # noqa: BLE001 - startup errors before protocol is ready.
-        print(json.dumps({"ok": False, "command": "startup", "error": str(exc)}), flush=True)
+        emit({"ok": False, "command": "startup", "error": str(exc)})
         log(f"startup failed: {exc}")
         raise SystemExit(1)
