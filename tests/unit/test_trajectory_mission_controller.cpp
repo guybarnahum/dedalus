@@ -21,11 +21,16 @@ dedalus::WorldSnapshot snapshot_at_height(double height_m, bool armed, bool arme
     return snapshot;
 }
 
-dedalus::MissionTickInput input_at(double seconds, double height_m, bool armed, bool armed_valid = true) {
+dedalus::MissionTickInput input_at(
+    double seconds,
+    double height_m,
+    bool armed,
+    bool armed_valid = true,
+    bool finish_requested = false) {
     auto snapshot = snapshot_at_height(height_m, armed, armed_valid);
     snapshot.timestamp = dedalus::TimePoint{static_cast<dedalus::Nanoseconds>(seconds * 1'000'000'000.0)};
     snapshot.ego.timestamp = snapshot.timestamp;
-    return dedalus::MissionTickInput{snapshot.timestamp, snapshot, std::nullopt};
+    return dedalus::MissionTickInput{snapshot.timestamp, snapshot, std::nullopt, finish_requested};
 }
 
 bool require_state(
@@ -193,6 +198,47 @@ int main() {
     }
     if (output.status != "complete") {
         std::cerr << "controller should report complete after disarmed telemetry\n";
+        return 1;
+    }
+
+    dedalus::TrajectoryMissionController finish_controller{config};
+    output = finish_controller.tick(input_at(0.0, 0.0, false));
+    if (!require_state(output, dedalus::MissionLifecycleState::Prepare, "finish initial arm") ||
+        !require_command_kind(output, dedalus::FlightCommandKind::Arm, "finish initial arm")) {
+        return 1;
+    }
+    output = finish_controller.tick(input_at(0.1, 0.0, true));
+    if (!require_state(output, dedalus::MissionLifecycleState::Takeoff, "finish armed transition")) {
+        return 1;
+    }
+    output = finish_controller.tick(input_at(0.2, 2.1, true));
+    if (!require_state(output, dedalus::MissionLifecycleState::ExecuteMission, "finish safe height")) {
+        return 1;
+    }
+    output = finish_controller.tick(input_at(0.3, 2.1, true, true, true));
+    if (!require_state(output, dedalus::MissionLifecycleState::GoHome, "finish requested go home")) {
+        return 1;
+    }
+    output = finish_controller.tick(input_at(0.4, 2.1, true, true, true));
+    if (!require_state(output, dedalus::MissionLifecycleState::Land, "finish requested home reached")) {
+        return 1;
+    }
+    output = finish_controller.tick(input_at(0.5, 2.1, true, true, true));
+    if (!require_state(output, dedalus::MissionLifecycleState::Land, "finish requested landing") ||
+        !require_command_kind(output, dedalus::FlightCommandKind::Velocity, "finish requested landing")) {
+        return 1;
+    }
+    output = finish_controller.tick(input_at(0.6, 0.0, true, true, true));
+    if (!require_state(output, dedalus::MissionLifecycleState::Complete, "finish requested landed")) {
+        return 1;
+    }
+    output = finish_controller.tick(input_at(0.7, 0.0, true, true, true));
+    if (!require_state(output, dedalus::MissionLifecycleState::Complete, "finish requested disarm") ||
+        !require_command_kind(output, dedalus::FlightCommandKind::Disarm, "finish requested disarm")) {
+        return 1;
+    }
+    output = finish_controller.tick(input_at(0.8, 0.0, false, true, true));
+    if (!require_state(output, dedalus::MissionLifecycleState::Complete, "finish requested complete")) {
         return 1;
     }
 
