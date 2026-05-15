@@ -152,6 +152,20 @@ target_link_libraries(test_airsim_velocity_command_sink
 target_compile_features(test_airsim_velocity_command_sink PRIVATE cxx_std_20)
 
 add_test(NAME airsim_velocity_command_sink COMMAND test_airsim_velocity_command_sink)
+
+add_executable(test_mission_runtime
+    unit/test_mission_runtime.cpp
+)
+
+target_link_libraries(test_mission_runtime
+    PRIVATE
+        dedalus_core
+)
+
+target_compile_features(test_mission_runtime PRIVATE cxx_std_20)
+
+add_test(NAME mission_runtime COMMAND test_mission_runtime)
+
 find_package(Python3 COMPONENTS Interpreter)
 if(Python3_Interpreter_FOUND)
     add_test(
