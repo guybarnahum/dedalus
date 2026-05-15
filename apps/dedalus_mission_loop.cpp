@@ -204,6 +204,16 @@ std::unique_ptr<dedalus::FlightCommandSink> create_flight_command_sink(
         sink_config.debug_logging = true;
         return std::make_unique<dedalus::AirSimVelocityCommandSink>(sink_config);
     }
+    if (config.flight_command_sink == "px4_bridge") {
+        dedalus::Px4BridgeCommandSinkConfig sink_config;
+        sink_config.command_duration_s = 1.0 / config.mission_tick_hz;
+        sink_config.max_velocity_mps = std::stod(config.mission_options.get_or("flight_max_velocity_mps", "5.0"));
+        sink_config.bridge_command = config.mission_options.get_or(
+            "flight_px4_command_bridge",
+            sink_config.bridge_command);
+        sink_config.debug_logging = true;
+        return std::make_unique<dedalus::Px4BridgeCommandSink>(sink_config);
+    }
     if (config.flight_command_sink == "px4_mavlink") {
         dedalus::Px4MavlinkCommandSinkConfig sink_config;
         sink_config.command_duration_s = 1.0 / config.mission_tick_hz;
