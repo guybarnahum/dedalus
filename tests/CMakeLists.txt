@@ -127,6 +127,19 @@ target_compile_features(test_pipeline_profiler PRIVATE cxx_std_20)
 
 add_test(NAME pipeline_profiler COMMAND test_pipeline_profiler)
 
+add_executable(test_trajectory_mission_controller
+    unit/test_trajectory_mission_controller.cpp
+)
+
+target_link_libraries(test_trajectory_mission_controller
+    PRIVATE
+        dedalus_core
+)
+
+target_compile_features(test_trajectory_mission_controller PRIVATE cxx_std_20)
+
+add_test(NAME trajectory_mission_controller COMMAND test_trajectory_mission_controller)
+
 add_executable(test_airsim_velocity_command_sink
     unit/test_airsim_velocity_command_sink.cpp
 )
@@ -139,7 +152,6 @@ target_link_libraries(test_airsim_velocity_command_sink
 target_compile_features(test_airsim_velocity_command_sink PRIVATE cxx_std_20)
 
 add_test(NAME airsim_velocity_command_sink COMMAND test_airsim_velocity_command_sink)
-
 find_package(Python3 COMPONENTS Interpreter)
 if(Python3_Interpreter_FOUND)
     add_test(

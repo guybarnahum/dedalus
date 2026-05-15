@@ -1,0 +1,61 @@
+#pragma once
+
+#include <cstddef>
+#include <string>
+#include <vector>
+
+#include "dedalus/behavior/mission_controller.hpp"
+
+namespace dedalus {
+
+struct TrajectorySegment {
+    std::string type{"hold"};
+    std::string label;
+    double duration_s{0.0};
+    double vx_mps{0.0};
+    double vy_mps{0.0};
+    double vz_mps{0.0};
+    double speed_mps{0.0};
+    double radius_m{1.0};
+    double scale_m{1.0};
+    std::string direction{"ccw"};
+};
+
+struct TrajectoryMissionConfig {
+    double safe_height_m{8.0};
+    double takeoff_velocity_mps{1.0};
+    double go_home_velocity_mps{1.0};
+    double land_velocity_mps{0.5};
+    std::string home_policy{"initial_ego_pose"};
+    std::vector<TrajectorySegment> segments;
+};
+
+TrajectoryMissionConfig load_trajectory_mission_config(const MissionOptions& options);
+
+class TrajectoryMissionController final : public MissionController {
+public:
+    explicit TrajectoryMissionController(TrajectoryMissionConfig config);
+
+    MissionTickOutput tick(const MissionTickInput& input) override;
+
+private:
+    [[nodiscard]] VelocityCommand command_from_velocity(
+        TimePoint timestamp,
+        Vec3 velocity_local_mps) const;
+    [[nodiscard]] VelocityCommand trajectory_command(TimePoint timestamp) const;
+    [[nodiscard]] bool trajectory_complete() const;
+    void advance_segment_if_needed();
+
+    TrajectoryMissionConfig config_;
+    MissionLifecycleState state_{MissionLifecycleState::Idle};
+    TimePoint mission_start_;
+    TimePoint state_start_;
+    bool mission_started_{false};
+    bool home_initialized_{false};
+    Pose3 home_pose_;
+    std::size_t segment_index_{0U};
+    double segment_elapsed_s_{0.0};
+    TimePoint last_tick_time_;
+};
+
+}  // namespace dedalus

@@ -1,10 +1,35 @@
 #include "dedalus/world_model/in_memory_world_model.hpp"
 
+#include <cmath>
+
 namespace dedalus {
+namespace {
+
+EgoState mission_ready_ego(EgoState ego) {
+    if (!ego.height_valid) {
+        ego.height_m = -ego.local_T_body.position.z;
+        ego.height_valid = true;
+    }
+    if (ego.confidence <= 0.0F) {
+        ego.confidence = 0.85F;
+    }
+    if (ego.flight_status == EgoFlightStatus::Unknown && ego.height_valid) {
+        ego.flight_status = ego.height_m > 0.25 ? EgoFlightStatus::Airborne : EgoFlightStatus::Landed;
+    }
+    return ego;
+}
+
+}  // namespace
 
 InMemoryWorldModel::InMemoryWorldModel(MapFrameId map_frame_id) {
     snapshot_.timestamp = TimePoint{0};
     snapshot_.active_map_frame_id = map_frame_id;
+    snapshot_.ego.map_frame_id = map_frame_id;
+    snapshot_.ego.home_T_body = snapshot_.ego.local_T_body;
+    snapshot_.ego.home_timestamp = snapshot_.timestamp;
+    snapshot_.ego.height_m = 0.0;
+    snapshot_.ego.height_valid = true;
+    snapshot_.ego.flight_status = EgoFlightStatus::Landed;
 
     MapFrame frame;
     frame.map_frame_id = map_frame_id;
@@ -17,12 +42,24 @@ InMemoryWorldModel::InMemoryWorldModel(MapFrameId map_frame_id) {
 
 void InMemoryWorldModel::update_ego(const EgoState& ego) {
     snapshot_.timestamp = ego.timestamp;
-    snapshot_.ego = ego;
-    snapshot_.active_map_frame_id = ego.map_frame_id;
+
+    auto updated_ego = mission_ready_ego(ego);
+    if (!updated_ego.home_T_body.has_value()) {
+        if (snapshot_.ego.home_T_body.has_value()) {
+            updated_ego.home_T_body = snapshot_.ego.home_T_body;
+            updated_ego.home_timestamp = snapshot_.ego.home_timestamp;
+        } else {
+            updated_ego.home_T_body = updated_ego.local_T_body;
+            updated_ego.home_timestamp = updated_ego.timestamp;
+        }
+    }
+
+    snapshot_.ego = updated_ego;
+    snapshot_.active_map_frame_id = updated_ego.map_frame_id;
 
     if (!snapshot_.map_frames.empty()) {
-        snapshot_.map_frames.front().map_frame_id = ego.map_frame_id;
-        snapshot_.map_frames.front().last_used = ego.timestamp;
+        snapshot_.map_frames.front().map_frame_id = updated_ego.map_frame_id;
+        snapshot_.map_frames.front().last_used = updated_ego.timestamp;
     }
 }
 

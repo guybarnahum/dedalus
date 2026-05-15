@@ -23,6 +23,12 @@ struct AppearanceCondition {
     float confidence{0.0F};
 };
 
+enum class EgoFlightStatus {
+    Unknown,
+    Landed,
+    Airborne,
+};
+
 struct EgoState {
     TimePoint timestamp;
     Pose3 local_T_body;
@@ -30,6 +36,16 @@ struct EgoState {
     Vec3 angular_velocity_body;
     Covariance6 covariance{};
     MapFrameId map_frame_id{"map_unknown"};
+
+    double height_m{0.0};
+    bool height_valid{false};
+    bool armed{false};
+    bool armed_valid{false};
+    EgoFlightStatus flight_status{EgoFlightStatus::Unknown};
+    float confidence{0.0F};
+
+    std::optional<Pose3> home_T_body;
+    std::optional<TimePoint> home_timestamp;
 };
 
 struct AgentState {
