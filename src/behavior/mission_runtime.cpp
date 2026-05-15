@@ -37,7 +37,7 @@ void MissionRuntime::start() {
     if (!running_.compare_exchange_strong(expected, true)) {
         return;
     }
-    if (config_.debug_logging) {
+    if (config_.verbosity >= 1) {
         std::cerr << "dedalus_mission: starting async loop @ " << config_.tick_hz << " Hz\n";
     }
     thread_ = std::thread([this]() { loop(); });
@@ -48,14 +48,14 @@ void MissionRuntime::stop() {
     if (thread_.joinable()) {
         thread_.join();
     }
-    if (config_.debug_logging) {
+    if (config_.verbosity >= 1) {
         std::cerr << "dedalus_mission: stopped after " << tick_count_ << " tick(s)\n";
     }
 }
 
 void MissionRuntime::request_finish() {
     finish_requested_.store(true);
-    if (config_.debug_logging) {
+    if (config_.verbosity >= 1) {
         std::cerr << "dedalus_mission: finish requested\n";
     }
 }
@@ -63,7 +63,7 @@ void MissionRuntime::request_finish() {
 bool MissionRuntime::tick_once() {
     const auto snapshot = snapshots_->latest();
     if (!snapshot.has_value()) {
-        if (config_.debug_logging && tick_count_ == 0U) {
+        if (config_.verbosity >= 3 && tick_count_ == 0U) {
             std::cerr << "dedalus_mission: waiting for first WorldSnapshot\n";
         }
         return false;
@@ -83,15 +83,19 @@ bool MissionRuntime::tick_once() {
     last_state_ = output.state;
     ++tick_count_;
 
-    if (config_.debug_logging && (previous_state != output.state || tick_count_ <= 3U || output.command.has_value())) {
+    const bool state_changed = previous_state != output.state;
+    const bool detailed_tick = config_.verbosity >= 3 && (tick_count_ <= 3U || output.command.has_value());
+    if (state_changed || detailed_tick) {
         std::cerr << "dedalus_mission: tick=" << tick_count_
                   << " state=" << to_string(output.state)
                   << " status=" << output.status
                   << " ego_height_m=" << input.snapshot.ego.height_m
-                  << " flight_control=" << static_cast<int>(input.snapshot.flight_control.arm_state)
                   << " finish_requested=" << (input.finish_requested ? "true" : "false")
                   << " command=" << (output.command.has_value() ? "yes" : "no");
-        if (input.last_command_result.has_value()) {
+        if (config_.verbosity >= 2) {
+            std::cerr << " flight_control=" << static_cast<int>(input.snapshot.flight_control.arm_state);
+        }
+        if (config_.verbosity >= 3 && input.last_command_result.has_value()) {
             std::cerr << " last_result=" << to_string(input.last_command_result->kind)
                       << ":" << (input.last_command_result->success ? "ok" : "failed");
         }
@@ -99,7 +103,7 @@ bool MissionRuntime::tick_once() {
     }
 
     if (output.command.has_value()) {
-        if (config_.debug_logging) {
+        if (config_.verbosity >= 2) {
             const auto& v = output.command->velocity_local_mps;
             std::cerr << "dedalus_mission: send_command kind=" << to_string(output.command->kind)
                       << " vx=" << v.x
@@ -124,12 +128,10 @@ bool MissionRuntime::tick_once() {
         } catch (const std::exception& ex) {
             last_command_result_ = FlightCommandResult{output.command->kind, false, ex.what()};
             snapshots_->mark_command_failed(output.command->kind, input.now, ex.what());
-            if (config_.debug_logging) {
-                std::cerr << "dedalus_mission: command_exception kind=" << to_string(output.command->kind)
-                          << " status=" << ex.what() << "\n";
-            }
+            std::cerr << "dedalus_mission: command_exception kind=" << to_string(output.command->kind)
+                      << " status=" << ex.what() << "\n";
         }
-        if (config_.debug_logging) {
+        if (config_.verbosity >= 2) {
             std::cerr << "dedalus_mission: command_result kind=" << to_string(last_command_result_->kind)
                       << " success=" << (last_command_result_->success ? "true" : "false")
                       << " status=" << last_command_result_->status;
