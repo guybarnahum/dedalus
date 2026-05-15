@@ -36,6 +36,21 @@ bool require_state(
     return true;
 }
 
+bool require_command_kind(
+    const dedalus::MissionTickOutput& output,
+    dedalus::FlightCommandKind expected,
+    const char* label) {
+    if (!output.command.has_value()) {
+        std::cerr << "missing command for " << label << "\n";
+        return false;
+    }
+    if (output.command->kind != expected) {
+        std::cerr << "unexpected command kind for " << label << "\n";
+        return false;
+    }
+    return true;
+}
+
 }  // namespace
 
 int main() {
@@ -57,14 +72,19 @@ int main() {
     dedalus::TrajectoryMissionController controller{config};
 
     auto output = controller.tick(input_at(0.0, 0.0));
-    if (!require_state(output, dedalus::MissionLifecycleState::Takeoff, "initial tick")) {
+    if (!require_state(output, dedalus::MissionLifecycleState::Prepare, "initial arm tick") ||
+        !require_command_kind(output, dedalus::FlightCommandKind::Arm, "initial arm tick")) {
         return 1;
     }
 
     output = controller.tick(input_at(0.1, 0.0));
+    if (!require_state(output, dedalus::MissionLifecycleState::Takeoff, "armed transition")) {
+        return 1;
+    }
+
+    output = controller.tick(input_at(0.2, 0.0));
     if (!require_state(output, dedalus::MissionLifecycleState::Takeoff, "takeoff low height") ||
-        !output.command.has_value()) {
-        std::cerr << "takeoff did not emit climb command\n";
+        !require_command_kind(output, dedalus::FlightCommandKind::Velocity, "takeoff low height")) {
         return 1;
     }
     if (output.command->velocity_local_mps.z >= 0.0) {
@@ -72,32 +92,30 @@ int main() {
         return 1;
     }
 
-    output = controller.tick(input_at(0.2, 2.1));
+    output = controller.tick(input_at(0.3, 2.1));
     if (!require_state(output, dedalus::MissionLifecycleState::ExecuteMission, "safe height reached")) {
         return 1;
     }
 
-    output = controller.tick(input_at(0.3, 2.1));
+    output = controller.tick(input_at(0.4, 2.1));
     if (!require_state(output, dedalus::MissionLifecycleState::ExecuteMission, "execute trajectory") ||
-        !output.command.has_value()) {
-        std::cerr << "execute mission did not emit trajectory command\n";
-        return 1;
-    }
-
-    output = controller.tick(input_at(1.5, 2.1));
-    if (!require_state(output, dedalus::MissionLifecycleState::GoHome, "trajectory complete")) {
+        !require_command_kind(output, dedalus::FlightCommandKind::Velocity, "execute trajectory")) {
         return 1;
     }
 
     output = controller.tick(input_at(1.6, 2.1));
-    if (!require_state(output, dedalus::MissionLifecycleState::Land, "home reached")) {
+    if (!require_state(output, dedalus::MissionLifecycleState::GoHome, "trajectory complete")) {
         return 1;
     }
 
     output = controller.tick(input_at(1.7, 2.1));
+    if (!require_state(output, dedalus::MissionLifecycleState::Land, "home reached")) {
+        return 1;
+    }
+
+    output = controller.tick(input_at(1.8, 2.1));
     if (!require_state(output, dedalus::MissionLifecycleState::Land, "landing") ||
-        !output.command.has_value()) {
-        std::cerr << "land state did not emit descent command\n";
+        !require_command_kind(output, dedalus::FlightCommandKind::Velocity, "landing")) {
         return 1;
     }
     if (output.command->velocity_local_mps.z <= 0.0) {
@@ -105,8 +123,14 @@ int main() {
         return 1;
     }
 
-    output = controller.tick(input_at(1.8, 0.0));
+    output = controller.tick(input_at(1.9, 0.0));
     if (!require_state(output, dedalus::MissionLifecycleState::Complete, "landed")) {
+        return 1;
+    }
+
+    output = controller.tick(input_at(2.0, 0.0));
+    if (!require_state(output, dedalus::MissionLifecycleState::Complete, "disarm after landed") ||
+        !require_command_kind(output, dedalus::FlightCommandKind::Disarm, "disarm after landed")) {
         return 1;
     }
 
