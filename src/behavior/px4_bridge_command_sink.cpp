@@ -18,47 +18,6 @@
 namespace dedalus {
 namespace {
 
-std::string json_escape(const std::string& value) {
-    std::string out;
-    out.reserve(value.size());
-    for (const char ch : value) {
-        switch (ch) {
-            case '\\':
-                out += "\\\\";
-                break;
-            case '"':
-                out += "\\\"";
-                break;
-            case '\n':
-                out += "\\n";
-                break;
-            case '\r':
-                out += "\\r";
-                break;
-            case '\t':
-                out += "\\t";
-                break;
-            default:
-                out.push_back(ch);
-                break;
-        }
-    }
-    return out;
-}
-
-std::string shell_quote(const std::string& value) {
-    std::string quoted = "'";
-    for (const char ch : value) {
-        if (ch == '\'') {
-            quoted += "'\\''";
-        } else {
-            quoted += ch;
-        }
-    }
-    quoted += "'";
-    return quoted;
-}
-
 bool json_bool_value(const std::string& json, const std::string& key) {
     const std::string marker = "\"" + key + "\":";
     const auto pos = json.find(marker);
