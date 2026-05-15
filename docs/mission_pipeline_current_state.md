@@ -121,6 +121,54 @@ Complete:
   request Disarm until telemetry confirms disarmed or timeout
 ```
 
+## Shutdown and repeatable runs
+
+The Python PX4 bridge handles a JSONL `shutdown` command from the C++ sink. On shutdown, if MAVLink was active, the bridge sends a short zero-velocity settle stream, closes the MAVLink socket, and resets its internal OFFBOARD/safe-height state before process exit.
+
+This is intended to make back-to-back mission-loop runs more reliable without restarting AirSim.
+
+Repeatability validation procedure:
+
+```bash
+# Start AirSim once.
+cd ~/dedalus/simulation
+./stop.sh
+./run.sh AirSimNH --airsim-camera-width 640 --airsim-camera-height 360
+
+# Terminal 2: run mission once.
+cd ~/dedalus
+source venv/bin/activate
+./build-staging/apps/dedalus_mission_loop \
+  --config config/core_stack_trajectory_mission_placeholder.yaml \
+  --output-dir out/airsim_mission_snapshots_run1 \
+  --max-frames 900 \
+  --shutdown-max-frames 400 \
+  --progress 2>&1 | tee out/airsim_mission_debug_run1.log
+
+# Without restarting AirSim, run again.
+./build-staging/apps/dedalus_mission_loop \
+  --config config/core_stack_trajectory_mission_placeholder.yaml \
+  --output-dir out/airsim_mission_snapshots_run2 \
+  --max-frames 900 \
+  --shutdown-max-frames 400 \
+  --progress 2>&1 | tee out/airsim_mission_debug_run2.log
+```
+
+Expected result for both runs:
+
+```text
+Mission summary:
+  final_state: Complete
+  failures: 0
+```
+
+If the second run fails, compare:
+
+```bash
+tail -n 80 out/airsim_mission_snapshots_run1/mission_events.jsonl
+tail -n 80 out/airsim_mission_snapshots_run2/mission_events.jsonl
+```
+
 ## Main files
 
 ```text
@@ -303,8 +351,9 @@ tail -n 40 out/airsim_mission_snapshots/mission_events.jsonl
 ## Recommended next improvements
 
 ```text
-1. Validate repeatable runs without restarting AirSim.
-2. Add a tiny mission-events inspection helper if manual tail/grep becomes repetitive.
-3. Factor common Python control helpers only after repeated-run stability is proven.
-4. Consider native C++ migration for AirSim frame/ego/session helpers, not PX4/MAVLink control first.
+1. Validate repeatable runs without restarting AirSim and record run1/run2 outcomes.
+2. If repeatability still fails, make the C++ sink wait synchronously for the Python bridge shutdown response before closing pipes.
+3. Add a tiny mission-events inspection helper if manual tail/grep becomes repetitive.
+4. Factor common Python control helpers only after repeated-run stability is proven.
+5. Consider native C++ migration for AirSim frame/ego/session helpers, not PX4/MAVLink control first.
 ```
