@@ -303,6 +303,22 @@ Nanoseconds parse_json_i64(const std::string& json, const std::string& key) {
     return static_cast<Nanoseconds>(std::stoll(token));
 }
 
+std::optional<bool> parse_json_bool_optional(const std::string& json, const std::string& key) {
+    const std::string marker = "\"" + key + "\":";
+    const auto marker_pos = json.find(marker);
+    if (marker_pos == std::string::npos) {
+        return std::nullopt;
+    }
+    const auto value_start = marker_pos + marker.size();
+    if (json.compare(value_start, 4U, "true") == 0) {
+        return true;
+    }
+    if (json.compare(value_start, 5U, "false") == 0) {
+        return false;
+    }
+    return std::nullopt;
+}
+
 Vec3 to_vec3(const std::vector<double>& values) {
     return Vec3{values.at(0), values.at(1), values.at(2)};
 }
@@ -317,6 +333,13 @@ EgoState parse_ego_json(const std::string& json, const MapFrameId& map_frame_id,
     ego.local_T_body.rotation_rpy = to_vec3(parse_json_number_array(json, "rotation_rpy", 3U));
     ego.velocity_local = to_vec3(parse_json_number_array(json, "velocity", 3U));
     ego.angular_velocity_body = to_vec3(parse_json_number_array(json, "angular_velocity", 3U));
+    if (const auto armed = parse_json_bool_optional(json, "armed")) {
+        ego.armed = *armed;
+        ego.armed_valid = true;
+    }
+    if (const auto armed_valid = parse_json_bool_optional(json, "armed_valid")) {
+        ego.armed_valid = *armed_valid;
+    }
     ego.map_frame_id = map_frame_id;
     return ego;
 }
