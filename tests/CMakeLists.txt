@@ -166,6 +166,19 @@ target_compile_features(test_mission_runtime PRIVATE cxx_std_20)
 
 add_test(NAME mission_runtime COMMAND test_mission_runtime)
 
+add_executable(test_latest_world_snapshot
+    unit/test_latest_world_snapshot.cpp
+)
+
+target_link_libraries(test_latest_world_snapshot
+    PRIVATE
+        dedalus_core
+)
+
+target_compile_features(test_latest_world_snapshot PRIVATE cxx_std_20)
+
+add_test(NAME latest_world_snapshot COMMAND test_latest_world_snapshot)
+
 find_package(Python3 COMPONENTS Interpreter)
 if(Python3_Interpreter_FOUND)
     add_test(
