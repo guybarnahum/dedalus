@@ -153,6 +153,19 @@ target_compile_features(test_airsim_velocity_command_sink PRIVATE cxx_std_20)
 
 add_test(NAME airsim_velocity_command_sink COMMAND test_airsim_velocity_command_sink)
 
+add_executable(test_px4_mavlink_command_sink
+    unit/test_px4_mavlink_command_sink.cpp
+)
+
+target_link_libraries(test_px4_mavlink_command_sink
+    PRIVATE
+        dedalus_core
+)
+
+target_compile_features(test_px4_mavlink_command_sink PRIVATE cxx_std_20)
+
+add_test(NAME px4_mavlink_command_sink COMMAND test_px4_mavlink_command_sink)
+
 add_executable(test_mission_runtime
     unit/test_mission_runtime.cpp
 )
