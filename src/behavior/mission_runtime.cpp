@@ -124,7 +124,10 @@ bool MissionRuntime::tick_once() {
         } catch (const std::exception& ex) {
             last_command_result_ = FlightCommandResult{output.command->kind, false, ex.what()};
             snapshots_->mark_command_failed(output.command->kind, input.now, ex.what());
-            throw;
+            if (config_.debug_logging) {
+                std::cerr << "dedalus_mission: command_exception kind=" << to_string(output.command->kind)
+                          << " status=" << ex.what() << "\n";
+            }
         }
         if (config_.debug_logging) {
             std::cerr << "dedalus_mission: command_result kind=" << to_string(last_command_result_->kind)
