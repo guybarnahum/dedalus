@@ -1,6 +1,7 @@
 #pragma once
 
 #include <algorithm>
+#include <iostream>
 #include <memory>
 #include <sstream>
 #include <stdexcept>
@@ -19,6 +20,7 @@ struct AirSimVelocityCommandSinkConfig {
     std::string bridge_command{"python3 simulation/airsim-send-velocity.py"};
     double command_duration_s{0.1};
     double max_velocity_mps{5.0};
+    bool debug_logging{false};
 };
 
 class AirSimVelocityCommandSink final : public FlightCommandSink {
@@ -42,7 +44,23 @@ public:
     }
 
     void send(const VelocityCommand& command) override {
-        const auto output = transport_->request_once(build_command(command));
+        const auto rendered_command = build_command(command);
+        if (config_.debug_logging) {
+            const auto v = bounded_velocity(command.velocity_local_mps);
+            std::cerr << "dedalus_flight_sink: airsim_velocity vx=" << v.x
+                      << " vy=" << v.y
+                      << " vz=" << v.z
+                      << " duration_s=" << config_.command_duration_s
+                      << " helper=" << rendered_command
+                      << "\n";
+        }
+        const auto output = transport_->request_once(rendered_command);
+        if (config_.debug_logging) {
+            std::cerr << "dedalus_flight_sink: helper_output=" << output;
+            if (output.empty() || output.back() != '\n') {
+                std::cerr << "\n";
+            }
+        }
         if (output.find("OK") == std::string::npos) {
             throw std::runtime_error("AirSim velocity command helper did not report OK: " + output);
         }
