@@ -8,6 +8,7 @@
 #include <array>
 #include <cerrno>
 #include <csignal>
+#include <cstdlib>
 #include <cstring>
 #include <iostream>
 #include <sstream>
@@ -118,6 +119,8 @@ struct Px4BridgeCommandSink::Impl {
             ::close(stdout_pipe[0]);
             ::close(stdout_pipe[1]);
 
+            const std::string verbosity = std::to_string(config.verbosity);
+            ::setenv("DEDALUS_PX4_BRIDGE_VERBOSITY", verbosity.c_str(), 1);
             const std::string command = "exec " + config.bridge_command;
             execl("/bin/sh", "sh", "-lc", command.c_str(), static_cast<char*>(nullptr));
             _exit(127);

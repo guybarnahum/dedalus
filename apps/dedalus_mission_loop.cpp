@@ -132,6 +132,10 @@ int run_shell_command(const std::string& command, int verbosity) {
     if (verbosity >= 1) {
         std::cerr << "dedalus_mission_loop: prepare_session command=" << command << "\n";
     }
+    if (verbosity <= 0) {
+        const std::string quiet_command = "(" + command + ") >/dev/null 2>&1";
+        return std::system(quiet_command.c_str());
+    }
     return std::system(command.c_str());
 }
 
@@ -232,6 +236,7 @@ std::unique_ptr<dedalus::FlightCommandSink> create_flight_command_sink(
         sink_config.bridge_command = config.mission_options.get_or(
             "flight_px4_command_bridge",
             sink_config.bridge_command);
+        sink_config.verbosity = verbosity;
         sink_config.debug_logging = sink_debug_logging;
         return std::make_unique<dedalus::Px4BridgeCommandSink>(sink_config);
     }

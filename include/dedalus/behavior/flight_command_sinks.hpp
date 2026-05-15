@@ -141,6 +141,7 @@ struct Px4BridgeCommandSinkConfig {
     std::string bridge_command{"python3 simulation/px4-command-bridge.py"};
     double command_duration_s{0.1};
     double max_velocity_mps{5.0};
+    int verbosity{0};
     bool debug_logging{false};
 };
 

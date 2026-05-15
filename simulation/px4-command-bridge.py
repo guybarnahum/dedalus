@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import subprocess
 import sys
 import time
@@ -28,9 +29,12 @@ from pymavlink import mavutil
 SIMULATION_DIR = Path(__file__).resolve().parent
 DEFAULT_ENDPOINTS = "udpin:127.0.0.1:14550"
 DEFAULT_PX4_TMUX_TARGET = "dedalus-sim:px4"
+DEFAULT_VERBOSITY = int(os.environ.get("DEDALUS_PX4_BRIDGE_VERBOSITY", "0"))
 
 
-def log(message: str) -> None:
+def log(message: str, *, level: int = 1) -> None:
+    if DEFAULT_VERBOSITY < level:
+        return
     print(f"px4-command-bridge: {message}", file=sys.stderr, flush=True)
 
 
@@ -196,7 +200,7 @@ def climb_to_safe_height_mavlink(
         log(
             f"safe_height_progress local_z={pos.z:.2f} "
             f"height≈{-pos.z:.2f}m remaining={remaining:.2f}m vz={climb_vz:.2f}"
-        )
+            , level=3)
         time.sleep(0.1)
 
     raise RuntimeError(

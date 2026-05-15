@@ -11,7 +11,7 @@ fallback_map_frame_id: map_airsim_mission_0001
 
 bridge_mode: stream_binary_ego
 bridge_transport: pipe
-bridge_command: python3 simulation/airsim-stream-frames-binary.py --include-ego --rate-hz 5 --mavlink-armed-endpoints udpin:127.0.0.1:14540,udpin:127.0.0.1:14600
+bridge_command: python3 simulation/airsim-stream-frames-binary.py --include-ego --rate-hz 5 --mavlink-armed-endpoints udpin:127.0.0.1:14540
 source_host: 127.0.0.1
 source_rpc_port: 41451
 vehicle_name: PX4
