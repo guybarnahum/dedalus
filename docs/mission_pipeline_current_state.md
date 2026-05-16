@@ -1,12 +1,12 @@
 # Mission Pipeline Current State
 
-This document describes the current Dedalus live AirSim/PX4 mission pipeline as of Milestone 2.20.
+This document describes the current Dedalus live AirSim/PX4 mission pipeline as of the Milestone 2.20 closeout.
 
 It is meant for developers and operators who need to run, debug, or safely extend the mission loop.
 
 ## Status
 
-The live mission path is working through the persistent PX4 bridge:
+The live mission path is working and repeatable through the persistent PX4 bridge. Back-to-back mission-loop runs now complete without restarting AirSim.
 
 ```text
 AirSim live frame + ego sidecar
@@ -81,6 +81,16 @@ ego.height_valid && ego.height_m >= safe_height
 
 The separate `WorldSnapshot.flight_control` overlay records command intent and command dispatch/failure state.
 
+### Arm dispatch fallback
+
+Repeat runs exposed a case where armed telemetry could be stale even though PX4 shell arm/takeoff remained healthy. The live config therefore enables:
+
+```yaml
+mission_options.flight_arm_dispatch_fallback_s: 2.0
+```
+
+This fallback may advance from `Prepare` to `Takeoff` after a successful Arm dispatch and a short settle interval when armed telemetry is stale. It does **not** advance into `ExecuteMission` from command OK. `ExecuteMission` still requires ego height telemetry to confirm takeoff/safe-height completion.
+
 ## Runtime states
 
 Current mission lifecycle:
@@ -99,7 +109,7 @@ High-level behavior:
 
 ```text
 Prepare:
-  request Arm until telemetry confirms armed or timeout
+  request Arm until telemetry confirms armed, or until Arm dispatch fallback unblocks shell takeoff
 
 Takeoff:
   request Takeoff
@@ -119,13 +129,26 @@ Land:
 
 Complete:
   request Disarm until telemetry confirms disarmed or timeout
+
+Abort:
+  terminal diagnostic state; does not emit velocity commands
 ```
 
-## Shutdown and repeatable runs
+## Shutdown, Ctrl-C, and repeatable runs
 
 The Python PX4 bridge handles a JSONL `shutdown` command from the C++ sink. On shutdown, if MAVLink was active, the bridge sends a short zero-velocity settle stream, closes the MAVLink socket, and resets its internal OFFBOARD/safe-height state before process exit.
 
-This is intended to make back-to-back mission-loop runs more reliable without restarting AirSim.
+`dedalus_mission_loop` also handles interrupts:
+
+```text
+First Ctrl-C / SIGTERM:
+  request graceful mission finish through MissionRuntime
+
+Second Ctrl-C:
+  stop the local main loop after local cleanup paths run
+```
+
+This is intended to leave the drone in a good state when the operator interrupts a live run.
 
 Repeatability validation procedure:
 
@@ -135,9 +158,23 @@ cd ~/dedalus/simulation
 ./stop.sh
 ./run.sh AirSimNH --airsim-camera-width 640 --airsim-camera-height 360
 
-# Terminal 2: run mission once.
+# Terminal 2: run several mission loops without restarting AirSim.
 cd ~/dedalus
 source venv/bin/activate
+RUNS=3 simulation/repeat-mission-smoke.sh
+```
+
+Expected result for every run:
+
+```text
+Mission summary:
+  final_state: Complete
+  failures: 0
+```
+
+Manual two-run validation remains useful while debugging:
+
+```bash
 ./build-staging/apps/dedalus_mission_loop \
   --config config/core_stack_trajectory_mission_placeholder.yaml \
   --output-dir out/airsim_mission_snapshots_run1 \
@@ -145,7 +182,6 @@ source venv/bin/activate
   --shutdown-max-frames 400 \
   --progress 2>&1 | tee out/airsim_mission_debug_run1.log
 
-# Without restarting AirSim, run again.
 ./build-staging/apps/dedalus_mission_loop \
   --config config/core_stack_trajectory_mission_placeholder.yaml \
   --output-dir out/airsim_mission_snapshots_run2 \
@@ -154,15 +190,7 @@ source venv/bin/activate
   --progress 2>&1 | tee out/airsim_mission_debug_run2.log
 ```
 
-Expected result for both runs:
-
-```text
-Mission summary:
-  final_state: Complete
-  failures: 0
-```
-
-If the second run fails, compare:
+If a run fails, compare:
 
 ```bash
 tail -n 80 out/airsim_mission_snapshots_run1/mission_events.jsonl
@@ -182,6 +210,8 @@ src/behavior/px4_bridge_command_sink.cpp
 simulation/px4-command-bridge.py
 simulation/airsim-prepare-session.py
 simulation/airsim-stream-frames-binary.py
+simulation/mission-events-summary.py
+simulation/repeat-mission-smoke.sh
 config/core_stack_trajectory_mission_placeholder.yaml
 ```
 
@@ -272,6 +302,14 @@ state=Complete status=landed
 state=Complete status=complete
 ```
 
+On repeat runs where armed telemetry is stale, this may include:
+
+```text
+state=Takeoff status=arm_dispatch_ok_waiting_for_takeoff_height
+```
+
+That is acceptable as long as `ExecuteMission` is still reached only after ego height confirms safe height.
+
 The final console summary is generated from `mission_events.jsonl` and should look like:
 
 ```text
@@ -332,6 +370,8 @@ Quick inspection:
 
 ```bash
 tail -n 40 out/airsim_mission_snapshots/mission_events.jsonl
+python3 simulation/mission-events-summary.py out/airsim_mission_snapshots/mission_events.jsonl
+python3 simulation/mission-events-summary.py out/airsim_mission_snapshots/mission_events.jsonl --expect-complete
 ```
 
 ## Known traps
@@ -348,12 +388,18 @@ tail -n 40 out/airsim_mission_snapshots/mission_events.jsonl
 - Do not refactor test-flight.py and px4-command-bridge.py until repeated mission runs are stable.
 ```
 
-## Recommended next improvements
+## Recommended next stage
 
 ```text
-1. Validate repeatable runs without restarting AirSim and record run1/run2 outcomes.
-2. If repeatability still fails, make the C++ sink wait synchronously for the Python bridge shutdown response before closing pipes.
-3. Add a tiny mission-events inspection helper if manual tail/grep becomes repetitive.
-4. Factor common Python control helpers only after repeated-run stability is proven.
-5. Consider native C++ migration for AirSim frame/ego/session helpers, not PX4/MAVLink control first.
+Milestone 2.21 — Mission artifact validation and replay-grade diagnostics
+```
+
+Suggested first tasks:
+
+```text
+1. Turn mission_events + snapshots into a formal validator for live-run artifact directories.
+2. Validate state ordering: Prepare -> Takeoff -> ExecuteMission -> GoHome -> Land -> Complete.
+3. Validate height gates: safe height reached before ExecuteMission; landed height before Complete.
+4. Validate final disarm requested/confirmed semantics.
+5. Keep mission event validation separate from frame replay semantics.
 ```
