@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <optional>
 #include <stdexcept>
 #include <string>
 
@@ -39,6 +40,12 @@ Vec3 velocity_toward_xy(const Vec3& from, const Vec3& to, double speed_mps) {
     return Vec3{delta.x / distance * speed_mps, delta.y / distance * speed_mps, 0.0};
 }
 
+bool last_result_matches_success(
+    const std::optional<FlightCommandResult>& result,
+    FlightCommandKind kind) {
+    return result.has_value() && result->kind == kind && result->success;
+}
+
 }  // namespace
 
 TrajectoryMissionConfig load_trajectory_mission_config(const MissionOptions& options) {
@@ -49,6 +56,7 @@ TrajectoryMissionConfig load_trajectory_mission_config(const MissionOptions& opt
     config.land_velocity_mps = std::stod(options.get_or("flight_land_velocity_mps", "0.5"));
     config.arm_retry_interval_s = std::stod(options.get_or("flight_arm_retry_interval_s", "1.0"));
     config.arm_timeout_s = std::stod(options.get_or("flight_arm_timeout_s", "10.0"));
+    config.arm_dispatch_fallback_s = std::stod(options.get_or("flight_arm_dispatch_fallback_s", "0.0"));
     config.takeoff_retry_interval_s = std::stod(options.get_or("flight_takeoff_retry_interval_s", "1.0"));
     config.land_retry_interval_s = std::stod(options.get_or("flight_land_retry_interval_s", "1.0"));
     config.land_timeout_s = std::stod(options.get_or("flight_land_timeout_s", "60.0"));
@@ -143,6 +151,12 @@ MissionTickOutput TrajectoryMissionController::tick(const MissionTickInput& inpu
                 state_ = MissionLifecycleState::Takeoff;
                 state_start_ = input.now;
                 output.status = "armed_confirmed_by_ego";
+            } else if (config_.arm_dispatch_fallback_s > 0.0 &&
+                       last_result_matches_success(input.last_command_result, FlightCommandKind::Arm) &&
+                       elapsed_at_least(arm_last_command_time_, input.now, config_.arm_dispatch_fallback_s)) {
+                state_ = MissionLifecycleState::Takeoff;
+                state_start_ = input.now;
+                output.status = "arm_dispatch_ok_waiting_for_takeoff_height";
             } else if (elapsed_at_least(state_start_, input.now, config_.arm_timeout_s)) {
                 state_ = MissionLifecycleState::Abort;
                 output.status = "arm_timeout";
