@@ -30,8 +30,22 @@ def main() -> int:
     if "Mission runtime: trajectory_mission" not in result.stdout:
         print("missing mission startup line", file=sys.stderr)
         return 1
-    if "Mission ticks:" not in result.stdout:
-        print("missing mission tick line", file=sys.stderr)
+    if "Mission summary:" not in result.stdout:
+        print("missing mission summary", file=sys.stderr)
+        return 1
+    if "Mission events:" not in result.stdout:
+        print("missing mission events artifact line", file=sys.stderr)
+        return 1
+    events_path = out_dir / "mission_events.jsonl"
+    if not events_path.exists():
+        print("missing mission_events.jsonl", file=sys.stderr)
+        return 1
+    events_text = events_path.read_text(encoding="utf-8")
+    if '"event":"runtime_start"' not in events_text:
+        print("missing runtime_start event", file=sys.stderr)
+        return 1
+    if '"event":"state_transition"' not in events_text:
+        print("missing state_transition event", file=sys.stderr)
         return 1
     snapshots = sorted(out_dir.glob("snapshot_*.json"))
     if len(snapshots) != 1:
