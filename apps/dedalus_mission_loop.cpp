@@ -31,8 +31,9 @@ namespace {
 volatile std::sig_atomic_t g_interrupt_count = 0;
 
 void handle_interrupt_signal(int) {
-    if (g_interrupt_count < 2) {
-        ++g_interrupt_count;
+    const auto current = g_interrupt_count;
+    if (current < 2) {
+        g_interrupt_count = static_cast<std::sig_atomic_t>(current + 1);
     }
 }
 
