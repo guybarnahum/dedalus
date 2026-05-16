@@ -1,5 +1,6 @@
 #include <algorithm>
 #include <chrono>
+#include <csignal>
 #include <cstdlib>
 #include <exception>
 #include <filesystem>
@@ -26,6 +27,23 @@
 #include "dedalus/world_model/world_snapshot.hpp"
 
 namespace {
+
+volatile std::sig_atomic_t g_interrupt_count = 0;
+
+void handle_interrupt_signal(int) {
+    if (g_interrupt_count < 2) {
+        ++g_interrupt_count;
+    }
+}
+
+void install_interrupt_handlers() {
+    std::signal(SIGINT, handle_interrupt_signal);
+    std::signal(SIGTERM, handle_interrupt_signal);
+}
+
+int interrupt_count() {
+    return static_cast<int>(g_interrupt_count);
+}
 
 enum class ProgressMode {
     Auto,
@@ -477,6 +495,7 @@ std::unique_ptr<dedalus::FlightCommandSink> create_flight_command_sink(
 
 int main(int argc, char** argv) {
     try {
+        install_interrupt_handlers();
         const auto args = parse_args(argc, argv);
         std::filesystem::create_directories(args.output_dir);
 
@@ -541,6 +560,20 @@ int main(int argc, char** argv) {
         int shutdown_frame_count = 0;
         bool finish_requested = false;
         while (true) {
+            const int signals = interrupt_count();
+            if (signals >= 2) {
+                std::cerr << "\ndedalus_mission_loop: second interrupt received; stopping after local cleanup\n";
+                break;
+            }
+            if (signals >= 1 && !finish_requested) {
+                finish_requested = true;
+                if (mission_runtime) {
+                    mission_runtime->request_finish();
+                }
+                std::cerr << "\ndedalus_mission_loop: interrupt received; requesting graceful mission finish"
+                          << " (press Ctrl-C again to force local stop)\n";
+            }
+
             const bool frame_limit_reached = args.max_frames > 0 && frame_count >= args.max_frames;
             if (frame_limit_reached && mission_runtime && !finish_requested) {
                 finish_requested = true;
@@ -551,7 +584,7 @@ int main(int argc, char** argv) {
                 break;
             }
             if (finish_requested) {
-                if (mission_finished(mission_runtime->last_state())) {
+                if (!mission_runtime || mission_finished(mission_runtime->last_state())) {
                     break;
                 }
                 if (shutdown_frame_count >= args.shutdown_max_frames) {
