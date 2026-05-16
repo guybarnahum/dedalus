@@ -6,6 +6,8 @@ This file is the archive for older LLM handoff material, superseded debugging co
 
 This archive exists so historical context is preserved without distracting new LLM sessions from the current active task.
 
+(AWS ec2 instance is at `35.82.43.156`)
+
 ---
 
 ## H1. Historical Milestone 2 Context
