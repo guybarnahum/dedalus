@@ -15,6 +15,7 @@ struct TrajectoryMissionConfig {
     double land_velocity_mps{0.5};
     double arm_retry_interval_s{1.0};
     double arm_timeout_s{10.0};
+    double arm_dispatch_fallback_s{0.0};
     double takeoff_retry_interval_s{1.0};
     double land_retry_interval_s{1.0};
     double land_timeout_s{60.0};
