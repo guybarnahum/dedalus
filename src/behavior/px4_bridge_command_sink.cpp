@@ -61,13 +61,7 @@ struct Px4BridgeCommandSink::Impl {
     }
 
     ~Impl() {
-        try {
-            if (child_pid > 0 && write_fd >= 0) {
-                const std::string shutdown = "{\"command\":\"shutdown\"}\n";
-                (void)::write(write_fd, shutdown.data(), shutdown.size());
-            }
-        } catch (...) {
-        }
+        shutdown_bridge();
         close_fds();
         if (child_pid > 0) {
             int status = 0;
@@ -140,6 +134,20 @@ struct Px4BridgeCommandSink::Impl {
         }
     }
 
+    bool wait_until_readable(int timeout_ms) const {
+        if (read_fd < 0) {
+            return false;
+        }
+        fd_set read_set;
+        FD_ZERO(&read_set);
+        FD_SET(read_fd, &read_set);
+        timeval timeout{};
+        timeout.tv_sec = timeout_ms / 1000;
+        timeout.tv_usec = (timeout_ms % 1000) * 1000;
+        const int selected = ::select(read_fd + 1, &read_set, nullptr, nullptr, &timeout);
+        return selected > 0 && FD_ISSET(read_fd, &read_set);
+    }
+
     std::string read_response() {
         std::string line;
         std::array<char, 1> byte{};
@@ -161,8 +169,10 @@ struct Px4BridgeCommandSink::Impl {
         }
     }
 
-    FlightCommandResult send_json(const VelocityCommand& command, const std::string& request) {
-        const std::string line = request + "\n";
+    bool write_line(const std::string& line) const {
+        if (write_fd < 0) {
+            return false;
+        }
         std::size_t total_written = 0U;
         while (total_written < line.size()) {
             const ssize_t written = ::write(write_fd, line.data() + total_written, line.size() - total_written);
@@ -170,9 +180,42 @@ struct Px4BridgeCommandSink::Impl {
                 if (errno == EINTR) {
                     continue;
                 }
-                throw std::runtime_error("failed writing PX4 bridge request: " + std::string(std::strerror(errno)));
+                return false;
             }
             total_written += static_cast<std::size_t>(written);
+        }
+        return true;
+    }
+
+    void shutdown_bridge() {
+        if (child_pid <= 0 || write_fd < 0 || read_fd < 0) {
+            return;
+        }
+        const std::string shutdown = "{\"command\":\"shutdown\"}\n";
+        if (!write_line(shutdown)) {
+            return;
+        }
+        if (!wait_until_readable(3000)) {
+            if (config.debug_logging) {
+                std::cerr << "dedalus_px4_bridge_sink: shutdown response timeout\n";
+            }
+            return;
+        }
+        try {
+            const auto response = read_response();
+            if (config.debug_logging) {
+                std::cerr << "dedalus_px4_bridge_sink: shutdown_response=" << response << "\n";
+            }
+        } catch (const std::exception& ex) {
+            if (config.debug_logging) {
+                std::cerr << "dedalus_px4_bridge_sink: shutdown response read failed: " << ex.what() << "\n";
+            }
+        }
+    }
+
+    FlightCommandResult send_json(const VelocityCommand& command, const std::string& request) {
+        if (!write_line(request + "\n")) {
+            throw std::runtime_error("failed writing PX4 bridge request: " + std::string(std::strerror(errno)));
         }
 
         const auto response = read_response();
