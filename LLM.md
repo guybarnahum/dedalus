@@ -13,42 +13,33 @@ guybarnahum/dedalus
 Current code baseline for this handoff:
 
 ```text
-31331bae938e23b3adfa041e9d52a9c47cd3db82
+main after Milestone 2.20E closeout
 ```
 
 Active milestone state:
 
 ```text
-Milestone 2.19 — Mission / behavior / flight-control pipeline
-Status: working live AirSim/PX4 trajectory mission using the persistent px4_bridge path.
+Milestone 2.20 — Mission robustness, observability, and cleanup
+Status: closed / validated.
 ```
 
 Current working result:
 
 ```text
 - `simulation/test-flight.py --trajectory trajectories/circle_figure8.json` works well.
-- `dedalus_mission_loop` now also flies through the mission path using `flight_command_sink: px4_bridge`.
+- `dedalus_mission_loop` flies through the mission path using `flight_command_sink: px4_bridge`.
+- Back-to-back mission-loop runs now work without restarting AirSim.
 - Build succeeds.
-- CTest passes: 18/18.
-- Live mission reaches safe height through pymavlink OFFBOARD control, executes the trajectory, then lands/disarms through PX4 shell lifecycle commands.
-```
-
-Current remaining cleanup:
-
-```text
-Verbosity level 0 is still too noisy because subprocesses print directly:
-- `airsim-prepare-session.py` prints AirSim connection text.
-- `px4-command-bridge.py` prints safe-height progress samples.
-- telemetry sidecar may still print `14600` bind noise if configured.
-
-A manual patch was prepared to quiet subprocesses by default, pass verbosity into the Python PX4 bridge, and remove the unused `14600` telemetry endpoint. It has not been confirmed as landed on main.
+- CTest expected result: 18/18 passing.
+- Live mission reaches safe height through pymavlink OFFBOARD control, executes the trajectory, goes home, lands, and disarms through PX4 shell lifecycle commands.
+- `mission_events.jsonl` is the source artifact for mission debugging and final summaries.
 ```
 
 Core rule:
 
 ```text
 Synchronous command dispatch success is not vehicle-state truth.
-Mission transitions must be driven by world-model telemetry.
+Mission transitions into flight execution must be driven by world-model telemetry.
 ```
 
 ---
@@ -247,75 +238,67 @@ Complete
 Abort
 ```
 
-Mission lifecycle may look at command intent and telemetry truth, but it must transition to flight states only from telemetry truth.
+Mission lifecycle may look at command intent and telemetry truth, but it must transition to flight execution only from telemetry truth.
+
+Repeat runs exposed a stale armed-telemetry case even though shell arm/takeoff remained healthy. The live config therefore enables:
+
+```yaml
+mission_options.flight_arm_dispatch_fallback_s: 2.0
+```
+
+This fallback may advance from `Prepare` to `Takeoff` after successful Arm dispatch and a short settle interval when armed telemetry is stale. It does **not** move to `ExecuteMission`; `ExecuteMission` remains gated by ego height reaching safe height.
 
 Do not collapse these layers.
 
 ---
 
-## 5. Current Milestone Journey — Milestone 2
+## 5. Milestone Journey
 
 | Stage | Name | Status | Notes |
 |---|---|---:|---|
 | 2.1–2.18 | Frame/source/provider/bridge foundation | Done | Synthetic, recorded, AirSim, binary bridge, timing, annotation |
-| 2.19A | WorldModel ego-state foundation | Done | Ego pose, height, armed fields |
-| 2.19B | Mission config contract | Done | `mission_controller`, `mission_tick_hz`, `flight_command_sink`, `mission_options` |
-| 2.19C | `TrajectoryMissionController` | Working | Prepare/Takeoff/ExecuteMission/GoHome/Land/Complete |
-| 2.19D | Flight command sink | Working | `px4_bridge` is the working live path |
-| 2.19E | Async runtime wiring | Done | `LatestWorldSnapshot` + `MissionRuntime` |
-| 2.19F | Integration harness | Done | `dedalus_mission_loop` |
-| 2.19G | Debug and naming cleanup | Done | Renamed app; verbosity now partly implemented |
-| 2.19H | Explicit command kinds | Done | `Arm`, `Takeoff`, `Velocity`, `Land`, `Disarm` |
-| 2.19I | Async command outcome semantics | Done | Telemetry truth drives transitions |
-| 2.19J | Flight-control intent overlay | Done | Command intent stored in `WorldSnapshot.flight_control` |
-| 2.19K | Reliable armed telemetry | Done enough for live mission | MAVLink heartbeat/ego sidecar path confirms arm/disarm |
-| 2.19L | PX4 bridge mission parity | Working | Mission path now follows `test-flight.py` control sequence |
-| 2.19M | Quiet/verbose logs | In progress | CLI flags exist; subprocess output still needs final cleanup |
+| 2.19A–K | Mission/ego/control foundation | Done | Ego state, mission config, runtime, command intent, armed telemetry |
+| 2.19L | PX4 bridge mission parity | Done | Mission path follows `test-flight.py` control sequence |
+| 2.19M | Quiet/verbose logs | Done enough | CLI verbosity exists; default is high-level output plus final summary |
+| 2.20A | Mission docs/current state | Done | `docs/mission_pipeline_current_state.md` |
+| 2.20B | Mission event artifacts | Done | `mission_events.jsonl` from `MissionRuntime` |
+| 2.20C | Final summary from events | Done | `dedalus_mission_loop` summarizes `mission_events.jsonl` |
+| 2.20D | Repeatable-run hardening | Done / validated | Back-to-back mission runs work without restarting AirSim |
+| 2.20E | Closeout tooling/checkpoint | Done | Event summary helper + repeat smoke wrapper + updated docs |
 
 ---
 
-## 6. Next Stage
+## 6. Mission Artifacts and Tools
 
-Recommended next active stage:
+Mission loop output directory contains:
 
 ```text
-Milestone 2.20 — Mission robustness, observability, and cleanup
+snapshot_XXXX.json
+snapshot_manifest.txt
+mission_events.jsonl
 ```
 
-Immediate next tasks, in order:
+`mission_events.jsonl` is the compact structured timeline and should be the first artifact inspected for mission behavior.
 
-```text
-1. Land the quiet-verbosity cleanup if not already applied:
-   - silence prepare-session output at verbosity 0
-   - pass verbosity into `px4-command-bridge.py`
-   - make safe-height progress level-3 only
-   - remove `14600` from default telemetry sidecar config if it keeps binding noisily
+Summary helper:
 
-2. Re-run:
-   cmake --build build-staging -j$(nproc)
-   ctest --test-dir build-staging --output-on-failure
-   live mission with verbosity 0 and --verbose
+```bash
+python3 simulation/mission-events-summary.py out/airsim_mission_snapshots/mission_events.jsonl
+python3 simulation/mission-events-summary.py out/airsim_mission_snapshots/mission_events.jsonl --expect-complete
+```
 
-3. Create a small `docs/mission_pipeline_current_state.md`:
-   - current architecture
-   - control split
-   - run commands
-   - known traps
-   - log interpretation
+Repeat-run smoke helper:
 
-4. Make mission artifacts more useful:
-   - include mission state / command status in manifest or a sidecar JSONL
-   - preserve final mission summary
-   - keep snapshots as debug artifacts, not replay input
+```bash
+RUNS=3 simulation/repeat-mission-smoke.sh
+```
 
-5. Improve graceful completion:
-   - avoid repeated land commands while landing is already in progress
-   - record explicit landing/disarm timeout reasons
-   - make abort behavior safe and visible
+`repeat-mission-smoke.sh` assumes AirSim/PX4 is already running. It runs `dedalus_mission_loop` repeatedly and validates each produced `mission_events.jsonl` with `--expect-complete`.
 
-6. Refactor only after stability:
-   - factor shared control helpers between `test-flight.py` and `px4-command-bridge.py`
-   - do not rewrite the working control path prematurely
+If the script is not executable after GitHub checkout, run:
+
+```bash
+chmod +x simulation/repeat-mission-smoke.sh simulation/mission-events-summary.py
 ```
 
 ---
@@ -383,6 +366,12 @@ Full debug:
   --verbose 2>&1 | tee out/airsim_mission_debug.log
 ```
 
+Repeat validation:
+
+```bash
+RUNS=3 simulation/repeat-mission-smoke.sh
+```
+
 Verbosity contract:
 
 ```text
@@ -394,7 +383,25 @@ default: high-level mission state transitions + final summary
 
 ---
 
-## 8. Known Traps
+## 8. Ctrl-C / Shutdown Behavior
+
+`dedalus_mission_loop` handles interrupts:
+
+```text
+First Ctrl-C / SIGTERM:
+  requests graceful mission finish through MissionRuntime.
+
+Second Ctrl-C:
+  stops the local main loop after local cleanup paths run.
+```
+
+The Python PX4 bridge handles a JSONL `shutdown` command from the C++ sink. On shutdown, if MAVLink was active, it sends a short zero-velocity settle stream, closes the MAVLink socket, and resets internal OFFBOARD/safe-height state before process exit.
+
+Abort is terminal/diagnostic and does not emit velocity commands.
+
+---
+
+## 9. Known Traps
 
 ```text
 - Do not use dedalus_replay_mission. It was renamed to dedalus_mission_loop.
@@ -407,12 +414,32 @@ default: high-level mission state transitions + final summary
 - Do not debug the working mission by rewriting MAVLink packet encoding in C++.
 - Do not let the telemetry sidecar and command bridge fight over the same MAVLink endpoint.
 - Do not replace `px4-command-bridge.py` with native C++ until the mission is stable and a real tested MAVLink C++ backend is planned.
-- Do not refactor `test-flight.py` / `px4-command-bridge.py` until the mission path remains stable across repeated runs.
+- Do not refactor `test-flight.py` / `px4-command-bridge.py` unless repeat-run smoke remains stable.
 ```
 
 ---
 
-## 9. Handoff Prompt Format
+## 10. Recommended Next Stage
+
+Recommended next active stage:
+
+```text
+Milestone 2.21 — Mission artifact validation and replay-grade diagnostics
+```
+
+Suggested first tasks:
+
+```text
+1. Turn mission_events + snapshots into a formal validator for live-run artifact directories.
+2. Validate state ordering: Prepare -> Takeoff -> ExecuteMission -> GoHome -> Land -> Complete.
+3. Validate height gates: safe height reached before ExecuteMission; landed height before Complete.
+4. Validate final disarm requested/confirmed semantics.
+5. Keep mission event validation separate from frame replay semantics.
+```
+
+---
+
+## 11. Handoff Prompt Format
 
 Every new worker handoff should include:
 
@@ -430,7 +457,7 @@ Every new worker handoff should include:
 
 ---
 
-## 10. Pointers
+## 12. Pointers
 
 Detailed / historical context:
 
@@ -440,10 +467,5 @@ docs/core_stack_current_state.md
 docs/bridge_transport_plugins.md
 docs/binary_frame_bridge_protocol.md
 docs/perception_stabilization_annotation.md
-```
-
-Future recommended doc:
-
-```text
 docs/mission_pipeline_current_state.md
 ```
