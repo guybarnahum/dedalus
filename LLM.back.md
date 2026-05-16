@@ -342,9 +342,9 @@ default: high-level mission transitions and final summary
 -vvv / --verbose: full tick/sink/bridge tracing
 ```
 
-As of the current handoff, the main C++ runtime obeys this contract, but subprocess output may still leak at verbosity 0 until the quiet-subprocess cleanup is fully landed and validated.
+The main C++ runtime follows this contract. Some subprocess output may still leak at verbosity 0 if helpers print directly.
 
-Known noisy sources:
+Known noisy sources historically included:
 
 ```text
 - AirSim `confirmConnection()` output during prepare-session
@@ -377,4 +377,51 @@ Keep `LLM.back.md` focused on:
 - historical debugging context
 - superseded approaches
 - old logs summarized, not pasted in full
+```
+
+---
+
+## H12. Milestone 2.20 Closeout History
+
+Milestone 2.20 closed the mission robustness / observability loop.
+
+Key outcomes:
+
+```text
+- `mission_events.jsonl` became the compact source artifact for mission behavior.
+- `dedalus_mission_loop` prints a final summary derived from `mission_events.jsonl`.
+- `simulation/mission-events-summary.py` can summarize and validate event artifacts after the run.
+- `simulation/repeat-mission-smoke.sh` can run repeated live missions and validate each event artifact.
+- Back-to-back mission-loop runs were validated without restarting AirSim.
+```
+
+Important reliability fixes:
+
+```text
+- The PX4 bridge shutdown path sends a short zero-velocity settle stream, closes MAVLink, and resets bridge state.
+- `Px4BridgeCommandSink` waits for bridge shutdown cleanup before closing pipes/reaping the child.
+- `dedalus_mission_loop` handles Ctrl-C/SIGTERM by requesting graceful mission finish on first interrupt.
+- Abort is terminal/diagnostic and no longer emits velocity commands.
+```
+
+Important design compromise:
+
+```text
+mission_options.flight_arm_dispatch_fallback_s: 2.0
+```
+
+This exists because repeat runs showed stale armed telemetry even though PX4 shell arm/takeoff was healthy and `simulation/test-flight.py` succeeded. The fallback may move from `Prepare` to `Takeoff` after successful Arm dispatch and a short settle interval when armed telemetry is stale.
+
+This is acceptable because:
+
+```text
+- it does not enter ExecuteMission from command OK
+- ExecuteMission remains gated by ego height reaching safe height
+- command intent and telemetry truth remain separate
+```
+
+Known small cleanup:
+
+```text
+If `apps/dedalus_mission_loop.cpp` still warns about ++ on volatile sig_atomic_t, replace the increment in handle_interrupt_signal with read/current plus assignment. This is warning-only; build and runtime behavior were otherwise validated.
 ```
