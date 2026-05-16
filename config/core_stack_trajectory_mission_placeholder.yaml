@@ -22,7 +22,7 @@ mission_tick_hz: 10
 flight_command_sink: px4_bridge
 mission_options.flight_control_mode: px4
 mission_options.flight_prepare_session_command: python3 simulation/airsim-prepare-session.py --host 127.0.0.1 --rpc-port 41451 --vehicle-name PX4 --mavlink-endpoints udpin:127.0.0.1:14550,udpin:127.0.0.1:14540,udpin:127.0.0.1:14600
-mission_options.flight_safe_height_m: 8
+mission_options.flight_safe_height_m: 16
 mission_options.flight_px4_command_bridge: python3 simulation/px4-command-bridge.py --mavlink-endpoints udpin:127.0.0.1:14550 --px4-tmux-target dedalus-sim:px4 --safe-height 8
 mission_options.flight_trajectory_path: simulation/trajectories/circle_figure8.json
 mission_options.flight_home_policy: initial_ego_pose
