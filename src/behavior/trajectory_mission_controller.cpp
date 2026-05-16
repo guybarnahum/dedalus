@@ -247,8 +247,7 @@ MissionTickOutput TrajectoryMissionController::tick(const MissionTickInput& inpu
             }
             break;
         case MissionLifecycleState::Abort:
-            output.command = command_from_velocity(input.now, Vec3{0.0, 0.0, 0.0});
-            output.status = "abort_hold";
+            output.status = "abort";
             break;
         case MissionLifecycleState::Idle:
         default:
