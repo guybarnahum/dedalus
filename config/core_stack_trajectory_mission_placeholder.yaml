@@ -28,5 +28,6 @@ mission_options.flight_trajectory_path: simulation/trajectories/circle_figure8.j
 mission_options.flight_home_policy: initial_ego_pose
 mission_options.flight_arm_retry_interval_s: 4.0
 mission_options.flight_arm_timeout_s: 30.0
+mission_options.flight_arm_dispatch_fallback_s: 2.0
 mission_options.flight_takeoff_retry_interval_s: 4.0
 mission_options.flight_land_retry_interval_s: 4.0
