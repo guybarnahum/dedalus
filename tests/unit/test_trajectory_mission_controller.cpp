@@ -232,11 +232,11 @@ int main() {
     output = land_timeout_controller.tick(input_at(1.4, 2.1, true));
     output = land_timeout_controller.tick(input_at(1.5, 2.1, true));
     output = land_timeout_controller.tick(input_at(12.0, 2.1, true));
-    if (!require_state(output, dedalus::MissionLifecycleState::Abort, "land timeout abort")) {
+    if (!require_state(output, dedalus::MissionLifecycleState::Abort, "land timeout terminal abort")) {
         return 1;
     }
-    if (output.status != "land_timeout") {
-        std::cerr << "controller should report land_timeout before abort\n";
+    if (output.status != "abort") {
+        std::cerr << "controller should terminal-abort when landing recovery cannot complete\n";
         return 1;
     }
 
