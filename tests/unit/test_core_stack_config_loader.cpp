@@ -58,7 +58,7 @@ int main() {
         return 1;
     }
     if (mission_config.mission_options.get_or("flight_control_mode", "") != "px4" ||
-        mission_config.mission_options.get_or("flight_safe_height_m", "") != "8" ||
+        mission_config.mission_options.get_or("flight_safe_height_m", "") != "16" ||
         mission_config.mission_options.get_or("flight_trajectory_path", "") !=
             "simulation/trajectories/circle_figure8.json" ||
         mission_config.mission_options.get_or("flight_home_policy", "") != "initial_ego_pose" ||
