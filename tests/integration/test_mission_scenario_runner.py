@@ -25,20 +25,19 @@ def main() -> int:
         "--run-id",
         "run_0001",
         "--config",
-        str(repo_root / "config" / "core_stack_mission_ci.yaml"),
+        str(repo_root / "config" / "core_stack_synthetic_mission_ci.yaml"),
         "--app",
         str(build_dir / "apps" / "dedalus_mission_loop"),
         "--output-root",
         str(out_root),
         "--max-frames",
-        "200",
+        "220",
         "--shutdown-max-frames",
         "50",
         "--safe-height-m",
         "2",
         "--landed-height-m",
         "1",
-        "--no-expect-complete",
         "--overwrite",
     ]
     result = subprocess.run(command, cwd=repo_root, text=True, capture_output=True, check=False)
@@ -68,9 +67,9 @@ def main() -> int:
         print(json.dumps(metadata, indent=2), file=sys.stderr)
         print("scenario metadata did not preserve identity", file=sys.stderr)
         return 1
-    if metadata.get("expect_complete") is not False:
+    if metadata.get("expect_complete") is not True:
         print(json.dumps(metadata, indent=2), file=sys.stderr)
-        print("scenario metadata did not preserve no-expect-complete mode", file=sys.stderr)
+        print("scenario metadata should preserve expect-complete mode", file=sys.stderr)
         return 1
     if metadata.get("mission_returncode") != 0 or metadata.get("validator_returncode") != 0:
         print(json.dumps(metadata, indent=2), file=sys.stderr)
@@ -84,6 +83,10 @@ def main() -> int:
     if "Mission events:" not in console_text:
         print("console log missing mission events artifact line", file=sys.stderr)
         return 1
+    if "mission terminal state settled=Complete" not in console_text:
+        print(console_text)
+        print("console log missing settled terminal completion", file=sys.stderr)
+        return 1
 
     validator_text = validator_path.read_text(encoding="utf-8")
     if "Mission artifact validation:" not in validator_text or "failures: 0" not in validator_text:
@@ -92,8 +95,16 @@ def main() -> int:
         return 1
 
     events_text = events_path.read_text(encoding="utf-8")
-    if '"event":"runtime_start"' not in events_text or '"event":"runtime_stop"' not in events_text:
-        print("mission events missing runtime start/stop", file=sys.stderr)
+    expected_states = ["Prepare", "Takeoff", "ExecuteMission", "GoHome", "Land", "Complete"]
+    for state in expected_states:
+        if f'"to":"{state}"' not in events_text and f'"state":"{state}"' not in events_text:
+            print(f"mission events missing state: {state}", file=sys.stderr)
+            return 1
+    if '"event":"runtime_stop"' not in events_text or '"state":"Complete"' not in events_text:
+        print("mission events missing Complete runtime_stop", file=sys.stderr)
+        return 1
+    if '"command":"Disarm"' not in events_text:
+        print("mission events missing disarm command", file=sys.stderr)
         return 1
 
     return 0
