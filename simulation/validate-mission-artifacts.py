@@ -16,7 +16,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-EXPECTED_STATE_ORDER = ["Prepare", "Takeoff", "ExecuteMission", "GoHome", "Land", "Complete"]
+COMPLETE_STATE_ORDER = ["Prepare", "Takeoff", "ExecuteMission", "GoHome", "Land", "Complete"]
+ABORT_AFTER_FLIGHT_STATE_ORDER = ["Prepare", "Takeoff", "ExecuteMission", "GoHome", "Land", "Abort"]
 OBJECT_BEHAVIOR_EVENTS = {
     "target_selected",
     "target_reacquired",
@@ -42,6 +43,7 @@ class ValidationResult:
     velocity_commands: int = 0
     safe_height_gate_height_m: float | None = None
     landed_gate_height_m: float | None = None
+    abort_height_m: float | None = None
 
     @property
     def valid(self) -> bool:
@@ -104,6 +106,9 @@ def collect_timeline(events: list[dict[str, Any]], result: ValidationResult) -> 
             append_state_if_new(result.state_path, event.get("to"))
             if isinstance(event.get("to"), str):
                 result.final_state = str(event["to"])
+            height = event.get("ego_height_m")
+            if event.get("to") == "Abort" and isinstance(height, (int, float)):
+                result.abort_height_m = float(height)
         elif event_name == "runtime_stop":
             append_state_if_new(result.state_path, event.get("state"))
             if isinstance(event.get("state"), str):
@@ -124,13 +129,13 @@ def collect_timeline(events: list[dict[str, Any]], result: ValidationResult) -> 
             result.behavior_events[event_name] = result.behavior_events.get(event_name, 0) + 1
 
 
-def validate_state_order(result: ValidationResult) -> None:
+def validate_state_order(result: ValidationResult, expected_order: list[str]) -> None:
     if not result.state_path:
         result.failures.append("no mission state transitions found")
         return
 
     search_from = 0
-    for expected in EXPECTED_STATE_ORDER:
+    for expected in expected_order:
         try:
             index = result.state_path.index(expected, search_from)
         except ValueError:
@@ -141,10 +146,6 @@ def validate_state_order(result: ValidationResult) -> None:
             return
         search_from = index + 1
 
-    complete_index = result.state_path.index("Complete")
-    if "Abort" in result.state_path[: complete_index + 1]:
-        result.failures.append(f"Abort appeared before Complete: {' -> '.join(result.state_path)}")
-
 
 def validate_height_gates(
     events: list[dict[str, Any]],
@@ -152,6 +153,7 @@ def validate_height_gates(
     *,
     safe_height_m: float,
     landed_height_m: float,
+    require_landed_height: bool,
 ) -> None:
     for event in events:
         if event.get("event") != "state_transition":
@@ -171,6 +173,8 @@ def validate_height_gates(
             f"height={result.safe_height_gate_height_m:.3f}m required>={safe_height_m:.3f}m"
         )
 
+    if not require_landed_height:
+        return
     if result.landed_gate_height_m is None:
         result.failures.append("missing Complete transition landed-height evidence")
     elif result.landed_gate_height_m > landed_height_m:
@@ -178,6 +182,43 @@ def validate_height_gates(
             "Complete reached above landed height: "
             f"height={result.landed_gate_height_m:.3f}m required<={landed_height_m:.3f}m"
         )
+
+
+def validate_expected_final_state(
+    events: list[dict[str, Any]],
+    result: ValidationResult,
+    *,
+    expected_final_state: str,
+    safe_height_m: float,
+    landed_height_m: float,
+) -> None:
+    if result.final_state != expected_final_state:
+        result.failures.append(f"final_state is {result.final_state}; expected {expected_final_state}")
+
+    if expected_final_state == "Complete":
+        validate_state_order(result, COMPLETE_STATE_ORDER)
+        if "Abort" in result.state_path:
+            result.failures.append(f"Abort appeared in successful Complete lifecycle: {' -> '.join(result.state_path)}")
+        validate_height_gates(
+            events,
+            result,
+            safe_height_m=safe_height_m,
+            landed_height_m=landed_height_m,
+            require_landed_height=True,
+        )
+    elif expected_final_state == "Abort":
+        validate_state_order(result, ABORT_AFTER_FLIGHT_STATE_ORDER)
+        if "Complete" in result.state_path:
+            result.failures.append(f"Complete appeared in expected Abort lifecycle: {' -> '.join(result.state_path)}")
+        validate_height_gates(
+            events,
+            result,
+            safe_height_m=safe_height_m,
+            landed_height_m=landed_height_m,
+            require_landed_height=False,
+        )
+    else:
+        result.failures.append(f"unsupported expected final state: {expected_final_state}")
 
 
 def validate_behavior_expectations(result: ValidationResult) -> None:
@@ -194,7 +235,7 @@ def validate_behavior_expectations(result: ValidationResult) -> None:
 def validate_run_dir(
     run_dir: Path,
     *,
-    expect_complete: bool,
+    expected_final_state: str | None,
     expect_behavior: bool,
     safe_height_m: float,
     landed_height_m: float,
@@ -218,13 +259,11 @@ def validate_run_dir(
     events = read_events(events_path, result)
     collect_timeline(events, result)
 
-    if expect_complete:
-        if result.final_state != "Complete":
-            result.failures.append(f"final_state is {result.final_state}; expected Complete")
-        validate_state_order(result)
-        validate_height_gates(
+    if expected_final_state is not None:
+        validate_expected_final_state(
             events,
             result,
+            expected_final_state=expected_final_state,
             safe_height_m=safe_height_m,
             landed_height_m=landed_height_m,
         )
@@ -247,6 +286,8 @@ def print_result(result: ValidationResult) -> None:
         print(f"  safe_height_gate_height_m: {result.safe_height_gate_height_m:.3f}")
     if result.landed_gate_height_m is not None:
         print(f"  landed_gate_height_m: {result.landed_gate_height_m:.3f}")
+    if result.abort_height_m is not None:
+        print(f"  abort_height_m: {result.abort_height_m:.3f}")
     if result.behavior_events:
         print("  behavior_events:")
         for name in sorted(result.behavior_events):
@@ -262,6 +303,11 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("run_dir", type=Path, help="Mission run artifact directory")
     parser.add_argument("--expect-complete", action="store_true", help="Require a successful Complete mission lifecycle")
+    parser.add_argument(
+        "--expect-final-state",
+        choices=["Complete", "Abort"],
+        help="Require a specific final mission state",
+    )
     parser.add_argument("--expect-behavior", action="store_true", help="Require M3 object-conditioned behavior events")
     parser.add_argument(
         "--safe-height-m",
@@ -282,9 +328,16 @@ def main() -> int:
     )
     args = parser.parse_args()
 
+    expected_final_state = args.expect_final_state
+    if args.expect_complete:
+        if expected_final_state is not None and expected_final_state != "Complete":
+            print("--expect-complete conflicts with --expect-final-state", file=sys.stderr)
+            return 2
+        expected_final_state = "Complete"
+
     result = validate_run_dir(
         args.run_dir,
-        expect_complete=args.expect_complete,
+        expected_final_state=expected_final_state,
         expect_behavior=args.expect_behavior,
         safe_height_m=args.safe_height_m,
         landed_height_m=args.landed_height_m,
