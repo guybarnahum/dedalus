@@ -43,6 +43,7 @@ private:
     [[nodiscard]] VelocityCommand trajectory_command(TimePoint timestamp) const;
     [[nodiscard]] bool trajectory_complete() const;
     void advance_segment_if_needed();
+    void begin_abort_recovery(TimePoint now, double height_m, const std::string& reason);
 
     TrajectoryMissionConfig config_;
     MissionLifecycleState state_{MissionLifecycleState::Idle};
@@ -58,6 +59,8 @@ private:
     bool takeoff_command_sent_{false};
     bool land_command_sent_{false};
     bool disarm_command_sent_{false};
+    bool aborting_{false};
+    std::string abort_reason_;
     Pose3 home_pose_;
     std::size_t segment_index_{0U};
     double segment_elapsed_s_{0.0};
