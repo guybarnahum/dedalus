@@ -1,10 +1,10 @@
 # Core Stack Current State
 
-This document captures the implemented state of the Dedalus core-stack after the current sensors → perception → world-model work. Keep milestone names out of code/entity names; use architectural names for files, tests, and modules.
+This document captures the implemented state of the Dedalus core-stack and its relationship to the current mission roadmap. Keep milestone names out of code/entity names; use architectural names for files, tests, and modules.
 
-## Implemented architecture spine
+## Current implemented architecture spine
 
-The repo now has a buildable C++20 core-stack skeleton with dependency-free provider composition:
+The repo has a buildable C++20 core-stack skeleton with dependency-free provider composition:
 
 ```text
 config/core_stack_ci.yaml OR config/core_stack_recorded_ci.yaml OR config/core_stack_airsim_example.yaml
@@ -32,11 +32,49 @@ config/core_stack_ci.yaml OR config/core_stack_recorded_ci.yaml OR config/core_s
               -> EffectiveWorldView
 ```
 
+The live mission path now extends this spine through behavior and flight-control integration:
+
+```text
+AirSim live frame + ego sidecar
+  -> AirSimFrameSource
+  -> FrameHintEgoProvider
+  -> CoreStackRunner
+  -> InMemoryWorldModel
+  -> LatestWorldSnapshot
+  -> MissionRuntime async loop
+  -> TrajectoryMissionController
+  -> Px4BridgeCommandSink
+  -> simulation/px4-command-bridge.py
+  -> PX4 / AirSim
+```
+
 The direct synthetic wiring that originally lived in apps has been moved behind config-driven provider composition. This is a plugin-style composition boundary, not dynamic shared-library loading yet.
+
+## Mission state after Milestone 2.20
+
+Milestone 2.20 closed the first live mission robustness phase:
+
+```text
+- dedalus_mission_loop flies through AirSim/PX4 using flight_command_sink=px4_bridge
+- repeated mission-loop runs work without restarting AirSim
+- safe-height climb, trajectory execution, GoHome, Land, and Disarm work
+- Ctrl-C / SIGTERM requests graceful mission finish
+- mission_events.jsonl is the compact source artifact for mission debugging
+- simulation/mission-events-summary.py summarizes and validates mission event artifacts
+- simulation/repeat-mission-smoke.sh validates repeated live mission runs
+```
+
+Current mission-loop artifacts:
+
+```text
+snapshot_XXXX.json
+snapshot_manifest.txt
+mission_events.jsonl
+```
 
 ## Replay artifact workflow
 
-Recorded or simulation-exported frames can now be replayed into deterministic snapshot artifacts:
+Recorded or simulation-exported frames can be replayed into deterministic snapshot artifacts:
 
 ```bash
 ./build-validation/apps/dedalus_replay_recording \
@@ -54,109 +92,51 @@ out/replay_snapshots/snapshot_0002.json
 out/replay_snapshots/snapshot_manifest.txt
 ```
 
-This is the preferred regression/debug artifact path for recorded fixtures and AirSim-exported frames.
+This remains the preferred regression/debug artifact path for recorded fixtures and AirSim-exported frames.
 
 ## Config format decision
 
 Current config uses a flat YAML subset because the repo already has YAML config files and provider selection benefits from human-readable key/value pairs.
 
-```text
-config/core_stack_ci.yaml
-config/core_stack_recorded_ci.yaml
-config/core_stack_airsim_example.yaml
-```
-
 The parser is intentionally dependency-free and only supports flat `key: value` entries for now. Do not add `yaml-cpp`, TOML, OpenCV, GStreamer, or AirSim as a requirement for core unit tests.
 
-Supported keys:
-
-```text
-frame_source
-recorded_manifest_path
-ego_provider
-detector
-tracker
-identity_resolver
-projector
-world_model
-fallback_map_frame_id
-airsim_host
-airsim_rpc_port
-airsim_vehicle_name
-airsim_camera_name
-```
+Provider selection and mission behavior should remain config-driven rather than hardcoded directly into apps or tests.
 
 ## Current tree shape
 
 ```text
 config/
-├── behaviors.yaml
-├── camera_intrinsics.yaml
-├── core_stack_airsim_example.yaml
-├── core_stack_ci.yaml
-└── core_stack_recorded_ci.yaml
-
 include/dedalus/
-├── core/
-├── ipc/
-├── perception/
-├── runtime/
-├── sensors/
-├── simulation/
-└── world_model/
-
 src/
-├── perception/
-├── runtime/
-├── sensors/
-├── simulation/
-└── world_model/
-
 apps/
-├── dedalus_core_stack.cpp
-├── dedalus_dump_world.cpp
-└── dedalus_replay_recording.cpp
-
 tests/
-├── fixtures/
-│   └── recorded_frames/
-│       ├── frame_0001.ppm
-│       └── manifest.txt
-├── integration/
-│   └── test_replay_recording_smoke.py
-└── unit/
-    ├── test_airsim_provider_boundary.cpp
-    ├── test_core_stack_config_loader.cpp
-    ├── test_perception_world_model_flow.cpp
-    ├── test_provider_composition.cpp
-    ├── test_recorded_frame_world_model_flow.cpp
-    ├── test_video_only_world_model_flow.cpp
-    └── test_world_snapshot_json.cpp
+simulation/
+docs/
+```
+
+Important application entry points:
+
+```text
+apps/dedalus_core_stack.cpp
+apps/dedalus_dump_world.cpp
+apps/dedalus_replay_recording.cpp
+apps/dedalus_mission_loop.cpp
+```
+
+Important mission tooling:
+
+```text
+simulation/test-flight.py
+simulation/px4-command-bridge.py
+simulation/airsim-prepare-session.py
+simulation/airsim-stream-frames-binary.py
+simulation/mission-events-summary.py
+simulation/repeat-mission-smoke.sh
 ```
 
 ## Public contracts added
 
-Current public headers include:
-
-```text
-include/dedalus/core/types.hpp
-include/dedalus/sensors/frame_source.hpp
-include/dedalus/sensors/ego_state_provider.hpp
-include/dedalus/sensors/recorded_frame_source.hpp
-include/dedalus/sensors/replay_frame_source.hpp
-include/dedalus/simulation/airsim_providers.hpp
-include/dedalus/perception/types.hpp
-include/dedalus/perception/perception_pipeline.hpp
-include/dedalus/runtime/config_loader.hpp
-include/dedalus/runtime/provider_registry.hpp
-include/dedalus/runtime/core_stack_runner.hpp
-include/dedalus/ipc/in_process_bus.hpp
-include/dedalus/world_model/world_snapshot.hpp
-include/dedalus/world_model/effective_world_view.hpp
-include/dedalus/world_model/in_memory_world_model.hpp
-include/dedalus/world_model/tactical_obstacle_mapper.hpp
-include/dedalus/world_model/rough_flight_map_builder.hpp
-```
+Current public headers include core, sensors, perception, runtime, ipc, world-model, and behavior contracts.
 
 Important value contracts now represented:
 
@@ -184,9 +164,14 @@ Landmark
 UncertainRegion
 WorldSnapshot
 EffectiveWorldView
+MissionController
+MissionRuntime
+VelocityTrajectory
+FlightCommandSink
+LatestWorldSnapshot
 ```
 
-## Implemented placeholder modules
+## Implemented placeholder and integration modules
 
 ```text
 SyntheticFrameSource
@@ -206,141 +191,33 @@ InProcessBus
 ProviderRegistry
 CoreStackRunner
 load_core_stack_config
-AirSimFrameSource stub
-AirSimEgoStateProvider stub
-AirSimDepthProjector stub
-AirSimGroundTruthDetector stub
-dedalus_replay_recording
+AirSimFrameSource / AirSim bridge integration path
+TrajectoryMissionController
+MissionRuntime
+Px4BridgeCommandSink
+AirSimVelocityCommandSink
+mission event artifact writer
+mission event summary helper
+repeat mission smoke helper
 ```
 
-These are deliberately deterministic placeholders or explicit integration stubs. They exist to lock down interfaces, tests, JSON shape, CI gates, and module boundaries before adding real perception, mapping, memory, or simulation adapters.
-
-`RecordedFrameSource` is a real file-backed adapter for CI-safe recorded frames. It currently reads a simple manifest plus P3/P6 PPM image files. This is intentionally not a full media decoder.
-
-The AirSim providers are registered integration stubs. They intentionally throw a clear runtime error in dependency-free builds. They define the provider boundary and config names for future AirSim/PX4 integration but do not yet call AirSim RPC APIs.
-
-## Provider names currently registered
-
-```text
-frame_source: synthetic, video_only, recorded_frames, airsim
-ego_provider: frame_hint, no_telemetry, airsim
-detector: scripted, airsim_ground_truth
-tracker: simple_centroid
-identity_resolver: appearance_only
-projector: flat_ground, airsim_depth
-world_model: in_memory
-```
-
-Future real providers should be added behind this registry and selected through config rather than hardcoded directly into apps or tests.
-
-## Runtime/debug apps
-
-```text
-apps/dedalus_core_stack.cpp
-apps/dedalus_dump_world.cpp
-apps/dedalus_replay_recording.cpp
-```
-
-`dedalus_core_stack` and `dedalus_dump_world` load provider config with `--config`, use `ProviderRegistry` + `CoreStackRunner`, and emit one `WorldSnapshot` JSON. If `--config` is omitted, they default to `config/core_stack_ci.yaml`.
-
-`dedalus_replay_recording` loads provider config with `--config`, runs until the configured frame source is exhausted, and writes one snapshot JSON per processed frame plus `snapshot_manifest.txt`.
-
-Examples:
-
-```bash
-./build-validation/apps/dedalus_core_stack --config config/core_stack_ci.yaml
-./build-validation/apps/dedalus_core_stack --config config/core_stack_recorded_ci.yaml
-./build-validation/apps/dedalus_core_stack --config config/core_stack_airsim_example.yaml
-./build-validation/apps/dedalus_replay_recording --config config/core_stack_recorded_ci.yaml --output-dir out/replay_snapshots
-```
-
-The AirSim example command will fail in the current dependency-free build with an explicit integration-provider unavailable error.
+These are deliberately deterministic placeholders or explicit integration adapters. They exist to lock down interfaces, tests, JSON shape, CI gates, and module boundaries before adding real perception, mapping, memory, or advanced behavior.
 
 ## Tests
 
-Current tests are architectural, not milestone-named:
+Current tests cover world snapshot JSON, perception/world-model flow, video-only flow, provider composition, config loading, recorded-frame flow, AirSim provider boundary, mission runtime, trajectory mission controller, latest world snapshot behavior, command sinks, replay smoke, annotation/export smoke, and mission-loop smoke.
 
-```text
-tests/unit/test_world_snapshot_json.cpp
-tests/unit/test_perception_world_model_flow.cpp
-tests/unit/test_video_only_world_model_flow.cpp
-tests/unit/test_provider_composition.cpp
-tests/unit/test_core_stack_config_loader.cpp
-tests/unit/test_recorded_frame_world_model_flow.cpp
-tests/unit/test_airsim_provider_boundary.cpp
-tests/integration/test_replay_recording_smoke.py
+Run:
+
+```bash
+cmake --build build-staging -j$(nproc)
+ctest --test-dir build-staging --output-on-failure
 ```
 
-`test_world_snapshot_json` guards the previous `map_frames` serialization bug.
-
-`test_perception_world_model_flow` validates the full synthetic perception/world-model flow and asserts:
+Expected result after the Milestone 2.20 closeout:
 
 ```text
-one detection
-one track
-one identity hypothesis
-one 3D observation
-one agent
-one tactical exclusion zone
-one uncertain region
-one static structure
-one flight corridor
-one landmark
-EffectiveWorldView contains actual state and uncertainty
-```
-
-`test_video_only_world_model_flow` validates the degraded/no-telemetry ingestion path and asserts:
-
-```text
-VideoOnlyFrameSource emits no ego_hint
-NoTelemetryEgoProvider creates a low-confidence fallback ego state
-map_video_only_0001 is preserved as the relative map frame
-perception/world-model artifacts are still emitted
-appearance confidence remains low
-```
-
-`test_provider_composition` validates the provider abstraction itself:
-
-```text
-ProviderRegistry lists multiple frame sources
-synthetic + frame_hint composition runs through CoreStackRunner
-video_only + no_telemetry composition runs through CoreStackRunner
-unknown provider names are rejected
-```
-
-`test_core_stack_config_loader` validates:
-
-```text
-config/core_stack_ci.yaml parses into expected provider names
-fallback_map_frame_id is loaded
-config-composed CoreStackRunner emits expected state
-```
-
-`test_recorded_frame_world_model_flow` validates:
-
-```text
-RecordedFrameSource loads tests/fixtures/recorded_frames/manifest.txt
-P3 PPM frame metadata and dimensions are preserved
-config/core_stack_recorded_ci.yaml parses recorded_manifest_path
-recorded_frames + no_telemetry composition runs through CoreStackRunner
-recorded flow emits world-model artifacts
-```
-
-`test_airsim_provider_boundary` validates:
-
-```text
-config/core_stack_airsim_example.yaml parses AirSim provider names and connection fields
-ProviderRegistry lists the AirSim frame source
-AirSimFrameSource throws a clear integration-provider unavailable error in dependency-free builds
-```
-
-`test_replay_recording_smoke.py` validates:
-
-```text
-dedalus_replay_recording runs on config/core_stack_recorded_ci.yaml
-snapshot_0001.json is written
-snapshot_manifest.txt is written
-snapshot JSON preserves map_recorded_ci_0001 and contains world-model artifacts
+100% tests passed, 0 tests failed out of 18
 ```
 
 ## CI smoke contract
@@ -358,31 +235,7 @@ Then they run:
 ctest --test-dir <build-dir> --output-on-failure
 ```
 
-Then they run `dedalus_core_stack` through the CI provider config:
-
-```text
-./build-*/apps/dedalus_core_stack --config config/core_stack_ci.yaml
-```
-
-and validate emitted JSON contains:
-
-```text
-active_map_frame_id = map_local_0001
-person agent
-car container
-map_frame_id = map_local_0001
-tactical_exclusion_zones
-reason = dynamic_observation_cone
-uncertain_regions
-flight_corridors
-corridor_id = corridor_forward_0001
-static_structures
-structure_id = structure_building_0001
-landmarks
-landmark_id = landmark_building_corner_0001
-```
-
-Recorded-frame ingestion, AirSim provider-boundary checks, and replay artifact generation are covered by CTest, not by the primary smoke artifact.
+Core and recorded-frame paths remain dependency-free. Live AirSim/PX4 mission validation is an operator/integration path and should not become mandatory for unit tests.
 
 ## Current status
 
@@ -392,19 +245,19 @@ Provider/plugin-style composition boundary: implemented
 Config-driven provider composition: implemented
 CI-safe provider config: implemented
 Recorded-frame CI config: implemented
-AirSim provider example config: implemented
 Synthetic perception pipeline: implemented
 Video-only/no-telemetry ingestion boundary: implemented
 Replay frame-source boundary: implemented
 Recorded frame-source boundary: implemented
-AirSim provider boundary: implemented as explicit unavailable stubs
+AirSim bridge/live mission path: implemented for simulation integration
 Replay snapshot artifact generation: implemented
 In-memory world model: implemented
 Tactical exclusion layer placeholder: implemented
 EffectiveWorldView placeholder: implemented
 Rough global flight-map placeholder: implemented
-Unit/flow/provider/config/recorded-ingestion/AirSim-boundary/replay tests: implemented
-CI/staging/production smoke assertions: implemented
+Mission runtime and trajectory mission controller: implemented
+PX4 bridge mission path: implemented and validated for repeated runs
+Mission event artifacts and summary tooling: implemented
 ```
 
 ## Still intentionally not implemented
@@ -417,36 +270,107 @@ Nested/full YAML parser
 TOML parser
 RecordedVideoFrameSource backed by real media decode
 MpegCameraSource backed by MPEG/RTSP/GStreamer/OpenCV
-Real AirSim RPC backend
-Real AirSimFrameSource frame capture
-Real AirSimEgoStateProvider telemetry capture
-Real AirSimDepthProjector depth-image projection
-Real AirSimGroundTruthDetector object/segmentation ground truth
-NullDetector
-IouTracker
-KalmanTracker2D
+Production AirSim C++ RPC backend
 YoloOnnxDetector
 YoloTensorRtDetector
 real ReID
 container-aware identity resolver
+object behavior mission controller
+behavior spec parser
+target selector
+follow/circle/approach behaviors
 persistent memory layer
 relative map store
 real flight corridor extraction
 voxel/SDF obstacle mapping
-behavior tree/control output
+tactical avoidance planner
+route cache
+map + drone POV visualization
 iceoryx runtime transport
 ```
 
 ## Next recommended step
 
-The next architectural step should be replay artifact comparison and regression baselines, not behavior/control:
+The next architectural step is:
 
 ```text
-recorded/simulation replay input
-  -> dedalus_replay_recording
-  -> snapshot JSON sequence
-  -> baseline manifest / diff tool
-  -> CI-safe regression checks for stable fields
+Milestone 2.21 — Mission artifact validation and replay-grade diagnostics
 ```
 
-Keep real AirSim/PX4/OpenCV/GStreamer dependencies out of unit tests. Simulation/media adapters should be integration-path modules, not required for core library tests.
+Immediate goal:
+
+```text
+live mission output directory
+  -> mission_events.jsonl + snapshot_XXXX.json
+  -> formal validator
+  -> state ordering, command failures, height gates, landing/completion checks
+```
+
+This keeps the now-working live mission path protected before adding object-conditioned behavior.
+
+## Roadmap to Milestone 3
+
+Milestone 3 is now defined as:
+
+```text
+Milestone 3.0 — Object-conditioned flight behavior demo
+```
+
+Path:
+
+```text
+2.21 Mission artifact validator
+2.22 Scenario/campaign harness
+2.23 Behavior spec parser foundation
+2.24 Target selector from WorldSnapshot agents
+2.25 ObjectBehaviorMissionController
+2.26 Follow behavior
+2.27 Circle behavior
+2.28 Approach + behavior sequence
+2.29 M3 demo hardening
+3.0  Object-conditioned flight behavior demo
+```
+
+Milestone 3 should demonstrate:
+
+```text
+detected/tracked class instance such as person or car
+  -> TargetSelector
+  -> follow / circle / approach / sequence behavior
+  -> bounded velocity vectors through existing PX4 bridge
+  -> GoHome / Land / Complete
+  -> mission_events + snapshots prove the behavior sequence
+```
+
+## Post-M3 spatial autonomy roadmap
+
+Post-M3 work adds tactical spatial reasoning while preserving the behavior/sink boundary:
+
+```text
+BehaviorController
+  -> desired velocity vector
+  -> TacticalAvoidancePlanner
+  -> safe velocity vector
+  -> Px4BridgeCommandSink
+```
+
+Roadmap:
+
+```text
+4.0 Local tactical occupancy map
+5.0 Reactive obstacle avoidance planner
+6.0 Persistent traverse map / flight memory
+7.0 Cached route solutions
+8.0 Tactical map + drone POV visualization
+9.0 Spatial autonomy demo with avoidance
+10.0 Multi-flight site memory
+```
+
+Design rules:
+
+```text
+- M3 is object-conditioned behavior, not full obstacle avoidance.
+- Avoidance belongs between behavior and the flight sink.
+- The flight sink should only receive bounded velocity/yaw intent.
+- Fresh tactical sensing overrides persistent traverse memory and route cache.
+```
