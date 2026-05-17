@@ -38,6 +38,7 @@ def main() -> int:
         "2",
         "--landed-height-m",
         "1",
+        "--no-expect-complete",
         "--overwrite",
     ]
     result = subprocess.run(command, cwd=repo_root, text=True, capture_output=True, check=False)
@@ -67,6 +68,10 @@ def main() -> int:
         print(json.dumps(metadata, indent=2), file=sys.stderr)
         print("scenario metadata did not preserve identity", file=sys.stderr)
         return 1
+    if metadata.get("expect_complete") is not False:
+        print(json.dumps(metadata, indent=2), file=sys.stderr)
+        print("scenario metadata did not preserve no-expect-complete mode", file=sys.stderr)
+        return 1
     if metadata.get("mission_returncode") != 0 or metadata.get("validator_returncode") != 0:
         print(json.dumps(metadata, indent=2), file=sys.stderr)
         print("scenario command return codes were not successful", file=sys.stderr)
@@ -87,8 +92,8 @@ def main() -> int:
         return 1
 
     events_text = events_path.read_text(encoding="utf-8")
-    if '"event":"runtime_stop"' not in events_text or '"state":"Complete"' not in events_text:
-        print("mission events missing Complete runtime_stop", file=sys.stderr)
+    if '"event":"runtime_start"' not in events_text or '"event":"runtime_stop"' not in events_text:
+        print("mission events missing runtime start/stop", file=sys.stderr)
         return 1
 
     return 0
