@@ -1,0 +1,14 @@
+{
+  "name": "synthetic_mission_ci",
+  "rate_hz": 10,
+  "segments": [
+    {
+      "type": "hold",
+      "label": "short_hold",
+      "duration_s": 1.0,
+      "vx_mps": 0.0,
+      "vy_mps": 0.0,
+      "vz_mps": 0.0
+    }
+  ]
+}
