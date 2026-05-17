@@ -157,11 +157,6 @@ std::string zero_padded(int value, int width) {
     return out.str();
 }
 
-bool mission_finished(dedalus::MissionLifecycleState state) {
-    return state == dedalus::MissionLifecycleState::Complete ||
-           state == dedalus::MissionLifecycleState::Abort;
-}
-
 std::string json_string_field(const std::string& line, const std::string& key) {
     const std::string marker = "\"" + key + "\":";
     const auto marker_pos = line.find(marker);
@@ -575,8 +570,8 @@ int main(int argc, char** argv) {
                           << " (press Ctrl-C again to force local stop)\n";
             }
 
-            if (!finish_requested && mission_runtime && mission_finished(mission_runtime->last_state())) {
-                std::cerr << "dedalus_mission_loop: mission reached terminal state="
+            if (!finish_requested && mission_runtime && mission_runtime->terminal_settled()) {
+                std::cerr << "dedalus_mission_loop: mission terminal state settled="
                           << dedalus::to_string(mission_runtime->last_state()) << "; stopping frame loop\n";
                 break;
             }
@@ -591,7 +586,7 @@ int main(int argc, char** argv) {
                 break;
             }
             if (finish_requested) {
-                if (!mission_runtime || mission_finished(mission_runtime->last_state())) {
+                if (!mission_runtime || mission_runtime->terminal_settled()) {
                     break;
                 }
                 if (shutdown_frame_count >= args.shutdown_max_frames) {
