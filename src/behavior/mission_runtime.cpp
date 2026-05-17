@@ -40,6 +40,11 @@ std::string q(const std::string& value) {
     return "\"" + json_escape(value) + "\"";
 }
 
+bool output_is_terminal_settled(const MissionTickOutput& output) {
+    return (output.state == MissionLifecycleState::Complete && output.status == "complete") ||
+           (output.state == MissionLifecycleState::Abort && output.status == "abort");
+}
+
 }  // namespace
 
 MissionRuntime::MissionRuntime(
@@ -95,7 +100,8 @@ void MissionRuntime::stop() {
     if (was_running || tick_count_ > 0U) {
         write_event(
             "\"event\":\"runtime_stop\",\"tick_count\":" + std::to_string(tick_count_) +
-            ",\"state\":" + q(to_string(last_state_)));
+            ",\"state\":" + q(to_string(last_state_)) +
+            ",\"terminal_settled\":" + (terminal_settled_.load() ? std::string{"true"} : std::string{"false"}));
     }
     if (config_.verbosity >= 1) {
         std::cerr << "dedalus_mission: stopped after " << tick_count_ << " tick(s)\n";
@@ -133,6 +139,9 @@ bool MissionRuntime::tick_once() {
     const auto output = controller_->tick(input);
     const auto previous_state = last_state_;
     last_state_ = output.state;
+    if (output_is_terminal_settled(output)) {
+        terminal_settled_.store(true);
+    }
     ++tick_count_;
 
     const bool state_changed = previous_state != output.state;
@@ -233,6 +242,10 @@ bool MissionRuntime::running() const {
 
 bool MissionRuntime::finish_requested() const {
     return finish_requested_.load();
+}
+
+bool MissionRuntime::terminal_settled() const {
+    return terminal_settled_.load();
 }
 
 std::size_t MissionRuntime::tick_count() const {
