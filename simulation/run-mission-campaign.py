@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
-"""Run a small Dedalus mission campaign and summarize scenario artifacts.
+"""Run a Dedalus mission campaign and summarize scenario artifacts.
 
-Milestone 2.22.3: campaign-level wrapper around `run-mission-scenario.py`.
+Milestone 2.22.6: campaign-level wrapper around `run-mission-scenario.py` with
+both CLI-driven single-scenario campaigns and JSON campaign specification files.
 The campaign runner intentionally delegates the per-run artifact contract to the
 single scenario runner, then writes a `campaign_summary.json` and
 `campaign_summary.txt` at the campaign root.
@@ -15,6 +16,7 @@ import shutil
 import subprocess
 import sys
 import time
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -52,8 +54,22 @@ def run_command(command: list[str], cwd: Path) -> int:
     return process.wait()
 
 
+@dataclass(frozen=True)
+class ScenarioSpec:
+    name: str
+    config: str
+    repeats: int
+    max_frames: int
+    shutdown_max_frames: int
+    safe_height_m: float
+    landed_height_m: float
+    expect_final_state: str | None
+    expect_behavior: bool
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--campaign-file", type=Path, help="JSON campaign specification file")
     parser.add_argument("--campaign", default="mission_campaign", help="Campaign name")
     parser.add_argument("--campaign-id", default=default_campaign_id(), help="Campaign run id")
     parser.add_argument("--scenario", default="trajectory_ci", help="Scenario name")
@@ -78,11 +94,96 @@ def parse_args() -> argparse.Namespace:
     return args
 
 
+def default_expected_final_state(args: argparse.Namespace) -> str | None:
+    if args.expect_final_state is not None:
+        return args.expect_final_state
+    if args.expect_complete:
+        return "Complete"
+    return None
+
+
+def require_positive_repeats(repeats: int, context: str) -> None:
+    if repeats <= 0:
+        raise ValueError(f"{context} repeats must be > 0")
+
+
+def scenario_from_cli(args: argparse.Namespace) -> list[ScenarioSpec]:
+    require_positive_repeats(args.repeats, args.scenario)
+    return [
+        ScenarioSpec(
+            name=args.scenario,
+            config=args.config,
+            repeats=args.repeats,
+            max_frames=args.max_frames,
+            shutdown_max_frames=args.shutdown_max_frames,
+            safe_height_m=args.safe_height_m,
+            landed_height_m=args.landed_height_m,
+            expect_final_state=default_expected_final_state(args),
+            expect_behavior=args.expect_behavior,
+        )
+    ]
+
+
+def load_campaign_file(path: Path, args: argparse.Namespace) -> tuple[str, list[ScenarioSpec], dict[str, Any]]:
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except OSError as exc:
+        raise ValueError(f"failed to read campaign file {path}: {exc}") from exc
+    except json.JSONDecodeError as exc:
+        raise ValueError(f"failed to parse campaign file {path}: {exc}") from exc
+
+    if not isinstance(data, dict):
+        raise ValueError("campaign file must contain a JSON object")
+    scenarios_raw = data.get("scenarios")
+    if not isinstance(scenarios_raw, list) or not scenarios_raw:
+        raise ValueError("campaign file must contain a non-empty scenarios array")
+
+    defaults = data.get("defaults", {})
+    if defaults is None:
+        defaults = {}
+    if not isinstance(defaults, dict):
+        raise ValueError("campaign defaults must be an object")
+
+    campaign_name = str(data.get("campaign") or args.campaign)
+    specs: list[ScenarioSpec] = []
+    for index, raw in enumerate(scenarios_raw, start=1):
+        if not isinstance(raw, dict):
+            raise ValueError(f"scenario {index} must be an object")
+        name = raw.get("name")
+        config = raw.get("config")
+        if not isinstance(name, str) or not name:
+            raise ValueError(f"scenario {index} missing non-empty name")
+        if not isinstance(config, str) or not config:
+            raise ValueError(f"scenario {name} missing non-empty config")
+
+        repeats = int(raw.get("repeats", defaults.get("repeats", args.repeats)))
+        require_positive_repeats(repeats, name)
+        expect_final_state = raw.get("expect_final_state", defaults.get("expect_final_state", default_expected_final_state(args)))
+        if expect_final_state is not None and expect_final_state not in {"Complete", "Abort"}:
+            raise ValueError(f"scenario {name} has unsupported expect_final_state: {expect_final_state}")
+
+        specs.append(
+            ScenarioSpec(
+                name=name,
+                config=config,
+                repeats=repeats,
+                max_frames=int(raw.get("max_frames", defaults.get("max_frames", args.max_frames))),
+                shutdown_max_frames=int(raw.get("shutdown_max_frames", defaults.get("shutdown_max_frames", args.shutdown_max_frames))),
+                safe_height_m=float(raw.get("safe_height_m", defaults.get("safe_height_m", args.safe_height_m))),
+                landed_height_m=float(raw.get("landed_height_m", defaults.get("landed_height_m", args.landed_height_m))),
+                expect_final_state=expect_final_state,
+                expect_behavior=bool(raw.get("expect_behavior", defaults.get("expect_behavior", args.expect_behavior))),
+            )
+        )
+    return campaign_name, specs, data
+
+
 def build_scenario_command(
     *,
     repo_root: Path,
     args: argparse.Namespace,
     campaign_dir: Path,
+    scenario: ScenarioSpec,
     run_number: int,
 ) -> tuple[list[str], Path]:
     run_id = f"run_{run_number:04d}"
@@ -91,36 +192,36 @@ def build_scenario_command(
         sys.executable,
         str(repo_root / "simulation" / "run-mission-scenario.py"),
         "--name",
-        args.scenario,
+        scenario.name,
         "--run-id",
         run_id,
         "--config",
-        args.config,
+        scenario.config,
         "--output-root",
         str(output_root),
         "--app",
         args.app,
         "--max-frames",
-        str(args.max_frames),
+        str(scenario.max_frames),
         "--shutdown-max-frames",
-        str(args.shutdown_max_frames),
+        str(scenario.shutdown_max_frames),
         "--safe-height-m",
-        str(args.safe_height_m),
+        str(scenario.safe_height_m),
         "--landed-height-m",
-        str(args.landed_height_m),
+        str(scenario.landed_height_m),
         "--overwrite",
     ]
-    if args.expect_final_state is not None:
-        command += ["--expect-final-state", args.expect_final_state]
-    elif not args.expect_complete:
+    if scenario.expect_final_state is not None:
+        command += ["--expect-final-state", scenario.expect_final_state]
+    else:
         command.append("--no-expect-complete")
-    if args.expect_behavior:
+    if scenario.expect_behavior:
         command.append("--expect-behavior")
     if args.progress:
         command.append("--progress")
     if args.verbose > 0:
         command.append("-" + "v" * min(args.verbose, 3))
-    run_dir = output_root / args.scenario / run_id
+    run_dir = output_root / scenario.name / run_id
     return command, run_dir
 
 
@@ -129,8 +230,8 @@ def write_text_summary(summary: dict[str, Any], path: Path) -> None:
         "Mission campaign summary:",
         f"  campaign: {summary['campaign']}",
         f"  campaign_id: {summary['campaign_id']}",
-        f"  scenario: {summary['scenario']}",
         f"  status: {summary['status']}",
+        f"  scenarios: {summary['scenario_count']}",
         f"  repeats: {summary['repeats']}",
         f"  passed: {summary['passed']}",
         f"  failed: {summary['failed']}",
@@ -140,7 +241,8 @@ def write_text_summary(summary: dict[str, Any], path: Path) -> None:
     for run in summary["runs"]:
         lines.append(
             "    - "
-            f"{run['run_id']}: status={run['status']} "
+            f"{run['scenario_name']}/{run['run_id']}: status={run['status']} "
+            f"expected={run.get('expect_final_state')} "
             f"mission_rc={run['mission_returncode']} validator_rc={run['validator_returncode']}"
         )
     path.write_text("\n".join(lines) + "\n", encoding="utf-8")
@@ -148,15 +250,23 @@ def write_text_summary(summary: dict[str, Any], path: Path) -> None:
 
 def main() -> int:
     args = parse_args()
-    if args.repeats <= 0:
-        print("--repeats must be > 0", file=sys.stderr)
-        return 2
 
     repo_root = repo_root_from_script()
+    campaign_spec: dict[str, Any] | None = None
+    try:
+        if args.campaign_file is not None:
+            campaign_name, scenarios, campaign_spec = load_campaign_file(args.campaign_file, args)
+        else:
+            campaign_name = args.campaign
+            scenarios = scenario_from_cli(args)
+    except ValueError as exc:
+        print(f"run-mission-campaign: {exc}", file=sys.stderr)
+        return 2
+
     output_root = Path(args.output_root)
     if not output_root.is_absolute():
         output_root = repo_root / output_root
-    campaign_dir = output_root / args.campaign / args.campaign_id
+    campaign_dir = output_root / campaign_name / args.campaign_id
 
     if campaign_dir.exists():
         if not args.overwrite:
@@ -168,34 +278,37 @@ def main() -> int:
 
     started_at = utc_now_iso()
     start = time.monotonic()
-    print(f"=== mission campaign: {args.campaign}/{args.campaign_id} ===")
+    print(f"=== mission campaign: {campaign_name}/{args.campaign_id} ===")
     print(f"Campaign directory: {campaign_dir}")
-    print(f"Scenario: {args.scenario} repeats={args.repeats}")
+    print(f"Scenarios: {len(scenarios)}")
 
     runs: list[dict[str, Any]] = []
-    for run_number in range(1, args.repeats + 1):
-        print(f"\n=== campaign run {run_number}/{args.repeats} ===")
-        command, run_dir = build_scenario_command(
-            repo_root=repo_root,
-            args=args,
-            campaign_dir=campaign_dir,
-            run_number=run_number,
-        )
-        returncode = run_command(command, repo_root)
-        metadata_path = run_dir / "metadata.json"
-        if metadata_path.exists():
-            run_metadata = load_run_metadata(metadata_path)
-        else:
-            run_metadata = {
-                "scenario_name": args.scenario,
-                "run_id": f"run_{run_number:04d}",
-                "status": "failed",
-                "mission_returncode": returncode,
-                "validator_returncode": None,
-                "run_dir": str(run_dir),
-            }
-        run_metadata["scenario_runner_returncode"] = returncode
-        runs.append(run_metadata)
+    for scenario in scenarios:
+        for run_number in range(1, scenario.repeats + 1):
+            print(f"\n=== campaign scenario {scenario.name} run {run_number}/{scenario.repeats} ===")
+            command, run_dir = build_scenario_command(
+                repo_root=repo_root,
+                args=args,
+                campaign_dir=campaign_dir,
+                scenario=scenario,
+                run_number=run_number,
+            )
+            returncode = run_command(command, repo_root)
+            metadata_path = run_dir / "metadata.json"
+            if metadata_path.exists():
+                run_metadata = load_run_metadata(metadata_path)
+            else:
+                run_metadata = {
+                    "scenario_name": scenario.name,
+                    "run_id": f"run_{run_number:04d}",
+                    "status": "failed",
+                    "expect_final_state": scenario.expect_final_state,
+                    "mission_returncode": returncode,
+                    "validator_returncode": None,
+                    "run_dir": str(run_dir),
+                }
+            run_metadata["scenario_runner_returncode"] = returncode
+            runs.append(run_metadata)
 
     finished_at = utc_now_iso()
     elapsed_s = round(time.monotonic() - start, 3)
@@ -204,19 +317,20 @@ def main() -> int:
     status = "passed" if failed == 0 else "failed"
 
     summary = {
-        "schema_version": 1,
-        "campaign": args.campaign,
+        "schema_version": 2,
+        "campaign": campaign_name,
         "campaign_id": args.campaign_id,
-        "scenario": args.scenario,
         "status": status,
         "started_at": started_at,
         "finished_at": finished_at,
         "elapsed_s": elapsed_s,
-        "repeats": args.repeats,
+        "scenario_count": len(scenarios),
+        "repeats": sum(s.repeats for s in scenarios),
         "passed": passed,
         "failed": failed,
-        "config": args.config,
-        "expect_final_state": args.expect_final_state if args.expect_final_state is not None else ("Complete" if args.expect_complete else None),
+        "campaign_file": str(args.campaign_file) if args.campaign_file is not None else None,
+        "campaign_spec": campaign_spec,
+        "scenarios": [scenario.__dict__ for scenario in scenarios],
         "output_root": str(output_root),
         "campaign_dir": str(campaign_dir),
         "runs": runs,
