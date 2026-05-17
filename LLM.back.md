@@ -427,3 +427,133 @@ Known small cleanup:
 ```text
 If `apps/dedalus_mission_loop.cpp` still warns about ++ on volatile sig_atomic_t, replace the increment in handle_interrupt_signal with read/current plus assignment. This is warning-only; build and runtime behavior were otherwise validated.
 ```
+
+---
+
+## H13. Milestone 3 Redefinition: Object-Conditioned Flight Behavior
+
+After Milestone 2.20 closed the reliable live mission loop, the roadmap was sharpened.
+
+Milestone 3 is no longer defined as tactical obstacle mapping. It is now:
+
+```text
+Milestone 3.0 — Object-conditioned flight behavior demo
+```
+
+The intended demo:
+
+```text
+AirSim/PX4 live mission starts
+  -> drone takes off and reaches safe height
+  -> perception/world model provides a detected/tracked class instance, such as person or car
+  -> TargetSelector selects a class or instance
+  -> BehaviorRuntime executes follow, circle, approach, or sequence behavior
+  -> behavior emits bounded velocity vectors into the existing PX4 SITL/AirSim path
+  -> drone returns home, lands, and disarms
+  -> mission_events + snapshots prove the behavior sequence
+```
+
+Initial behavior language concepts:
+
+```text
+Target selector
+Behavior type
+Reference frame
+Desired relative geometry
+Constraints
+Completion condition
+Fallback behavior
+```
+
+Initial behavior types:
+
+```text
+hold
+search
+follow
+approach
+circle
+go_home
+land
+sequence
+```
+
+Important behavior semantics:
+
+```text
+follow:
+  maintain a relative 3D offset from a selected target
+
+circle:
+  orbit a static or slow selected target at radius/altitude/angular speed
+
+approach:
+  move toward a target until a standoff or relative-position condition, then optionally run another action
+```
+
+M3 should not own full obstacle avoidance. M3 proves object-conditioned behavior on top of the existing velocity-command path.
+
+---
+
+## H14. Post-Milestone 3 Spatial Autonomy Plan
+
+After M3, the same behaviors should become obstacle-aware by inserting an avoidance layer between behavior and the flight sink:
+
+```text
+BehaviorController
+  -> desired velocity vector
+  -> TacticalAvoidancePlanner
+  -> safe velocity vector
+  -> Px4BridgeCommandSink
+```
+
+The sink must remain simple. It should receive bounded velocity/yaw intent. It should not own obstacle logic, target logic, or behavior policy.
+
+Post-M3 roadmap:
+
+```text
+4.0 Local tactical occupancy map
+  Drone-relative real-time map from vision/ego motion.
+
+5.0 Reactive obstacle avoidance planner
+  Modify desired behavior velocity into safe velocity using tactical occupancy.
+
+6.0 Persistent traverse map / flight memory
+  Remember known-safe corridors, blocked regions, risk/cost surfaces, and preferred lanes across flights.
+
+7.0 Cached route solutions
+  Reuse successful routes when live sensing and map priors agree; invalidate when live sensing contradicts memory.
+
+8.0 Tactical map + drone POV visualization
+  Visualize both takeoff-origin/drone-relative map and camera POV overlays.
+
+9.0 Spatial autonomy demo with avoidance
+  Follow/circle/approach an object-conditioned target while avoiding static/dynamic obstacles and updating traverse memory.
+
+10.0 Multi-flight site memory
+  Maintain route priors, hazard history, repeated obstacle history, and mission outcomes across missions.
+```
+
+Core post-M3 design split:
+
+```text
+Tactical occupancy map:
+  real-time, short-horizon, safety-critical
+
+Persistent traverse map:
+  slower, historical, advisory
+
+Route cache:
+  proposed solution memory, invalidated by live sensing
+
+Behavior:
+  decides intent
+
+Avoidance planner:
+  modifies intent into safe motion
+
+Flight sink:
+  sends bounded velocity/yaw intent to PX4/SITL
+```
+
+Do not let route memory override fresh tactical sensing.
