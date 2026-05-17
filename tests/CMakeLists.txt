@@ -242,4 +242,11 @@ if(Python3_Interpreter_FOUND)
             ${PROJECT_SOURCE_DIR}
             ${PROJECT_BINARY_DIR}
     )
+    add_test(
+        NAME mission_abort_scenario
+        COMMAND ${Python3_EXECUTABLE}
+            ${PROJECT_SOURCE_DIR}/tests/integration/test_mission_abort_scenario.py
+            ${PROJECT_SOURCE_DIR}
+            ${PROJECT_BINARY_DIR}
+    )
 endif()
