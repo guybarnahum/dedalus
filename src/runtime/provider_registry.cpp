@@ -37,6 +37,8 @@ CoreStackProviders ProviderRegistry::create(const CoreStackProviderConfig& confi
 
     if (config.frame_source == "synthetic") {
         providers.frame_source = std::make_unique<SyntheticFrameSource>();
+    } else if (config.frame_source == "synthetic_mission") {
+        providers.frame_source = std::make_unique<SyntheticMissionFrameSource>();
     } else if (config.frame_source == "video_only") {
         providers.frame_source = std::make_unique<VideoOnlyFrameSource>(1U);
     } else if (config.frame_source == "recorded_frames") {
@@ -118,7 +120,7 @@ CoreStackProviders ProviderRegistry::create(const CoreStackProviderConfig& confi
 }
 
 std::vector<std::string> ProviderRegistry::frame_sources() const {
-    return {"synthetic", "video_only", "recorded_frames", "airsim"};
+    return {"synthetic", "synthetic_mission", "video_only", "recorded_frames", "airsim"};
 }
 
 std::vector<std::string> ProviderRegistry::ego_providers() const {
