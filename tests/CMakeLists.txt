@@ -235,4 +235,11 @@ if(Python3_Interpreter_FOUND)
             ${PROJECT_SOURCE_DIR}
             ${PROJECT_BINARY_DIR}
     )
+    add_test(
+        NAME mission_campaign_runner
+        COMMAND ${Python3_EXECUTABLE}
+            ${PROJECT_SOURCE_DIR}/tests/integration/test_mission_campaign_runner.py
+            ${PROJECT_SOURCE_DIR}
+            ${PROJECT_BINARY_DIR}
+    )
 endif()
