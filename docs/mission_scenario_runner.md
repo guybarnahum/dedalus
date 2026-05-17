@@ -1,10 +1,10 @@
-# Mission Scenario Runner
+# Mission Scenario and Campaign Runners
 
-This document captures Milestone 2.22.1: the first scenario/campaign harness slice.
+This document captures Milestone 2.22 scenario/campaign harness work.
 
-The goal is to make a single mission run archive-grade by wrapping `dedalus_mission_loop`, preserving console output, validating the run artifact directory, and writing structured metadata.
+The goal is to make mission runs archive-grade by wrapping `dedalus_mission_loop`, preserving console output, validating run artifact directories, and writing structured metadata and campaign summaries.
 
-## Runner
+## Single scenario runner
 
 ```bash
 python3 simulation/run-mission-scenario.py \
@@ -31,7 +31,45 @@ out/mission_scenarios/trajectory_live/run_0001/
   snapshot_XXXX.json
 ```
 
-## Metadata
+## Campaign runner
+
+```bash
+python3 simulation/run-mission-campaign.py \
+  --campaign synthetic_ci \
+  --campaign-id campaign_0001 \
+  --scenario synthetic_lifecycle \
+  --repeats 3 \
+  --config config/core_stack_synthetic_mission_ci.yaml \
+  --output-root out/mission_campaigns \
+  --max-frames 220 \
+  --shutdown-max-frames 50 \
+  --safe-height-m 2 \
+  --landed-height-m 1 \
+  --overwrite
+```
+
+The resulting directory is:
+
+```text
+out/mission_campaigns/synthetic_ci/campaign_0001/
+  campaign_summary.json
+  campaign_summary.txt
+  runs/
+    synthetic_lifecycle/
+      run_0001/
+        console.log
+        metadata.json
+        validator_result.txt
+        mission_events.jsonl
+        snapshot_manifest.txt
+        snapshot_XXXX.json
+      run_0002/
+        ...
+```
+
+The campaign runner delegates each run to `simulation/run-mission-scenario.py`. This keeps the per-run artifact contract in one place and makes campaign summary generation a thin aggregation layer.
+
+## Per-run metadata
 
 `metadata.json` records:
 
@@ -48,7 +86,20 @@ out/mission_scenarios/trajectory_live/run_0001/
 - artifact filenames
 ```
 
-This file is intended to become the per-run anchor for later campaign summaries.
+This file is the per-run anchor used by campaign summaries.
+
+## Campaign summary
+
+`campaign_summary.json` and `campaign_summary.txt` record:
+
+```text
+- campaign name and id
+- scenario name
+- repeat count
+- passed / failed counts
+- per-run status and return codes
+- per-run artifact directories
+```
 
 ## Validation
 
@@ -67,16 +118,18 @@ For future M3 object-conditioned behavior scenarios, add:
 --expect-behavior
 ```
 
-## CI smoke test
+## CI smoke tests
 
-The CTest smoke test uses the synthetic mission config so it does not require AirSim:
+The CTest smoke tests use the synthetic mission config so they do not require AirSim:
 
 ```bash
-ctest --test-dir build-staging --output-on-failure -R mission_scenario_runner
+ctest --test-dir build-staging --output-on-failure -R 'mission_(scenario|campaign)_runner'
 ```
 
-It proves that the runner creates the expected run directory, captures logs, writes metadata, and gates the result through the mission artifact validator.
+The scenario test proves that one run creates the expected archive-grade directory and validates mission lifecycle completion.
+
+The campaign test proves that repeated scenario runs produce per-run metadata and campaign-level summaries.
 
 ## Next slice
 
-Milestone 2.22.2 should add a campaign-level wrapper that runs several scenario definitions/repeats and writes a campaign summary, rather than replacing this single-run primitive.
+Milestone 2.22.4 should add first-class abort/edge-case scenario validation, including validator support for expected final states beyond `Complete`.
