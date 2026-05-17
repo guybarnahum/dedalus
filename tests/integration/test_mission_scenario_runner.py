@@ -7,7 +7,32 @@ import json
 import shutil
 import subprocess
 import sys
+import time
 from pathlib import Path
+
+
+def run_streaming(command: list[str], cwd: Path) -> int:
+    process = subprocess.Popen(
+        command,
+        cwd=cwd,
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        bufsize=1,
+    )
+    assert process.stdout is not None
+    last_progress_s = time.monotonic()
+    for line in process.stdout:
+        now = time.monotonic()
+        if now - last_progress_s > 0.75:
+            sys.stdout.write("\rmission_scenario_runner: still running...\033[K")
+            sys.stdout.flush()
+            last_progress_s = now
+        sys.stdout.write(line)
+        sys.stdout.flush()
+    sys.stdout.write("\rmission_scenario_runner: subprocess finished\033[K\n")
+    sys.stdout.flush()
+    return process.wait()
 
 
 def main() -> int:
@@ -38,13 +63,12 @@ def main() -> int:
         "2",
         "--landed-height-m",
         "1",
+        "--progress",
         "--overwrite",
     ]
-    result = subprocess.run(command, cwd=repo_root, text=True, capture_output=True, check=False)
-    if result.returncode != 0:
-        print(result.stdout)
-        print(result.stderr, file=sys.stderr)
-        return result.returncode
+    returncode = run_streaming(command, repo_root)
+    if returncode != 0:
+        return returncode
 
     run_dir = out_root / "ci_smoke" / "run_0001"
     metadata_path = run_dir / "metadata.json"
