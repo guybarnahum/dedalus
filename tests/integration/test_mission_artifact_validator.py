@@ -78,7 +78,7 @@ def main() -> int:
                 record["ego_height_m"] = 2.0
         write_jsonl(low_height_dir / "mission_events.jsonl", records)
         (low_height_dir / "snapshot_manifest.txt").write_text("snapshot_0001.json\n", encoding="utf-8")
-        low_height = run_validator(low_height_dir=low_height_dir, repo_root=repo_root, *["--expect-complete", "--safe-height-m", "16"])
+        low_height = run_validator(repo_root, low_height_dir, "--expect-complete", "--safe-height-m", "16")
         if low_height.returncode == 0:
             print(low_height.stdout)
             print("validator accepted ExecuteMission below safe height", file=sys.stderr)
