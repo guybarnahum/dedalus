@@ -228,4 +228,11 @@ if(Python3_Interpreter_FOUND)
             ${PROJECT_SOURCE_DIR}/tests/integration/test_mission_artifact_validator.py
             ${PROJECT_SOURCE_DIR}
     )
+    add_test(
+        NAME mission_scenario_runner
+        COMMAND ${Python3_EXECUTABLE}
+            ${PROJECT_SOURCE_DIR}/tests/integration/test_mission_scenario_runner.py
+            ${PROJECT_SOURCE_DIR}
+            ${PROJECT_BINARY_DIR}
+    )
 endif()
