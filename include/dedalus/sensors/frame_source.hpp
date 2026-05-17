@@ -77,4 +77,15 @@ private:
     bool emitted_{false};
 };
 
+class SyntheticMissionFrameSource final : public FrameSource {
+public:
+    SyntheticMissionFrameSource() = default;
+    std::optional<FramePacket> next_frame() override;
+    void request_stop() override;
+
+private:
+    int frame_index_{0};
+    bool stop_requested_{false};
+};
+
 }  // namespace dedalus
