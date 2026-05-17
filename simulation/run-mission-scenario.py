@@ -11,7 +11,6 @@ from __future__ import annotations
 
 import argparse
 import json
-import os
 import shutil
 import subprocess
 import sys
@@ -31,6 +30,14 @@ def default_run_id() -> str:
 
 def repo_root_from_script() -> Path:
     return Path(__file__).resolve().parents[1]
+
+
+def expected_final_state_from(args: argparse.Namespace) -> str | None:
+    if args.expect_final_state is not None:
+        return args.expect_final_state
+    if args.expect_complete:
+        return "Complete"
+    return None
 
 
 def stream_command(command: list[str], cwd: Path, log_path: Path) -> int:
@@ -78,6 +85,7 @@ def build_metadata(
     elapsed_s: float,
 ) -> dict[str, Any]:
     status = "passed" if mission_returncode == 0 and validator_returncode == 0 else "failed"
+    expected_final_state = expected_final_state_from(args)
     return {
         "schema_version": 1,
         "scenario_name": args.name,
@@ -93,6 +101,7 @@ def build_metadata(
         "max_frames": args.max_frames,
         "shutdown_max_frames": args.shutdown_max_frames,
         "expect_complete": args.expect_complete,
+        "expect_final_state": expected_final_state,
         "expect_behavior": args.expect_behavior,
         "safe_height_m": args.safe_height_m,
         "landed_height_m": args.landed_height_m,
@@ -124,11 +133,15 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--landed-height-m", type=float, default=1.0)
     parser.add_argument("--expect-complete", dest="expect_complete", action="store_true", default=True)
     parser.add_argument("--no-expect-complete", dest="expect_complete", action="store_false")
-    parser.add_argument("--expect-behavior", action="store_true", help="Require M3 behavior events")
+    parser.add_argument("--expect-final-state", choices=["Complete", "Abort"], help="Expected final mission state")
+    parser.add_argument("--expect-behavior", action="store_true", help="Require M3 object-conditioned behavior events")
     parser.add_argument("--progress", action="store_true", help="Pass --progress through to dedalus_mission_loop")
     parser.add_argument("-v", "--verbose", action="count", default=0, help="Pass verbosity through to dedalus_mission_loop")
     parser.add_argument("--overwrite", action="store_true", help="Replace an existing scenario run directory")
-    return parser.parse_args()
+    args = parser.parse_args()
+    if args.expect_final_state is not None and args.expect_final_state != "Complete":
+        args.expect_complete = False
+    return args
 
 
 def main() -> int:
@@ -166,8 +179,9 @@ def main() -> int:
         mission_command.append("-" + "v" * min(args.verbose, 3))
 
     validator_command = args.validator.split() + [str(run_dir)]
-    if args.expect_complete:
-        validator_command.append("--expect-complete")
+    expected_final_state = expected_final_state_from(args)
+    if expected_final_state is not None:
+        validator_command += ["--expect-final-state", expected_final_state]
     if args.expect_behavior:
         validator_command.append("--expect-behavior")
     validator_command += [
