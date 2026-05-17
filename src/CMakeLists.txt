@@ -8,6 +8,7 @@ add_library(dedalus_core
     sensors/recorded_frame_source.cpp
     sensors/replay_frame_source.cpp
     sensors/synthetic_frame_source.cpp
+    sensors/synthetic_mission_frame_source.cpp
     perception/perception_pipeline.cpp
     runtime/config_loader.cpp
     runtime/core_stack_runner.cpp
