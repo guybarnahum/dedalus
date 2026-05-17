@@ -13,7 +13,7 @@ guybarnahum/dedalus
 Current code baseline for this handoff:
 
 ```text
-main at / after commit c12c201c2329fd2fdf9fd1a584b316a712400d59
+main at / after commit ac5493139a196e293a4e8bcec889d3e9c5605f8c
 ```
 
 Active milestone state:
@@ -22,8 +22,40 @@ Active milestone state:
 Milestone 2.20 — Mission robustness, observability, and cleanup
 Status: closed / validated.
 
+Milestone 2.21 — Mission artifact validation and replay-grade diagnostics
+Status: implemented on main; local validation still expected after checkout.
+
 Next active milestone:
-Milestone 2.21 — Mission artifact validation and replay-grade diagnostics.
+Milestone 2.22 — Scenario/campaign harness.
+```
+
+Patch policy:
+
+```text
+Default: apply changes directly to main.
+Do not create branches or PRs unless the user explicitly asks for a branch or PR.
+Do not leave completed work sitting on a feature branch.
+
+Prefer GitHub connector file updates directly on main when available.
+If connector patching fails or is ambiguous, provide an exact manual patch.
+
+For normal patches:
+
+  cat > /tmp/change.patch <<'PATCH'
+  diff --git ...
+  PATCH
+  git apply /tmp/change.patch
+
+For full-file replacements:
+
+  cat > /tmp/update_file.sh <<'SH'
+  #!/usr/bin/env bash
+  set -euo pipefail
+  cat > path/to/file <<'EOF'
+  ... complete file content ...
+  EOF
+  SH
+  bash /tmp/update_file.sh
 ```
 
 Current working result:
@@ -33,10 +65,11 @@ Current working result:
 - `dedalus_mission_loop` flies through the mission path using `flight_command_sink: px4_bridge`.
 - Back-to-back mission-loop runs work without restarting AirSim.
 - Build succeeds.
-- CTest expected result: 18/18 passing.
+- CTest expected result after 2.21: 19/19 passing.
 - Live mission reaches safe height through pymavlink OFFBOARD control, executes the trajectory, goes home, lands, and disarms through PX4 shell lifecycle commands.
 - Ctrl-C / SIGTERM requests graceful mission finish on first interrupt.
 - `mission_events.jsonl` is the source artifact for mission debugging and final summaries.
+- `simulation/validate-mission-artifacts.py` validates live-run artifact directories.
 ```
 
 Core rule:
@@ -327,6 +360,7 @@ Do not make the sink understand obstacles. Do not bury behavior or avoidance log
 | 2.20C | Final summary from events | Done | `dedalus_mission_loop` summarizes `mission_events.jsonl` |
 | 2.20D | Repeatable-run hardening | Done / validated | Back-to-back mission runs work without restarting AirSim |
 | 2.20E | Closeout tooling/checkpoint | Done | Event summary helper + repeat smoke wrapper + updated docs |
+| 2.21 | Mission artifact validator | Implemented | `simulation/validate-mission-artifacts.py` + CTest smoke |
 
 ---
 
@@ -336,7 +370,7 @@ The path from 2.20 to 3.0 is no longer about making the drone fly. It is about m
 
 ```text
 2.21 Mission artifact validator
-  Validate mission_events + snapshots as a formal live-run artifact directory.
+  Validate mission_events + snapshots as a formal live-run artifact directory. Implemented on main.
 
 2.22 Scenario/campaign harness
   Run repeatable mission scenarios/campaigns and preserve metadata.
@@ -565,6 +599,27 @@ python3 simulation/mission-events-summary.py out/airsim_mission_snapshots/missio
 python3 simulation/mission-events-summary.py out/airsim_mission_snapshots/mission_events.jsonl --expect-complete
 ```
 
+Formal live-run artifact validator:
+
+```bash
+python3 simulation/validate-mission-artifacts.py \
+  out/airsim_mission_snapshots \
+  --expect-complete \
+  --safe-height-m 16 \
+  --landed-height-m 1
+```
+
+Future M3 behavior-artifact validation:
+
+```bash
+python3 simulation/validate-mission-artifacts.py \
+  out/object_behavior_mission \
+  --expect-complete \
+  --expect-behavior \
+  --safe-height-m 16 \
+  --landed-height-m 1
+```
+
 Repeat-run smoke helper:
 
 ```bash
@@ -573,10 +628,10 @@ RUNS=3 simulation/repeat-mission-smoke.sh
 
 `repeat-mission-smoke.sh` assumes AirSim/PX4 is already running. It runs `dedalus_mission_loop` repeatedly and validates each produced `mission_events.jsonl` with `--expect-complete`.
 
-If the script is not executable after GitHub checkout, run:
+If the scripts are not executable after GitHub checkout, run:
 
 ```bash
-chmod +x simulation/repeat-mission-smoke.sh simulation/mission-events-summary.py
+chmod +x simulation/repeat-mission-smoke.sh simulation/mission-events-summary.py simulation/validate-mission-artifacts.py
 ```
 
 ---
@@ -596,7 +651,7 @@ ctest --test-dir build-staging --output-on-failure
 Expected current result:
 
 ```text
-100% tests passed, 0 tests failed out of 18
+100% tests passed, 0 tests failed out of 19
 ```
 
 ### 10.2 Standalone known-good test flight
@@ -696,6 +751,7 @@ Abort is terminal/diagnostic and does not emit velocity commands.
 - Do not put obstacle avoidance inside the flight sink.
 - Do not let route memory override fresh tactical sensing.
 - Do not let Milestone 3 balloon into full obstacle avoidance; M3 is object-conditioned behavior. Avoidance starts post-M3.
+- Do not create branches or PRs unless the user explicitly asks for them.
 ```
 
 ---
@@ -705,18 +761,17 @@ Abort is terminal/diagnostic and does not emit velocity commands.
 Recommended next active stage:
 
 ```text
-Milestone 2.21 — Mission artifact validation and replay-grade diagnostics
+Milestone 2.22 — Scenario/campaign harness
 ```
 
 Suggested first tasks:
 
 ```text
-1. Turn mission_events + snapshots into a formal validator for live-run artifact directories.
-2. Validate state ordering: Prepare -> Takeoff -> ExecuteMission -> GoHome -> Land -> Complete.
-3. Validate height gates: safe height reached before ExecuteMission; landed height before Complete.
-4. Validate final disarm requested/confirmed semantics.
-5. Keep mission event validation separate from frame replay semantics.
-6. Make room in the validator for future object-behavior events: target_selected, behavior_start, behavior_complete, target_lost, fallback_start.
+1. Wrap repeatable mission scenarios/campaigns around the validated run artifact directory contract.
+2. Preserve per-run metadata beside mission_events.jsonl and snapshots.
+3. Use validate-mission-artifacts.py as the post-run gate for live mission artifacts.
+4. Keep mission event validation separate from frame replay semantics.
+5. Preserve the object-conditioned behavior validation extension points for M3.
 ```
 
 Expected later M3 event types:
@@ -760,6 +815,7 @@ docs/bridge_transport_plugins.md
 docs/binary_frame_bridge_protocol.md
 docs/perception_stabilization_annotation.md
 docs/mission_pipeline_current_state.md
+docs/object_conditioned_behavior_plan.md
 WHITEPAPER.md
 HANDOFF.md
 ```
