@@ -815,6 +815,7 @@ docs/bridge_transport_plugins.md
 docs/binary_frame_bridge_protocol.md
 docs/perception_stabilization_annotation.md
 docs/mission_pipeline_current_state.md
+docs/mission_state_machine.md
 docs/object_conditioned_behavior_plan.md
 WHITEPAPER.md
 HANDOFF.md
