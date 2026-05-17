@@ -575,6 +575,12 @@ int main(int argc, char** argv) {
                           << " (press Ctrl-C again to force local stop)\n";
             }
 
+            if (!finish_requested && mission_runtime && mission_finished(mission_runtime->last_state())) {
+                std::cerr << "dedalus_mission_loop: mission reached terminal state="
+                          << dedalus::to_string(mission_runtime->last_state()) << "; stopping frame loop\n";
+                break;
+            }
+
             const bool frame_limit_reached = args.max_frames > 0 && frame_count >= args.max_frames;
             if (frame_limit_reached && mission_runtime && !finish_requested) {
                 finish_requested = true;
