@@ -1,8 +1,8 @@
 # Mission Pipeline Current State
 
-This document describes the current Dedalus live AirSim/PX4 mission pipeline as of the Milestone 2.20 closeout.
+This document describes the current Dedalus live AirSim/PX4 mission pipeline as of the Milestone 2.21 artifact-validation stage.
 
-It is meant for developers and operators who need to run, debug, or safely extend the mission loop.
+It is meant for developers and operators who need to run, debug, validate, or safely extend the mission loop.
 
 ## Status
 
@@ -211,6 +211,7 @@ simulation/px4-command-bridge.py
 simulation/airsim-prepare-session.py
 simulation/airsim-stream-frames-binary.py
 simulation/mission-events-summary.py
+simulation/validate-mission-artifacts.py
 simulation/repeat-mission-smoke.sh
 config/core_stack_trajectory_mission_placeholder.yaml
 ```
@@ -352,17 +353,17 @@ mission_events.jsonl
 
 `snapshot_XXXX.json` files describe what the world model and mission handoff saw. They are debug artifacts and are not necessarily replay inputs.
 
-`mission_events.jsonl` is the compact structured mission timeline. It is independent of console verbosity and is the source artifact used to generate the final console summary.
+`mission_events.jsonl` is the compact structured mission timeline. It is independent of console verbosity and is the source artifact used to generate the final console summary and formal artifact validation.
 
 Representative events:
 
 ```json
 {"event":"runtime_start","tick_hz":10.000000}
-{"event":"state_transition","tick":1,"from":"Idle","to":"Prepare","status":"arming"}
+{"event":"state_transition","tick":1,"from":"Idle","to":"Prepare","status":"arming","ego_height_m":0.000000}
 {"event":"command_dispatch","tick":1,"state":"Prepare","command":"Arm"}
 {"event":"command_result","tick":1,"state":"Prepare","command":"Arm","success":true}
-{"event":"state_transition","tick":42,"from":"Takeoff","to":"ExecuteMission","status":"takeoff_complete"}
-{"event":"state_transition","tick":901,"from":"Land","to":"Complete","status":"landed"}
+{"event":"state_transition","tick":42,"from":"Takeoff","to":"ExecuteMission","status":"takeoff_complete","ego_height_m":16.200000}
+{"event":"state_transition","tick":901,"from":"Land","to":"Complete","status":"landed","ego_height_m":0.100000}
 {"event":"runtime_stop","tick_count":902,"state":"Complete"}
 ```
 
@@ -372,6 +373,48 @@ Quick inspection:
 tail -n 40 out/airsim_mission_snapshots/mission_events.jsonl
 python3 simulation/mission-events-summary.py out/airsim_mission_snapshots/mission_events.jsonl
 python3 simulation/mission-events-summary.py out/airsim_mission_snapshots/mission_events.jsonl --expect-complete
+```
+
+Formal live-run artifact validation:
+
+```bash
+python3 simulation/validate-mission-artifacts.py \
+  out/airsim_mission_snapshots \
+  --expect-complete \
+  --safe-height-m 16 \
+  --landed-height-m 1
+```
+
+The validator checks:
+
+```text
+- mission_events.jsonl exists and parses as JSONL
+- snapshot evidence exists through snapshot_manifest.txt or snapshot_*.json
+- final_state is Complete when requested
+- lifecycle ordering includes Prepare -> Takeoff -> ExecuteMission -> GoHome -> Land -> Complete
+- command_result failures and command_exception events are absent
+- ExecuteMission is reached at or above the configured safe height
+- Complete is reached at or below the configured landed height
+```
+
+For later M3 object-conditioned behavior runs, add:
+
+```bash
+python3 simulation/validate-mission-artifacts.py \
+  out/object_behavior_mission \
+  --expect-complete \
+  --expect-behavior \
+  --safe-height-m 16 \
+  --landed-height-m 1
+```
+
+`--expect-behavior` currently reserves the validation extension points for:
+
+```text
+target_selected
+behavior_start
+behavior_complete
+velocity commands during behavior
 ```
 
 ## Known traps
@@ -391,15 +434,15 @@ python3 simulation/mission-events-summary.py out/airsim_mission_snapshots/missio
 ## Recommended next stage
 
 ```text
-Milestone 2.21 — Mission artifact validation and replay-grade diagnostics
+Milestone 2.22 — Scenario/campaign harness
 ```
 
 Suggested first tasks:
 
 ```text
-1. Turn mission_events + snapshots into a formal validator for live-run artifact directories.
-2. Validate state ordering: Prepare -> Takeoff -> ExecuteMission -> GoHome -> Land -> Complete.
-3. Validate height gates: safe height reached before ExecuteMission; landed height before Complete.
-4. Validate final disarm requested/confirmed semantics.
-5. Keep mission event validation separate from frame replay semantics.
+1. Wrap repeatable mission scenarios/campaigns around the validated run artifact directory contract.
+2. Preserve per-run metadata beside mission_events.jsonl and snapshots.
+3. Use validate-mission-artifacts.py as the post-run gate for live mission artifacts.
+4. Keep mission event validation separate from frame replay semantics.
+5. Preserve the object-conditioned behavior validation extension points for M3.
 ```
