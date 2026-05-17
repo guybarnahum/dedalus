@@ -41,6 +41,7 @@ public:
 
     [[nodiscard]] bool running() const;
     [[nodiscard]] bool finish_requested() const;
+    [[nodiscard]] bool terminal_settled() const;
     [[nodiscard]] std::size_t tick_count() const;
     [[nodiscard]] MissionLifecycleState last_state() const;
 
@@ -55,6 +56,7 @@ private:
     std::unique_ptr<FlightCommandSink> sink_;
     std::atomic<bool> running_{false};
     std::atomic<bool> finish_requested_{false};
+    std::atomic<bool> terminal_settled_{false};
     std::thread thread_;
     std::size_t tick_count_{0U};
     MissionLifecycleState last_state_{MissionLifecycleState::Idle};
