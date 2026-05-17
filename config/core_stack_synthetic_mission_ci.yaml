@@ -1,0 +1,27 @@
+frame_source: synthetic_mission
+ego_provider: frame_hint
+detector: scripted
+camera_stabilizer: null
+tracker: simple_centroid
+identity_resolver: appearance_only
+projector: flat_ground
+world_model: in_memory
+frame_annotator: null
+fallback_map_frame_id: map_mission_ci_0001
+
+mission_controller: trajectory_mission
+mission_tick_hz: 10
+flight_command_sink: disabled
+mission_options.flight_control_mode: px4
+mission_options.flight_safe_height_m: 2
+mission_options.flight_trajectory_path: simulation/trajectories/synthetic_mission_ci.json
+mission_options.flight_home_policy: initial_ego_pose
+mission_options.flight_max_velocity_mps: 5
+mission_options.flight_arm_retry_interval_s: 0.2
+mission_options.flight_arm_timeout_s: 2.0
+mission_options.flight_arm_dispatch_fallback_s: 0.0
+mission_options.flight_takeoff_retry_interval_s: 0.2
+mission_options.flight_land_retry_interval_s: 0.2
+mission_options.flight_land_timeout_s: 8.0
+mission_options.flight_disarm_retry_interval_s: 0.2
+mission_options.flight_disarm_timeout_s: 8.0
