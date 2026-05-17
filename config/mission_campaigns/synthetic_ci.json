@@ -1,0 +1,23 @@
+{
+  "campaign": "synthetic_ci",
+  "defaults": {
+    "max_frames": 220,
+    "shutdown_max_frames": 50,
+    "safe_height_m": 2,
+    "landed_height_m": 1
+  },
+  "scenarios": [
+    {
+      "name": "synthetic_lifecycle",
+      "config": "config/core_stack_synthetic_mission_ci.yaml",
+      "repeats": 2,
+      "expect_final_state": "Complete"
+    },
+    {
+      "name": "synthetic_abort_land_timeout",
+      "config": "config/core_stack_synthetic_mission_abort_ci.yaml",
+      "repeats": 1,
+      "expect_final_state": "Abort"
+    }
+  ]
+}
