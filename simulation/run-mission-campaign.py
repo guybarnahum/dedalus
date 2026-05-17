@@ -67,11 +67,15 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--landed-height-m", type=float, default=1.0)
     parser.add_argument("--expect-complete", dest="expect_complete", action="store_true", default=True)
     parser.add_argument("--no-expect-complete", dest="expect_complete", action="store_false")
+    parser.add_argument("--expect-final-state", choices=["Complete", "Abort"], help="Expected final mission state")
     parser.add_argument("--expect-behavior", action="store_true")
     parser.add_argument("--progress", action="store_true", help="Pass --progress through to each scenario")
     parser.add_argument("-v", "--verbose", action="count", default=0, help="Pass verbosity through to each scenario")
     parser.add_argument("--overwrite", action="store_true", help="Replace an existing campaign directory")
-    return parser.parse_args()
+    args = parser.parse_args()
+    if args.expect_final_state is not None and args.expect_final_state != "Complete":
+        args.expect_complete = False
+    return args
 
 
 def build_scenario_command(
@@ -106,7 +110,9 @@ def build_scenario_command(
         str(args.landed_height_m),
         "--overwrite",
     ]
-    if not args.expect_complete:
+    if args.expect_final_state is not None:
+        command += ["--expect-final-state", args.expect_final_state]
+    elif not args.expect_complete:
         command.append("--no-expect-complete")
     if args.expect_behavior:
         command.append("--expect-behavior")
@@ -210,6 +216,7 @@ def main() -> int:
         "passed": passed,
         "failed": failed,
         "config": args.config,
+        "expect_final_state": args.expect_final_state if args.expect_final_state is not None else ("Complete" if args.expect_complete else None),
         "output_root": str(output_root),
         "campaign_dir": str(campaign_dir),
         "runs": runs,
