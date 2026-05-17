@@ -5,6 +5,7 @@
 #include <optional>
 #include <stdexcept>
 #include <string>
+#include <utility>
 
 namespace dedalus {
 namespace {
@@ -121,6 +122,20 @@ void TrajectoryMissionController::advance_segment_if_needed() {
     }
 }
 
+void TrajectoryMissionController::begin_abort_recovery(
+    TimePoint now,
+    double height_m,
+    const std::string& reason) {
+    aborting_ = true;
+    abort_reason_ = reason;
+    state_start_ = now;
+    if (height_m > kLandHeightM) {
+        state_ = home_initialized_ ? MissionLifecycleState::GoHome : MissionLifecycleState::Land;
+    } else {
+        state_ = MissionLifecycleState::Complete;
+    }
+}
+
 MissionTickOutput TrajectoryMissionController::tick(const MissionTickInput& input) {
     MissionTickOutput output;
     output.state = state_;
@@ -158,8 +173,13 @@ MissionTickOutput TrajectoryMissionController::tick(const MissionTickInput& inpu
                 state_start_ = input.now;
                 output.status = "arm_dispatch_ok_waiting_for_takeoff_height";
             } else if (elapsed_at_least(state_start_, input.now, config_.arm_timeout_s)) {
-                state_ = MissionLifecycleState::Abort;
-                output.status = "arm_timeout";
+                if (ego.armed_valid && !ego.armed) {
+                    state_ = MissionLifecycleState::Abort;
+                    output.status = "abort";
+                } else {
+                    begin_abort_recovery(input.now, height_m, "arm_timeout");
+                    output.status = "abort_recovery_start_arm_timeout";
+                }
             } else if (!arm_command_sent_ || elapsed_at_least(arm_last_command_time_, input.now, config_.arm_retry_interval_s)) {
                 arm_command_sent_ = true;
                 arm_last_command_time_ = input.now;
@@ -221,10 +241,10 @@ MissionTickOutput TrajectoryMissionController::tick(const MissionTickInput& inpu
             if (norm_xy(velocity) <= 0.0) {
                 state_ = MissionLifecycleState::Land;
                 state_start_ = input.now;
-                output.status = "home_reached";
+                output.status = aborting_ ? "abort_recovery_home_reached" : "home_reached";
             } else {
                 output.command = command_from_velocity(input.now, velocity);
-                output.status = "go_home";
+                output.status = aborting_ ? "abort_recovery_go_home" : "go_home";
             }
             break;
         }
@@ -232,32 +252,39 @@ MissionTickOutput TrajectoryMissionController::tick(const MissionTickInput& inpu
             if (height_m <= kLandHeightM) {
                 state_ = MissionLifecycleState::Complete;
                 state_start_ = input.now;
-                output.status = "landed";
+                output.status = aborting_ ? "abort_recovery_landed" : "landed";
             } else if (!land_command_sent_) {
                 land_command_sent_ = true;
                 land_last_command_time_ = input.now;
                 output.command = command_with_kind(input.now, FlightCommandKind::Land);
-                output.status = "landing_command_sent";
+                output.status = aborting_ ? "abort_recovery_landing_command_sent" : "landing_command_sent";
             } else if (elapsed_at_least(land_last_command_time_, input.now, config_.land_timeout_s)) {
                 state_ = MissionLifecycleState::Abort;
-                output.status = "land_timeout";
+                output.status = "abort";
             } else {
-                output.status = "waiting_for_landed_telemetry";
+                output.status = aborting_ ? "abort_recovery_waiting_for_landed_telemetry" : "waiting_for_landed_telemetry";
             }
             break;
         case MissionLifecycleState::Complete:
             if (ego.armed_valid && !ego.armed) {
-                output.status = "complete";
+                if (aborting_) {
+                    state_ = MissionLifecycleState::Abort;
+                    output.status = "abort";
+                } else {
+                    output.status = "complete";
+                }
             } else if (elapsed_at_least(state_start_, input.now, config_.disarm_timeout_s)) {
                 state_ = MissionLifecycleState::Abort;
-                output.status = "disarm_timeout";
+                output.status = "abort";
             } else if (!disarm_command_sent_ || elapsed_at_least(disarm_last_command_time_, input.now, config_.disarm_retry_interval_s)) {
                 disarm_command_sent_ = true;
                 disarm_last_command_time_ = input.now;
                 output.command = command_with_kind(input.now, FlightCommandKind::Disarm);
-                output.status = "disarming";
+                output.status = aborting_ ? "abort_recovery_disarming" : "disarming";
             } else {
-                output.status = ego.armed_valid ? "waiting_for_disarmed_state" : "waiting_for_disarmed_telemetry";
+                output.status = aborting_
+                    ? (ego.armed_valid ? "abort_recovery_waiting_for_disarmed_state" : "abort_recovery_waiting_for_disarmed_telemetry")
+                    : (ego.armed_valid ? "waiting_for_disarmed_state" : "waiting_for_disarmed_telemetry");
             }
             break;
         case MissionLifecycleState::Abort:
