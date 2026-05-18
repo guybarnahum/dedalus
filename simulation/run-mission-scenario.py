@@ -43,16 +43,15 @@ def expected_final_state_from(args: argparse.Namespace) -> str | None:
 def stream_command(command: list[str], cwd: Path, log_path: Path) -> int:
     """Stream command output in real time while preserving carriage returns.
 
-    Line-oriented iteration turns `\r` progress updates into newline-ish chunks in
-    some terminals and can delay output until a newline appears. Reading one
-    character at a time preserves in-place progress and keeps the artifact log
-    close to what the child emitted without changing the child's environment.
+    Python text-mode pipes use universal-newline translation, which can turn
+    child `\r` progress updates into `\n`. Binary-mode reads preserve the exact
+    terminal control bytes while still allowing the run artifact log to capture
+    the same stream.
     """
-    with log_path.open("w", encoding="utf-8") as log_file:
+    with log_path.open("wb") as log_file:
         process = subprocess.Popen(
             command,
             cwd=cwd,
-            text=True,
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
             bufsize=0,
@@ -60,12 +59,12 @@ def stream_command(command: list[str], cwd: Path, log_path: Path) -> int:
         assert process.stdout is not None
         while True:
             chunk = process.stdout.read(1)
-            if chunk == "" and process.poll() is not None:
+            if chunk == b"" and process.poll() is not None:
                 break
             if not chunk:
                 continue
-            sys.stdout.write(chunk)
-            sys.stdout.flush()
+            sys.stdout.buffer.write(chunk)
+            sys.stdout.buffer.flush()
             log_file.write(chunk)
             log_file.flush()
         return process.wait()
