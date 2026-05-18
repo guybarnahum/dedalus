@@ -218,6 +218,46 @@ target_compile_features(test_target_selector PRIVATE cxx_std_20)
 
 add_test(NAME target_selector COMMAND test_target_selector)
 
+# Validation layers:
+#   contracts  — data formats, config parsing, protocol/boundary contracts
+#   unit       — deterministic native unit tests, often using synthetic inputs
+#   synthetic  — tests that exercise synthetic/recorded pipeline data or mission artifacts
+#   scenario   — archive-grade mission scenario/campaign harness tests
+#   airsim     — AirSim-facing boundaries that do not require a live simulator in CTest
+#
+# No CTest test is labeled airsim_live today. Real live AirSim/PX4 validation remains an
+# explicit operator-run smoke/campaign command outside normal CTest.
+set_tests_properties(
+    world_snapshot_json
+    behavior_spec
+    target_selector
+    core_stack_config_loader
+    provider_composition
+    ppm_frame_annotation_sink
+    airsim_velocity_command_sink
+    px4_mavlink_command_sink
+    PROPERTIES
+        LABELS "contracts;unit"
+)
+
+set_tests_properties(
+    perception_world_model_flow
+    video_only_world_model_flow
+    recorded_frame_world_model_flow
+    pipeline_profiler
+    trajectory_mission_controller
+    mission_runtime
+    latest_world_snapshot
+    PROPERTIES
+        LABELS "unit;synthetic"
+)
+
+set_tests_properties(
+    airsim_provider_boundary
+    PROPERTIES
+        LABELS "contracts;unit;airsim"
+)
+
 find_package(Python3 COMPONENTS Interpreter)
 if(Python3_Interpreter_FOUND)
     add_test(
@@ -274,5 +314,23 @@ if(Python3_Interpreter_FOUND)
             ${PROJECT_SOURCE_DIR}/tests/integration/test_mission_abort_scenario.py
             ${PROJECT_SOURCE_DIR}
             ${PROJECT_BINARY_DIR}
+    )
+
+    set_tests_properties(
+        replay_recording_smoke
+        replay_artifact_validator
+        ppm_sequence_mp4_export
+        replay_mission_smoke
+        mission_artifact_validator
+        PROPERTIES
+            LABELS "synthetic;integration"
+    )
+
+    set_tests_properties(
+        mission_scenario_runner
+        mission_campaign_runner
+        mission_abort_scenario
+        PROPERTIES
+            LABELS "scenario;synthetic;integration"
     )
 endif()
