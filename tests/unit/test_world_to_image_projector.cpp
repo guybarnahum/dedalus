@@ -91,7 +91,9 @@ void applies_ego_translation_and_yaw() {
             "ego-relative vector should change with ego translation");
     require(from_left.u_px > from_origin.u_px, "object should move right in viewport when ego moves left");
 
-    const auto ego_yawed = ego_at(dedalus::Vec3{0.0, 0.0, 0.0}, kPi / 4.0);
+    // With a 90-degree horizontal FOV, 45 degrees is exactly the image edge. Use 30 degrees
+    // for the inside-FOV yaw case and reserve 90 degrees for the out-of-view stress case.
+    const auto ego_yawed = ego_at(dedalus::Vec3{0.0, 0.0, 0.0}, kPi / 6.0);
     const auto from_yaw = dedalus::project_local_point_to_image(fixed_object, ego_yawed, config);
     require(from_yaw.visible, "fixed object should remain visible under moderate yaw");
     require(from_yaw.u_px < from_origin.u_px, "positive yaw should move forward object left in body/camera view");
