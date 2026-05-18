@@ -1,5 +1,6 @@
 #include "dedalus/visualization/world_overlay_sidecar.hpp"
 
+#include <cmath>
 #include <filesystem>
 #include <fstream>
 #include <iomanip>
@@ -46,8 +47,27 @@ std::string sidecar_file_name(const std::size_t frame_index) {
     return stream.str();
 }
 
+void write_vec2_json(std::ostream& output, const Vec2& value) {
+    output << '[' << value.x << ',' << value.y << ']';
+}
+
 void write_vec3_json(std::ostream& output, const Vec3& value) {
     output << '[' << value.x << ',' << value.y << ',' << value.z << ']';
+}
+
+void write_rect_json(std::ostream& output, const Rect2& value) {
+    output << "{\"x\":" << value.x << ",\"y\":" << value.y << ",\"width\":" << value.width
+           << ",\"height\":" << value.height << '}';
+}
+
+Vec2 bbox_center(const Rect2& bbox) {
+    return Vec2{bbox.x + bbox.width * 0.5, bbox.y + bbox.height * 0.5};
+}
+
+double pixel_residual(const Vec2& source_center, const ProjectedWorldPoint& projected) {
+    const double du = projected.u_px - source_center.x;
+    const double dv = projected.v_px - source_center.y;
+    return std::sqrt(du * du + dv * dv);
 }
 
 void write_json_string(std::ostream& output, const std::string& value) {
@@ -153,6 +173,16 @@ void write_world_overlay_sidecar(
         output << "      \"identity_id\": ";
         write_json_string(output, agent.identity_id.value);
         output << ",\n";
+        if (agent.has_source_detection) {
+            output << "      \"source_detection_id\": ";
+            write_json_string(output, agent.source_detection_id.value);
+            output << ",\n";
+        }
+        if (agent.has_source_frame) {
+            output << "      \"source_frame_id\": ";
+            write_json_string(output, agent.source_frame_id.value);
+            output << ",\n";
+        }
         output << "      \"class\": ";
         write_json_string(output, class_label_to_string(agent.class_label));
         output << ",\n";
@@ -175,6 +205,19 @@ void write_world_overlay_sidecar(
         output << "      \"u_px\": " << projected.u_px << ",\n";
         output << "      \"v_px\": " << projected.v_px << ",\n";
         output << "      \"depth_m\": " << projected.depth_m << ",\n";
+        if (agent.has_source_bbox) {
+            const auto source_center = bbox_center(agent.source_bbox_px);
+            output << "      \"source_bbox_px\": ";
+            write_rect_json(output, agent.source_bbox_px);
+            output << ",\n";
+            output << "      \"source_center_px\": ";
+            write_vec2_json(output, source_center);
+            output << ",\n";
+            output << "      \"reprojected_center_px\": [" << projected.u_px << ',' << projected.v_px << "],\n";
+            if (projected.visible) {
+                output << "      \"residual_px\": " << pixel_residual(source_center, projected) << ",\n";
+            }
+        }
         output << "      \"reason\": ";
         write_json_string(output, projected.reason);
         output << "\n";
