@@ -1,0 +1,17 @@
+frame_source: synthetic
+ego_provider: frame_hint
+detector: scripted
+camera_stabilizer: null
+tracker: simple_centroid
+identity_resolver: appearance_only
+projector: flat_ground
+ghost_targets_enabled: true
+ghost_targets_scenario: person_pair_crossing
+world_model: in_memory
+fallback_map_frame_id: map_local_0001
+frame_annotator: ppm_sequence
+annotation_output_path: out/ghost_targets_annotation
+annotation_output_fps: 5
+pipeline_timing_enabled: false
+mission_controller: disabled
+flight_command_sink: disabled
