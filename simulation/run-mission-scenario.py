@@ -12,6 +12,7 @@ from __future__ import annotations
 import argparse
 import json
 import shutil
+import signal
 import subprocess
 import sys
 import time
@@ -46,7 +47,9 @@ def stream_command(command: list[str], cwd: Path, log_path: Path) -> int:
     Python text-mode pipes use universal-newline translation, which can turn
     child `\r` progress updates into `\n`. Binary-mode reads preserve the exact
     terminal control bytes while still allowing the run artifact log to capture
-    the same stream.
+    the same stream. Ctrl-C is relayed to the active mission process and then
+    the wrapper keeps streaming so `dedalus_mission_loop` can perform its
+    graceful finish path. A second Ctrl-C forces termination.
     """
     with log_path.open("wb") as log_file:
         process = subprocess.Popen(
@@ -57,8 +60,32 @@ def stream_command(command: list[str], cwd: Path, log_path: Path) -> int:
             bufsize=0,
         )
         assert process.stdout is not None
+        interrupt_count = 0
         while True:
-            chunk = process.stdout.read(1)
+            try:
+                chunk = process.stdout.read(1)
+            except KeyboardInterrupt:
+                interrupt_count += 1
+                if interrupt_count == 1:
+                    message = (
+                        b"\nrun-mission-scenario: interrupt received; "
+                        b"forwarding to mission process and waiting for graceful shutdown\n"
+                    )
+                    sys.stdout.buffer.write(message)
+                    sys.stdout.buffer.flush()
+                    log_file.write(message)
+                    log_file.flush()
+                    if process.poll() is None:
+                        process.send_signal(signal.SIGINT)
+                    continue
+                message = b"\nrun-mission-scenario: second interrupt; terminating mission process\n"
+                sys.stdout.buffer.write(message)
+                sys.stdout.buffer.flush()
+                log_file.write(message)
+                log_file.flush()
+                if process.poll() is None:
+                    process.terminate()
+                break
             if chunk == b"" and process.poll() is not None:
                 break
             if not chunk:
