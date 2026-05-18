@@ -1,11 +1,5 @@
 #!/usr/bin/env python3
-"""Run one Dedalus mission scenario and preserve archive-grade artifacts.
-
-This is the first Milestone 2.22 scenario/campaign harness slice. It wraps
-`dedalus_mission_loop`, captures combined stdout/stderr to `console.log`, runs
-`validate-mission-artifacts.py`, and writes `metadata.json` beside the run
-artifacts.
-"""
+"""Run one Dedalus mission scenario and preserve archive-grade artifacts."""
 
 from __future__ import annotations
 
@@ -41,23 +35,36 @@ def expected_final_state_from(args: argparse.Namespace) -> str | None:
     return None
 
 
-def stream_command(command: list[str], cwd: Path, log_path: Path) -> int:
-    """Stream command output in real time while preserving carriage returns.
+def relay_signal(process: subprocess.Popen[bytes], sig: int, *, terminate: bool = False) -> None:
+    """Relay a signal without letting a second terminal SIGINT interrupt relay."""
+    previous = signal.signal(signal.SIGINT, signal.SIG_IGN)
+    try:
+        if process.poll() is None:
+            if terminate:
+                process.terminate()
+            else:
+                process.send_signal(sig)
+    finally:
+        signal.signal(signal.SIGINT, previous)
 
-    Python text-mode pipes use universal-newline translation, which can turn
-    child `\r` progress updates into `\n`. Binary-mode reads preserve the exact
-    terminal control bytes while still allowing the run artifact log to capture
-    the same stream. Ctrl-C is relayed to the active mission process and then
-    the wrapper keeps streaming so `dedalus_mission_loop` can perform its
-    graceful finish path. A second Ctrl-C forces termination.
+
+def stream_command(command: list[str], cwd: Path, log_path: Path) -> int:
+    """Stream child output exactly and relay Ctrl-C to the active mission process.
+
+    The mission process is started in its own session so the terminal Ctrl-C is
+    first handled by this wrapper. The first Ctrl-C is forwarded to
+    `dedalus_mission_loop`, which should enter its graceful finish path. The
+    wrapper keeps streaming until that process exits. A second Ctrl-C terminates
+    the process locally.
     """
     with log_path.open("wb") as log_file:
-        process = subprocess.Popen(
+        process: subprocess.Popen[bytes] = subprocess.Popen(
             command,
             cwd=cwd,
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
             bufsize=0,
+            start_new_session=True,
         )
         assert process.stdout is not None
         interrupt_count = 0
@@ -75,16 +82,14 @@ def stream_command(command: list[str], cwd: Path, log_path: Path) -> int:
                     sys.stdout.buffer.flush()
                     log_file.write(message)
                     log_file.flush()
-                    if process.poll() is None:
-                        process.send_signal(signal.SIGINT)
+                    relay_signal(process, signal.SIGINT)
                     continue
                 message = b"\nrun-mission-scenario: second interrupt; terminating mission process\n"
                 sys.stdout.buffer.write(message)
                 sys.stdout.buffer.flush()
                 log_file.write(message)
                 log_file.flush()
-                if process.poll() is None:
-                    process.terminate()
+                relay_signal(process, signal.SIGTERM, terminate=True)
                 break
             if chunk == b"" and process.poll() is not None:
                 break
@@ -125,8 +130,8 @@ def build_metadata(
     finished_at: str,
     elapsed_s: float,
 ) -> dict[str, Any]:
-    status = "passed" if mission_returncode == 0 and validator_returncode == 0 else "failed"
     expected_final_state = expected_final_state_from(args)
+    status = "passed" if mission_returncode == 0 and validator_returncode == 0 else "failed"
     return {
         "schema_version": 1,
         "scenario_name": args.name,
@@ -212,10 +217,7 @@ def main() -> int:
         "--shutdown-max-frames",
         str(args.shutdown_max_frames),
     ]
-    if args.progress:
-        mission_command.append("--progress")
-    else:
-        mission_command.append("--no-progress")
+    mission_command.append("--progress" if args.progress else "--no-progress")
     if args.verbose > 0:
         mission_command.append("-" + "v" * min(args.verbose, 3))
 
@@ -225,12 +227,7 @@ def main() -> int:
         validator_command += ["--expect-final-state", expected_final_state]
     if args.expect_behavior:
         validator_command.append("--expect-behavior")
-    validator_command += [
-        "--safe-height-m",
-        str(args.safe_height_m),
-        "--landed-height-m",
-        str(args.landed_height_m),
-    ]
+    validator_command += ["--safe-height-m", str(args.safe_height_m), "--landed-height-m", str(args.landed_height_m)]
 
     started_at = utc_now_iso()
     started_monotonic = time.monotonic()
@@ -242,10 +239,7 @@ def main() -> int:
     if mission_returncode == 0:
         validator_returncode = run_capture(validator_command, repo_root, run_dir / "validator_result.txt")
     else:
-        (run_dir / "validator_result.txt").write_text(
-            "validator skipped because mission command failed\n",
-            encoding="utf-8",
-        )
+        (run_dir / "validator_result.txt").write_text("validator skipped because mission command failed\n", encoding="utf-8")
 
     finished_at = utc_now_iso()
     elapsed_s = time.monotonic() - started_monotonic
