@@ -1,0 +1,24 @@
+mission:
+  name: circle_car_demo
+
+target:
+  selector:
+    class: car
+    confidence_min: 0.6
+    policy: nearest
+
+behavior:
+  type: circle
+  radius_m: 10.0
+  altitude_offset_m: 5.0
+  angular_speed_deg_s: 12.0
+  direction: clockwise
+  max_speed_mps: 3.0
+
+completion:
+  after_s: 30
+  then: go_home_land
+
+fallback:
+  on_target_lost: search_then_go_home
+  search_s: 10.0
