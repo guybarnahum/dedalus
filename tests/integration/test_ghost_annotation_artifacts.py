@@ -4,10 +4,13 @@
 from __future__ import annotations
 
 import json
+import math
 import shutil
 import subprocess
 import sys
 from pathlib import Path
+
+AGENT_COLOR = (80, 255, 120)
 
 
 def write_config(path: Path, output_dir: Path) -> None:
@@ -36,6 +39,61 @@ def write_config(path: Path, output_dir: Path) -> None:
         ),
         encoding="utf-8",
     )
+
+
+def read_ppm(path: Path) -> tuple[int, int, bytes]:
+    data = path.read_bytes()
+    if not data.startswith(b"P6\n"):
+        raise AssertionError(f"annotated frame is not P6 PPM: {path}")
+    cursor = 3
+    tokens: list[bytes] = []
+    while len(tokens) < 3:
+        while data[cursor:cursor + 1].isspace():
+            cursor += 1
+        start = cursor
+        while cursor < len(data) and not data[cursor:cursor + 1].isspace():
+            cursor += 1
+        tokens.append(data[start:cursor])
+    while data[cursor:cursor + 1].isspace():
+        cursor += 1
+    width = int(tokens[0])
+    height = int(tokens[1])
+    max_value = int(tokens[2])
+    if max_value != 255:
+        raise AssertionError(f"unsupported PPM max value {max_value}: {path}")
+    pixels = data[cursor:]
+    if len(pixels) != width * height * 3:
+        raise AssertionError(f"unexpected PPM payload size for {path}")
+    return width, height, pixels
+
+
+def project_point(width: int, height: int, point: tuple[float, float, float]) -> tuple[int, int]:
+    x, y, z = point
+    fx = (width * 0.5) / math.tan(math.radians(90.0) * 0.5)
+    fy = fx
+    cx = (width - 1.0) * 0.5
+    cy = (height - 1.0) * 0.5
+    u = fx * (y / x) + cx
+    v = fy * (z / x) + cy
+    return round(u), round(v)
+
+
+def count_color_near(
+    width: int,
+    height: int,
+    pixels: bytes,
+    center: tuple[int, int],
+    radius: int,
+    color: tuple[int, int, int],
+) -> int:
+    cx, cy = center
+    count = 0
+    for y in range(max(0, cy - radius), min(height, cy + radius + 1)):
+        for x in range(max(0, cx - radius), min(width, cx + radius + 1)):
+            offset = (y * width + x) * 3
+            if tuple(pixels[offset:offset + 3]) == color:
+                count += 1
+    return count
 
 
 def main() -> int:
@@ -80,12 +138,23 @@ def main() -> int:
     if len(rows) != 4:
         raise AssertionError(f"expected header + 3 manifest rows, got {len(rows)}")
 
+    first_frame = annotation_dir / "frame_000001.ppm"
     for index in range(1, 4):
         frame = annotation_dir / f"frame_{index:06d}.ppm"
         if not frame.exists() or frame.stat().st_size == 0:
             raise AssertionError(f"missing non-empty annotated frame: {frame}")
         if frame.read_bytes()[:2] != b"P6":
             raise AssertionError(f"annotated frame is not P6 PPM: {frame}")
+
+    width, height, pixels = read_ppm(first_frame)
+    # First ghost frame timestamp is 1s in the synthetic source, so ghost_person_001 is
+    # at x=12.3, y=-4.0, z=0.0. With ego at z=-2, reprojection uses body-relative z=2.
+    expected_marker = project_point(width, height, (12.3, -4.0, 2.0))
+    marker_pixels = count_color_near(width, height, pixels, expected_marker, radius=8, color=AGENT_COLOR)
+    if marker_pixels < 8:
+        raise AssertionError(
+            f"expected projected ghost marker pixels near {expected_marker}, found {marker_pixels}"
+        )
 
     subprocess.run(
         [
