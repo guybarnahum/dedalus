@@ -11,10 +11,12 @@ To generate a current handoff, read `LLM.md` and the current repo state, then fi
 ## How to Generate a Handoff
 
 1. Read `LLM.md` first. Treat it as the active operating brief.
-2. Read `LLM.back.md` only for historical context when needed.
-3. Run `git log --oneline -1` to get the current commit SHA.
-4. Substitute all `<PLACEHOLDER>` values below with current state.
-5. Emit the filled-in prompt as plain text — no surrounding explanation.
+2. Read `docs/mission_scenario_runner.md` for the current scenario/campaign harness workflow.
+3. Read `docs/object_conditioned_behavior_plan.md` before Milestone 2.23 / M3 behavior work.
+4. Read `LLM.back.md` only for historical context when needed.
+5. Run `git log --oneline -1` to get the current commit SHA.
+6. Substitute all `<PLACEHOLDER>` values below with current state.
+7. Emit the filled-in prompt as plain text — no surrounding explanation.
 
 ---
 
@@ -31,6 +33,10 @@ Current commit:
 
 First read:
   LLM.md
+
+Then read:
+  docs/mission_scenario_runner.md
+  docs/object_conditioned_behavior_plan.md
 
 Historical context, only if needed:
   LLM.back.md
@@ -54,7 +60,9 @@ Do not:
   <DO_NOT_LIST — copy from LLM.md Known Traps and add any session-specific traps>
 
 Patch policy:
-  Prefer GitHub connector patches. If connector patching fails or is ambiguous, provide an exact manual patch.
+  Apply changes directly to main.
+  Do not create branches or PRs unless explicitly requested.
+  If GitHub connector patching fails or is ambiguous, provide an exact manual patch.
 
   For normal patches:
 
@@ -80,19 +88,30 @@ Validation:
     cmake --build build-staging -j$(nproc)
     ctest --test-dir build-staging --output-on-failure
 
-  For live mission changes, also include:
+  For scenario/campaign harness changes, also include:
+
+    ctest --test-dir build-staging --output-on-failure -R 'mission_(scenario|campaign|abort)_'
+
+  For live mission changes, also include one of:
 
     RUNS=3 simulation/repeat-mission-smoke.sh
 
+    python3 simulation/run-mission-campaign.py \
+      --campaign-file config/mission_campaigns/airsim_live_smoke.json \
+      --campaign-id live_<N> \
+      --output-root out/mission_campaigns \
+      --progress \
+      --overwrite
+
 Expected success:
-  <SPECIFIC_LOG_STATE_OR_TEST_RESULT_THAT_SIGNALS_TASK_COMPLETE>
+  <SPECIFIC_LOG_STATE_OR_TEST_RESULT_THAT SIGNALS TASK COMPLETE>
 ```
 
 ---
 
 ## Reference — Current Strategic Handoff Shape
 
-This reference is valid after the Milestone 2.20 closeout and the Milestone 3 roadmap redefinition.
+This reference is valid after the Milestone 2.22 closeout and before Milestone 2.23 starts.
 When generating a new handoff, update the commit SHA and any current runtime observations.
 
 ```
@@ -107,11 +126,15 @@ Current commit:
 First read:
   LLM.md
 
+Then read:
+  docs/mission_scenario_runner.md
+  docs/object_conditioned_behavior_plan.md
+
 Historical context, only if needed:
   LLM.back.md
 
 Active milestone:
-  Milestone 2.21 — Mission artifact validation and replay-grade diagnostics
+  Milestone 2.23 — Behavior spec parser foundation for M3 object-conditioned behavior
 
 Current architecture:
   AirSim live frame + ego sidecar
@@ -138,17 +161,26 @@ Current architecture:
       -> PX4 / AirSim
 
 Current observed behavior:
-  Milestone 2.20 is closed / validated.
+  Milestone 2.20, 2.21, and 2.22 are implemented / validated.
 
   The live AirSim/PX4 mission loop works through flight_command_sink=px4_bridge:
     - takeoff reaches safe height
     - trajectory executes
     - GoHome / Land / Disarm complete
     - repeated mission runs work without restarting AirSim
-    - mission_events.jsonl and summary helper validate successful runs
+    - mission_events.jsonl validates successful runs
+
+  Scenario/campaign harness is available:
+    - run-mission-scenario.py runs one archive-grade scenario
+    - run-mission-campaign.py runs/dry-runs campaigns
+    - validate-mission-artifacts.py validates Complete and Abort final states
+    - synthetic_ci campaign mixes Complete and expected-Abort scenarios
+    - airsim_live_smoke campaign is the live EC2/AirSim/PX4 preset
+    - campaign reports write JSON, text, and Markdown summaries
+    - Ctrl-C during a campaign gracefully finishes the active mission and then stops the campaign
 
 Current diagnosis:
-  The drone can now fly a reliable preconfigured mission. The gap to Milestone 3 is object-conditioned behavior: selecting a detected/tracked class instance from WorldSnapshot and using follow, circle, approach, or sequence behaviors to emit bounded velocity vectors into the existing PX4 bridge path.
+  The drone can fly and validate reliable preconfigured missions and scenario/campaign artifacts. The gap to Milestone 3 is object-conditioned behavior: parse behavior specs, select detected/tracked objects from WorldSnapshot, and run follow/circle/approach/sequence behaviors that emit bounded velocity vectors into the existing PX4 bridge path.
 
 Immediate tasks:
   1. Build/test current head:
@@ -156,12 +188,18 @@ Immediate tasks:
        cmake --build build-staging -j$(nproc)
        ctest --test-dir build-staging --output-on-failure
 
-  2. Implement Milestone 2.21 artifact validation:
-       - validate mission_events.jsonl + snapshots as a formal run artifact directory
-       - validate state ordering: Prepare -> Takeoff -> ExecuteMission -> GoHome -> Land -> Complete
-       - validate height gates: safe height before ExecuteMission, landed height before Complete
-       - validate command exceptions/failures are absent for successful runs
-       - leave extension points for future object-behavior events
+  2. Start Milestone 2.23 behavior spec parser foundation:
+       - add a small behavior spec data model for target selector + behavior + completion/fallback
+       - add parser support for YAML/JSON behavior specs without binding it to live flight yet
+       - add sample specs for follow, circle, approach, and sequence
+       - add unit tests for valid specs, defaults, and invalid combinations
+       - preserve event extension points already expected by the validator:
+           target_selected
+           target_lost
+           behavior_start
+           behavior_complete
+           behavior_failed
+           fallback_start
 
   3. Preserve the Milestone 3 roadmap:
        - behavior spec parser
@@ -180,30 +218,17 @@ Do not:
   - Do not move to ExecuteMission until Takeoff is confirmed by ego height.
   - Do not make the native C++ MAVLink sink the default live path; use px4_bridge.
   - Do not rewrite the working pymavlink control path in C++ while stabilizing behavior.
+  - Do not let human diagnostics contaminate binary bridge stdout; binary frame bridge stdout is protocol bytes only.
+  - Do not make mission_campaign_runner CTest execute repeated real missions; keep campaign CTest dry-run and leave real lifecycle coverage to scenario/abort tests.
   - Do not put obstacle avoidance inside the flight sink.
   - Do not let route memory override fresh tactical sensing.
   - Do not let Milestone 3 balloon into full obstacle avoidance; M3 is object-conditioned behavior. Avoidance starts post-M3.
+  - Do not create branches or PRs unless explicitly requested.
 
 Patch policy:
-  Prefer GitHub connector patches. If connector patching fails or is ambiguous, provide an exact manual patch.
-
-  For normal patches:
-
-    cat > /tmp/change.patch <<'PATCH'
-    diff --git ...
-    PATCH
-    git apply /tmp/change.patch
-
-  For full-file replacements:
-
-    cat > /tmp/update_file.sh <<'SH'
-    #!/usr/bin/env bash
-    set -euo pipefail
-    cat > path/to/file <<'EOF'
-    ... complete file content ...
-    EOF
-    SH
-    bash /tmp/update_file.sh
+  Apply changes directly to main.
+  Do not create branches or PRs unless explicitly requested.
+  If GitHub connector patching fails or is ambiguous, provide an exact manual patch.
 
 Validation:
   Always give build/test commands after code patches:
@@ -211,18 +236,25 @@ Validation:
     cmake --build build-staging -j$(nproc)
     ctest --test-dir build-staging --output-on-failure
 
-  For mission-loop changes:
+  For scenario/campaign harness changes:
+
+    ctest --test-dir build-staging --output-on-failure -R 'mission_(scenario|campaign|abort)_'
+
+  For live mission changes:
 
     RUNS=3 simulation/repeat-mission-smoke.sh
 
+    python3 simulation/run-mission-campaign.py \
+      --campaign-file config/mission_campaigns/airsim_live_smoke.json \
+      --campaign-id live_<N> \
+      --output-root out/mission_campaigns \
+      --progress \
+      --overwrite
+
 Expected success:
-  For 2.21:
-    A new validator can inspect a live run output directory and confirm:
-      final_state=Complete
-      failures=0
-      safe height was reached before ExecuteMission
-      landed height was reached before Complete
-      command/state ordering is valid
+  For 2.23:
+    Behavior specs parse from samples and unit tests prove defaults/errors.
+    No live flight behavior changes are required yet.
 
   For later M3:
     mission_events + snapshots should prove:
