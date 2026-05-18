@@ -157,6 +157,13 @@ dedalus_add_native_test(
 
 # Layer 2: deterministic native unit tests, usually with synthetic in-memory data.
 dedalus_add_native_test(
+    NAME world_to_image_projector
+    LAYER unit
+    TAGS visualization reprojection
+    SOURCES unit/test_world_to_image_projector.cpp
+)
+
+dedalus_add_native_test(
     NAME perception_world_model_flow
     LAYER unit
     TAGS synthetic
