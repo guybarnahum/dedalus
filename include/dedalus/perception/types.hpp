@@ -26,6 +26,8 @@ enum class TrackState {
 
 struct Track2D {
     TrackId track_id;
+    DetectionId source_detection_id;
+    bool has_source_detection{false};
     TimePoint timestamp;
     Rect2 bbox_px;
     ClassLabel class_label{ClassLabel::Unknown};
@@ -46,6 +48,12 @@ struct IdentityHypothesis {
 
 struct Observation3D {
     TrackId track_id;
+    DetectionId source_detection_id;
+    bool has_source_detection{false};
+    Rect2 source_bbox_px;
+    bool has_source_bbox{false};
+    FrameId source_frame_id;
+    bool has_source_frame{false};
     TimePoint timestamp;
     Vec3 position_body;
     Vec3 position_local;
