@@ -205,6 +205,19 @@ target_compile_features(test_behavior_spec PRIVATE cxx_std_20)
 
 add_test(NAME behavior_spec COMMAND test_behavior_spec)
 
+add_executable(test_target_selector
+    unit/test_target_selector.cpp
+)
+
+target_link_libraries(test_target_selector
+    PRIVATE
+        dedalus_core
+)
+
+target_compile_features(test_target_selector PRIVATE cxx_std_20)
+
+add_test(NAME target_selector COMMAND test_target_selector)
+
 find_package(Python3 COMPONENTS Interpreter)
 if(Python3_Interpreter_FOUND)
     add_test(
