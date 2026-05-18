@@ -6,7 +6,7 @@
 
 namespace dedalus {
 
-struct CameraIntrinsics {
+struct WorldImageCameraIntrinsics {
     int width{0};
     int height{0};
     double fx{0.0};
@@ -16,7 +16,7 @@ struct CameraIntrinsics {
     double near_plane_m{0.05};
 };
 
-struct CameraExtrinsics {
+struct WorldImageCameraExtrinsics {
     // Body-to-camera transform. The initial M3 convention is:
     //   body/local X: forward
     //   body/local Y: right
@@ -40,11 +40,11 @@ struct ProjectedWorldPoint {
 };
 
 struct WorldToImageProjectionConfig {
-    CameraIntrinsics intrinsics;
-    CameraExtrinsics extrinsics;
+    WorldImageCameraIntrinsics intrinsics;
+    WorldImageCameraExtrinsics extrinsics;
 };
 
-CameraIntrinsics pinhole_intrinsics_from_horizontal_fov(
+WorldImageCameraIntrinsics pinhole_intrinsics_from_horizontal_fov(
     int width,
     int height,
     double horizontal_fov_deg,
