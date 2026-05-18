@@ -39,7 +39,59 @@ If the world-model agent is correct, its reprojected image position should remai
 
 ---
 
-## 2. Scope
+## 2. Coordinate Products and Consumers
+
+Keep three coordinate products separate. They are connected by transforms, but they serve different system layers.
+
+```text
+1. Camera viewport projection
+   Raw sensor/image coordinates.
+   Typical representation: pixel coordinates, bounding boxes, image-space tracks.
+   Consumer: detector, tracker, visualization, reprojection residual validation.
+
+2. Drone ego-relative 3D
+   Tactical object state relative to the current drone/body/ego frame.
+   Typical representation: Cartesian body-frame vector plus optional polar/range-bearing form.
+   Consumer: object-conditioned behavior, standoff/follow/circle math, local obstacle avoidance.
+
+3. Global/map 3D
+   Scene/map state in a local or global map frame.
+   Typical representation: Cartesian local map coordinates, optionally anchored to absolute latitude/longitude/altitude.
+   Consumer: search, route memory, go-home, mission geography, multi-frame/world-model consistency.
+```
+
+The global/map frame may be either:
+
+```text
+floating local patch:
+  A mission-local Cartesian map with no absolute geodetic anchor.
+
+anchored map:
+  A local/global frame tied to latitude/longitude/altitude or another absolute reference.
+```
+
+Design rule:
+
+```text
+Do not treat camera pixels, ego-relative 3D, and global/map 3D as interchangeable.
+Every transition between them must pass through an explicit transform and camera model.
+```
+
+Practical data flow:
+
+```text
+Camera viewport
+  -> detector/tracker evidence
+  -> ego-relative 3D estimate
+  -> global/map 3D WorldSnapshot agent
+  -> current-ego/camera reprojection back to viewport for validation
+```
+
+Behavior should generally consume ego-relative 3D or a target expressed relative to ego at the current tick. Global navigation should consume map/global 3D. Reprojection validation consumes map/global or ego-relative 3D plus the current ego/camera transform to produce viewport pixels.
+
+---
+
+## 3. Scope
 
 This validation layer applies to:
 
@@ -66,7 +118,7 @@ Dedalus artifact overlays are validation truth. AirSim viewport overlays are ope
 
 ---
 
-## 3. Core Architecture
+## 4. Core Architecture
 
 The projection/reprojection layer should be read-only.
 
@@ -91,7 +143,7 @@ Visualization/validation:
 
 ---
 
-## 4. Coordinate-Frame Contract
+## 5. Coordinate-Frame Contract
 
 The projection path should be explicit and unit-tested.
 
@@ -126,7 +178,7 @@ The exact AirSim/PX4/Dedalus axis convention must be isolated in one module and 
 
 ---
 
-## 5. Camera Model
+## 6. Camera Model
 
 Start with explicit config. Do not depend on live AirSim camera introspection for the first deterministic implementation.
 
@@ -155,7 +207,7 @@ Later, AirSim-specific providers may fill these values from simulator settings o
 
 ---
 
-## 6. Proposed Reprojection Types
+## 7. Proposed Reprojection Types
 
 Proposed files:
 
@@ -226,7 +278,7 @@ missing_camera_model
 
 ---
 
-## 7. Detection Provenance Needed for Residuals
+## 8. Detection Provenance Needed for Residuals
 
 For true perception validation, `Observation3D` and/or `AgentState` should preserve enough provenance to compare reprojection against image evidence.
 
@@ -262,7 +314,7 @@ Do not block M3 on every provenance field. But design the reprojection artifact 
 
 ---
 
-## 8. Artifact Format
+## 9. Artifact Format
 
 For each annotated frame, write a sidecar JSON file:
 
@@ -279,6 +331,11 @@ Example sidecar:
 {
   "frame_id": "frame_000001",
   "timestamp_ns": 1234567890,
+  "coordinate_products": {
+    "viewport": "camera pixel coordinates",
+    "ego_relative_3d": "current drone/body-relative tactical coordinates",
+    "map_3d": "floating or anchored local/global Cartesian map coordinates"
+  },
   "camera_model": {
     "width": 640,
     "height": 360,
@@ -295,6 +352,9 @@ Example sidecar:
       "class": "person",
       "confidence": 0.82,
       "position_local": [12.0, -4.0, 0.0],
+      "position_ego_relative": [12.0, -4.0, 2.0],
+      "range_m": 12.8,
+      "bearing_deg": -18.4,
       "visible": true,
       "u_px": 421.3,
       "v_px": 180.0,
@@ -319,7 +379,7 @@ For camera-derived detections, extend with residual fields:
 
 ---
 
-## 9. Visual Overlay Semantics
+## 10. Visual Overlay Semantics
 
 Use distinct overlay prefixes:
 
@@ -358,7 +418,7 @@ This makes it visually obvious whether the overlay is detector evidence or world
 
 ---
 
-## 10. Stationary-Object / Moving-Drone Stress Case
+## 11. Stationary-Object / Moving-Drone Stress Case
 
 A key stress case is a stationary object in the world while the drone moves.
 
@@ -368,8 +428,8 @@ Expected behavior:
 Object world/local position:
   approximately constant
 
-Drone ego pose:
-  changes every frame
+Drone ego-relative vector to object:
+  changes as the drone translates/yaws
 
 Reprojected viewport coordinate:
   changes significantly, sometimes rapidly
@@ -382,23 +442,27 @@ Test scenario:
 ```text
 Frame 1:
   ego at x=0, object at local [10, 0, 0]
+  ego-relative vector is [10, 0, 0]
   reprojection near image center
 
 Frame 2:
   ego translates right/left or yaws
-  same object local position
+  object local/map position remains [10, 0, 0]
+  ego-relative vector changes
   reprojection moves across the viewport
 
 Frame 3:
   ego passes object or turns away
-  object becomes near edge or outside image
+  object local/map position remains stable
+  object becomes near edge, outside image, or behind camera
 ```
 
 Assertions:
 
 ```text
 - object agent_id/source_track_id remains stable
-- position_local remains constant or changes only within tolerance
+- map/global position remains constant or changes only within tolerance
+- ego-relative vector changes with drone motion
 - projected u/v changes as ego pose changes
 - visibility flips to outside_image/behind_camera when appropriate
 - no target identity switch occurs due solely to image motion
@@ -408,7 +472,7 @@ This is especially important because a static object can have highly dynamic ima
 
 ---
 
-## 11. Ghost Targets vs Camera-Derived Detections
+## 12. Ghost Targets vs Camera-Derived Detections
 
 Ghost targets are the easiest deterministic starting point because their 3D positions are known.
 
@@ -429,7 +493,7 @@ Do not create a ghost-only projection path. Ghosts are just one source of WorldS
 
 ---
 
-## 12. AirSim Viewport Overlay
+## 13. AirSim Viewport Overlay
 
 AirSim viewport overlay is a later optional adapter.
 
@@ -464,7 +528,7 @@ Rules:
 
 ---
 
-## 13. Implementation Order
+## 14. Implementation Order
 
 ```text
 2.24G.1 — Add WorldToImageProjector contract and math tests.
@@ -488,7 +552,7 @@ Later optional adapter — AirSim viewport debug overlay from WorldSnapshot agen
 
 ---
 
-## 14. Validation Commands
+## 15. Validation Commands
 
 After implementation:
 
