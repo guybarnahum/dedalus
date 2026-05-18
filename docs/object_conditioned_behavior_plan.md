@@ -355,13 +355,13 @@ Selector fields:
 
 ```text
 class:
-  Match a class group, such as person/car/vehicle.
+  Required class group, such as person/car/vehicle. Behavior semantics are class-dependent.
 
 track_id:
-  Prefer/select a specific source_track_id from the tracker.
+  Prefer/select a specific source_track_id from the tracker inside the class group.
 
 agent_id:
-  Prefer/select a specific world-model agent.
+  Prefer/select a specific world-model agent inside the class group.
 
 identity_id:
   Future selector for recognized identity. Do not require it for M3.
@@ -376,7 +376,7 @@ policy:
 Validation rule:
 
 ```text
-At least one of class, track_id, or agent_id must be present.
+class is required. track_id and agent_id are optional specificity handles within that class.
 ```
 
 Initial selection policies:
@@ -398,7 +398,7 @@ Filtering rules:
 ```text
 - lifecycle must be New or Active initially
 - confidence >= confidence_min
-- class matches when class is specified
+- class matches
 - source_track_id matches when track_id is specified
 - agent_id matches when agent_id is specified
 - map/local position must be usable
@@ -515,11 +515,63 @@ Level 2 — Synthetic pipeline tests:
 
 Level 3 — Mission scenario tests:
   Run dedalus_mission_loop with ghost targets enabled and validate mission_events + snapshots contain target_selected and stable target identity.
+
+Level 4 — Visual artifact tests:
+  Render WorldSnapshot agents back onto captured camera frames and export deterministic annotated frame artifacts and MP4 clips.
+
+Level 5 — AirSim viewport debug overlay:
+  Optionally mirror WorldSnapshot agents back into the AirSim/Unreal viewport using debug markers or spawned debug actors. This is for operator visibility only; the authoritative validation artifacts remain mission_events, snapshots, and Dedalus-generated annotated video.
 ```
 
 ---
 
-## 10. Follow Behavior Semantics
+## 10. World-Model Visualization and Recording Plan
+
+World-model state should be visible at three distinct levels, with clear separation between validation artifacts and simulator/operator display.
+
+```text
+1. Snapshot artifacts:
+   snapshot_XXXX.json records WorldSnapshot.agents, source_track_id, agent_id, class, confidence, local position, and velocity.
+
+2. Dedalus annotated camera artifacts:
+   FrameAnnotationSink draws world-model agents, selected target state, behavior state, and diagnostics onto captured camera frames.
+   PPM sequence output is the deterministic CI-friendly path.
+   MP4 recording/export should be supported for human review when the environment has the required encoder tooling.
+
+3. AirSim viewport overlay:
+   A future AirSimWorldAnnotationSink mirrors selected WorldSnapshot state back into the simulator view using AirSim debug APIs or lightweight spawned debug actors.
+   This must be an optional adapter and must not change autonomy semantics or contaminate binary bridge stdout.
+```
+
+Design rules:
+
+```text
+- WorldSnapshot remains the source of truth.
+- Annotators consume WorldSnapshot; they do not modify mission state.
+- AirSim viewport annotation is operator/debug display only, not validation truth.
+- MP4 files are review artifacts; JSON snapshots and mission_events remain validation truth.
+- Keep Dedalus artifact annotation working without live AirSim.
+```
+
+Planned visual overlays:
+
+```text
+World agents:
+  source_track_id, agent_id, class, confidence, local position/velocity
+
+Selection:
+  selected target, selection reason, target age, reacquiring/lost state
+
+Behavior:
+  behavior_start/current behavior, desired velocity vector, completion/fallback state
+
+Mission:
+  mission phase, arm/takeoff/land/disarm status, safe-height gate, terminal_settled state
+```
+
+---
+
+## 11. Follow Behavior Semantics
 
 Follow means maintaining a relative 3D offset from a selected target.
 
@@ -529,13 +581,13 @@ For `target_heading_frame`, use target velocity to compute forward/right axes. I
 
 ---
 
-## 11. Circle Behavior Semantics
+## 12. Circle Behavior Semantics
 
 Circle means orbiting a selected static or slow target at radius and altitude/height offset. For a slow target, the circle center may be smoothed. M3 can start with static or slow scripted targets.
 
 ---
 
-## 12. Approach Behavior Semantics
+## 13. Approach Behavior Semantics
 
 Approach means moving toward a target until a relative condition is satisfied. For M3, prefer the geometric condition:
 
@@ -547,7 +599,7 @@ Approach should obey standoff and speed constraints. It should not fly directly 
 
 ---
 
-## 13. Sequence Behavior Semantics
+## 14. Sequence Behavior Semantics
 
 Sequence composes behaviors, for example:
 
@@ -559,7 +611,7 @@ Each step should emit `behavior_start` and `behavior_complete`. The sequence adv
 
 ---
 
-## 14. Mission Events for M3
+## 15. Mission Events for M3
 
 Recommended event types:
 
@@ -585,7 +637,7 @@ Do not rely on console prints for validation. The event log is the durable artif
 
 ---
 
-## 15. M3 Validation Expectations
+## 16. M3 Validation Expectations
 
 Required checks:
 
@@ -609,11 +661,14 @@ follow offset error converged below tolerance
 circle radius stayed within tolerance
 approach stopped near standoff distance
 fallback was not triggered unless expected
+annotated frame artifacts include selected target overlays
+MP4 review artifact generated when encoder tooling is available
+AirSim viewport debug overlay shows selected target when enabled
 ```
 
 ---
 
-## 16. Proposed Files
+## 17. Proposed Files
 
 Initial implementation files:
 
@@ -637,6 +692,15 @@ simulation/ghost_targets/person_pair_crossing.yaml
 config/core_stack_object_behavior_mission.yaml
 ```
 
+Visibility/recording files:
+
+```text
+include/dedalus/visualization/world_annotation.hpp
+src/visualization/world_annotation.cpp
+simulation/airsim-world-annotation.py
+simulation/export-annotated-mp4.py
+```
+
 Tests:
 
 ```text
@@ -644,12 +708,14 @@ tests/unit/test_behavior_spec.cpp
 tests/unit/test_target_selector.cpp
 tests/unit/test_behavior_runtime.cpp
 tests/unit/test_object_behavior_mission_controller.cpp
+tests/unit/test_world_annotation.cpp
 tests/integration/test_object_behavior_mission_smoke.py
+tests/integration/test_world_annotation_artifacts.py
 ```
 
 ---
 
-## 17. Non-Goals for M3
+## 18. Non-Goals for M3
 
 Do not make M3 own:
 
@@ -673,7 +739,7 @@ Select one detected/tracked class instance and fly a behavior relative to it.
 
 ---
 
-## 18. Post-M3 Avoidance Boundary
+## 19. Post-M3 Avoidance Boundary
 
 Post-M3, add avoidance here:
 
@@ -689,7 +755,7 @@ Do not push avoidance into the flight sink. Fresh tactical sensing overrides per
 
 ---
 
-## 19. Build and Validation Commands
+## 20. Build and Validation Commands
 
 After code changes:
 
@@ -698,10 +764,16 @@ cmake --build build-staging -j$(nproc)
 ctest --test-dir build-staging --output-on-failure
 ```
 
-Focused 2.24A checks:
+Focused 2.24 checks:
 
 ```bash
-ctest --test-dir build-staging --output-on-failure -R 'world_snapshot_json|perception_world_model_flow'
+ctest --test-dir build-staging --output-on-failure -R 'world_snapshot_json|perception_world_model_flow|target_selector|core_stack_config_loader'
+```
+
+After visual artifact changes:
+
+```bash
+ctest --test-dir build-staging --output-on-failure -R 'ppm_frame_annotation_sink|core_stack_config_loader|perception_world_model_flow'
 ```
 
 After live mission behavior changes:
@@ -725,22 +797,25 @@ python3 simulation/validate-mission-artifacts.py out/object_behavior_mission --e
 
 ---
 
-## 20. Implementation Order
+## 21. Implementation Order
 
 ```text
 1. BehaviorSpec parser with tests. DONE for 2.23.
-2. WorldSnapshot agent track hygiene. STARTED in 2.24A.
-3. TargetSelectorSpec fields for track_id / agent_id.
-4. TargetSelector with tests over synthetic WorldSnapshot agents.
-5. Ghost/scripted target provider for expressive pre-camera validation.
-6. BehaviorRuntime for hold/fallback/sequence mechanics.
-7. Follow behavior math and unit tests.
-8. Circle behavior math and unit tests.
-9. Approach behavior math and unit tests.
-10. ObjectBehaviorMissionController integration.
-11. Mission event extensions.
-12. Artifact validator extensions.
-13. Live AirSim/PX4 object-conditioned demo.
+2. WorldSnapshot agent track hygiene. DONE for 2.24A.
+3. TargetSelectorSpec fields for track_id / agent_id. DONE for 2.24B.
+4. TargetSelector with tests over synthetic WorldSnapshot agents. DONE for 2.24C.
+5. Ghost/scripted target provider for expressive pre-camera validation. DONE for 2.24D.
+6. Runtime ghost target injection + artifact visibility. STARTED for 2.24E.
+7. WorldSnapshot-to-annotation overlays for agents/selection/behavior and MP4 review export.
+8. Optional AirSim viewport annotation adapter for operator debug display.
+9. BehaviorRuntime for hold/fallback/sequence mechanics.
+10. Follow behavior math and unit tests.
+11. Circle behavior math and unit tests.
+12. Approach behavior math and unit tests.
+13. ObjectBehaviorMissionController integration.
+14. Mission event extensions.
+15. Artifact validator extensions.
+16. Live AirSim/PX4 object-conditioned demo.
 ```
 
 Keep every step artifact-driven and testable.
