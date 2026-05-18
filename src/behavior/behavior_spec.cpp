@@ -2,7 +2,6 @@
 
 #include <algorithm>
 #include <cctype>
-#include <cmath>
 #include <fstream>
 #include <sstream>
 #include <stdexcept>
@@ -321,7 +320,6 @@ ConfigNode parse_yaml_subset(const std::string& text) {
             }
             ConfigNode& node = map_child(item, key);
             if (value.empty()) {
-                node.kind = ConfigNode::Kind::Map;
                 stack.push_back({indent, &item});
                 stack.push_back({indent + 2, &node});
             } else {
@@ -342,7 +340,6 @@ ConfigNode parse_yaml_subset(const std::string& text) {
         }
         ConfigNode& node = map_child(*parent, key);
         if (value.empty()) {
-            node.kind = ConfigNode::Kind::Map;
             stack.push_back({indent, &node});
         } else {
             set_scalar(node, value);
