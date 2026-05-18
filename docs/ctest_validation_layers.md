@@ -20,7 +20,7 @@ Each test is declared through one of the helper functions:
 dedalus_add_native_test(
     NAME target_selector
     LAYER contracts
-    LABELS unit
+    TAGS unit
     SOURCES unit/test_target_selector.cpp
 )
 ```
@@ -31,7 +31,7 @@ or:
 dedalus_add_python_test(
     NAME mission_scenario_runner
     LAYER scenario
-    LABELS synthetic integration
+    TAGS synthetic integration
     COMMAND_ARGS ...
 )
 ```
@@ -42,17 +42,24 @@ The helper derives:
 CTest display name:
   target_selector (contracts)
 
-Primary CTest LABEL:
+Only CTest LABEL:
   contracts
 
-Extra CTest tags:
-  tag:unit
-
-CTest custom property:
+Custom properties:
   DEDALUS_LAYER=contracts
+  DEDALUS_TAGS=unit
 ```
 
-The primary layer label is intentionally separate from extra tags. This keeps layer filters precise:
+CTest labels are intentionally layer-only. This keeps the default `Label Time Summary` readable:
+
+```text
+contracts = ...
+unit      = ...
+synthetic = ...
+scenario  = ...
+```
+
+Layer filters are precise:
 
 ```bash
 ctest --test-dir build-staging --output-on-failure -L contracts
@@ -61,12 +68,7 @@ ctest --test-dir build-staging --output-on-failure -L synthetic
 ctest --test-dir build-staging --output-on-failure -L scenario
 ```
 
-Extra tags use a `tag:` prefix:
-
-```bash
-ctest --test-dir build-staging --output-on-failure -L tag:integration
-ctest --test-dir build-staging --output-on-failure -L tag:airsim
-```
+Secondary metadata such as `unit`, `synthetic`, `integration`, or `airsim` can be stored in `DEDALUS_TAGS`, but those tags are not CTest labels.
 
 ---
 
@@ -148,19 +150,17 @@ mission_campaign_runner (scenario)
 mission_abort_scenario (scenario)
 ```
 
-### airsim tag
+### AirSim boundary metadata
 
-AirSim-facing boundary tests that remain CI-safe are tagged, not layered, unless a future AirSim-specific layer is needed.
-
-```bash
-ctest --test-dir build-staging --output-on-failure -L tag:airsim
-```
+AirSim-facing boundary tests that remain CI-safe are currently part of the contracts layer.
 
 Current example:
 
 ```text
 airsim_provider_boundary (contracts)
 ```
+
+It carries `DEDALUS_TAGS=unit;airsim`, but it is not labeled `airsim` so it does not add a separate CTest label summary row.
 
 ### airsim_live
 
@@ -202,14 +202,7 @@ ctest --test-dir build-staging -N -L synthetic
 ctest --test-dir build-staging -N -L scenario
 ```
 
-List tests for a tag:
-
-```bash
-ctest --test-dir build-staging -N -L tag:integration
-ctest --test-dir build-staging -N -L tag:airsim
-```
-
-CTest can filter using `LABELS`. The `DEDALUS_LAYER` property is stored for structured inspection tooling, but the standard command-line filter remains `-L`.
+CTest can filter using `LABELS`. `DEDALUS_LAYER` and `DEDALUS_TAGS` are stored for structured inspection tooling, but the standard command-line layer filter remains `-L`.
 
 ---
 
