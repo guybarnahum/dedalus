@@ -68,6 +68,8 @@ fallback:
     const auto spec = dedalus::parse_behavior_spec_text(yaml);
     require(spec.mission_name == "follow_person_demo", "mission name should parse");
     require(spec.target.class_label == "person", "target class should parse");
+    require(spec.target.track_id.empty(), "default target track id should be empty");
+    require(spec.target.agent_id.empty(), "default target agent id should be empty");
     require(spec.target.policy == dedalus::TargetSelectionPolicy::HighestConfidence, "policy should parse");
     require_near(spec.target.confidence_min, 0.55, "confidence_min should parse");
     require(spec.behavior.type == dedalus::BehaviorType::Follow, "follow type should parse");
@@ -110,6 +112,49 @@ void parses_json_circle() {
     require_near(spec.behavior.angular_speed_deg_s, 12.0, "circle angular speed should parse");
 }
 
+void parses_track_and_agent_selectors() {
+    const std::string track_yaml = R"YAML(
+mission:
+  name: follow_specific_track
+
+target:
+  selector:
+    class: person
+    track_id: ghost_person_001
+    policy: persistent_track
+    confidence_min: 0.4
+
+behavior:
+  type: follow
+  relative_offset_m:
+    x: -5.0
+    y: 0.0
+    z: 3.0
+)YAML";
+
+    const auto track_spec = dedalus::parse_behavior_spec_text(track_yaml);
+    require(track_spec.target.class_label == "person", "track selector class should parse");
+    require(track_spec.target.track_id == "ghost_person_001", "track selector track_id should parse");
+    require(track_spec.target.agent_id.empty(), "track selector agent_id should default empty");
+    require(track_spec.target.policy == dedalus::TargetSelectionPolicy::PersistentTrack, "track selector policy should parse");
+
+    const std::string agent_json = R"JSON({
+  "target": {
+    "selector": {
+      "agent_id": "agent_track_0007",
+      "confidence_min": 0.25
+    }
+  },
+  "behavior": {"type": "hold"}
+})JSON";
+
+    const auto agent_spec = dedalus::parse_behavior_spec_text(agent_json);
+    require(agent_spec.target.class_label.empty(), "agent-only selector class should default empty");
+    require(agent_spec.target.track_id.empty(), "agent-only selector track_id should default empty");
+    require(agent_spec.target.agent_id == "agent_track_0007", "agent selector agent_id should parse");
+    require_near(agent_spec.target.confidence_min, 0.25, "agent selector confidence should parse");
+}
+
 void applies_defaults() {
     const std::string yaml = R"YAML(
 target:
@@ -125,6 +170,8 @@ behavior:
     require_near(spec.target.confidence_min, 0.5, "default confidence_min should apply");
     require(spec.target.policy == dedalus::TargetSelectionPolicy::HighestConfidence, "default policy should apply");
     require_near(spec.target.reacquire_timeout_s, 5.0, "default reacquire timeout should apply");
+    require(spec.target.track_id.empty(), "default track_id should apply");
+    require(spec.target.agent_id.empty(), "default agent_id should apply");
     require(spec.behavior.type == dedalus::BehaviorType::Hold, "hold behavior should parse");
     require(spec.behavior.target_frame == dedalus::ReferenceFrame::WorldLocalFrame, "default frame should apply");
     require_near(spec.behavior.max_speed_mps, 1.0, "default max speed should apply");
@@ -186,7 +233,7 @@ target:
 behavior:
   type: hold
 )YAML");
-    }, "target.selector.class");
+    }, "at least one of class, track_id, or agent_id");
 
     require_throws([] {
         (void)dedalus::parse_behavior_spec_text(R"YAML(
@@ -238,6 +285,7 @@ int main() {
     try {
         parses_follow_yaml();
         parses_json_circle();
+        parses_track_and_agent_selectors();
         applies_defaults();
         parses_sequence_yaml();
         rejects_invalid_specs();
