@@ -27,6 +27,17 @@ int main() {
     snapshot.ego.home_T_body = dedalus::Pose3{};
     snapshot.ego.home_timestamp = dedalus::TimePoint{123456789};
 
+    dedalus::AgentState agent;
+    agent.agent_id = dedalus::AgentId{"agent_track_0007"};
+    agent.identity_id = dedalus::IdentityId{"identity_track_0007"};
+    agent.source_track_id = dedalus::TrackId{"track_0007"};
+    agent.class_label = dedalus::ClassLabel::Person;
+    agent.lifecycle = dedalus::AgentLifecycle::Active;
+    agent.position_local = dedalus::Vec3{3.0, 4.0, -1.0};
+    agent.velocity_local = dedalus::Vec3{0.1, 0.2, 0.0};
+    agent.confidence = 0.91F;
+    snapshot.agents.push_back(agent);
+
     dedalus::MapFrame map_frame;
     map_frame.map_frame_id = snapshot.active_map_frame_id;
     map_frame.scale_confidence = 0.5F;
@@ -61,6 +72,25 @@ int main() {
     for (const auto& token : required_ego_tokens) {
         if (!contains(json, token)) {
             std::cerr << "missing serialized ego token: " << token << "\n";
+            std::cerr << json << "\n";
+            return 1;
+        }
+    }
+
+    const std::string required_agent_tokens[] = {
+        "\"agents\"",
+        "\"agent_id\": \"agent_track_0007\"",
+        "\"identity_id\": \"identity_track_0007\"",
+        "\"source_track_id\": \"track_0007\"",
+        "\"class\": \"person\"",
+        "\"lifecycle\": \"active\"",
+        "\"position_local\": [3,4,-1]",
+        "\"velocity_local\": [0.1,0.2,0]",
+        "\"confidence\": 0.91"};
+
+    for (const auto& token : required_agent_tokens) {
+        if (!contains(json, token)) {
+            std::cerr << "missing serialized agent token: " << token << "\n";
             std::cerr << json << "\n";
             return 1;
         }
