@@ -141,6 +141,7 @@ behavior:
     const std::string agent_json = R"JSON({
   "target": {
     "selector": {
+      "class": "person",
       "agent_id": "agent_track_0007",
       "confidence_min": 0.25
     }
@@ -149,8 +150,8 @@ behavior:
 })JSON";
 
     const auto agent_spec = dedalus::parse_behavior_spec_text(agent_json);
-    require(agent_spec.target.class_label.empty(), "agent-only selector class should default empty");
-    require(agent_spec.target.track_id.empty(), "agent-only selector track_id should default empty");
+    require(agent_spec.target.class_label == "person", "agent selector class should parse");
+    require(agent_spec.target.track_id.empty(), "agent selector track_id should default empty");
     require(agent_spec.target.agent_id == "agent_track_0007", "agent selector agent_id should parse");
     require_near(agent_spec.target.confidence_min, 0.25, "agent selector confidence should parse");
 }
@@ -229,11 +230,31 @@ behavior:
         (void)dedalus::parse_behavior_spec_text(R"YAML(
 target:
   selector:
+    track_id: ghost_person_001
+behavior:
+  type: hold
+)YAML");
+    }, "target.selector.class");
+
+    require_throws([] {
+        (void)dedalus::parse_behavior_spec_text(R"YAML(
+target:
+  selector:
+    agent_id: agent_track_0007
+behavior:
+  type: hold
+)YAML");
+    }, "target.selector.class");
+
+    require_throws([] {
+        (void)dedalus::parse_behavior_spec_text(R"YAML(
+target:
+  selector:
     confidence_min: 0.5
 behavior:
   type: hold
 )YAML");
-    }, "at least one of class, track_id, or agent_id");
+    }, "target.selector.class");
 
     require_throws([] {
         (void)dedalus::parse_behavior_spec_text(R"YAML(
