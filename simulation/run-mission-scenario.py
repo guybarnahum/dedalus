@@ -11,7 +11,6 @@ from __future__ import annotations
 
 import argparse
 import json
-import os
 import shutil
 import subprocess
 import sys
@@ -41,25 +40,18 @@ def expected_final_state_from(args: argparse.Namespace) -> str | None:
     return None
 
 
-def child_env() -> dict[str, str]:
-    env = os.environ.copy()
-    env.setdefault("PYTHONUNBUFFERED", "1")
-    return env
-
-
 def stream_command(command: list[str], cwd: Path, log_path: Path) -> int:
     """Stream command output in real time while preserving carriage returns.
 
     Line-oriented iteration turns `\r` progress updates into newline-ish chunks in
     some terminals and can delay output until a newline appears. Reading one
     character at a time preserves in-place progress and keeps the artifact log
-    byte-for-byte close to what the child emitted.
+    close to what the child emitted without changing the child's environment.
     """
     with log_path.open("w", encoding="utf-8") as log_file:
         process = subprocess.Popen(
             command,
             cwd=cwd,
-            env=child_env(),
             text=True,
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
@@ -83,7 +75,6 @@ def run_capture(command: list[str], cwd: Path, output_path: Path) -> int:
     result = subprocess.run(
         command,
         cwd=cwd,
-        env=child_env(),
         text=True,
         stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT,
