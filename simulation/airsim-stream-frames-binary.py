@@ -24,6 +24,7 @@ Python bridge process instead of the C++ core stack.
 from __future__ import annotations
 
 import argparse
+from contextlib import redirect_stdout
 import json
 import os
 from pathlib import Path
@@ -313,7 +314,11 @@ def main() -> int:
     mavlink_ego_reader = MavlinkEgoTelemetryReader(parse_mavlink_endpoints(endpoint_string))
     try:
         client = airsim.MultirotorClient(ip=args.host, port=args.rpc_port)
-        client.confirmConnection()
+        # AirSim's Python client may print connection diagnostics to stdout.
+        # stdout is the binary frame protocol for this bridge, so redirect any
+        # human diagnostics to stderr before the first protocol byte is emitted.
+        with redirect_stdout(sys.stderr):
+            client.confirmConnection()
 
         period_s = 0.0 if args.rate_hz <= 0 else 1.0 / args.rate_hz
         sequence = 0
