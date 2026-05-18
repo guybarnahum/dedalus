@@ -64,6 +64,8 @@ struct BehaviorVector3 {
 
 struct TargetSelectorSpec {
     std::string class_label;
+    std::string track_id;
+    std::string agent_id;
     double confidence_min{0.5};
     TargetSelectionPolicy policy{TargetSelectionPolicy::HighestConfidence};
     double reacquire_timeout_s{5.0};
