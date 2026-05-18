@@ -1,0 +1,31 @@
+scenario:
+  name: person_pair_crossing
+  description: >
+    Two scripted person tracks cross the scene before real camera detections are available.
+    Behavior specs can select ghost_person_001 explicitly and prove target stability even
+    when ghost_person_002 has higher confidence.
+
+targets:
+  - track_id: ghost_person_001
+    class: person
+    confidence: 0.82
+    trajectory:
+      type: linear
+      start_local_m: [12.0, -4.0, 0.0]
+      velocity_local_mps: [0.3, 0.0, 0.0]
+
+  - track_id: ghost_person_002
+    class: person
+    confidence: 0.91
+    trajectory:
+      type: linear
+      start_local_m: [8.0, 4.0, 0.0]
+      velocity_local_mps: [-0.2, 0.0, 0.0]
+
+  - track_id: ghost_car_001
+    class: car
+    confidence: 0.95
+    trajectory:
+      type: linear
+      start_local_m: [4.0, 0.0, 0.0]
+      velocity_local_mps: [0.0, 0.0, 0.0]
