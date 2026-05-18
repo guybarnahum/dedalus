@@ -1,6 +1,41 @@
 # CTest Validation Layers
 
-Dedalus uses CTest labels to separate fast contracts, deterministic unit/synthetic tests, scenario harness tests, and AirSim-facing boundaries.
+Dedalus uses a first-class test declaration attribute named `LAYER` in `tests/CMakeLists.txt`.
+
+Each test is declared through one of the helper functions:
+
+```cmake
+dedalus_add_native_test(
+    NAME target_selector
+    LAYER contracts
+    LABELS unit
+    SOURCES unit/test_target_selector.cpp
+)
+```
+
+or:
+
+```cmake
+dedalus_add_python_test(
+    NAME mission_scenario_runner
+    LAYER scenario
+    LABELS synthetic integration
+    COMMAND_ARGS ...
+)
+```
+
+The helper derives three things from the layer:
+
+```text
+CTest display name:
+  target_selector (contracts)
+
+CTest LABELS:
+  contracts;unit
+
+CTest custom property:
+  DEDALUS_LAYER=contracts
+```
 
 Plain CTest still runs the full suite:
 
@@ -8,7 +43,11 @@ Plain CTest still runs the full suite:
 ctest --test-dir build-staging --output-on-failure
 ```
 
-Layered runs use `-L`.
+Layered runs use `-L`:
+
+```bash
+ctest --test-dir build-staging --output-on-failure -L contracts
+```
 
 ---
 
@@ -25,15 +64,15 @@ ctest --test-dir build-staging --output-on-failure -L contracts
 Examples:
 
 ```text
-world_snapshot_json
-behavior_spec
-target_selector
-core_stack_config_loader
-provider_composition
-ppm_frame_annotation_sink
-airsim_provider_boundary
-airsim_velocity_command_sink
-px4_mavlink_command_sink
+world_snapshot_json (contracts)
+behavior_spec (contracts)
+target_selector (contracts)
+core_stack_config_loader (contracts)
+provider_composition (contracts)
+ppm_frame_annotation_sink (contracts)
+airsim_provider_boundary (contracts)
+airsim_velocity_command_sink (contracts)
+px4_mavlink_command_sink (contracts)
 ```
 
 ### unit
@@ -55,16 +94,16 @@ ctest --test-dir build-staging --output-on-failure -L synthetic
 Examples:
 
 ```text
-perception_world_model_flow
-video_only_world_model_flow
-recorded_frame_world_model_flow
-replay_recording_smoke
-replay_artifact_validator
-replay_mission_smoke
-mission_artifact_validator
-mission_scenario_runner
-mission_campaign_runner
-mission_abort_scenario
+perception_world_model_flow (unit)
+video_only_world_model_flow (unit)
+recorded_frame_world_model_flow (unit)
+replay_recording_smoke (synthetic)
+replay_artifact_validator (synthetic)
+replay_mission_smoke (synthetic)
+mission_artifact_validator (synthetic)
+mission_scenario_runner (scenario)
+mission_campaign_runner (scenario)
+mission_abort_scenario (scenario)
 ```
 
 ### scenario
@@ -78,9 +117,9 @@ ctest --test-dir build-staging --output-on-failure -L scenario
 Current examples:
 
 ```text
-mission_scenario_runner
-mission_campaign_runner
-mission_abort_scenario
+mission_scenario_runner (scenario)
+mission_campaign_runner (scenario)
+mission_abort_scenario (scenario)
 ```
 
 ### airsim
@@ -94,7 +133,7 @@ ctest --test-dir build-staging --output-on-failure -L airsim
 Current example:
 
 ```text
-airsim_provider_boundary
+airsim_provider_boundary (contracts)
 ```
 
 ### airsim_live
@@ -117,6 +156,25 @@ python3 simulation/run-mission-campaign.py \
   --progress \
   --overwrite
 ```
+
+---
+
+## Inspecting Layers
+
+List all tests with their display names:
+
+```bash
+ctest --test-dir build-staging -N
+```
+
+List tests for a layer:
+
+```bash
+ctest --test-dir build-staging -N -L contracts
+ctest --test-dir build-staging -N -L scenario
+```
+
+CTest can filter using `LABELS`. The `DEDALUS_LAYER` property is stored for structured inspection tooling, but the standard command-line filter remains `-L`.
 
 ---
 
