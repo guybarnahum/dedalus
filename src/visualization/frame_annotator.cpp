@@ -15,6 +15,7 @@
 #include <vector>
 
 #include "dedalus/visualization/world_to_image_projector.hpp"
+#include "dedalus/visualization/world_overlay_sidecar.hpp"
 
 namespace dedalus {
 namespace {
@@ -493,6 +494,10 @@ void PpmFrameAnnotationSink::annotate(const AnnotationContext& context) {
     ++frame_index_;
     const auto frame_path = std::filesystem::path{output_dir_} / frame_file_name(frame_index_);
     write_ppm(frame_path, annotated);
+    write_world_overlay_sidecar(
+        std::filesystem::path{output_dir_},
+        frame_index_,
+        context);
     append_manifest_row(
         std::filesystem::path{output_dir_} / "manifest.txt",
         frame_index_,
