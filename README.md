@@ -368,3 +368,10 @@ All workflows use `actions/checkout@v6` and `actions/upload-artifact@v6` (Node.j
 
 ## Getting Started
 *(Documentation on bootstrapping the local Colosseum simulation environment and Jetson L4T cross-compilation Docker containers is forthcoming.)*
+
+## Useful commands
+
+```bash
+titan@Titans-MacBook-Pro dedalus % git rev-parse --short HEAD
+5fedb2f
+```
