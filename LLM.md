@@ -1,19 +1,11 @@
 # Dedalus LLM Operating Brief
 
-This file is the active orientation document for a new LLM session. Keep it short, current, and action-oriented.
-
-Historical notes, superseded debugging context, and older milestone details live in `LLM.back.md`.
+This file is the active orientation document for a new LLM session. Keep it short, current, and action-oriented. Historical notes and superseded debugging context live in `LLM.back.md`.
 
 Repository:
 
 ```text
 guybarnahum/dedalus
-```
-
-Current code baseline for this handoff:
-
-```text
-main at / after commit 5fedb2f4199a29810d3683a2729942b6bd6ec949
 ```
 
 Active milestone state:
@@ -28,95 +20,59 @@ Status: implemented / validated.
 Milestone 2.22 — Scenario/campaign harness
 Status: implemented / validated.
 
-Next active milestone:
-Milestone 2.23 — Behavior spec parser foundation for M3 object-conditioned behavior.
+Milestone 2.23 — Behavior spec parser foundation
+Status: implemented on main; local validation still expected after checkout.
+
+Current active milestone:
+Milestone 2.24 — TargetSelector from WorldSnapshot agents.
+Current slice: 2.24A track-addressable WorldSnapshot agents is implemented; continue with TargetSelectorSpec track/agent fields and TargetSelector tests.
 ```
 
 Patch policy:
 
 ```text
 Default: apply changes directly to main.
-Do not create branches or PRs unless the user explicitly asks for a branch or PR.
+Do not create branches or PRs unless explicitly requested.
 Do not leave completed work sitting on a feature branch.
-
 Prefer GitHub connector file updates directly on main when available.
 If connector patching fails or is ambiguous, provide an exact manual patch.
-
-For normal patches:
-
-  cat > /tmp/change.patch <<'PATCH'
-  diff --git ...
-  PATCH
-  git apply /tmp/change.patch
-
-For full-file replacements:
-
-  cat > /tmp/update_file.sh <<'SH'
-  #!/usr/bin/env bash
-  set -euo pipefail
-  cat > path/to/file <<'EOF'
-  ... complete file content ...
-  EOF
-  SH
-  bash /tmp/update_file.sh
 ```
 
-Current working result:
+Validation after code patches:
 
-```text
-- `simulation/test-flight.py --trajectory trajectories/circle_figure8.json` works well.
-- `dedalus_mission_loop` flies through the mission path using `flight_command_sink: px4_bridge`.
-- Back-to-back mission-loop runs work without restarting AirSim.
-- Build succeeds.
-- CTest expected result after 2.22: 22/22 passing.
-- Live mission reaches safe height through pymavlink OFFBOARD control, executes the trajectory, goes home, lands, and disarms through PX4 shell lifecycle commands.
-- Ctrl-C / SIGTERM requests graceful mission finish on first interrupt.
-- Campaign Ctrl-C now stops the campaign after the active mission safely finishes; it does not start the next repeat.
-- `mission_events.jsonl` is the source artifact for mission debugging and final summaries.
-- `simulation/validate-mission-artifacts.py` validates live-run artifact directories for expected final states `Complete` and `Abort`.
-- `simulation/run-mission-scenario.py` wraps one archive-grade scenario run.
-- `simulation/run-mission-campaign.py` runs or dry-runs scenario campaigns and writes JSON/text/Markdown summaries.
+```bash
+cmake --build build-staging -j$(nproc)
+ctest --test-dir build-staging --output-on-failure
 ```
 
-Core rule:
+Focused current 2.24A validation:
 
-```text
-Synchronous command dispatch success is not vehicle-state truth.
-Mission transitions into flight execution must be driven by world-model telemetry.
+```bash
+ctest --test-dir build-staging --output-on-failure -R 'world_snapshot_json|perception_world_model_flow|behavior_spec'
 ```
 
-Milestone 3 direction:
+Scenario/campaign validation:
 
-```text
-Milestone 3.0 is now defined as object-conditioned flight behavior:
-  detect / track a class instance such as person or car
-    -> select target
-    -> follow, circle, approach, or sequence behavior
-    -> emit bounded velocity vectors through PX4 SITL/AirSim
-    -> return / land / disarm
-    -> validate artifacts.
+```bash
+ctest --test-dir build-staging --output-on-failure -R 'mission_(scenario|campaign|abort)_'
 ```
 
-Post-Milestone 3 direction:
+Live mission validation, when AirSim/PX4 is already running:
 
-```text
-After M3, behaviors should become obstacle-aware through a tactical occupancy / avoidance layer that modifies desired velocity vectors before they reach the flight sink. The sink still receives bounded velocity/yaw intent only.
+```bash
+RUNS=3 simulation/repeat-mission-smoke.sh
+
+python3 simulation/run-mission-campaign.py \
+  --campaign-file config/mission_campaigns/airsim_live_smoke.json \
+  --campaign-id live_<N> \
+  --output-root out/mission_campaigns \
+  --progress \
+  --overwrite
 ```
 
 ---
 
 ## 1. Current Architecture
-
-Dedalus is a live/simulated drone autonomy stack:
-
-```text
-sensors / simulation
-  -> perception
-  -> world model
-  -> behavior / mission controller
-  -> flight-command sink
-  -> AirSim / PX4
-```
 
 Current live mission pipeline:
 
@@ -142,12 +98,11 @@ Milestone 3 target architecture:
 ```text
 AirSim live frame + ego sidecar
   -> AirSimFrameSource
-  -> perception / detector / tracker
-  -> WorldSnapshot agents with class, confidence, local position, velocity
+  -> detector / tracker / projector, or ghost/scripted target provider for pre-camera validation
+  -> WorldSnapshot agents with agent_id, source_track_id, identity_id, class, confidence, local position, velocity
   -> TargetSelector
   -> BehaviorRuntime / ObjectBehaviorMissionController
   -> desired velocity vector
-  -> optional future TacticalAvoidancePlanner
   -> Px4BridgeCommandSink
   -> PX4 / AirSim
 ```
@@ -160,11 +115,9 @@ apps/dedalus_mission_loop.cpp
 
 The old name `dedalus_replay_mission` is obsolete. Do not use it.
 
-Snapshot artifacts are debug outputs showing what the world model / mission handoff saw. They are not necessarily replay inputs.
-
 ---
 
-## 2. Control Path That Works
+## 2. Proven Control Path
 
 The working control split deliberately mirrors `simulation/test-flight.py`.
 
@@ -197,181 +150,219 @@ Complete:
   PX4 shell: commander disarm
 ```
 
-Key files:
+Core rule:
 
 ```text
-simulation/test-flight.py                    known-good standalone reference
-simulation/px4-command-bridge.py             persistent bridge used by mission runtime
-src/behavior/px4_bridge_command_sink.cpp      C++ JSONL process-backed command sink
-src/behavior/trajectory_mission_controller.cpp
-src/behavior/mission_runtime.cpp
-apps/dedalus_mission_loop.cpp
-config/core_stack_trajectory_mission_placeholder.yaml
+Synchronous command dispatch success is not vehicle-state truth.
+Mission transitions into flight execution must be driven by world-model telemetry.
 ```
 
 Do not reintroduce the hand-written native C++ MAVLink encoder as the default live path. `src/behavior/px4_mavlink_command_sink.cpp` may remain as experimental/deprecated code, but the live mission should use `flight_command_sink: px4_bridge`.
 
 ---
 
-## 3. Python Helpers vs Native C++ Decision
+## 3. Object Identity Model
 
-AirSim itself has a native C++ client API. Python helpers are not used because C++ cannot talk to AirSim.
-
-The current boundary decision is:
+Do not collapse detections, tracks, agents, and identities. They answer different questions.
 
 ```text
-- Keep the mission state machine, world model, runtime, behavior controllers, and provider interfaces in C++.
-- Keep PX4/MAVLink/OFFBOARD mission control in the Python `px4-command-bridge.py` for now because it uses the same `pymavlink` behavior proven by `simulation/test-flight.py`.
-- Do not rewrite the working MAVLink control path in C++ while the mission is still being stabilized.
+detection_id  ->  track_id  ->  agent_id  ->  identity_id
+single frame      tracker       world model    recognized identity
 ```
 
-Important distinction:
+Definitions:
 
 ```text
-AirSim RPC control != PX4 control
+detection_id:
+  A single detector observation in one frame.
+
+track_id:
+  Tracker-owned frame-to-frame continuity for one moving blob/object.
+  Usually local to one tracker session.
+
+source_track_id:
+  The tracker ID preserved inside AgentState as provenance.
+  It answers: which tracker track produced this world-model agent?
+
+agent_id:
+  World-model-owned object handle.
+  Behavior and planning should select agents, not raw detections.
+  Today it may be derived from source_track_id; later it can represent a fused object from multiple sensors/tracks.
+
+identity_id:
+  Identity-resolver-owned recognized real-world identity.
+  Later this may be a known person, vehicle plate, drone serial, or cross-mission identity.
 ```
 
-AirSim C++ can eventually replace Python helpers for simulator-side concerns:
+Current 2.24A implementation rule:
 
 ```text
-- frame streaming
-- ego/state reads
-- session prep / API control
+InMemoryWorldModel derives agent_id and identity_id from Observation3D.track_id, and stores the original tracker ID in AgentState.source_track_id. Snapshot JSON includes source_track_id so artifacts can prove which tracker target became which world-model agent.
 ```
 
-But PX4 trajectory and behavior velocity control currently depends on the validated `pymavlink` path:
+Example:
 
 ```text
-- MAVLink heartbeat and target routing
-- PX4 mode mapping and COMMAND_ACK handling
-- OFFBOARD priming timing
-- LOCAL_POSITION_NED feedback climb
-- SET_POSITION_TARGET_LOCAL_NED velocity setpoints
+track_id:        ghost_person_001
+agent_id:        agent_ghost_person_001
+identity_id:     identity_ghost_person_001
+source_track_id: ghost_person_001
 ```
 
-Recommended migration order:
+Why this matters:
 
 ```text
-1. Stabilize current `px4_bridge` mission path.
-2. Build object-conditioned behavior on top of the existing velocity-command path.
-3. Migrate AirSim frame/ego/session helpers to native C++ if needed.
-4. Only later consider a native C++ PX4/MAVLink backend using a real tested MAVLink library, not ad-hoc packet encoding.
-```
-
-Bottom line:
-
-```text
-Python is not required for AirSim access. It is currently required for the stable PX4/MAVLink mission-control path because `pymavlink` + `test-flight.py` is the proven implementation.
+Target selection must be able to focus on one specific object in a group. It must not switch to another person/car merely because another detection has higher confidence.
 ```
 
 ---
 
-## 4. Separation of Concerns
+## 4. Milestone 2.24 Plan
 
-Keep these layers separate.
-
-### 4.1 Command intent
-
-Command intent records what the mission runtime requested or dispatched.
-
-Examples:
+2.24A is implemented:
 
 ```text
-flight_control.arm_state = arm_requested
-  The Arm command dispatch path returned OK.
-
-flight_control.arm_state = arm_failed
-  The Arm command dispatch path failed.
-
-flight_control.arm_state = armed_confirmed
-  Ego telemetry later confirmed the drone is armed.
+- AgentState.agent_id is derived from Observation3D.track_id.
+- AgentState.identity_id is derived from Observation3D.track_id.
+- AgentState.source_track_id preserves the original tracker ID.
+- WorldSnapshot JSON emits source_track_id.
+- Unit tests verify multiple observations produce distinct agents and serialized source_track_id artifacts.
 ```
 
-### 4.2 Telemetry truth
-
-Telemetry truth comes from the vehicle/sim state represented in `WorldSnapshot.ego`.
-
-Examples:
+Next 2.24 tasks:
 
 ```text
-ego.armed_valid && ego.armed
-ego.armed_valid && !ego.armed
-ego.height_valid && ego.height_m >= safe_height
-ego.flight_status
+1. Extend TargetSelectorSpec with optional track_id and agent_id fields.
+2. Parser validation: at least one of class, track_id, or agent_id must be present.
+3. Add TargetSelector output model with agent_id, source_track_id, identity_id, class, confidence, position, velocity, status, reason.
+4. Add selection policies:
+     highest_confidence
+     nearest
+     persistent_track
+5. Add tests over hand-built WorldSnapshot agents:
+     explicit track_id selection
+     explicit agent_id selection
+     highest_confidence among matching class
+     nearest among matching class
+     persistent_track keeps prior target even if another object has higher confidence
+     wrong class / low confidence / stale lifecycle ignored
+     no candidates returns selected=false
 ```
-
-### 4.3 Mission lifecycle
-
-The mission state machine owns mission phase:
-
-```text
-Prepare
-Takeoff
-ExecuteMission
-GoHome
-Land
-Complete
-Abort
-```
-
-Mission lifecycle may look at command intent and telemetry truth, but it must transition to flight execution only from telemetry truth.
-
-Repeat runs exposed a stale armed-telemetry case even though shell arm/takeoff remained healthy. The live config therefore enables:
-
-```yaml
-mission_options.flight_arm_dispatch_fallback_s: 2.0
-```
-
-This fallback may advance from `Prepare` to `Takeoff` after successful Arm dispatch and a short settle interval when armed telemetry is stale. It does **not** move to `ExecuteMission`; `ExecuteMission` remains gated by ego height reaching safe height.
-
-### 4.4 Behavior intent
-
-Behavior decides what the drone wants to do:
-
-```text
-follow target
-circle target
-approach target
-hold/search/go_home/land
-```
-
-Behavior should emit desired velocity/yaw intent, not low-level motor/attitude commands.
-
-### 4.5 Future avoidance layer
-
-Post-M3, avoidance modifies behavior intent into a safe command:
-
-```text
-BehaviorController
-  -> desired velocity vector
-  -> TacticalAvoidancePlanner
-  -> safe velocity vector
-  -> FlightCommandSink
-```
-
-Do not make the sink understand obstacles. Do not bury behavior or avoidance logic inside `px4-command-bridge.py`.
 
 ---
 
-## 5. Milestone Journey
+## 5. Ghost / Scripted Target Validation
 
-| Stage | Name | Status | Notes |
-|---|---|---:|---|
-| 2.1–2.18 | Frame/source/provider/bridge foundation | Done | Synthetic, recorded, AirSim, binary bridge, timing, annotation |
-| 2.19A–K | Mission/ego/control foundation | Done | Ego state, mission config, runtime, command intent, armed telemetry |
-| 2.19L | PX4 bridge mission parity | Done | Mission path follows `test-flight.py` control sequence |
-| 2.19M | Quiet/verbose logs | Done enough | CLI verbosity exists; default is high-level output plus final summary |
-| 2.20A | Mission docs/current state | Done | `docs/mission_pipeline_current_state.md` |
-| 2.20B | Mission event artifacts | Done | `mission_events.jsonl` from `MissionRuntime` |
-| 2.20C | Final summary from events | Done | `dedalus_mission_loop` summarizes `mission_events.jsonl` |
-| 2.20D | Repeatable-run hardening | Done / validated | Back-to-back mission runs work without restarting AirSim |
-| 2.20E | Closeout tooling/checkpoint | Done | Event summary helper + repeat smoke wrapper + updated docs |
-| 2.21 | Mission artifact validator | Done | `simulation/validate-mission-artifacts.py` + CTest smoke |
-| 2.22 | Scenario/campaign harness | Done | Scenario runner, campaign specs, dry-run, live preset, reports, interrupt semantics |
+Before real camera detections are reliable, use ghost targets that enter at the same semantic boundary as real detections.
+
+Good validation path:
+
+```text
+Synthetic / AirSim frame
+  -> GhostDetectionProvider or ScriptedTargetProvider
+  -> PerceptionPipelineOutput.observations
+  -> InMemoryWorldModel
+  -> WorldSnapshot.agents with stable source_track_id
+  -> TargetSelector
+  -> ObjectBehaviorMissionController later
+```
+
+Bad shortcut:
+
+```text
+config says selected_target = ghost_person_001
+```
+
+That bypasses the perception/world-model/selector chain and should not be the main validation path.
+
+Meaningful ghost scenario:
+
+```text
+Two person targets exist:
+  ghost_person_001 confidence 0.82
+  ghost_person_002 confidence 0.91
+
+Behavior spec requests ghost_person_001 with policy=persistent_track.
+Expected result:
+  TargetSelector keeps ghost_person_001 and does not switch to ghost_person_002 merely because confidence is higher.
+```
 
 ---
 
-## 6. Scenario / Campaign Harness
+## 6. Behavior Language v1
+
+The behavior language is small and declarative:
+
+```text
+Target selector
+Behavior type
+Reference frame
+Desired relative geometry
+Constraints
+Completion condition
+Fallback behavior
+```
+
+Initial behavior types:
+
+```text
+hold
+search
+follow
+approach
+circle
+go_home
+land
+go_home_land
+sequence
+```
+
+Sample specs live in:
+
+```text
+simulation/behaviors/follow_person.yaml
+simulation/behaviors/circle_car.yaml
+simulation/behaviors/approach_target.yaml
+simulation/behaviors/sequence_approach_circle.yaml
+```
+
+2.23 parser files:
+
+```text
+include/dedalus/behavior/behavior_spec.hpp
+src/behavior/behavior_spec.cpp
+tests/unit/test_behavior_spec.cpp
+```
+
+---
+
+## 7. Mission Events and Validation Expectations for M3
+
+Expected later M3 events should include both world-model and tracker handles when available:
+
+```json
+{"event":"target_selected","class":"person","agent_id":"agent_ghost_person_001","source_track_id":"ghost_person_001","identity_id":"identity_ghost_person_001","confidence":0.82}
+{"event":"behavior_start","behavior":"follow","agent_id":"agent_ghost_person_001","source_track_id":"ghost_person_001"}
+{"event":"behavior_complete","behavior":"follow","reason":"duration_elapsed"}
+```
+
+M3 validation should prove:
+
+```text
+final_state == Complete
+failures == 0
+safe height reached before behavior execution
+at least one target_selected event
+selected target identity remains stable unless reacquire/lost is expected
+at least one behavior_start event
+expected behavior_complete event
+velocity commands emitted during behavior
+GoHome / Land / Complete reached
+```
+
+---
+
+## 8. Scenario / Campaign Harness
 
 Key files:
 
@@ -384,71 +375,6 @@ config/core_stack_synthetic_mission_abort_ci.yaml
 config/mission_campaigns/synthetic_ci.json
 config/mission_campaigns/airsim_live_smoke.json
 docs/mission_scenario_runner.md
-```
-
-Single synthetic Complete lifecycle:
-
-```bash
-python3 simulation/run-mission-scenario.py \
-  --name synthetic_lifecycle \
-  --run-id run_0001 \
-  --config config/core_stack_synthetic_mission_ci.yaml \
-  --app ./build-staging/apps/dedalus_mission_loop \
-  --output-root out/mission_scenarios \
-  --max-frames 220 \
-  --shutdown-max-frames 50 \
-  --safe-height-m 2 \
-  --landed-height-m 1 \
-  --expect-final-state Complete \
-  --overwrite
-```
-
-Single synthetic expected-Abort lifecycle:
-
-```bash
-python3 simulation/run-mission-scenario.py \
-  --name synthetic_abort_land_timeout \
-  --run-id run_0001 \
-  --config config/core_stack_synthetic_mission_abort_ci.yaml \
-  --app ./build-staging/apps/dedalus_mission_loop \
-  --output-root out/mission_scenarios \
-  --max-frames 220 \
-  --shutdown-max-frames 50 \
-  --safe-height-m 2 \
-  --landed-height-m 1 \
-  --expect-final-state Abort \
-  --overwrite
-```
-
-Dry-run live AirSim campaign planning without launching AirSim:
-
-```bash
-python3 simulation/run-mission-campaign.py \
-  --campaign-file config/mission_campaigns/airsim_live_smoke.json \
-  --campaign-id dry_run_0001 \
-  --output-root out/mission_campaigns \
-  --dry-run \
-  --overwrite
-```
-
-Live AirSim campaign when AirSim/PX4 is already running:
-
-```bash
-python3 simulation/run-mission-campaign.py \
-  --campaign-file config/mission_campaigns/airsim_live_smoke.json \
-  --campaign-id live_0001 \
-  --output-root out/mission_campaigns \
-  --progress \
-  --overwrite
-```
-
-Campaign outputs:
-
-```text
-campaign_summary.json     machine-readable summary, schema_version=4
-campaign_summary.txt      compact terminal summary
-campaign_report.md        human-readable Markdown report with per-run artifact links
-runs/<scenario>/run_XXXX/ per-run scenario artifacts
 ```
 
 Campaign Ctrl-C semantics:
@@ -468,498 +394,39 @@ Second Ctrl-C:
 
 ---
 
-## 7. Roadmap to Milestone 3
-
-The path from 2.22 to 3.0 is about making the drone fly **based on detected/tracked objects**.
+## 9. Known Traps
 
 ```text
-2.23 Behavior spec parser foundation
-  Parse a small declarative behavior language from YAML/JSON.
-
-2.24 Target selector from WorldSnapshot agents
-  Select class or instance targets from tracked agents.
-
-2.25 ObjectBehaviorMissionController
-  Add a mission controller that owns object-conditioned behavior lifecycle.
-
-2.26 Follow behavior
-  Maintain a relative 3D offset from a selected class instance.
-
-2.27 Circle behavior
-  Orbit a selected static or slow class instance such as a car/person.
-
-2.28 Approach + behavior sequence
-  Approach until standoff/relative condition, then execute follow/circle/action.
-
-2.29 M3 demo hardening
-  Validate object-conditioned flight artifacts, repeatability, fallback behavior, and docs.
-
-3.0 Object-conditioned flight behavior demo
-  Detect/select class instance -> follow/circle/approach -> return/land/disarm.
-```
-
-Milestone 3.0 success criteria:
-
-```text
-1. Drone takes off and reaches safe height.
-2. WorldSnapshot contains a valid detected/tracked target class instance.
-3. TargetSelector selects a class or instance, e.g. person or car.
-4. BehaviorRuntime starts follow, circle, approach, or sequence behavior.
-5. Controller emits bounded velocity vectors through the existing PX4 bridge path.
-6. Drone returns home, lands, and disarms.
-7. mission_events + snapshots prove target selection, behavior execution, and completion.
-```
-
----
-
-## 8. Behavior Language v1
-
-The behavior language should be small and declarative.
-
-Core concepts:
-
-```text
-Target selector
-Behavior type
-Reference frame
-Desired relative geometry
-Constraints
-Completion condition
-Fallback behavior
-```
-
-Example follow behavior:
-
-```yaml
-mission:
-  name: follow_person_demo
-
-target:
-  selector:
-    class: person
-    confidence_min: 0.55
-    policy: highest_confidence
-
-behavior:
-  type: follow
-  target_frame: target_heading_frame
-  relative_offset_m:
-    x: -8.0
-    y: 0.0
-    z: 4.0
-  max_speed_mps: 2.0
-  position_tolerance_m: 1.5
-  lost_target_timeout_s: 5.0
-
-completion:
-  after_s: 30
-  then: go_home_land
-```
-
-Example circle behavior:
-
-```yaml
-mission:
-  name: circle_car_demo
-
-target:
-  selector:
-    class: car
-    confidence_min: 0.6
-    policy: nearest
-
-behavior:
-  type: circle
-  radius_m: 10.0
-  altitude_offset_m: 5.0
-  angular_speed_deg_s: 12.0
-  direction: clockwise
-  center:
-    target: selected_target
-  max_speed_mps: 3.0
-```
-
-Example approach-then-circle sequence:
-
-```yaml
-behavior:
-  type: sequence
-  steps:
-    - type: approach
-      stop_distance_m: 8.0
-      altitude_offset_m: 4.0
-    - type: circle
-      radius_m: 10.0
-      duration_s: 20.0
-    - type: go_home_land
-```
-
-Initial behavior types:
-
-```text
-hold
-search
-follow
-approach
-circle
-go_home
-land
-sequence
-```
-
-Reference frames to support over time:
-
-```text
-target_heading_frame
-  offset relative to target direction of travel
-
-drone_heading_frame
-  offset relative to current drone heading
-
-world_local_frame
-  offset fixed in takeoff-local / map coordinates
-
-camera_frame
-  offset based on drone POV/image bearing
-```
-
-For Milestone 3, prefer `target_heading_frame` and `world_local_frame` first.
-
----
-
-## 9. Post-Milestone 3 Spatial Autonomy Roadmap
-
-After M3, the same behaviors should become obstacle-aware while still emitting velocity vectors into PX4 SITL/AirSim.
-
-```text
-4.0 Local tactical occupancy map
-  Build a drone-relative real-time occupancy map from vision/ego motion.
-
-5.0 Reactive obstacle avoidance planner
-  Modify desired behavior velocity into safe velocity using tactical occupancy.
-
-6.0 Persistent traverse map / flight memory
-  Remember known-safe corridors, blocked regions, risk/cost surfaces, and preferred lanes across flights.
-
-7.0 Cached route solutions
-  Reuse successful routes when live sensing and map priors agree; invalidate them when live sensing contradicts memory.
-
-8.0 Tactical map + drone POV visualization
-  Visualize both takeoff-origin/drone-relative map and camera POV overlays.
-
-9.0 Integrated spatial autonomy demo
-  Avoid static/dynamic obstacles while following/circling/approaching an object-conditioned target and updating traverse memory.
-
-10.0 Multi-flight site memory
-  Maintain site-local memory across missions, including route priors, hazards, repeated obstacle history, and mission outcomes.
-```
-
-Important design split:
-
-```text
-Tactical occupancy map:
-  real-time, short-horizon, safety-critical
-
-Persistent traverse map:
-  slower, historical, advisory
-
-Route cache:
-  proposed solution memory, invalidated by live sensing
-
-Behavior:
-  decides intent
-
-Avoidance planner:
-  modifies intent into safe motion
-
-Flight sink:
-  sends bounded velocity/yaw intent to PX4/SITL
-```
-
----
-
-## 10. Mission Artifacts and Tools
-
-Mission loop output directory contains:
-
-```text
-snapshot_XXXX.json
-snapshot_manifest.txt
-mission_events.jsonl
-```
-
-`mission_events.jsonl` is the compact structured timeline and should be the first artifact inspected for mission behavior.
-
-Summary helper:
-
-```bash
-python3 simulation/mission-events-summary.py out/airsim_mission_snapshots/mission_events.jsonl
-python3 simulation/mission-events-summary.py out/airsim_mission_snapshots/mission_events.jsonl --expect-complete
-```
-
-Formal live-run artifact validator:
-
-```bash
-python3 simulation/validate-mission-artifacts.py \
-  out/airsim_mission_snapshots \
-  --expect-final-state Complete \
-  --safe-height-m 16 \
-  --landed-height-m 1
-```
-
-Expected-Abort validation:
-
-```bash
-python3 simulation/validate-mission-artifacts.py \
-  out/abort_mission \
-  --expect-final-state Abort \
-  --safe-height-m 16 \
-  --landed-height-m 1
-```
-
-Future M3 behavior-artifact validation:
-
-```bash
-python3 simulation/validate-mission-artifacts.py \
-  out/object_behavior_mission \
-  --expect-final-state Complete \
-  --expect-behavior \
-  --safe-height-m 16 \
-  --landed-height-m 1
-```
-
-Repeat-run smoke helper:
-
-```bash
-RUNS=3 simulation/repeat-mission-smoke.sh
-```
-
-`repeat-mission-smoke.sh` assumes AirSim/PX4 is already running. It runs `dedalus_mission_loop` repeatedly and validates each produced `mission_events.jsonl` with `--expect-complete`.
-
-If the scripts are not executable after GitHub checkout, run:
-
-```bash
-chmod +x simulation/repeat-mission-smoke.sh simulation/mission-events-summary.py simulation/validate-mission-artifacts.py simulation/run-mission-scenario.py simulation/run-mission-campaign.py
-```
-
----
-
-## 11. Commands
-
-### 11.1 Build/test
-
-```bash
-cd ~/dedalus
-source venv/bin/activate
-
-cmake --build build-staging -j$(nproc)
-ctest --test-dir build-staging --output-on-failure
-```
-
-Expected current result:
-
-```text
-100% tests passed, 0 tests failed out of 22
-```
-
-Focused scenario/campaign tests:
-
-```bash
-ctest --test-dir build-staging --output-on-failure -R 'mission_(scenario|campaign|abort)_'
-```
-
-### 11.2 Standalone known-good test flight
-
-```bash
-cd ~/dedalus
-source venv/bin/activate
-
-python ./simulation/test-flight.py --trajectory trajectories/circle_figure8.json
-```
-
-### 11.3 Start AirSim
-
-```bash
-cd ~/dedalus/simulation
-./stop.sh
-./run.sh AirSimNH --airsim-camera-width 640 --airsim-camera-height 360
-```
-
-### 11.4 Run live mission loop
-
-Quiet/default:
-
-```bash
-cd ~/dedalus
-source venv/bin/activate
-
-./build-staging/apps/dedalus_mission_loop \
-  --config config/core_stack_trajectory_mission_placeholder.yaml \
-  --output-dir out/airsim_mission_snapshots \
-  --max-frames 900 \
-  --shutdown-max-frames 400 \
-  --progress 2>&1 | tee out/airsim_mission_debug.log
-```
-
-Full debug:
-
-```bash
-./build-staging/apps/dedalus_mission_loop \
-  --config config/core_stack_trajectory_mission_placeholder.yaml \
-  --output-dir out/airsim_mission_snapshots \
-  --max-frames 900 \
-  --shutdown-max-frames 400 \
-  --progress \
-  --verbose 2>&1 | tee out/airsim_mission_debug.log
-```
-
-Repeat validation:
-
-```bash
-RUNS=3 simulation/repeat-mission-smoke.sh
-```
-
-Live campaign validation:
-
-```bash
-python3 simulation/run-mission-campaign.py \
-  --campaign-file config/mission_campaigns/airsim_live_smoke.json \
-  --campaign-id live_0001 \
-  --output-root out/mission_campaigns \
-  --progress \
-  --overwrite
-```
-
-Verbosity contract:
-
-```text
-default: high-level mission state transitions + final summary
--v: lifecycle/prep details
--vv: command summaries + sampled world snapshots
--vvv / --verbose: full detailed tick/sink/bridge tracing
-```
-
----
-
-## 12. Ctrl-C / Shutdown Behavior
-
-`dedalus_mission_loop` handles interrupts:
-
-```text
-First Ctrl-C / SIGTERM:
-  requests graceful mission finish through MissionRuntime.
-
-Second Ctrl-C:
-  stops the local main loop after local cleanup paths run.
-```
-
-`run-mission-scenario.py` starts the mission loop in an isolated session and relays Ctrl-C into the active mission process so the mission can finish safely.
-
-`run-mission-campaign.py` starts each scenario in an isolated session. On first Ctrl-C, it relays the interrupt to the active scenario, waits for that scenario to finish, then stops the campaign without starting the next repeat. The campaign summary records:
-
-```text
-status: interrupted
-interrupted: 1
-```
-
-The Python PX4 bridge handles a JSONL `shutdown` command from the C++ sink. On shutdown, if MAVLink was active, it sends a short zero-velocity settle stream, closes the MAVLink socket, and resets internal OFFBOARD/safe-height state before process exit.
-
-Abort is terminal/diagnostic and does not emit velocity commands.
-
----
-
-## 13. Known Traps
-
-```text
-- Do not use dedalus_replay_mission. It was renamed to dedalus_mission_loop.
-- Do not treat snapshot artifacts as proof of replay input.
+- Do not use dedalus_replay_mission. Use dedalus_mission_loop.
 - Do not treat command helper OK as vehicle-state truth.
 - Do not hide arming inside velocity commands.
 - Do not collapse flight_control.arm_state and ego.armed.
 - Do not move to ExecuteMission until Takeoff is confirmed by ego height.
 - Do not make the native C++ MAVLink sink the default live path; use px4_bridge.
-- Do not debug the working mission by rewriting MAVLink packet encoding in C++.
+- Do not rewrite the working pymavlink control path in C++ while stabilizing behavior.
+- Do not let telemetry sidecar and command bridge bind the same MAVLink endpoint.
 - Do not let human diagnostics contaminate binary bridge stdout; binary frame bridge stdout is protocol bytes only.
-- Do not let the telemetry sidecar and command bridge fight over the same MAVLink endpoint.
-- Do not replace `px4-command-bridge.py` with native C++ until the mission is stable and a real tested MAVLink C++ backend is planned.
-- Do not refactor `test-flight.py` / `px4-command-bridge.py` unless repeat-run smoke remains stable.
-- Do not make `mission_campaign_runner` CTest execute repeated real missions; keep campaign CTest dry-run and leave real lifecycle coverage to scenario/abort tests.
+- Do not make mission_campaign_runner CTest execute repeated real missions.
 - Do not put obstacle avoidance inside the flight sink.
 - Do not let route memory override fresh tactical sensing.
 - Do not let Milestone 3 balloon into full obstacle avoidance; M3 is object-conditioned behavior. Avoidance starts post-M3.
-- Do not create branches or PRs unless the user explicitly asks for them.
+- Do not collapse track_id/source_track_id/agent_id/identity_id into one field.
+- Do not select targets only by confidence when a stable track/agent target is specified.
+- Do not create branches or PRs unless explicitly requested.
 ```
 
 ---
 
-## 14. Recommended Next Stage
+## 10. Pointers
 
-Recommended next active stage:
-
-```text
-Milestone 2.23 — Behavior spec parser foundation
-```
-
-Suggested first tasks:
+Read next when relevant:
 
 ```text
-1. Add a small behavior spec data model for target selector + behavior + completion/fallback.
-2. Add parser support for YAML/JSON behavior specs without binding it to live flight yet.
-3. Add sample specs for follow, circle, approach, and sequence.
-4. Add unit tests for valid specs, defaults, and invalid combinations.
-5. Preserve event extension points already expected by the validator:
-     target_selected
-     target_lost
-     behavior_start
-     behavior_complete
-     behavior_failed
-     fallback_start
-```
-
-Expected later M3 event types:
-
-```json
-{"event":"target_selected","class":"car","track_id":"agent_3","confidence":0.86}
-{"event":"behavior_start","behavior":"approach","target":"agent_3"}
-{"event":"behavior_complete","behavior":"approach","reason":"standoff_reached"}
-{"event":"behavior_start","behavior":"circle","target":"agent_3"}
-{"event":"behavior_complete","behavior":"circle","reason":"duration_elapsed"}
-```
-
----
-
-## 15. Handoff Prompt Format
-
-Every new worker handoff should include:
-
-```text
-1. Repo and current commit.
-2. Active milestone and exact stage.
-3. Current architecture summary.
-4. Current observed behavior / logs.
-5. Current diagnosis.
-6. Immediate next tasks in order.
-7. Explicit non-goals / traps.
-8. Build/test/run commands.
-9. Expected success signal.
-```
-
----
-
-## 16. Pointers
-
-Detailed / historical context:
-
-```text
-LLM.back.md
-docs/core_stack_current_state.md
-docs/bridge_transport_plugins.md
-docs/binary_frame_bridge_protocol.md
-docs/perception_stabilization_annotation.md
-docs/mission_pipeline_current_state.md
-docs/mission_state_machine.md
-docs/mission_scenario_runner.md
-docs/object_conditioned_behavior_plan.md
-WHITEPAPER.md
-HANDOFF.md
+docs/object_conditioned_behavior_plan.md     detailed 2.24/M3 behavior + identity plan
+docs/mission_scenario_runner.md             scenario/campaign harness
+docs/mission_pipeline_current_state.md       mission loop architecture
+docs/core_stack_current_state.md             broader core-stack status
+WHITEPAPER.md                                architectural rationale
+HANDOFF.md                                   handoff prompt template
+LLM.back.md                                  historical context only
 ```
