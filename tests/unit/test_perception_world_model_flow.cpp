@@ -35,7 +35,7 @@ int main() {
     dedalus::FlatGroundProjector projector;
     dedalus::PerceptionPipeline pipeline(detector, stabilizer, tracker, identity_resolver, projector);
 
-    const auto output = pipeline.process(*frame, ego);
+    auto output = pipeline.process(*frame, ego);
     if (output.detections.size() != 1U || output.stabilized_frame.detections.size() != 1U ||
         output.tracks.size() != 1U || output.identities.size() != 1U || output.observations.size() != 1U) {
         std::cerr << "unexpected pipeline output cardinality\n";
@@ -46,6 +46,13 @@ int main() {
         std::cerr << "null stabilizer unexpectedly reported a transform\n";
         return 1;
     }
+
+    const auto first_track_id = output.observations.front().track_id;
+    auto second_observation = output.observations.front();
+    second_observation.track_id = dedalus::TrackId{"track_extra_0002"};
+    second_observation.position_local = dedalus::Vec3{9.0, 2.0, -1.0};
+    second_observation.confidence = 0.77F;
+    output.observations.push_back(second_observation);
 
     dedalus::InMemoryWorldModel world_model(ego.map_frame_id);
     world_model.update_ego(ego);
@@ -76,13 +83,38 @@ int main() {
         return 1;
     }
 
-    if (snapshot.agents.size() != 1U) {
-        std::cerr << "world model did not emit expected agent\n";
+    if (snapshot.agents.size() != 2U) {
+        std::cerr << "world model did not emit expected agents\n";
         return 1;
     }
 
-    if (snapshot.tactical_exclusion_zones.size() != 1U) {
-        std::cerr << "world model did not emit expected tactical exclusion zone\n";
+    if (snapshot.agents[0].source_track_id.value != first_track_id.value) {
+        std::cerr << "first agent did not preserve source track id\n";
+        return 1;
+    }
+    if (snapshot.agents[0].agent_id.value != "agent_" + first_track_id.value) {
+        std::cerr << "first agent id was not derived from source track id\n";
+        return 1;
+    }
+    if (snapshot.agents[0].identity_id.value != "identity_" + first_track_id.value) {
+        std::cerr << "first identity id was not derived from source track id\n";
+        return 1;
+    }
+    if (snapshot.agents[1].source_track_id.value != "track_extra_0002") {
+        std::cerr << "second agent did not preserve source track id\n";
+        return 1;
+    }
+    if (snapshot.agents[1].agent_id.value != "agent_track_extra_0002") {
+        std::cerr << "second agent id was not derived from source track id\n";
+        return 1;
+    }
+    if (snapshot.agents[0].agent_id.value == snapshot.agents[1].agent_id.value) {
+        std::cerr << "agents from different tracks must not share an agent id\n";
+        return 1;
+    }
+
+    if (snapshot.tactical_exclusion_zones.size() != 2U) {
+        std::cerr << "world model did not emit expected tactical exclusion zones\n";
         return 1;
     }
 
@@ -91,8 +123,8 @@ int main() {
         return 1;
     }
 
-    if (snapshot.static_structures.size() != 1U || snapshot.static_structures.front().type != "building") {
-        std::cerr << "world model did not emit expected static structure\n";
+    if (snapshot.static_structures.size() != 2U || snapshot.static_structures.front().type != "building") {
+        std::cerr << "world model did not emit expected static structures\n";
         return 1;
     }
 
@@ -101,14 +133,14 @@ int main() {
         return 1;
     }
 
-    if (snapshot.landmarks.size() != 1U || snapshot.landmarks.front().type != "building_corner") {
-        std::cerr << "world model did not emit expected landmark\n";
+    if (snapshot.landmarks.size() != 2U || snapshot.landmarks.front().type != "building_corner") {
+        std::cerr << "world model did not emit expected landmarks\n";
         return 1;
     }
 
     const auto view = world_model.effective_view();
-    if (view.actual.agents.size() != 1U || view.uncertain_regions.empty()) {
-        std::cerr << "effective view missing actual agent or uncertainty state\n";
+    if (view.actual.agents.size() != 2U || view.uncertain_regions.empty()) {
+        std::cerr << "effective view missing actual agents or uncertainty state\n";
         return 1;
     }
 
