@@ -99,7 +99,16 @@ bool CoreStackRunner::run_once() {
         *providers_.projector);
 
     start = SteadyClock::now();
-    const auto perception_output = pipeline.process(*frame, *ego_estimate.ego);
+    auto perception_output = pipeline.process(*frame, *ego_estimate.ego);
+    if (providers_.ghost_targets) {
+        const auto ghost_observations = providers_.ghost_targets->observations_at(
+            frame->timestamp,
+            ego_estimate.ego->map_frame_id);
+        perception_output.observations.insert(
+            perception_output.observations.end(),
+            ghost_observations.begin(),
+            ghost_observations.end());
+    }
     if (timing_writer_) {
         timing_writer_->record_stage("perception_pipeline.process", duration_us(start));
     }
