@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import shutil
 import subprocess
 import sys
@@ -40,20 +41,41 @@ def expected_final_state_from(args: argparse.Namespace) -> str | None:
     return None
 
 
+def child_env() -> dict[str, str]:
+    env = os.environ.copy()
+    env.setdefault("PYTHONUNBUFFERED", "1")
+    return env
+
+
 def stream_command(command: list[str], cwd: Path, log_path: Path) -> int:
+    """Stream command output in real time while preserving carriage returns.
+
+    Line-oriented iteration turns `\r` progress updates into newline-ish chunks in
+    some terminals and can delay output until a newline appears. Reading one
+    character at a time preserves in-place progress and keeps the artifact log
+    byte-for-byte close to what the child emitted.
+    """
     with log_path.open("w", encoding="utf-8") as log_file:
         process = subprocess.Popen(
             command,
             cwd=cwd,
+            env=child_env(),
             text=True,
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
-            bufsize=1,
+            bufsize=0,
         )
         assert process.stdout is not None
-        for line in process.stdout:
-            sys.stdout.write(line)
-            log_file.write(line)
+        while True:
+            chunk = process.stdout.read(1)
+            if chunk == "" and process.poll() is not None:
+                break
+            if not chunk:
+                continue
+            sys.stdout.write(chunk)
+            sys.stdout.flush()
+            log_file.write(chunk)
+            log_file.flush()
         return process.wait()
 
 
@@ -61,6 +83,7 @@ def run_capture(command: list[str], cwd: Path, output_path: Path) -> int:
     result = subprocess.run(
         command,
         cwd=cwd,
+        env=child_env(),
         text=True,
         stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT,
@@ -68,6 +91,7 @@ def run_capture(command: list[str], cwd: Path, output_path: Path) -> int:
     )
     output_path.write_text(result.stdout, encoding="utf-8")
     sys.stdout.write(result.stdout)
+    sys.stdout.flush()
     return result.returncode
 
 
@@ -193,8 +217,8 @@ def main() -> int:
 
     started_at = utc_now_iso()
     started_monotonic = time.monotonic()
-    print(f"=== mission scenario: {args.name}/{args.run_id} ===")
-    print(f"Run directory: {run_dir}")
+    print(f"=== mission scenario: {args.name}/{args.run_id}", flush=True)
+    print(f"Run directory: {run_dir}", flush=True)
 
     mission_returncode = stream_command(mission_command, repo_root, run_dir / "console.log")
     validator_returncode: int | None = None
@@ -222,8 +246,8 @@ def main() -> int:
     )
     (run_dir / "metadata.json").write_text(json.dumps(metadata, indent=2, sort_keys=True) + "\n", encoding="utf-8")
 
-    print(f"Scenario status: {metadata['status']}")
-    print(f"Metadata: {run_dir / 'metadata.json'}")
+    print(f"Scenario status: {metadata['status']}", flush=True)
+    print(f"Metadata: {run_dir / 'metadata.json'}", flush=True)
     return 0 if metadata["status"] == "passed" else 1
 
 
