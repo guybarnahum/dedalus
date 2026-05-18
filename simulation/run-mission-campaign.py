@@ -11,8 +11,8 @@ from __future__ import annotations
 
 import argparse
 import json
-import os
 import shutil
+import signal
 import subprocess
 import sys
 import time
@@ -38,32 +38,50 @@ def load_run_metadata(path: Path) -> dict[str, Any]:
     return json.loads(path.read_text(encoding="utf-8"))
 
 
-def child_env() -> dict[str, str]:
-    env = os.environ.copy()
-    env.setdefault("PYTHONUNBUFFERED", "1")
-    return env
-
-
 def run_command(command: list[str], cwd: Path) -> int:
-    """Stream child output in real time while preserving `\r` progress updates."""
+    """Stream child output exactly and relay Ctrl-C to the active scenario.
+
+    Binary-mode reads preserve child carriage-return progress bytes. On first
+    Ctrl-C the wrapper forwards SIGINT to the active scenario runner and keeps
+    streaming so the mission loop can enter its graceful finish path. A second
+    Ctrl-C terminates the child.
+    """
     process = subprocess.Popen(
         command,
         cwd=cwd,
-        env=child_env(),
-        text=True,
         stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT,
         bufsize=0,
     )
     assert process.stdout is not None
+    interrupt_count = 0
     while True:
-        chunk = process.stdout.read(1)
-        if chunk == "" and process.poll() is not None:
+        try:
+            chunk = process.stdout.read(1)
+        except KeyboardInterrupt:
+            interrupt_count += 1
+            if interrupt_count == 1:
+                message = (
+                    b"\nrun-mission-campaign: interrupt received; "
+                    b"forwarding to active scenario and waiting for graceful shutdown\n"
+                )
+                sys.stdout.buffer.write(message)
+                sys.stdout.buffer.flush()
+                if process.poll() is None:
+                    process.send_signal(signal.SIGINT)
+                continue
+            message = b"\nrun-mission-campaign: second interrupt; terminating active scenario\n"
+            sys.stdout.buffer.write(message)
+            sys.stdout.buffer.flush()
+            if process.poll() is None:
+                process.terminate()
+            break
+        if chunk == b"" and process.poll() is not None:
             break
         if not chunk:
             continue
-        sys.stdout.write(chunk)
-        sys.stdout.flush()
+        sys.stdout.buffer.write(chunk)
+        sys.stdout.buffer.flush()
     return process.wait()
 
 
@@ -419,6 +437,7 @@ def main() -> int:
         )
     else:
         runs = []
+        interrupted = False
         for scenario in scenarios:
             for run_number in range(1, scenario.repeats + 1):
                 print(f"\n=== campaign scenario {scenario.name} run {run_number}/{scenario.repeats} ===", flush=True)
@@ -445,6 +464,12 @@ def main() -> int:
                     }
                 run_metadata["scenario_runner_returncode"] = returncode
                 runs.append(run_metadata)
+                if returncode < 0 or returncode == 130:
+                    interrupted = True
+                    print("run-mission-campaign: stopping campaign after interrupted scenario", flush=True)
+                    break
+            if interrupted:
+                break
 
     finished_at = utc_now_iso()
     elapsed_s = round(time.monotonic() - start, 3)
