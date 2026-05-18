@@ -29,6 +29,11 @@ int main() {
         return 1;
     }
 
+    if (config.ghost_targets_enabled) {
+        std::cerr << "core_stack_ci should keep ghost targets disabled by default\n";
+        return 1;
+    }
+
     if (config.fallback_map_frame_id.value != "map_local_0001") {
         std::cerr << "core_stack_ci config did not parse expected fallback map frame\n";
         return 1;
@@ -41,6 +46,21 @@ int main() {
     }
     if (profile_config.pipeline_timing_output_path != "out/profile/pipeline_profile.jsonl") {
         std::cerr << "core_stack_profile_ci did not parse expected timing output path\n";
+        return 1;
+    }
+
+    const auto ghost_config = dedalus::load_core_stack_config("config/core_stack_ghost_targets_ci.yaml");
+    if (!ghost_config.ghost_targets_enabled) {
+        std::cerr << "ghost target config did not enable ghost targets\n";
+        return 1;
+    }
+    if (ghost_config.ghost_targets_scenario != "person_pair_crossing") {
+        std::cerr << "ghost target config did not parse scenario\n";
+        return 1;
+    }
+    if (ghost_config.frame_annotator != "ppm_sequence" ||
+        ghost_config.annotation_output_path != "out/ghost_targets_annotation") {
+        std::cerr << "ghost target config did not parse annotation settings\n";
         return 1;
     }
 
@@ -80,6 +100,27 @@ int main() {
     const auto snapshot = runner.snapshot();
     if (snapshot.active_map_frame_id.value != "map_local_0001" || snapshot.agents.empty()) {
         std::cerr << "config-composed snapshot missing expected state\n";
+        return 1;
+    }
+
+    dedalus::CoreStackRunner ghost_runner{registry.create(ghost_config)};
+    if (!ghost_runner.run_once()) {
+        std::cerr << "ghost config-composed runner failed\n";
+        return 1;
+    }
+    const auto ghost_snapshot = ghost_runner.snapshot();
+    bool saw_ghost_person_001 = false;
+    bool saw_ghost_person_002 = false;
+    for (const auto& agent : ghost_snapshot.agents) {
+        if (agent.source_track_id.value == "ghost_person_001") {
+            saw_ghost_person_001 = true;
+        }
+        if (agent.source_track_id.value == "ghost_person_002") {
+            saw_ghost_person_002 = true;
+        }
+    }
+    if (!saw_ghost_person_001 || !saw_ghost_person_002) {
+        std::cerr << "ghost config-composed snapshot missing expected ghost agents\n";
         return 1;
     }
 
