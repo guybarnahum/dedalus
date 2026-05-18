@@ -13,7 +13,7 @@ import time
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, BinaryIO
+from typing import Any
 
 PROGRESS_IDLE_NEWLINE_S = 0.05
 
@@ -69,6 +69,12 @@ class ProgressAwareStdout:
         sys.stdout.buffer.flush()
 
 
+@dataclass(frozen=True)
+class ChildRunResult:
+    returncode: int
+    interrupted: bool = False
+
+
 def relay_signal(process: subprocess.Popen[bytes], sig: int, *, terminate: bool = False) -> None:
     previous = signal.signal(signal.SIGINT, signal.SIG_IGN)
     try:
@@ -81,7 +87,7 @@ def relay_signal(process: subprocess.Popen[bytes], sig: int, *, terminate: bool 
         signal.signal(signal.SIGINT, previous)
 
 
-def run_command(command: list[str], cwd: Path) -> int:
+def run_command(command: list[str], cwd: Path) -> ChildRunResult:
     """Stream child output exactly and relay Ctrl-C to the active scenario."""
     process: subprocess.Popen[bytes] = subprocess.Popen(
         command,
@@ -94,11 +100,13 @@ def run_command(command: list[str], cwd: Path) -> int:
     assert process.stdout is not None
     output = ProgressAwareStdout()
     interrupt_count = 0
+    interrupted = False
     while True:
         try:
             chunk = process.stdout.read(1)
         except KeyboardInterrupt:
             interrupt_count += 1
+            interrupted = True
             if interrupt_count == 1:
                 output.write_message(
                     b"\nrun-mission-campaign: interrupt received; "
@@ -114,7 +122,7 @@ def run_command(command: list[str], cwd: Path) -> int:
         if not chunk:
             continue
         output.write(chunk)
-    return process.wait()
+    return ChildRunResult(returncode=process.wait(), interrupted=interrupted)
 
 
 @dataclass(frozen=True)
@@ -282,6 +290,7 @@ def write_text_summary(summary: dict[str, Any], path: Path) -> None:
         f"  repeats: {summary['repeats']}",
         f"  passed: {summary['passed']}",
         f"  failed: {summary['failed']}",
+        f"  interrupted: {summary['interrupted']}",
         f"  elapsed_s: {summary['elapsed_s']}",
         "  runs:",
     ]
@@ -313,6 +322,7 @@ def write_markdown_report(summary: dict[str, Any], path: Path) -> None:
         f"| Runs | {summary['repeats']} |",
         f"| Passed | {summary['passed']} |",
         f"| Failed | {summary['failed']} |",
+        f"| Interrupted | {summary['interrupted']} |",
         f"| Elapsed seconds | {summary['elapsed_s']} |",
         "", "## Scenarios", "",
         "| Scenario | Config | Repeats | Expected final state | Safe height | Landed height |",
@@ -403,16 +413,17 @@ def main() -> int:
     if args.dry_run:
         print("Mode: dry-run plan only", flush=True)
 
+    campaign_interrupted = False
     if args.dry_run:
         runs = build_dry_run_records(repo_root=repo_root, args=args, campaign_dir=campaign_dir, scenarios=scenarios)
     else:
         runs = []
-        interrupted = False
         for scenario in scenarios:
             for run_number in range(1, scenario.repeats + 1):
                 print(f"\n=== campaign scenario {scenario.name} run {run_number}/{scenario.repeats} ===", flush=True)
                 command, run_dir = build_scenario_command(repo_root=repo_root, args=args, campaign_dir=campaign_dir, scenario=scenario, run_number=run_number)
-                returncode = run_command(command, repo_root)
+                child_result = run_command(command, repo_root)
+                returncode = child_result.returncode
                 metadata_path = run_dir / "metadata.json"
                 if metadata_path.exists():
                     run_metadata = load_run_metadata(metadata_path)
@@ -427,12 +438,13 @@ def main() -> int:
                         "run_dir": str(run_dir),
                     }
                 run_metadata["scenario_runner_returncode"] = returncode
+                run_metadata["campaign_interrupt_requested"] = child_result.interrupted
                 runs.append(run_metadata)
-                if returncode < 0 or returncode == 130:
-                    interrupted = True
+                if child_result.interrupted or returncode < 0 or returncode == 130:
+                    campaign_interrupted = True
                     print("run-mission-campaign: stopping campaign after interrupted scenario", flush=True)
                     break
-            if interrupted:
+            if campaign_interrupted:
                 break
 
     finished_at = utc_now_iso()
@@ -440,7 +452,13 @@ def main() -> int:
     passed = sum(1 for run in runs if run.get("status") == "passed")
     failed = sum(1 for run in runs if run.get("status") == "failed")
     planned = sum(1 for run in runs if run.get("status") == "planned")
-    status = "planned" if args.dry_run else ("passed" if failed == 0 else "failed")
+    interrupted_count = 1 if campaign_interrupted else 0
+    if args.dry_run:
+        status = "planned"
+    elif campaign_interrupted:
+        status = "interrupted"
+    else:
+        status = "passed" if failed == 0 else "failed"
 
     summary = {
         "schema_version": 4,
@@ -456,6 +474,7 @@ def main() -> int:
         "passed": passed,
         "failed": failed,
         "planned": planned,
+        "interrupted": interrupted_count,
         "campaign_file": str(args.campaign_file) if args.campaign_file is not None else None,
         "campaign_spec": campaign_spec,
         "scenarios": [scenario.__dict__ for scenario in scenarios],
@@ -468,6 +487,8 @@ def main() -> int:
     print("\n" + summary_txt.read_text(encoding="utf-8"), end="", flush=True)
     print(f"Campaign summary JSON: {summary_json}", flush=True)
     print(f"Campaign report Markdown: {report_md}", flush=True)
+    if status == "interrupted":
+        return 130
     return 0 if status in {"passed", "planned"} else 1
 
 
