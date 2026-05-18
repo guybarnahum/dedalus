@@ -312,7 +312,84 @@ missing_camera_model
 
 ---
 
-## 9. Detection Provenance Needed for Residuals
+## 9. Reprojection Residual Semantics
+
+A reprojection residual is the pixel error between where an object was originally observed in the camera image and where the world model predicts that object should appear after projecting the world-model agent back into the camera image.
+
+For a camera-derived detection:
+
+```text
+source_center_px:
+  The center of the original detector or tracker box in the camera viewport.
+
+reprojected_center_px:
+  The pixel coordinate produced by projecting AgentState.position_local through the current ego pose and camera model.
+
+residual_px:
+  Euclidean pixel distance between source_center_px and reprojected_center_px.
+```
+
+Formula:
+
+```text
+residual_px = sqrt((u_reprojected - u_source)^2 + (v_reprojected - v_source)^2)
+```
+
+Example:
+
+```text
+source_bbox_px:
+  x=260, y=160, width=80, height=180
+
+source_center_px:
+  [300, 250]
+
+reprojected_center_px:
+  [306, 247]
+
+residual_px:
+  sqrt((306 - 300)^2 + (247 - 250)^2)
+  = 6.7 px
+```
+
+Interpretation:
+
+```text
+small residual:
+  The world-model 3D position is consistent with the image evidence.
+
+large residual:
+  The world-model projection and the image evidence disagree.
+```
+
+A large residual is a diagnostic signal, not a single root cause. It can indicate:
+
+```text
+- wrong or stale depth estimate
+- wrong camera intrinsics or FOV
+- wrong camera/body extrinsics
+- wrong ego pose or orientation
+- stale track/world-model position
+- detection-to-track association error
+- object moved but world state was not refreshed
+- coordinate-frame convention bug
+```
+
+Residuals can still be useful when the reprojected point is outside the image, as long as the projection produced finite pixel coordinates. In that case, the sidecar can report `reason: outside_image` and still include `residual_px`. That tells us how far the world-model prediction is from the original image evidence, even though the projected point is not currently drawable inside the viewport.
+
+Ghost/scripted agents do not have source image evidence, so they should normally omit `source_bbox_px`, `source_center_px`, and `residual_px`. They can still report projected coordinates, visibility, depth, range, and bearing.
+
+Architectural rule:
+
+```text
+Residuals are world-model validation/enrichment signals.
+Behavior should not recompute residuals from detector boxes.
+If behavior needs target-quality information, expose it as WorldSnapshot / TargetSelection quality metadata.
+```
+
+---
+
+## 10. Detection Provenance Needed for Residuals
 
 For true perception validation, `Observation3D` and `AgentState` preserve enough provenance to compare reprojection against image evidence.
 
@@ -347,7 +424,7 @@ The key rule is that residuals and quality indicators must become world-model-si
 
 ---
 
-## 10. Artifact Format
+## 11. Artifact Format
 
 For each annotated frame, write a sidecar JSON file:
 
@@ -413,7 +490,7 @@ For camera-derived detections, include residual fields:
 
 ---
 
-## 11. Visual Overlay Semantics
+## 12. Visual Overlay Semantics
 
 Use distinct overlay prefixes:
 
@@ -452,7 +529,7 @@ This makes it visually obvious whether the overlay is detector evidence or world
 
 ---
 
-## 12. Stationary-Object / Moving-Drone Stress Case
+## 13. Stationary-Object / Moving-Drone Stress Case
 
 A key stress case is a stationary object in the world while the drone moves.
 
@@ -506,7 +583,7 @@ This is especially important because a static object can have highly dynamic ima
 
 ---
 
-## 13. Ghost Targets vs Camera-Derived Detections
+## 14. Ghost Targets vs Camera-Derived Detections
 
 Ghost targets are the easiest deterministic starting point because their 3D positions are known.
 
@@ -527,7 +604,7 @@ Do not create a ghost-only projection path. Ghosts are just one source of WorldS
 
 ---
 
-## 14. AirSim Viewport Overlay
+## 15. AirSim Viewport Overlay
 
 AirSim viewport overlay is a later optional adapter.
 
@@ -562,7 +639,7 @@ Rules:
 
 ---
 
-## 15. Implementation Order
+## 16. Implementation Order
 
 ```text
 2.24G.1 — Add WorldToImageProjector contract and math tests. DONE.
@@ -588,7 +665,7 @@ Later optional adapter — AirSim viewport debug overlay from WorldSnapshot agen
 
 ---
 
-## 16. Validation Commands
+## 17. Validation Commands
 
 After implementation:
 
