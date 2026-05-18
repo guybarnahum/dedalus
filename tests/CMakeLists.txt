@@ -192,6 +192,19 @@ target_compile_features(test_latest_world_snapshot PRIVATE cxx_std_20)
 
 add_test(NAME latest_world_snapshot COMMAND test_latest_world_snapshot)
 
+add_executable(test_behavior_spec
+    unit/test_behavior_spec.cpp
+)
+
+target_link_libraries(test_behavior_spec
+    PRIVATE
+        dedalus_core
+)
+
+target_compile_features(test_behavior_spec PRIVATE cxx_std_20)
+
+add_test(NAME behavior_spec COMMAND test_behavior_spec)
+
 find_package(Python3 COMPONENTS Interpreter)
 if(Python3_Interpreter_FOUND)
     add_test(
