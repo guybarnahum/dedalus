@@ -14,6 +14,8 @@
 #include <utility>
 #include <vector>
 
+#include "dedalus/visualization/world_to_image_projector.hpp"
+
 namespace dedalus {
 namespace {
 
@@ -324,8 +326,7 @@ void draw_track_overlay(
         image, track_label_x, track_label_y, label.str(), style, track_color, RgbColor{0U, 0U, 0U});
 }
 
-void draw_world_metadata(
-    ImageView& image, const AnnotationContext& context, const OverlayStyle& style) {
+void draw_world_metadata(ImageView& image, const AnnotationContext& context, const OverlayStyle& style) {
     const RgbColor text_color{255U, 255U, 255U};
     const RgbColor bg_color{0U, 0U, 0U};
     const int hud_x = style.padding_px * 2;
@@ -339,6 +340,62 @@ void draw_world_metadata(
     draw_text_label(image, hud_x, hud_y, line1, style, text_color, bg_color);
     hud_y += hud_line_advance;
     draw_text_label(image, hud_x, hud_y, line2, style, text_color, bg_color);
+}
+
+void draw_projected_agent_overlays(ImageView& image, const WorldSnapshot& snapshot, const OverlayStyle& style) {
+    if (snapshot.agents.empty()) {
+        return;
+    }
+
+    WorldToImageProjectionConfig projection_config;
+    projection_config.intrinsics = pinhole_intrinsics_from_horizontal_fov(image.width, image.height, 90.0);
+    projection_config.extrinsics.body_T_camera.position = Vec3{0.0, 0.0, 0.0};
+    projection_config.extrinsics.body_T_camera.rotation_rpy = Vec3{0.0, 0.0, 0.0};
+
+    const RgbColor agent_color{80U, 255U, 120U};
+    const RgbColor bg_color{0U, 0U, 0U};
+    const int marker_radius = std::max(5, 4 * style.stroke_px);
+    const int marker_thickness = std::max(1, style.stroke_px);
+    const int label_gap = std::max(3, style.padding_px);
+
+    for (const auto& agent : snapshot.agents) {
+        const auto projected = project_local_point_to_image(agent.position_local, snapshot.ego, projection_config);
+        if (!projected.visible) {
+            continue;
+        }
+
+        const int u = clamp_int(rounded_int(projected.u_px), 0, image.width - 1);
+        const int v = clamp_int(rounded_int(projected.v_px), 0, image.height - 1);
+
+        fill_rect(image, u - marker_radius, v - marker_thickness / 2, marker_radius * 2 + 1, marker_thickness, agent_color);
+        fill_rect(image, u - marker_thickness / 2, v - marker_radius, marker_thickness, marker_radius * 2 + 1, agent_color);
+        draw_rect(
+            image,
+            u - marker_radius,
+            v - marker_radius,
+            marker_radius * 2 + 1,
+            marker_radius * 2 + 1,
+            agent_color,
+            marker_thickness);
+
+        std::ostringstream label;
+        label << "AG:" << agent.source_track_id.value << " " << class_label_to_string(agent.class_label)
+              << " D" << std::fixed << std::setprecision(1) << projected.depth_m;
+
+        const int label_w = text_pixel_width(label.str(), style.glyph_scale) + style.padding_px * 2;
+        const int label_h = text_pixel_height(style.glyph_scale) + style.padding_px * 2;
+        int label_x = u + marker_radius + label_gap;
+        int label_y = v - marker_radius - label_h;
+        if (label_x + label_w >= image.width) {
+            label_x = u - marker_radius - label_gap - label_w;
+        }
+        if (label_y < 0) {
+            label_y = v + marker_radius + label_gap;
+        }
+        label_x = clamp_int(label_x, 0, std::max(0, image.width - label_w));
+        label_y = clamp_int(label_y, 0, std::max(0, image.height - label_h));
+        draw_text_label(image, label_x + style.padding_px, label_y + style.padding_px, label.str(), style, agent_color, bg_color);
+    }
 }
 
 void draw_world_debug_shapes(ImageView& image, const WorldSnapshot& snapshot, const OverlayStyle& style) {
@@ -430,6 +487,7 @@ void PpmFrameAnnotationSink::annotate(const AnnotationContext& context) {
     for (const auto& track : context.perception.tracks) {
         draw_track_overlay(annotated, track, overlay_style);
     }
+    draw_projected_agent_overlays(annotated, context.world_snapshot, overlay_style);
     draw_world_debug_shapes(annotated, context.world_snapshot, overlay_style);
 
     ++frame_index_;
