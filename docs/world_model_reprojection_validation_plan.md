@@ -7,7 +7,8 @@ It is not only for ghost/scripted detections. It is a general perception-consist
 ```text
 2D camera detection / track
   -> projected to 3D ego/local/world state
-  -> fused into WorldSnapshot.agents
+  -> captured, fused, processed, and enriched by the world model
+  -> exposed through WorldSnapshot.agents
   -> reprojected back into the current camera viewport
   -> compared against the original or current 2D evidence
 ```
@@ -39,7 +40,46 @@ If the world-model agent is correct, its reprojected image position should remai
 
 ---
 
-## 2. Coordinate Products and Consumers
+## 2. Architecture Boundary: Perception Evidence, World-Model State, Behavior Input
+
+All perception-derived information that may influence autonomy must be captured into the world model before behavior consumes it.
+
+```text
+Perception pipeline:
+  Produces evidence and measurements.
+  Examples: detections, boxes, tracks, features, projected 3D observations, source frame metadata.
+
+World model:
+  Owns fusion, provenance, enrichment, consistency checks, reprojection residuals, lifecycle state, and stable agent handles.
+  It converts perception evidence into stateful WorldSnapshot products.
+
+Behavior / planning clients:
+  Consume WorldSnapshot state only.
+  They should not reach backward into raw PerceptionPipelineOutput, detector boxes, or tracker internals.
+```
+
+Architectural invariant:
+
+```text
+PerceptionPipelineOutput is evidence.
+WorldSnapshot is autonomy state.
+Behavior consumes WorldSnapshot, not perception internals.
+```
+
+This applies to reprojection too:
+
+```text
+Detection2D / Track2D / Observation3D provenance
+  -> AgentState provenance and enriched reprojection metadata
+  -> WorldSnapshot / world-overlay artifacts
+  -> behavior and validation clients consume the world-model product
+```
+
+A behavior controller may care that a target has good geometry, fresh evidence, low reprojection residual, or stable identity. It should receive those as world-model fields or derived TargetSelection fields, not recompute them from detector output.
+
+---
+
+## 3. Coordinate Products and Consumers
 
 Keep three coordinate products separate. They are connected by transforms, but they serve different system layers.
 
@@ -91,7 +131,7 @@ Behavior should generally consume ego-relative 3D or a target expressed relative
 
 ---
 
-## 3. Scope
+## 4. Scope
 
 This validation layer applies to:
 
@@ -118,18 +158,18 @@ Dedalus artifact overlays are validation truth. AirSim viewport overlays are ope
 
 ---
 
-## 4. Core Architecture
+## 5. Core Architecture
 
-The projection/reprojection layer should be read-only.
+The projection/reprojection layer should be read-only with respect to behavior execution, but the metadata it computes belongs to the world-model validation/enrichment surface.
 
 ```text
 WorldSnapshot + camera model + current ego pose
   -> WorldToImageProjector
-  -> projected viewport coordinates
+  -> projected viewport coordinates / residuals / visibility reason
   -> FrameAnnotationSink / sidecar JSON / MP4 export
 ```
 
-It must not feed back into target selection or behavior control.
+It must not feed directly back into target selection or behavior control as an out-of-band perception dependency. If behavior needs this signal, the world model or TargetSelector should expose it as world-model-derived target quality.
 
 Keep the autonomy and visualization chains separate:
 
@@ -143,7 +183,7 @@ Visualization/validation:
 
 ---
 
-## 5. Coordinate-Frame Contract
+## 6. Coordinate-Frame Contract
 
 The projection path should be explicit and unit-tested.
 
@@ -178,7 +218,7 @@ The exact AirSim/PX4/Dedalus axis convention must be isolated in one module and 
 
 ---
 
-## 6. Camera Model
+## 7. Camera Model
 
 Start with explicit config. Do not depend on live AirSim camera introspection for the first deterministic implementation.
 
@@ -207,29 +247,32 @@ Later, AirSim-specific providers may fill these values from simulator settings o
 
 ---
 
-## 7. Proposed Reprojection Types
+## 8. Proposed Reprojection Types
 
-Proposed files:
+Current/projected files:
 
 ```text
 include/dedalus/visualization/world_to_image_projector.hpp
 src/visualization/world_to_image_projector.cpp
+include/dedalus/visualization/world_overlay_sidecar.hpp
+src/visualization/world_overlay_sidecar.cpp
 ```
 
-Proposed types:
+Current/projected types:
 
 ```cpp
-struct CameraIntrinsics {
+struct WorldImageCameraIntrinsics {
     int width;
     int height;
     double fx;
     double fy;
     double cx;
     double cy;
+    double near_plane_m;
 };
 
-struct CameraExtrinsics {
-    Transform3 body_T_camera;  // name must be unambiguous and tested
+struct WorldImageCameraExtrinsics {
+    Pose3 body_T_camera;
 };
 
 struct ProjectedWorldPoint {
@@ -237,19 +280,11 @@ struct ProjectedWorldPoint {
     double u_px;
     double v_px;
     double depth_m;
-    std::string reason;
-};
-
-struct ReprojectedAgentOverlay {
-    AgentId agent_id;
-    TrackId source_track_id;
-    IdentityId identity_id;
-    ClassLabel class_label;
-    float confidence;
-    bool visible;
-    double u_px;
-    double v_px;
-    double depth_m;
+    Vec3 position_ego_relative;
+    Vec3 position_body;
+    Vec3 position_camera;
+    double range_m;
+    double bearing_deg;
     std::string reason;
 };
 ```
@@ -260,8 +295,7 @@ Core function:
 ProjectedWorldPoint project_local_point_to_image(
     const Vec3& point_local,
     const EgoState& ego,
-    const CameraIntrinsics& intrinsics,
-    const CameraExtrinsics& extrinsics);
+    const WorldToImageProjectionConfig& config);
 ```
 
 Visibility reasons:
@@ -278,28 +312,27 @@ missing_camera_model
 
 ---
 
-## 8. Detection Provenance Needed for Residuals
+## 9. Detection Provenance Needed for Residuals
 
-For true perception validation, `Observation3D` and/or `AgentState` should preserve enough provenance to compare reprojection against image evidence.
+For true perception validation, `Observation3D` and `AgentState` preserve enough provenance to compare reprojection against image evidence.
 
-Current/needed links:
+Current links:
 
 ```text
 Detection2D.detection_id
+Detection2D.bbox_px
+Detection2D.frame_id
 Track2D.track_id
+Track2D.source_detection_id
 Observation3D.track_id
-AgentState.source_track_id
-AgentState.agent_id
-```
-
-Useful additions for later residual checks:
-
-```text
 Observation3D.source_detection_id
-Observation3D.source_bbox_px or source_center_px
-Observation3D.source_camera_name
+Observation3D.source_bbox_px
 Observation3D.source_frame_id
-Observation3D.source_timestamp
+AgentState.source_track_id
+AgentState.source_detection_id
+AgentState.source_bbox_px
+AgentState.source_frame_id
+AgentState.agent_id
 ```
 
 This allows validation like:
@@ -310,11 +343,11 @@ world-model reprojection_px:  [u1, v1]
 residual_px:                 sqrt((u1-u0)^2 + (v1-v0)^2)
 ```
 
-Do not block M3 on every provenance field. But design the reprojection artifact format so these fields can be added without changing the concept.
+The key rule is that residuals and quality indicators must become world-model-side metadata. They should not remain as private detector/tracker implementation details if behavior or validation will depend on them.
 
 ---
 
-## 9. Artifact Format
+## 10. Artifact Format
 
 For each annotated frame, write a sidecar JSON file:
 
@@ -365,12 +398,13 @@ Example sidecar:
 }
 ```
 
-For camera-derived detections, extend with residual fields:
+For camera-derived detections, include residual fields:
 
 ```json
 {
   "source_detection_id": "det_000123",
   "source_track_id": "track_0007",
+  "source_bbox_px": {"x": 375.0, "y": 130.0, "width": 80.0, "height": 100.0},
   "source_center_px": [415.0, 181.0],
   "reprojected_center_px": [421.3, 180.0],
   "residual_px": 6.4
@@ -379,7 +413,7 @@ For camera-derived detections, extend with residual fields:
 
 ---
 
-## 10. Visual Overlay Semantics
+## 11. Visual Overlay Semantics
 
 Use distinct overlay prefixes:
 
@@ -418,7 +452,7 @@ This makes it visually obvious whether the overlay is detector evidence or world
 
 ---
 
-## 11. Stationary-Object / Moving-Drone Stress Case
+## 12. Stationary-Object / Moving-Drone Stress Case
 
 A key stress case is a stationary object in the world while the drone moves.
 
@@ -472,7 +506,7 @@ This is especially important because a static object can have highly dynamic ima
 
 ---
 
-## 12. Ghost Targets vs Camera-Derived Detections
+## 13. Ghost Targets vs Camera-Derived Detections
 
 Ghost targets are the easiest deterministic starting point because their 3D positions are known.
 
@@ -493,7 +527,7 @@ Do not create a ghost-only projection path. Ghosts are just one source of WorldS
 
 ---
 
-## 13. AirSim Viewport Overlay
+## 14. AirSim Viewport Overlay
 
 AirSim viewport overlay is a later optional adapter.
 
@@ -528,31 +562,33 @@ Rules:
 
 ---
 
-## 14. Implementation Order
+## 15. Implementation Order
 
 ```text
-2.24G.1 — Add WorldToImageProjector contract and math tests.
+2.24G.1 — Add WorldToImageProjector contract and math tests. DONE.
 
-2.24G.2 — Add camera intrinsics/extrinsics config defaults.
+2.24G.2 — Add camera intrinsics/extrinsics config defaults. DONE for deterministic default camera model.
 
-2.24G.3 — Reproject WorldSnapshot.agents into PPM annotation artifacts.
+2.24G.3 — Reproject WorldSnapshot.agents into PPM annotation artifacts. DONE.
 
-2.24G.4 — Emit frame_XXXXXX.world_overlay.json sidecars.
+2.24G.4 — Emit frame_XXXXXX.world_overlay.json sidecars. DONE.
 
-2.24G.5 — Strengthen ghost annotation tests to verify projected visible agents.
+2.24G.5 — Strengthen world_reprojection_artifacts test to verify projected visible agents and sidecars. DONE.
 
-2.24G.6 — Add stationary-object / moving-drone reprojection stress test.
+2.24G.6 — Add stationary-object / moving-drone reprojection stress test. DONE at unit level.
 
-2.24G.7 — Add detection residual fields once Observation3D preserves source 2D detection provenance.
+2.24G.7 — Add detection residual fields once Observation3D preserves source 2D detection provenance. DONE baseline.
 
-2.24G.8 — Keep MP4 export path as review artifact generation from annotated PPM sequences.
+2.24G.8 — Keep MP4 export path as review artifact generation from annotated PPM sequences. DONE baseline.
+
+Next — promote reprojection/residual quality from sidecar-only artifact into explicit world-model quality fields if behavior needs to depend on it.
 
 Later optional adapter — AirSim viewport debug overlay from WorldSnapshot agents.
 ```
 
 ---
 
-## 15. Validation Commands
+## 16. Validation Commands
 
 After implementation:
 
@@ -567,7 +603,7 @@ ctest --test-dir build-staging --output-on-failure -L synthetic
 Focused expected tests:
 
 ```bash
-ctest --test-dir build-staging --output-on-failure -R 'world_to_image_projector|ghost_annotation_artifacts|ppm_frame_annotation_sink'
+ctest --test-dir build-staging --output-on-failure -R 'world_to_image_projector|world_reprojection_artifacts|ppm_frame_annotation_sink'
 ```
 
 Full validation:
