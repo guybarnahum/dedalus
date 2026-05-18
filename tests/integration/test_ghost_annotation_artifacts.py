@@ -17,7 +17,7 @@ def write_config(path: Path, output_dir: Path) -> None:
     path.write_text(
         "\n".join(
             [
-                "frame_source: synthetic",
+                "frame_source: synthetic_mission",
                 "ego_provider: frame_hint",
                 "detector: scripted",
                 "camera_stabilizer: null",
@@ -147,9 +147,9 @@ def main() -> int:
             raise AssertionError(f"annotated frame is not P6 PPM: {frame}")
 
     width, height, pixels = read_ppm(first_frame)
-    # First ghost frame timestamp is 1s in the synthetic source, so ghost_person_001 is
-    # at x=12.3, y=-4.0, z=0.0. With ego at z=-2, reprojection uses body-relative z=2.
-    expected_marker = project_point(width, height, (12.3, -4.0, 2.0))
+    # synthetic_mission first frame timestamp is 0.1s and initial ego height is 0,
+    # so ghost_person_001 is at x=12.03, y=-4.0, z=0.0 in ego/body convention.
+    expected_marker = project_point(width, height, (12.03, -4.0, 0.0))
     marker_pixels = count_color_near(width, height, pixels, expected_marker, radius=8, color=AGENT_COLOR)
     if marker_pixels < 8:
         raise AssertionError(
