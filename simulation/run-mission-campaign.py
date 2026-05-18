@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import shutil
 import subprocess
 import sys
@@ -37,18 +38,31 @@ def load_run_metadata(path: Path) -> dict[str, Any]:
     return json.loads(path.read_text(encoding="utf-8"))
 
 
+def child_env() -> dict[str, str]:
+    env = os.environ.copy()
+    env.setdefault("PYTHONUNBUFFERED", "1")
+    return env
+
+
 def run_command(command: list[str], cwd: Path) -> int:
+    """Stream child output in real time while preserving `\r` progress updates."""
     process = subprocess.Popen(
         command,
         cwd=cwd,
+        env=child_env(),
         text=True,
         stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT,
-        bufsize=1,
+        bufsize=0,
     )
     assert process.stdout is not None
-    for line in process.stdout:
-        sys.stdout.write(line)
+    while True:
+        chunk = process.stdout.read(1)
+        if chunk == "" and process.poll() is not None:
+            break
+        if not chunk:
+            continue
+        sys.stdout.write(chunk)
         sys.stdout.flush()
     return process.wait()
 
@@ -390,11 +404,11 @@ def main() -> int:
 
     started_at = utc_now_iso()
     start = time.monotonic()
-    print(f"=== mission campaign: {campaign_name}/{args.campaign_id} ===")
-    print(f"Campaign directory: {campaign_dir}")
-    print(f"Scenarios: {len(scenarios)}")
+    print(f"=== mission campaign: {campaign_name}/{args.campaign_id} ===", flush=True)
+    print(f"Campaign directory: {campaign_dir}", flush=True)
+    print(f"Scenarios: {len(scenarios)}", flush=True)
     if args.dry_run:
-        print("Mode: dry-run plan only")
+        print("Mode: dry-run plan only", flush=True)
 
     if args.dry_run:
         runs = build_dry_run_records(
@@ -407,7 +421,7 @@ def main() -> int:
         runs = []
         for scenario in scenarios:
             for run_number in range(1, scenario.repeats + 1):
-                print(f"\n=== campaign scenario {scenario.name} run {run_number}/{scenario.repeats} ===")
+                print(f"\n=== campaign scenario {scenario.name} run {run_number}/{scenario.repeats} ===", flush=True)
                 command, run_dir = build_scenario_command(
                     repo_root=repo_root,
                     args=args,
@@ -463,9 +477,9 @@ def main() -> int:
 
     summary_json, summary_txt, report_md = write_campaign_outputs(summary, campaign_dir)
 
-    print("\n" + summary_txt.read_text(encoding="utf-8"), end="")
-    print(f"Campaign summary JSON: {summary_json}")
-    print(f"Campaign report Markdown: {report_md}")
+    print("\n" + summary_txt.read_text(encoding="utf-8"), end="", flush=True)
+    print(f"Campaign summary JSON: {summary_json}", flush=True)
+    print(f"Campaign report Markdown: {report_md}", flush=True)
     return 0 if status in {"passed", "planned"} else 1
 
 
