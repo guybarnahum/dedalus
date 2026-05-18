@@ -109,6 +109,12 @@ void InMemoryWorldModel::ingest(const PerceptionPipelineOutput& perception_outpu
         agent.agent_id = AgentId{"agent_" + id_suffix};
         agent.identity_id = IdentityId{"identity_" + id_suffix};
         agent.source_track_id = observation.track_id;
+        agent.source_detection_id = observation.source_detection_id;
+        agent.has_source_detection = observation.has_source_detection;
+        agent.source_bbox_px = observation.source_bbox_px;
+        agent.has_source_bbox = observation.has_source_bbox;
+        agent.source_frame_id = observation.source_frame_id;
+        agent.has_source_frame = observation.has_source_frame;
         agent.last_seen = observation.timestamp;
         agent.position_local = observation.position_local;
         agent.velocity_local = Vec3{2.0, 0.4, 0.0};
