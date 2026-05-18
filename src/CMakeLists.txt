@@ -20,6 +20,7 @@ add_library(dedalus_core
     simulation/airsim_providers.cpp
     simulation/bridge_transport.cpp
     visualization/frame_annotator.cpp
+    visualization/world_overlay_sidecar.cpp
     visualization/world_to_image_projector.cpp
     world_model/in_memory_world_model.cpp
     world_model/rough_flight_map_builder.cpp
