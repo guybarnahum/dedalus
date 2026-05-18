@@ -557,3 +557,75 @@ Flight sink:
 ```
 
 Do not let route memory override fresh tactical sensing.
+
+---
+
+## H15. Milestone 2.24 Target Identity Rationale
+
+Milestone 2.24 clarified that object-conditioned behavior must select a target object, not just the highest-confidence detection every frame.
+
+The identity layers are deliberately separate:
+
+```text
+detection_id  ->  track_id  ->  agent_id  ->  identity_id
+single frame      tracker       world model    recognized identity
+```
+
+Definitions:
+
+```text
+detection_id:
+  A single detector observation in one frame.
+
+track_id:
+  Tracker-owned frame-to-frame continuity for one moving blob/object.
+  Usually local to one tracker session and may reset after restart or long target loss.
+
+source_track_id:
+  The tracker ID preserved inside AgentState as provenance.
+  It answers: which tracker track produced this world-model agent?
+
+agent_id:
+  World-model-owned object handle.
+  Behavior and planning should select agents, not raw detections.
+  Today it may be derived from source_track_id; later it can represent a fused object from multiple sensors/tracks.
+
+identity_id:
+  Identity-resolver-owned recognized real-world identity.
+  Later this may be a known person, vehicle plate, drone serial, or cross-mission identity.
+```
+
+The practical M3 rule is:
+
+```text
+Select by agent_id/source_track_id when a stable target is specified, preserve that object across frames, and do not switch merely because another same-class object has higher confidence.
+```
+
+2.24A implementation decision:
+
+```text
+InMemoryWorldModel derives agent_id and identity_id from Observation3D.track_id, while preserving Observation3D.track_id as AgentState.source_track_id. WorldSnapshot JSON emits source_track_id so artifacts can prove which tracker object became which world-model agent.
+```
+
+Example:
+
+```text
+track_id:        ghost_person_001
+agent_id:        agent_ghost_person_001
+identity_id:     identity_ghost_person_001
+source_track_id: ghost_person_001
+```
+
+Pre-camera validation direction:
+
+```text
+Synthetic / AirSim frame
+  -> GhostDetectionProvider or ScriptedTargetProvider
+  -> PerceptionPipelineOutput.observations
+  -> InMemoryWorldModel
+  -> WorldSnapshot.agents with stable source_track_id
+  -> TargetSelector
+  -> ObjectBehaviorMissionController later
+```
+
+Do not validate target selection by hardcoding `selected_target` directly from config as the main path. That bypasses the world-model and TargetSelector plumbing that real camera detections must use.
