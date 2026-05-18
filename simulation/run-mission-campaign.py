@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
 """Run a Dedalus mission campaign and summarize scenario artifacts.
 
-Milestone 2.22.6: campaign-level wrapper around `run-mission-scenario.py` with
+Milestone 2.22.7: campaign-level wrapper around `run-mission-scenario.py` with
 both CLI-driven single-scenario campaigns and JSON campaign specification files.
 The campaign runner intentionally delegates the per-run artifact contract to the
-single scenario runner, then writes a `campaign_summary.json` and
-`campaign_summary.txt` at the campaign root.
+single scenario runner, then writes JSON, text, and Markdown summaries at the
+campaign root.
 """
 
 from __future__ import annotations
@@ -248,6 +248,76 @@ def write_text_summary(summary: dict[str, Any], path: Path) -> None:
     path.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 
+def run_relpath(campaign_dir: Path, run: dict[str, Any], filename: str) -> str:
+    try:
+        return str((Path(run["run_dir"]) / filename).relative_to(campaign_dir))
+    except (KeyError, ValueError):
+        return str(Path(run.get("run_dir", ".")) / filename)
+
+
+def write_markdown_report(summary: dict[str, Any], path: Path) -> None:
+    campaign_dir = Path(summary["campaign_dir"])
+    lines = [
+        f"# Mission Campaign Report: {summary['campaign']}",
+        "",
+        "## Summary",
+        "",
+        "| Field | Value |",
+        "|---|---:|",
+        f"| Campaign ID | `{summary['campaign_id']}` |",
+        f"| Status | **{summary['status']}** |",
+        f"| Scenarios | {summary['scenario_count']} |",
+        f"| Runs | {summary['repeats']} |",
+        f"| Passed | {summary['passed']} |",
+        f"| Failed | {summary['failed']} |",
+        f"| Elapsed seconds | {summary['elapsed_s']} |",
+        "",
+        "## Scenarios",
+        "",
+        "| Scenario | Config | Repeats | Expected final state | Safe height | Landed height |",
+        "|---|---|---:|---|---:|---:|",
+    ]
+    for scenario in summary["scenarios"]:
+        lines.append(
+            "| "
+            f"`{scenario['name']}` | `{scenario['config']}` | {scenario['repeats']} | "
+            f"{scenario.get('expect_final_state')} | {scenario['safe_height_m']} | {scenario['landed_height_m']} |"
+        )
+
+    lines += [
+        "",
+        "## Runs",
+        "",
+        "| Scenario / Run | Status | Expected | Mission RC | Validator RC | Artifacts |",
+        "|---|---|---|---:|---:|---|",
+    ]
+    for run in summary["runs"]:
+        run_label = f"{run['scenario_name']}/{run['run_id']}"
+        artifacts = ", ".join(
+            [
+                f"[metadata]({run_relpath(campaign_dir, run, 'metadata.json')})",
+                f"[events]({run_relpath(campaign_dir, run, 'mission_events.jsonl')})",
+                f"[validator]({run_relpath(campaign_dir, run, 'validator_result.txt')})",
+                f"[console]({run_relpath(campaign_dir, run, 'console.log')})",
+            ]
+        )
+        lines.append(
+            "| "
+            f"`{run_label}` | {run.get('status')} | {run.get('expect_final_state')} | "
+            f"{run.get('mission_returncode')} | {run.get('validator_returncode')} | {artifacts} |"
+        )
+
+    lines += [
+        "",
+        "## Files",
+        "",
+        "- `campaign_summary.json`: machine-readable campaign summary.",
+        "- `campaign_summary.txt`: compact terminal-oriented summary.",
+        "- `campaign_report.md`: this human-readable report.",
+    ]
+    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+
 def main() -> int:
     args = parse_args()
 
@@ -317,7 +387,7 @@ def main() -> int:
     status = "passed" if failed == 0 else "failed"
 
     summary = {
-        "schema_version": 2,
+        "schema_version": 3,
         "campaign": campaign_name,
         "campaign_id": args.campaign_id,
         "status": status,
@@ -338,11 +408,14 @@ def main() -> int:
 
     summary_json = campaign_dir / "campaign_summary.json"
     summary_txt = campaign_dir / "campaign_summary.txt"
+    report_md = campaign_dir / "campaign_report.md"
     summary_json.write_text(json.dumps(summary, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     write_text_summary(summary, summary_txt)
+    write_markdown_report(summary, report_md)
 
     print("\n" + summary_txt.read_text(encoding="utf-8"), end="")
     print(f"Campaign summary JSON: {summary_json}")
+    print(f"Campaign report Markdown: {report_md}")
     return 0 if status == "passed" else 1
 
 
