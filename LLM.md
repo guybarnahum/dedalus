@@ -13,7 +13,7 @@ guybarnahum/dedalus
 Current code baseline for this handoff:
 
 ```text
-main at / after commit ac5493139a196e293a4e8bcec889d3e9c5605f8c
+main at / after commit 5fedb2f4199a29810d3683a2729942b6bd6ec949
 ```
 
 Active milestone state:
@@ -23,10 +23,13 @@ Milestone 2.20 — Mission robustness, observability, and cleanup
 Status: closed / validated.
 
 Milestone 2.21 — Mission artifact validation and replay-grade diagnostics
-Status: implemented on main; local validation still expected after checkout.
+Status: implemented / validated.
+
+Milestone 2.22 — Scenario/campaign harness
+Status: implemented / validated.
 
 Next active milestone:
-Milestone 2.22 — Scenario/campaign harness.
+Milestone 2.23 — Behavior spec parser foundation for M3 object-conditioned behavior.
 ```
 
 Patch policy:
@@ -65,11 +68,14 @@ Current working result:
 - `dedalus_mission_loop` flies through the mission path using `flight_command_sink: px4_bridge`.
 - Back-to-back mission-loop runs work without restarting AirSim.
 - Build succeeds.
-- CTest expected result after 2.21: 19/19 passing.
+- CTest expected result after 2.22: 22/22 passing.
 - Live mission reaches safe height through pymavlink OFFBOARD control, executes the trajectory, goes home, lands, and disarms through PX4 shell lifecycle commands.
 - Ctrl-C / SIGTERM requests graceful mission finish on first interrupt.
+- Campaign Ctrl-C now stops the campaign after the active mission safely finishes; it does not start the next repeat.
 - `mission_events.jsonl` is the source artifact for mission debugging and final summaries.
-- `simulation/validate-mission-artifacts.py` validates live-run artifact directories.
+- `simulation/validate-mission-artifacts.py` validates live-run artifact directories for expected final states `Complete` and `Abort`.
+- `simulation/run-mission-scenario.py` wraps one archive-grade scenario run.
+- `simulation/run-mission-campaign.py` runs or dry-runs scenario campaigns and writes JSON/text/Markdown summaries.
 ```
 
 Core rule:
@@ -360,21 +366,113 @@ Do not make the sink understand obstacles. Do not bury behavior or avoidance log
 | 2.20C | Final summary from events | Done | `dedalus_mission_loop` summarizes `mission_events.jsonl` |
 | 2.20D | Repeatable-run hardening | Done / validated | Back-to-back mission runs work without restarting AirSim |
 | 2.20E | Closeout tooling/checkpoint | Done | Event summary helper + repeat smoke wrapper + updated docs |
-| 2.21 | Mission artifact validator | Implemented | `simulation/validate-mission-artifacts.py` + CTest smoke |
+| 2.21 | Mission artifact validator | Done | `simulation/validate-mission-artifacts.py` + CTest smoke |
+| 2.22 | Scenario/campaign harness | Done | Scenario runner, campaign specs, dry-run, live preset, reports, interrupt semantics |
 
 ---
 
-## 6. Roadmap to Milestone 3
+## 6. Scenario / Campaign Harness
 
-The path from 2.20 to 3.0 is no longer about making the drone fly. It is about making the drone fly **based on detected/tracked objects**.
+Key files:
 
 ```text
-2.21 Mission artifact validator
-  Validate mission_events + snapshots as a formal live-run artifact directory. Implemented on main.
+simulation/run-mission-scenario.py
+simulation/run-mission-campaign.py
+simulation/validate-mission-artifacts.py
+config/core_stack_synthetic_mission_ci.yaml
+config/core_stack_synthetic_mission_abort_ci.yaml
+config/mission_campaigns/synthetic_ci.json
+config/mission_campaigns/airsim_live_smoke.json
+docs/mission_scenario_runner.md
+```
 
-2.22 Scenario/campaign harness
-  Run repeatable mission scenarios/campaigns and preserve metadata.
+Single synthetic Complete lifecycle:
 
+```bash
+python3 simulation/run-mission-scenario.py \
+  --name synthetic_lifecycle \
+  --run-id run_0001 \
+  --config config/core_stack_synthetic_mission_ci.yaml \
+  --app ./build-staging/apps/dedalus_mission_loop \
+  --output-root out/mission_scenarios \
+  --max-frames 220 \
+  --shutdown-max-frames 50 \
+  --safe-height-m 2 \
+  --landed-height-m 1 \
+  --expect-final-state Complete \
+  --overwrite
+```
+
+Single synthetic expected-Abort lifecycle:
+
+```bash
+python3 simulation/run-mission-scenario.py \
+  --name synthetic_abort_land_timeout \
+  --run-id run_0001 \
+  --config config/core_stack_synthetic_mission_abort_ci.yaml \
+  --app ./build-staging/apps/dedalus_mission_loop \
+  --output-root out/mission_scenarios \
+  --max-frames 220 \
+  --shutdown-max-frames 50 \
+  --safe-height-m 2 \
+  --landed-height-m 1 \
+  --expect-final-state Abort \
+  --overwrite
+```
+
+Dry-run live AirSim campaign planning without launching AirSim:
+
+```bash
+python3 simulation/run-mission-campaign.py \
+  --campaign-file config/mission_campaigns/airsim_live_smoke.json \
+  --campaign-id dry_run_0001 \
+  --output-root out/mission_campaigns \
+  --dry-run \
+  --overwrite
+```
+
+Live AirSim campaign when AirSim/PX4 is already running:
+
+```bash
+python3 simulation/run-mission-campaign.py \
+  --campaign-file config/mission_campaigns/airsim_live_smoke.json \
+  --campaign-id live_0001 \
+  --output-root out/mission_campaigns \
+  --progress \
+  --overwrite
+```
+
+Campaign outputs:
+
+```text
+campaign_summary.json     machine-readable summary, schema_version=4
+campaign_summary.txt      compact terminal summary
+campaign_report.md        human-readable Markdown report with per-run artifact links
+runs/<scenario>/run_XXXX/ per-run scenario artifacts
+```
+
+Campaign Ctrl-C semantics:
+
+```text
+First Ctrl-C:
+  active mission receives graceful interrupt
+  active mission should GoHome -> Land -> Disarm
+  campaign stops after active scenario finishes
+  no next repeat starts
+  campaign_summary status=interrupted
+  process exits 130
+
+Second Ctrl-C:
+  force-terminates active child process
+```
+
+---
+
+## 7. Roadmap to Milestone 3
+
+The path from 2.22 to 3.0 is about making the drone fly **based on detected/tracked objects**.
+
+```text
 2.23 Behavior spec parser foundation
   Parse a small declarative behavior language from YAML/JSON.
 
@@ -414,7 +512,7 @@ Milestone 3.0 success criteria:
 
 ---
 
-## 7. Behavior Language v1
+## 8. Behavior Language v1
 
 The behavior language should be small and declarative.
 
@@ -529,7 +627,7 @@ For Milestone 3, prefer `target_heading_frame` and `world_local_frame` first.
 
 ---
 
-## 8. Post-Milestone 3 Spatial Autonomy Roadmap
+## 9. Post-Milestone 3 Spatial Autonomy Roadmap
 
 After M3, the same behaviors should become obstacle-aware while still emitting velocity vectors into PX4 SITL/AirSim.
 
@@ -580,7 +678,7 @@ Flight sink:
 
 ---
 
-## 9. Mission Artifacts and Tools
+## 10. Mission Artifacts and Tools
 
 Mission loop output directory contains:
 
@@ -604,7 +702,17 @@ Formal live-run artifact validator:
 ```bash
 python3 simulation/validate-mission-artifacts.py \
   out/airsim_mission_snapshots \
-  --expect-complete \
+  --expect-final-state Complete \
+  --safe-height-m 16 \
+  --landed-height-m 1
+```
+
+Expected-Abort validation:
+
+```bash
+python3 simulation/validate-mission-artifacts.py \
+  out/abort_mission \
+  --expect-final-state Abort \
   --safe-height-m 16 \
   --landed-height-m 1
 ```
@@ -614,7 +722,7 @@ Future M3 behavior-artifact validation:
 ```bash
 python3 simulation/validate-mission-artifacts.py \
   out/object_behavior_mission \
-  --expect-complete \
+  --expect-final-state Complete \
   --expect-behavior \
   --safe-height-m 16 \
   --landed-height-m 1
@@ -631,14 +739,14 @@ RUNS=3 simulation/repeat-mission-smoke.sh
 If the scripts are not executable after GitHub checkout, run:
 
 ```bash
-chmod +x simulation/repeat-mission-smoke.sh simulation/mission-events-summary.py simulation/validate-mission-artifacts.py
+chmod +x simulation/repeat-mission-smoke.sh simulation/mission-events-summary.py simulation/validate-mission-artifacts.py simulation/run-mission-scenario.py simulation/run-mission-campaign.py
 ```
 
 ---
 
-## 10. Commands
+## 11. Commands
 
-### 10.1 Build/test
+### 11.1 Build/test
 
 ```bash
 cd ~/dedalus
@@ -651,10 +759,16 @@ ctest --test-dir build-staging --output-on-failure
 Expected current result:
 
 ```text
-100% tests passed, 0 tests failed out of 19
+100% tests passed, 0 tests failed out of 22
 ```
 
-### 10.2 Standalone known-good test flight
+Focused scenario/campaign tests:
+
+```bash
+ctest --test-dir build-staging --output-on-failure -R 'mission_(scenario|campaign|abort)_'
+```
+
+### 11.2 Standalone known-good test flight
 
 ```bash
 cd ~/dedalus
@@ -663,7 +777,7 @@ source venv/bin/activate
 python ./simulation/test-flight.py --trajectory trajectories/circle_figure8.json
 ```
 
-### 10.3 Start AirSim
+### 11.3 Start AirSim
 
 ```bash
 cd ~/dedalus/simulation
@@ -671,7 +785,7 @@ cd ~/dedalus/simulation
 ./run.sh AirSimNH --airsim-camera-width 640 --airsim-camera-height 360
 ```
 
-### 10.4 Run live mission loop
+### 11.4 Run live mission loop
 
 Quiet/default:
 
@@ -705,6 +819,17 @@ Repeat validation:
 RUNS=3 simulation/repeat-mission-smoke.sh
 ```
 
+Live campaign validation:
+
+```bash
+python3 simulation/run-mission-campaign.py \
+  --campaign-file config/mission_campaigns/airsim_live_smoke.json \
+  --campaign-id live_0001 \
+  --output-root out/mission_campaigns \
+  --progress \
+  --overwrite
+```
+
 Verbosity contract:
 
 ```text
@@ -716,7 +841,7 @@ default: high-level mission state transitions + final summary
 
 ---
 
-## 11. Ctrl-C / Shutdown Behavior
+## 12. Ctrl-C / Shutdown Behavior
 
 `dedalus_mission_loop` handles interrupts:
 
@@ -728,13 +853,22 @@ Second Ctrl-C:
   stops the local main loop after local cleanup paths run.
 ```
 
+`run-mission-scenario.py` starts the mission loop in an isolated session and relays Ctrl-C into the active mission process so the mission can finish safely.
+
+`run-mission-campaign.py` starts each scenario in an isolated session. On first Ctrl-C, it relays the interrupt to the active scenario, waits for that scenario to finish, then stops the campaign without starting the next repeat. The campaign summary records:
+
+```text
+status: interrupted
+interrupted: 1
+```
+
 The Python PX4 bridge handles a JSONL `shutdown` command from the C++ sink. On shutdown, if MAVLink was active, it sends a short zero-velocity settle stream, closes the MAVLink socket, and resets internal OFFBOARD/safe-height state before process exit.
 
 Abort is terminal/diagnostic and does not emit velocity commands.
 
 ---
 
-## 12. Known Traps
+## 13. Known Traps
 
 ```text
 - Do not use dedalus_replay_mission. It was renamed to dedalus_mission_loop.
@@ -745,9 +879,11 @@ Abort is terminal/diagnostic and does not emit velocity commands.
 - Do not move to ExecuteMission until Takeoff is confirmed by ego height.
 - Do not make the native C++ MAVLink sink the default live path; use px4_bridge.
 - Do not debug the working mission by rewriting MAVLink packet encoding in C++.
+- Do not let human diagnostics contaminate binary bridge stdout; binary frame bridge stdout is protocol bytes only.
 - Do not let the telemetry sidecar and command bridge fight over the same MAVLink endpoint.
 - Do not replace `px4-command-bridge.py` with native C++ until the mission is stable and a real tested MAVLink C++ backend is planned.
 - Do not refactor `test-flight.py` / `px4-command-bridge.py` unless repeat-run smoke remains stable.
+- Do not make `mission_campaign_runner` CTest execute repeated real missions; keep campaign CTest dry-run and leave real lifecycle coverage to scenario/abort tests.
 - Do not put obstacle avoidance inside the flight sink.
 - Do not let route memory override fresh tactical sensing.
 - Do not let Milestone 3 balloon into full obstacle avoidance; M3 is object-conditioned behavior. Avoidance starts post-M3.
@@ -756,22 +892,28 @@ Abort is terminal/diagnostic and does not emit velocity commands.
 
 ---
 
-## 13. Recommended Next Stage
+## 14. Recommended Next Stage
 
 Recommended next active stage:
 
 ```text
-Milestone 2.22 — Scenario/campaign harness
+Milestone 2.23 — Behavior spec parser foundation
 ```
 
 Suggested first tasks:
 
 ```text
-1. Wrap repeatable mission scenarios/campaigns around the validated run artifact directory contract.
-2. Preserve per-run metadata beside mission_events.jsonl and snapshots.
-3. Use validate-mission-artifacts.py as the post-run gate for live mission artifacts.
-4. Keep mission event validation separate from frame replay semantics.
-5. Preserve the object-conditioned behavior validation extension points for M3.
+1. Add a small behavior spec data model for target selector + behavior + completion/fallback.
+2. Add parser support for YAML/JSON behavior specs without binding it to live flight yet.
+3. Add sample specs for follow, circle, approach, and sequence.
+4. Add unit tests for valid specs, defaults, and invalid combinations.
+5. Preserve event extension points already expected by the validator:
+     target_selected
+     target_lost
+     behavior_start
+     behavior_complete
+     behavior_failed
+     fallback_start
 ```
 
 Expected later M3 event types:
@@ -786,7 +928,7 @@ Expected later M3 event types:
 
 ---
 
-## 14. Handoff Prompt Format
+## 15. Handoff Prompt Format
 
 Every new worker handoff should include:
 
@@ -804,7 +946,7 @@ Every new worker handoff should include:
 
 ---
 
-## 15. Pointers
+## 16. Pointers
 
 Detailed / historical context:
 
@@ -816,6 +958,7 @@ docs/binary_frame_bridge_protocol.md
 docs/perception_stabilization_annotation.md
 docs/mission_pipeline_current_state.md
 docs/mission_state_machine.md
+docs/mission_scenario_runner.md
 docs/object_conditioned_behavior_plan.md
 WHITEPAPER.md
 HANDOFF.md
