@@ -101,6 +101,13 @@ def require_close(actual: float, expected: float, tolerance: float, message: str
         raise AssertionError(f"{message}: actual={actual} expected={expected} tolerance={tolerance}")
 
 
+def require_vec2_close(actual: list[float], expected: tuple[float, float], tolerance: float, message: str) -> None:
+    if len(actual) != 2:
+        raise AssertionError(f"{message}: expected 2-vector, got {actual}")
+    for index, expected_value in enumerate(expected):
+        require_close(float(actual[index]), expected_value, tolerance, f"{message}[{index}]")
+
+
 def require_vec3_close(actual: list[float], expected: tuple[float, float, float], tolerance: float, message: str) -> None:
     if len(actual) != 3:
         raise AssertionError(f"{message}: expected 3-vector, got {actual}")
@@ -113,6 +120,10 @@ def find_agent(sidecar: dict, source_track_id: str) -> dict:
         if agent.get("source_track_id") == source_track_id:
             return agent
     raise AssertionError(f"missing sidecar agent for source_track_id={source_track_id}")
+
+
+def residual_px(source_center: tuple[float, float], reprojection: tuple[float, float]) -> float:
+    return math.hypot(reprojection[0] - source_center[0], reprojection[1] - source_center[1])
 
 
 def main() -> int:
@@ -146,7 +157,7 @@ def main() -> int:
 
     snapshot = json.loads(result.stdout)
     source_track_ids = {agent.get("source_track_id", "") for agent in snapshot.get("agents", [])}
-    expected_tracks = {"ghost_person_001", "ghost_person_002", "ghost_car_001"}
+    expected_tracks = {"track_0001", "ghost_person_001", "ghost_person_002", "ghost_car_001"}
     if not expected_tracks <= source_track_ids:
         raise AssertionError(f"snapshot missing deterministic world-agent tracks: got {sorted(source_track_ids)}")
 
@@ -189,11 +200,32 @@ def main() -> int:
     if camera_model.get("width") != width or camera_model.get("height") != height:
         raise AssertionError(f"sidecar camera dimensions do not match PPM: {camera_model}")
 
+    camera_agent = find_agent(sidecar, "track_0001")
+    if camera_agent.get("source_detection_id") != "det_0001":
+        raise AssertionError(f"camera-derived agent missing source_detection_id: {camera_agent}")
+    if camera_agent.get("source_frame_id") != "synthetic_mission_000001":
+        raise AssertionError(f"camera-derived agent missing source_frame_id: {camera_agent}")
+    bbox = camera_agent.get("source_bbox_px", {})
+    if bbox != {"x": 260.0, "y": 160.0, "width": 80.0, "height": 180.0}:
+        raise AssertionError(f"unexpected source bbox: {bbox}")
+    source_center = (300.0, 250.0)
+    reprojected_center = (float(camera_agent.get("u_px")), float(camera_agent.get("v_px")))
+    require_vec2_close(camera_agent.get("source_center_px", []), source_center, 0.001, "source_center_px")
+    require_vec2_close(camera_agent.get("reprojected_center_px", []), reprojected_center, 0.001, "reprojected_center_px")
+    require_close(
+        float(camera_agent.get("residual_px")),
+        residual_px(source_center, reprojected_center),
+        0.001,
+        "residual_px",
+    )
+
     ghost = find_agent(sidecar, "ghost_person_001")
     if ghost.get("visible") is not True:
         raise AssertionError(f"expected ghost_person_001 visible in sidecar: {ghost}")
     if ghost.get("reason") != "visible":
         raise AssertionError(f"expected ghost_person_001 reason=visible, got {ghost.get('reason')}")
+    if "source_bbox_px" in ghost or "residual_px" in ghost:
+        raise AssertionError(f"ghost agent should not have camera-derived residual fields: {ghost}")
     require_close(float(ghost.get("u_px")), float(expected_marker[0]), 1.0, "sidecar u_px")
     require_close(float(ghost.get("v_px")), float(expected_marker[1]), 1.0, "sidecar v_px")
     require_vec3_close(ghost.get("position_ego_relative", []), expected_point, 0.02, "position_ego_relative")
