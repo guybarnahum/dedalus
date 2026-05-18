@@ -5,6 +5,7 @@
 #include <vector>
 
 #include "dedalus/behavior/mission_controller.hpp"
+#include "dedalus/perception/ghost_targets.hpp"
 #include "dedalus/perception/perception_pipeline.hpp"
 #include "dedalus/sensors/ego_state_provider.hpp"
 #include "dedalus/sensors/frame_source.hpp"
@@ -21,6 +22,8 @@ struct CoreStackProviderConfig {
     std::string tracker{"simple_centroid"};
     std::string identity_resolver{"appearance_only"};
     std::string projector{"flat_ground"};
+    bool ghost_targets_enabled{false};
+    std::string ghost_targets_scenario{"person_pair_crossing"};
     std::string world_model{"in_memory"};
     std::string frame_annotator{"null"};
     std::string annotation_output_path{"out/annotated.mp4"};
@@ -52,6 +55,7 @@ struct CoreStackProviders {
     std::unique_ptr<Tracker> tracker;
     std::unique_ptr<IdentityResolver> identity_resolver;
     std::unique_ptr<Projector3D> projector;
+    std::unique_ptr<GhostTargetProvider> ghost_targets;
     std::unique_ptr<InMemoryWorldModel> world_model;
     std::unique_ptr<FrameAnnotationSink> frame_annotator;
 };
