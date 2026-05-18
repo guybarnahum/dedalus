@@ -2,6 +2,7 @@
 
 #include <cmath>
 #include <stdexcept>
+#include <utility>
 
 namespace dedalus {
 namespace {
@@ -14,7 +15,7 @@ bool finite_vec3(const Vec3& value) {
     return std::isfinite(value.x) && std::isfinite(value.y) && std::isfinite(value.z);
 }
 
-bool valid_intrinsics(const CameraIntrinsics& intrinsics) {
+bool valid_intrinsics(const WorldImageCameraIntrinsics& intrinsics) {
     return intrinsics.width > 0 && intrinsics.height > 0 && intrinsics.fx > 0.0 && intrinsics.fy > 0.0 &&
            std::isfinite(intrinsics.fx) && std::isfinite(intrinsics.fy) && std::isfinite(intrinsics.cx) &&
            std::isfinite(intrinsics.cy) && std::isfinite(intrinsics.near_plane_m) && intrinsics.near_plane_m > 0.0;
@@ -24,9 +25,6 @@ Vec3 subtract(const Vec3& lhs, const Vec3& rhs) {
     return Vec3{lhs.x - rhs.x, lhs.y - rhs.y, lhs.z - rhs.z};
 }
 
-Vec3 add(const Vec3& lhs, const Vec3& rhs) {
-    return Vec3{lhs.x + rhs.x, lhs.y + rhs.y, lhs.z + rhs.z};
-}
 
 double norm(const Vec3& value) {
     return std::sqrt(value.x * value.x + value.y * value.y + value.z * value.z);
@@ -87,7 +85,7 @@ ProjectedWorldPoint invalid_result(std::string reason) {
 
 }  // namespace
 
-CameraIntrinsics pinhole_intrinsics_from_horizontal_fov(
+WorldImageCameraIntrinsics pinhole_intrinsics_from_horizontal_fov(
     int width,
     int height,
     double horizontal_fov_deg,
@@ -104,7 +102,7 @@ CameraIntrinsics pinhole_intrinsics_from_horizontal_fov(
 
     const double horizontal_fov_rad = horizontal_fov_deg * kDegToRad;
     const double fx = (static_cast<double>(width) * 0.5) / std::tan(horizontal_fov_rad * 0.5);
-    return CameraIntrinsics{
+    return WorldImageCameraIntrinsics{
         .width = width,
         .height = height,
         .fx = fx,
