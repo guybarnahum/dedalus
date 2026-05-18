@@ -1,0 +1,17 @@
+{
+  "campaign": "airsim_live_smoke",
+  "defaults": {
+    "max_frames": 900,
+    "shutdown_max_frames": 400,
+    "safe_height_m": 16,
+    "landed_height_m": 1,
+    "expect_final_state": "Complete"
+  },
+  "scenarios": [
+    {
+      "name": "trajectory_px4_bridge_live",
+      "config": "config/core_stack_trajectory_mission_placeholder.yaml",
+      "repeats": 3
+    }
+  ]
+}
