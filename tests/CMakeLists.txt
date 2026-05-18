@@ -250,11 +250,11 @@ if(Python3_Interpreter_FOUND)
     )
 
     dedalus_add_python_test(
-        NAME ghost_annotation_artifacts
+        NAME world_reprojection_artifacts
         LAYER synthetic
-        TAGS integration visualization
+        TAGS integration visualization reprojection
         COMMAND_ARGS
-            ${PROJECT_SOURCE_DIR}/tests/integration/test_ghost_annotation_artifacts.py
+            ${PROJECT_SOURCE_DIR}/tests/integration/test_world_reprojection_artifacts.py
             ${PROJECT_SOURCE_DIR}
             ${PROJECT_BINARY_DIR}
     )
