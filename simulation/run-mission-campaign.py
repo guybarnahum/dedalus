@@ -1,11 +1,10 @@
 #!/usr/bin/env python3
 """Run a Dedalus mission campaign and summarize scenario artifacts.
 
-Milestone 2.22.7: campaign-level wrapper around `run-mission-scenario.py` with
-both CLI-driven single-scenario campaigns and JSON campaign specification files.
-The campaign runner intentionally delegates the per-run artifact contract to the
-single scenario runner, then writes JSON, text, and Markdown summaries at the
-campaign root.
+Milestone 2.22.8: campaign-level wrapper around `run-mission-scenario.py` with
+CLI-driven single-scenario campaigns, JSON campaign specification files, and a
+CI-safe dry-run planning mode for validating live campaign presets without
+launching AirSim/PX4.
 """
 
 from __future__ import annotations
@@ -88,6 +87,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--progress", action="store_true", help="Pass --progress through to each scenario")
     parser.add_argument("-v", "--verbose", action="count", default=0, help="Pass verbosity through to each scenario")
     parser.add_argument("--overwrite", action="store_true", help="Replace an existing campaign directory")
+    parser.add_argument("--dry-run", action="store_true", help="Write a campaign plan without executing scenario runs")
     args = parser.parse_args()
     if args.expect_final_state is not None and args.expect_final_state != "Complete":
         args.expect_complete = False
@@ -318,6 +318,48 @@ def write_markdown_report(summary: dict[str, Any], path: Path) -> None:
     path.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 
+def build_dry_run_records(
+    *,
+    repo_root: Path,
+    args: argparse.Namespace,
+    campaign_dir: Path,
+    scenarios: list[ScenarioSpec],
+) -> list[dict[str, Any]]:
+    records: list[dict[str, Any]] = []
+    for scenario in scenarios:
+        for run_number in range(1, scenario.repeats + 1):
+            command, run_dir = build_scenario_command(
+                repo_root=repo_root,
+                args=args,
+                campaign_dir=campaign_dir,
+                scenario=scenario,
+                run_number=run_number,
+            )
+            records.append(
+                {
+                    "scenario_name": scenario.name,
+                    "run_id": f"run_{run_number:04d}",
+                    "status": "planned",
+                    "expect_final_state": scenario.expect_final_state,
+                    "mission_returncode": None,
+                    "validator_returncode": None,
+                    "run_dir": str(run_dir),
+                    "scenario_command": command,
+                }
+            )
+    return records
+
+
+def write_campaign_outputs(summary: dict[str, Any], campaign_dir: Path) -> tuple[Path, Path, Path]:
+    summary_json = campaign_dir / "campaign_summary.json"
+    summary_txt = campaign_dir / "campaign_summary.txt"
+    report_md = campaign_dir / "campaign_report.md"
+    summary_json.write_text(json.dumps(summary, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    write_text_summary(summary, summary_txt)
+    write_markdown_report(summary, report_md)
+    return summary_json, summary_txt, report_md
+
+
 def main() -> int:
     args = parse_args()
 
@@ -351,46 +393,58 @@ def main() -> int:
     print(f"=== mission campaign: {campaign_name}/{args.campaign_id} ===")
     print(f"Campaign directory: {campaign_dir}")
     print(f"Scenarios: {len(scenarios)}")
+    if args.dry_run:
+        print("Mode: dry-run plan only")
 
-    runs: list[dict[str, Any]] = []
-    for scenario in scenarios:
-        for run_number in range(1, scenario.repeats + 1):
-            print(f"\n=== campaign scenario {scenario.name} run {run_number}/{scenario.repeats} ===")
-            command, run_dir = build_scenario_command(
-                repo_root=repo_root,
-                args=args,
-                campaign_dir=campaign_dir,
-                scenario=scenario,
-                run_number=run_number,
-            )
-            returncode = run_command(command, repo_root)
-            metadata_path = run_dir / "metadata.json"
-            if metadata_path.exists():
-                run_metadata = load_run_metadata(metadata_path)
-            else:
-                run_metadata = {
-                    "scenario_name": scenario.name,
-                    "run_id": f"run_{run_number:04d}",
-                    "status": "failed",
-                    "expect_final_state": scenario.expect_final_state,
-                    "mission_returncode": returncode,
-                    "validator_returncode": None,
-                    "run_dir": str(run_dir),
-                }
-            run_metadata["scenario_runner_returncode"] = returncode
-            runs.append(run_metadata)
+    if args.dry_run:
+        runs = build_dry_run_records(
+            repo_root=repo_root,
+            args=args,
+            campaign_dir=campaign_dir,
+            scenarios=scenarios,
+        )
+    else:
+        runs = []
+        for scenario in scenarios:
+            for run_number in range(1, scenario.repeats + 1):
+                print(f"\n=== campaign scenario {scenario.name} run {run_number}/{scenario.repeats} ===")
+                command, run_dir = build_scenario_command(
+                    repo_root=repo_root,
+                    args=args,
+                    campaign_dir=campaign_dir,
+                    scenario=scenario,
+                    run_number=run_number,
+                )
+                returncode = run_command(command, repo_root)
+                metadata_path = run_dir / "metadata.json"
+                if metadata_path.exists():
+                    run_metadata = load_run_metadata(metadata_path)
+                else:
+                    run_metadata = {
+                        "scenario_name": scenario.name,
+                        "run_id": f"run_{run_number:04d}",
+                        "status": "failed",
+                        "expect_final_state": scenario.expect_final_state,
+                        "mission_returncode": returncode,
+                        "validator_returncode": None,
+                        "run_dir": str(run_dir),
+                    }
+                run_metadata["scenario_runner_returncode"] = returncode
+                runs.append(run_metadata)
 
     finished_at = utc_now_iso()
     elapsed_s = round(time.monotonic() - start, 3)
     passed = sum(1 for run in runs if run.get("status") == "passed")
-    failed = len(runs) - passed
-    status = "passed" if failed == 0 else "failed"
+    failed = sum(1 for run in runs if run.get("status") == "failed")
+    planned = sum(1 for run in runs if run.get("status") == "planned")
+    status = "planned" if args.dry_run else ("passed" if failed == 0 else "failed")
 
     summary = {
-        "schema_version": 3,
+        "schema_version": 4,
         "campaign": campaign_name,
         "campaign_id": args.campaign_id,
         "status": status,
+        "dry_run": args.dry_run,
         "started_at": started_at,
         "finished_at": finished_at,
         "elapsed_s": elapsed_s,
@@ -398,6 +452,7 @@ def main() -> int:
         "repeats": sum(s.repeats for s in scenarios),
         "passed": passed,
         "failed": failed,
+        "planned": planned,
         "campaign_file": str(args.campaign_file) if args.campaign_file is not None else None,
         "campaign_spec": campaign_spec,
         "scenarios": [scenario.__dict__ for scenario in scenarios],
@@ -406,17 +461,12 @@ def main() -> int:
         "runs": runs,
     }
 
-    summary_json = campaign_dir / "campaign_summary.json"
-    summary_txt = campaign_dir / "campaign_summary.txt"
-    report_md = campaign_dir / "campaign_report.md"
-    summary_json.write_text(json.dumps(summary, indent=2, sort_keys=True) + "\n", encoding="utf-8")
-    write_text_summary(summary, summary_txt)
-    write_markdown_report(summary, report_md)
+    summary_json, summary_txt, report_md = write_campaign_outputs(summary, campaign_dir)
 
     print("\n" + summary_txt.read_text(encoding="utf-8"), end="")
     print(f"Campaign summary JSON: {summary_json}")
     print(f"Campaign report Markdown: {report_md}")
-    return 0 if status == "passed" else 1
+    return 0 if status in {"passed", "planned"} else 1
 
 
 if __name__ == "__main__":
