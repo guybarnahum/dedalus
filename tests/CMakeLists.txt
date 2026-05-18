@@ -1,3 +1,11 @@
+function(dedalus_layer_labels OUTPUT_VAR LAYER)
+    set(labels "${LAYER}")
+    foreach(extra_label IN LISTS ARGN)
+        list(APPEND labels "tag:${extra_label}")
+    endforeach()
+    set(${OUTPUT_VAR} "${labels}" PARENT_SCOPE)
+endfunction()
+
 function(dedalus_add_native_test)
     set(options)
     set(one_value_args NAME LAYER)
@@ -30,7 +38,7 @@ function(dedalus_add_native_test)
 
     add_test(NAME "${display_name}" COMMAND ${target_name})
 
-    set(test_labels "${DEDALUS_TEST_LAYER};${DEDALUS_TEST_LABELS}")
+    dedalus_layer_labels(test_labels "${DEDALUS_TEST_LAYER}" ${DEDALUS_TEST_LABELS})
     set_tests_properties("${display_name}"
         PROPERTIES
             LABELS "${test_labels}"
@@ -60,7 +68,7 @@ function(dedalus_add_python_test)
         COMMAND ${Python3_EXECUTABLE} ${DEDALUS_TEST_COMMAND_ARGS}
     )
 
-    set(test_labels "${DEDALUS_TEST_LAYER};${DEDALUS_TEST_LABELS}")
+    dedalus_layer_labels(test_labels "${DEDALUS_TEST_LAYER}" ${DEDALUS_TEST_LABELS})
     set_tests_properties("${display_name}"
         PROPERTIES
             LABELS "${test_labels}"
@@ -68,22 +76,22 @@ function(dedalus_add_python_test)
     )
 endfunction()
 
-# Validation layers:
-#   contracts  — data formats, config parsing, protocol/boundary contracts
-#   unit       — deterministic native unit tests, often using synthetic inputs
-#   synthetic  — tests that exercise synthetic/recorded pipeline data or mission artifacts
-#   scenario   — archive-grade mission scenario/campaign harness tests
-#   airsim     — AirSim-facing boundaries that do not require a live simulator in CTest
+# Validation layers execute in declaration order under plain `ctest`:
+#   contracts -> unit -> synthetic -> scenario
 #
-# The layer is a first-class declaration attribute in dedalus_add_*_test(LAYER ...).
-# The helper derives:
-#   - the CTest display name, e.g. `world_snapshot_json (contracts)`
-#   - the CTest LABELS property, so `ctest -L contracts` works
-#   - the DEDALUS_LAYER test property for structured inspection tools
+# `LAYER` is the primary validation layer and is used for:
+#   - CTest display name, e.g. `world_snapshot_json (contracts)`
+#   - the primary CTest label, so `ctest -L contracts` runs only that layer
+#   - the DEDALUS_LAYER property for structured inspection tooling
+#
+# Additional LABELS are emitted as `tag:<name>` so they do not pollute primary layer filters.
+# Example: a scenario test can have LABELS synthetic integration, which becomes:
+#   scenario;tag:synthetic;tag:integration
 #
 # No CTest test is labeled airsim_live today. Real live AirSim/PX4 validation remains an
 # explicit operator-run smoke/campaign command outside normal CTest.
 
+# Layer 1: contracts / protocols / boundaries.
 dedalus_add_native_test(
     NAME world_snapshot_json
     LAYER contracts
@@ -91,6 +99,71 @@ dedalus_add_native_test(
     SOURCES unit/test_world_snapshot_json.cpp
 )
 
+dedalus_add_native_test(
+    NAME behavior_spec
+    LAYER contracts
+    LABELS unit
+    SOURCES unit/test_behavior_spec.cpp
+)
+
+dedalus_add_native_test(
+    NAME target_selector
+    LAYER contracts
+    LABELS unit
+    SOURCES unit/test_target_selector.cpp
+)
+
+dedalus_add_native_test(
+    NAME core_stack_config_loader
+    LAYER contracts
+    LABELS unit
+    SOURCES unit/test_core_stack_config_loader.cpp
+)
+set_tests_properties("core_stack_config_loader (contracts)"
+    PROPERTIES
+        WORKING_DIRECTORY ${PROJECT_SOURCE_DIR}
+)
+
+dedalus_add_native_test(
+    NAME provider_composition
+    LAYER contracts
+    LABELS unit
+    SOURCES unit/test_provider_composition.cpp
+)
+
+dedalus_add_native_test(
+    NAME ppm_frame_annotation_sink
+    LAYER contracts
+    LABELS unit
+    SOURCES unit/test_ppm_frame_annotation_sink.cpp
+)
+
+dedalus_add_native_test(
+    NAME airsim_provider_boundary
+    LAYER contracts
+    LABELS unit airsim
+    SOURCES unit/test_airsim_provider_boundary.cpp
+)
+set_tests_properties("airsim_provider_boundary (contracts)"
+    PROPERTIES
+        WORKING_DIRECTORY ${PROJECT_SOURCE_DIR}
+)
+
+dedalus_add_native_test(
+    NAME airsim_velocity_command_sink
+    LAYER contracts
+    LABELS unit
+    SOURCES unit/test_airsim_velocity_command_sink.cpp
+)
+
+dedalus_add_native_test(
+    NAME px4_mavlink_command_sink
+    LAYER contracts
+    LABELS unit
+    SOURCES unit/test_px4_mavlink_command_sink.cpp
+)
+
+# Layer 2: deterministic native unit tests, usually with synthetic in-memory data.
 dedalus_add_native_test(
     NAME perception_world_model_flow
     LAYER unit
@@ -106,24 +179,6 @@ dedalus_add_native_test(
 )
 
 dedalus_add_native_test(
-    NAME provider_composition
-    LAYER contracts
-    LABELS unit
-    SOURCES unit/test_provider_composition.cpp
-)
-
-dedalus_add_native_test(
-    NAME core_stack_config_loader
-    LAYER contracts
-    LABELS unit
-    SOURCES unit/test_core_stack_config_loader.cpp
-)
-set_tests_properties("core_stack_config_loader (contracts)"
-    PROPERTIES
-        WORKING_DIRECTORY ${PROJECT_SOURCE_DIR}
-)
-
-dedalus_add_native_test(
     NAME recorded_frame_world_model_flow
     LAYER unit
     LABELS synthetic
@@ -132,24 +187,6 @@ dedalus_add_native_test(
 set_tests_properties("recorded_frame_world_model_flow (unit)"
     PROPERTIES
         WORKING_DIRECTORY ${PROJECT_SOURCE_DIR}
-)
-
-dedalus_add_native_test(
-    NAME airsim_provider_boundary
-    LAYER contracts
-    LABELS unit airsim
-    SOURCES unit/test_airsim_provider_boundary.cpp
-)
-set_tests_properties("airsim_provider_boundary (contracts)"
-    PROPERTIES
-        WORKING_DIRECTORY ${PROJECT_SOURCE_DIR}
-)
-
-dedalus_add_native_test(
-    NAME ppm_frame_annotation_sink
-    LAYER contracts
-    LABELS unit
-    SOURCES unit/test_ppm_frame_annotation_sink.cpp
 )
 
 dedalus_add_native_test(
@@ -167,20 +204,6 @@ dedalus_add_native_test(
 )
 
 dedalus_add_native_test(
-    NAME airsim_velocity_command_sink
-    LAYER contracts
-    LABELS unit
-    SOURCES unit/test_airsim_velocity_command_sink.cpp
-)
-
-dedalus_add_native_test(
-    NAME px4_mavlink_command_sink
-    LAYER contracts
-    LABELS unit
-    SOURCES unit/test_px4_mavlink_command_sink.cpp
-)
-
-dedalus_add_native_test(
     NAME mission_runtime
     LAYER unit
     LABELS synthetic
@@ -194,22 +217,9 @@ dedalus_add_native_test(
     SOURCES unit/test_latest_world_snapshot.cpp
 )
 
-dedalus_add_native_test(
-    NAME behavior_spec
-    LAYER contracts
-    LABELS unit
-    SOURCES unit/test_behavior_spec.cpp
-)
-
-dedalus_add_native_test(
-    NAME target_selector
-    LAYER contracts
-    LABELS unit
-    SOURCES unit/test_target_selector.cpp
-)
-
 find_package(Python3 COMPONENTS Interpreter)
 if(Python3_Interpreter_FOUND)
+    # Layer 3: synthetic / recorded data and generated artifact tests.
     dedalus_add_python_test(
         NAME replay_recording_smoke
         LAYER synthetic
@@ -259,6 +269,7 @@ if(Python3_Interpreter_FOUND)
             ${PROJECT_SOURCE_DIR}
     )
 
+    # Layer 4: archive-grade scenario/campaign tests.
     dedalus_add_python_test(
         NAME mission_scenario_runner
         LAYER scenario
