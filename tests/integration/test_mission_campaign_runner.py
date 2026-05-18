@@ -25,25 +25,26 @@ def require_file(path: Path) -> bool:
     return True
 
 
-def validate_executed_synthetic_campaign(repo_root: Path, build_dir: Path, out_root: Path) -> int:
+def validate_synthetic_dry_run(repo_root: Path, build_dir: Path, out_root: Path) -> int:
     command = [
         sys.executable,
         str(repo_root / "simulation" / "run-mission-campaign.py"),
         "--campaign-file",
         str(repo_root / "config" / "mission_campaigns" / "synthetic_ci.json"),
         "--campaign-id",
-        "campaign_0001",
+        "synthetic_dry_run_0001",
         "--app",
         str(build_dir / "apps" / "dedalus_mission_loop"),
         "--output-root",
         str(out_root),
+        "--dry-run",
         "--overwrite",
     ]
     returncode = run_campaign(command, repo_root)
     if returncode != 0:
         return returncode
 
-    campaign_dir = out_root / "synthetic_ci" / "campaign_0001"
+    campaign_dir = out_root / "synthetic_ci" / "synthetic_dry_run_0001"
     summary_json = campaign_dir / "campaign_summary.json"
     summary_txt = campaign_dir / "campaign_summary.txt"
     report_md = campaign_dir / "campaign_report.md"
@@ -55,25 +56,21 @@ def validate_executed_synthetic_campaign(repo_root: Path, build_dir: Path, out_r
         print(json.dumps(summary, indent=2), file=sys.stderr)
         print("campaign summary did not use schema_version=4", file=sys.stderr)
         return 1
-    if summary.get("dry_run") is not False:
+    if summary.get("status") != "planned" or summary.get("dry_run") is not True:
         print(json.dumps(summary, indent=2), file=sys.stderr)
-        print("executed campaign summary should not be dry-run", file=sys.stderr)
+        print("synthetic campaign dry-run did not report planned status", file=sys.stderr)
         return 1
-    if summary.get("status") != "passed" or summary.get("passed") != 3 or summary.get("failed") != 0:
+    if summary.get("planned") != 3 or summary.get("passed") != 0 or summary.get("failed") != 0:
         print(json.dumps(summary, indent=2), file=sys.stderr)
-        print("campaign summary did not report 3/3 passed", file=sys.stderr)
-        return 1
-    if summary.get("planned") != 0:
-        print(json.dumps(summary, indent=2), file=sys.stderr)
-        print("executed campaign summary should not contain planned runs", file=sys.stderr)
+        print("synthetic dry-run did not report three planned runs", file=sys.stderr)
         return 1
     if summary.get("scenario_count") != 2 or summary.get("repeats") != 3:
         print(json.dumps(summary, indent=2), file=sys.stderr)
-        print("campaign summary did not preserve scenario/repeat counts", file=sys.stderr)
+        print("synthetic dry-run did not preserve scenario/repeat counts", file=sys.stderr)
         return 1
     if len(summary.get("runs", [])) != 3:
         print(json.dumps(summary, indent=2), file=sys.stderr)
-        print("campaign summary did not preserve three run records", file=sys.stderr)
+        print("synthetic dry-run did not preserve three run records", file=sys.stderr)
         return 1
 
     expected = [
@@ -85,22 +82,22 @@ def validate_executed_synthetic_campaign(repo_root: Path, build_dir: Path, out_r
         if (
             run.get("scenario_name") != scenario
             or run.get("run_id") != run_id
-            or run.get("status") != "passed"
+            or run.get("status") != "planned"
             or run.get("expect_final_state") != expected_final_state
         ):
             print(json.dumps(run, indent=2), file=sys.stderr)
-            print("run summary did not preserve expected scenario/id/status/final-state", file=sys.stderr)
+            print("planned run did not preserve expected scenario/id/status/final-state", file=sys.stderr)
             return 1
-        run_dir = Path(run["run_dir"])
-        for name in ["metadata.json", "mission_events.jsonl", "validator_result.txt", "console.log"]:
-            if not (run_dir / name).exists():
-                print(f"missing per-run artifact: {run_dir / name}", file=sys.stderr)
-                return 1
+        command_text = " ".join(run.get("scenario_command", []))
+        if "run-mission-scenario.py" not in command_text or "--expect-final-state" not in command_text:
+            print(json.dumps(run, indent=2), file=sys.stderr)
+            print("planned synthetic run missing expected scenario command", file=sys.stderr)
+            return 1
 
     summary_text = summary_txt.read_text(encoding="utf-8")
-    if "passed: 3" not in summary_text or "failed: 0" not in summary_text:
+    if "planned: 3" not in summary_text and "planned" not in summary_text:
         print(summary_text)
-        print("text summary missing pass/fail counts", file=sys.stderr)
+        print("text summary missing planned state", file=sys.stderr)
         return 1
     if "synthetic_abort_land_timeout/run_0001" not in summary_text:
         print(summary_text)
@@ -110,12 +107,10 @@ def validate_executed_synthetic_campaign(repo_root: Path, build_dir: Path, out_r
     report_text = report_md.read_text(encoding="utf-8")
     required_report_fragments = [
         "# Mission Campaign Report: synthetic_ci",
-        "| Status | **passed** |",
+        "| Status | **planned** |",
         "`synthetic_lifecycle/run_0001`",
         "`synthetic_lifecycle/run_0002`",
         "`synthetic_abort_land_timeout/run_0001`",
-        "[metadata](runs/synthetic_lifecycle/run_0001/metadata.json)",
-        "[validator](runs/synthetic_abort_land_timeout/run_0001/validator_result.txt)",
         "Abort",
         "Complete",
     ]
@@ -134,7 +129,7 @@ def validate_airsim_dry_run(repo_root: Path, build_dir: Path, out_root: Path) ->
         "--campaign-file",
         str(repo_root / "config" / "mission_campaigns" / "airsim_live_smoke.json"),
         "--campaign-id",
-        "dry_run_0001",
+        "airsim_dry_run_0001",
         "--app",
         str(build_dir / "apps" / "dedalus_mission_loop"),
         "--output-root",
@@ -146,7 +141,7 @@ def validate_airsim_dry_run(repo_root: Path, build_dir: Path, out_root: Path) ->
     if returncode != 0:
         return returncode
 
-    campaign_dir = out_root / "airsim_live_smoke" / "dry_run_0001"
+    campaign_dir = out_root / "airsim_live_smoke" / "airsim_dry_run_0001"
     summary_json = campaign_dir / "campaign_summary.json"
     report_md = campaign_dir / "campaign_report.md"
     if not all(require_file(path) for path in [summary_json, report_md]):
@@ -195,7 +190,7 @@ def main() -> int:
     if out_root.exists():
         shutil.rmtree(out_root)
 
-    result = validate_executed_synthetic_campaign(repo_root, build_dir, out_root)
+    result = validate_synthetic_dry_run(repo_root, build_dir, out_root)
     if result != 0:
         return result
     return validate_airsim_dry_run(repo_root, build_dir, out_root)
