@@ -4,6 +4,22 @@ This document is the focused implementation plan for the Milestone 3 object-cond
 
 Milestone 2.20 proved that Dedalus can run a repeatable live AirSim/PX4 mission loop. Milestone 2.23 added the behavior-spec parser foundation. Milestone 2.24 starts the target-selection foundation: the system must be able to select one tracked object from a group and keep that target stable across frames.
 
+Related detailed plan:
+
+```text
+docs/world_model_reprojection_validation_plan.md
+```
+
+That reprojection plan is broader than ghost detections. It covers the general perception-validation loop:
+
+```text
+2D camera detection / track
+  -> projected to 3D ego/local/world state
+  -> fused into WorldSnapshot.agents
+  -> reprojected back into the current camera viewport
+  -> compared against original or current 2D evidence
+```
+
 ---
 
 ## 1. Milestone 3 Definition
@@ -548,6 +564,7 @@ Design rules:
 ```text
 - WorldSnapshot remains the source of truth.
 - Annotators consume WorldSnapshot; they do not modify mission state.
+- Reprojection is a general perception-validation layer, not a ghost-only visualization feature.
 - AirSim viewport annotation is operator/debug display only, not validation truth.
 - MP4 files are review artifacts; JSON snapshots and mission_events remain validation truth.
 - Keep Dedalus artifact annotation working without live AirSim.
@@ -556,18 +573,26 @@ Design rules:
 Planned visual overlays:
 
 ```text
+Detector evidence:
+  D: 2D detector boxes and detection IDs
+
+Tracker evidence:
+  T: 2D tracks and track IDs
+
 World agents:
-  source_track_id, agent_id, class, confidence, local position/velocity
+  AG: reprojected WorldSnapshot agent with source_track_id, agent_id, class, confidence, local position/velocity, depth, and reprojection residual when available
 
 Selection:
-  selected target, selection reason, target age, reacquiring/lost state
+  SEL: selected target, selection reason, target age, reacquiring/lost state
 
 Behavior:
-  behavior_start/current behavior, desired velocity vector, completion/fallback state
+  BH: behavior_start/current behavior, desired velocity vector, completion/fallback state
 
 Mission:
   mission phase, arm/takeoff/land/disarm status, safe-height gate, terminal_settled state
 ```
+
+See `docs/world_model_reprojection_validation_plan.md` for the detailed projection/reprojection design, including the stationary-object / moving-drone stress case.
 
 ---
 
@@ -664,6 +689,8 @@ fallback was not triggered unless expected
 annotated frame artifacts include selected target overlays
 MP4 review artifact generated when encoder tooling is available
 AirSim viewport debug overlay shows selected target when enabled
+world-model agent reprojection residuals stay within expected tolerance for camera-derived detections
+stationary-object / moving-drone reprojection stress test passes
 ```
 
 ---
@@ -695,6 +722,8 @@ config/core_stack_object_behavior_mission.yaml
 Visibility/recording files:
 
 ```text
+include/dedalus/visualization/world_to_image_projector.hpp
+src/visualization/world_to_image_projector.cpp
 include/dedalus/visualization/world_annotation.hpp
 src/visualization/world_annotation.cpp
 simulation/airsim-world-annotation.py
@@ -708,6 +737,7 @@ tests/unit/test_behavior_spec.cpp
 tests/unit/test_target_selector.cpp
 tests/unit/test_behavior_runtime.cpp
 tests/unit/test_object_behavior_mission_controller.cpp
+tests/unit/test_world_to_image_projector.cpp
 tests/unit/test_world_annotation.cpp
 tests/integration/test_object_behavior_mission_smoke.py
 tests/integration/test_world_annotation_artifacts.py
@@ -773,7 +803,13 @@ ctest --test-dir build-staging --output-on-failure -R 'world_snapshot_json|perce
 After visual artifact changes:
 
 ```bash
-ctest --test-dir build-staging --output-on-failure -R 'ppm_frame_annotation_sink|core_stack_config_loader|perception_world_model_flow'
+ctest --test-dir build-staging --output-on-failure -R 'ppm_frame_annotation_sink|core_stack_config_loader|perception_world_model_flow|ghost_annotation_artifacts'
+```
+
+After reprojection changes:
+
+```bash
+ctest --test-dir build-staging --output-on-failure -R 'world_to_image_projector|ghost_annotation_artifacts|ppm_frame_annotation_sink'
 ```
 
 After live mission behavior changes:
@@ -805,17 +841,18 @@ python3 simulation/validate-mission-artifacts.py out/object_behavior_mission --e
 3. TargetSelectorSpec fields for track_id / agent_id. DONE for 2.24B.
 4. TargetSelector with tests over synthetic WorldSnapshot agents. DONE for 2.24C.
 5. Ghost/scripted target provider for expressive pre-camera validation. DONE for 2.24D.
-6. Runtime ghost target injection + artifact visibility. STARTED for 2.24E.
-7. WorldSnapshot-to-annotation overlays for agents/selection/behavior and MP4 review export.
-8. Optional AirSim viewport annotation adapter for operator debug display.
-9. BehaviorRuntime for hold/fallback/sequence mechanics.
-10. Follow behavior math and unit tests.
-11. Circle behavior math and unit tests.
-12. Approach behavior math and unit tests.
-13. ObjectBehaviorMissionController integration.
-14. Mission event extensions.
-15. Artifact validator extensions.
-16. Live AirSim/PX4 object-conditioned demo.
+6. Runtime ghost target injection + artifact visibility. DONE for 2.24E.
+7. WorldSnapshot-to-annotation overlays for agents/selection/behavior and MP4 review export. DONE for 2.24F baseline.
+8. World-model reprojection validation: project WorldSnapshot agents back into camera viewport and measure residuals. NEXT for 2.24G.
+9. Optional AirSim viewport annotation adapter for operator debug display.
+10. BehaviorRuntime for hold/fallback/sequence mechanics.
+11. Follow behavior math and unit tests.
+12. Circle behavior math and unit tests.
+13. Approach behavior math and unit tests.
+14. ObjectBehaviorMissionController integration.
+15. Mission event extensions.
+16. Artifact validator extensions.
+17. Live AirSim/PX4 object-conditioned demo.
 ```
 
 Keep every step artifact-driven and testable.
