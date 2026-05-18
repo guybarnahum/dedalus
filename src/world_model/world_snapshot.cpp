@@ -291,6 +291,7 @@ std::string to_json(const WorldSnapshot& snapshot) {
         out << "    {\n";
         out << "      \"agent_id\": \"" << escape_json(agent.agent_id.value) << "\",\n";
         out << "      \"identity_id\": \"" << escape_json(agent.identity_id.value) << "\",\n";
+        out << "      \"source_track_id\": \"" << escape_json(agent.source_track_id.value) << "\",\n";
         out << "      \"class\": \"" << to_string(agent.class_label) << "\",\n";
         out << "      \"faction\": \"" << to_string(agent.faction) << "\",\n";
         out << "      \"lifecycle\": \"" << to_string(agent.lifecycle) << "\",\n";
