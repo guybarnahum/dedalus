@@ -12,7 +12,9 @@ import sys
 import time
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, BinaryIO
+
+PROGRESS_IDLE_NEWLINE_S = 0.05
 
 
 def utc_now_iso() -> str:
@@ -33,6 +35,45 @@ def expected_final_state_from(args: argparse.Namespace) -> str | None:
     if args.expect_complete:
         return "Complete"
     return None
+
+
+class ProgressAwareStream:
+    """Mirror bytes to terminal/log while keeping CR progress and logs readable."""
+
+    def __init__(self, log_file: BinaryIO):
+        self._log_file = log_file
+        self._progress_active = False
+        self._last_byte_at = time.monotonic()
+
+    def write(self, chunk: bytes) -> None:
+        now = time.monotonic()
+        if (
+            self._progress_active
+            and chunk not in {b"\r", b"\n"}
+            and now - self._last_byte_at >= PROGRESS_IDLE_NEWLINE_S
+        ):
+            self._write_raw(b"\n")
+            self._progress_active = False
+
+        self._write_raw(chunk)
+        self._last_byte_at = now
+        if chunk == b"\r":
+            self._progress_active = True
+        elif chunk == b"\n":
+            self._progress_active = False
+
+    def write_message(self, message: bytes) -> None:
+        if self._progress_active:
+            self._write_raw(b"\n")
+            self._progress_active = False
+        self._write_raw(message)
+        self._last_byte_at = time.monotonic()
+
+    def _write_raw(self, chunk: bytes) -> None:
+        sys.stdout.buffer.write(chunk)
+        sys.stdout.buffer.flush()
+        self._log_file.write(chunk)
+        self._log_file.flush()
 
 
 def relay_signal(process: subprocess.Popen[bytes], sig: int, *, terminate: bool = False) -> None:
@@ -58,6 +99,7 @@ def stream_command(command: list[str], cwd: Path, log_path: Path) -> int:
     the process locally.
     """
     with log_path.open("wb") as log_file:
+        output = ProgressAwareStream(log_file)
         process: subprocess.Popen[bytes] = subprocess.Popen(
             command,
             cwd=cwd,
@@ -74,31 +116,20 @@ def stream_command(command: list[str], cwd: Path, log_path: Path) -> int:
             except KeyboardInterrupt:
                 interrupt_count += 1
                 if interrupt_count == 1:
-                    message = (
+                    output.write_message(
                         b"\nrun-mission-scenario: interrupt received; "
                         b"forwarding to mission process and waiting for graceful shutdown\n"
                     )
-                    sys.stdout.buffer.write(message)
-                    sys.stdout.buffer.flush()
-                    log_file.write(message)
-                    log_file.flush()
                     relay_signal(process, signal.SIGINT)
                     continue
-                message = b"\nrun-mission-scenario: second interrupt; terminating mission process\n"
-                sys.stdout.buffer.write(message)
-                sys.stdout.buffer.flush()
-                log_file.write(message)
-                log_file.flush()
+                output.write_message(b"\nrun-mission-scenario: second interrupt; terminating mission process\n")
                 relay_signal(process, signal.SIGTERM, terminate=True)
                 break
             if chunk == b"" and process.poll() is not None:
                 break
             if not chunk:
                 continue
-            sys.stdout.buffer.write(chunk)
-            sys.stdout.buffer.flush()
-            log_file.write(chunk)
-            log_file.flush()
+            output.write(chunk)
         return process.wait()
 
 
