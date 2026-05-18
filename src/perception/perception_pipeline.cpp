@@ -58,6 +58,8 @@ std::vector<Track2D> SimpleCentroidTracker::update(const std::vector<Detection2D
         const auto& detection = detections[i];
         Track2D track;
         track.track_id = TrackId{"track_" + std::string(4 - std::to_string(i + 1).size(), '0') + std::to_string(i + 1)};
+        track.source_detection_id = detection.detection_id;
+        track.has_source_detection = true;
         track.timestamp = detection.timestamp;
         track.bbox_px = detection.bbox_px;
         track.class_label = detection.class_label;
@@ -103,6 +105,12 @@ std::vector<Observation3D> FlatGroundProjector::project(
 
         Observation3D observation;
         observation.track_id = track.track_id;
+        observation.source_detection_id = track.source_detection_id;
+        observation.has_source_detection = track.has_source_detection;
+        observation.source_bbox_px = track.bbox_px;
+        observation.has_source_bbox = true;
+        observation.source_frame_id = frame.frame_id;
+        observation.has_source_frame = true;
         observation.timestamp = track.timestamp;
         observation.position_body = Vec3{18.0, normalized_x * 18.0, 1.5};
         observation.position_local = Vec3{
