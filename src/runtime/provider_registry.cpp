@@ -29,6 +29,49 @@ AirSimProviderConfig airsim_config_from(const CoreStackProviderConfig& config) {
     return airsim;
 }
 
+GhostTargetSpec ghost_target(
+    std::string track_id,
+    ClassLabel class_label,
+    float confidence,
+    Vec3 start_local_m,
+    Vec3 velocity_local_mps) {
+    GhostTargetSpec target;
+    target.track_id = TrackId{std::move(track_id)};
+    target.class_label = class_label;
+    target.confidence = confidence;
+    target.trajectory.type = GhostTrajectoryType::Linear;
+    target.trajectory.start_local_m = start_local_m;
+    target.trajectory.velocity_local_mps = velocity_local_mps;
+    return target;
+}
+
+std::unique_ptr<GhostTargetProvider> make_ghost_target_provider(const std::string& scenario) {
+    if (scenario != "person_pair_crossing") {
+        throw std::invalid_argument("unknown ghost_targets_scenario: " + scenario);
+    }
+
+    return std::make_unique<GhostTargetProvider>(std::vector<GhostTargetSpec>{
+        ghost_target(
+            "ghost_person_001",
+            ClassLabel::Person,
+            0.82F,
+            Vec3{12.0, -4.0, 0.0},
+            Vec3{0.3, 0.0, 0.0}),
+        ghost_target(
+            "ghost_person_002",
+            ClassLabel::Person,
+            0.91F,
+            Vec3{8.0, 4.0, 0.0},
+            Vec3{-0.2, 0.0, 0.0}),
+        ghost_target(
+            "ghost_car_001",
+            ClassLabel::Car,
+            0.95F,
+            Vec3{4.0, 0.0, 0.0},
+            Vec3{0.0, 0.0, 0.0}),
+    });
+}
+
 }  // namespace
 
 CoreStackProviders ProviderRegistry::create(const CoreStackProviderConfig& config) const {
@@ -94,6 +137,10 @@ CoreStackProviders ProviderRegistry::create(const CoreStackProviderConfig& confi
         providers.projector = std::make_unique<AirSimDepthProjector>(airsim_config);
     } else {
         throw unknown_provider("projector", config.projector);
+    }
+
+    if (config.ghost_targets_enabled) {
+        providers.ghost_targets = make_ghost_target_provider(config.ghost_targets_scenario);
     }
 
     if (config.world_model == "in_memory") {
