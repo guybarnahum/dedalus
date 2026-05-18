@@ -341,11 +341,11 @@ void draw_world_metadata(
     draw_text_label(image, hud_x, hud_y, line2, style, text_color, bg_color);
 }
 
-void draw_world_debug_shapes(
-    ImageView& image, const WorldSnapshot& snapshot, const OverlayStyle& style) {
+void draw_world_debug_shapes(ImageView& image, const WorldSnapshot& snapshot, const OverlayStyle& style) {
     const RgbColor zone_color{255U, 80U, 80U};
     const RgbColor corridor_color{90U, 160U, 255U};
     const RgbColor landmark_color{190U, 120U, 255U};
+    const RgbColor agent_color{80U, 255U, 120U};
     const RgbColor bg_color{0U, 0U, 0U};
     const int line_h = text_pixel_height(style.glyph_scale);
     const int line_advance = line_h + style.line_gap_px;
@@ -353,6 +353,19 @@ void draw_world_debug_shapes(
     const int text_offset_x = indicator_size + style.padding_px * 2;
 
     int y = style.padding_px * 2 + line_h * 2 + style.line_gap_px * 2 + style.padding_px;
+    for (const auto& agent : snapshot.agents) {
+        draw_rect(image, style.padding_px * 2, y, indicator_size, indicator_size, agent_color, style.stroke_px);
+        std::ostringstream label;
+        label << "AG:" << agent.source_track_id.value << " " << class_label_to_string(agent.class_label)
+              << " C" << std::fixed << std::setprecision(2) << agent.confidence;
+        const int text_x = style.padding_px * 2 + text_offset_x;
+        draw_text_label(image, text_x, y, label.str(), style, agent_color, bg_color);
+        y += line_advance;
+        if (y > image.height - line_advance) {
+            break;
+        }
+    }
+
     for (const auto& zone : snapshot.tactical_exclusion_zones) {
         draw_rect(image, style.padding_px * 2, y, indicator_size, indicator_size, zone_color, style.stroke_px);
         const int text_x = style.padding_px * 2 + text_offset_x;
