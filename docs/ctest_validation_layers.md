@@ -2,6 +2,18 @@
 
 Dedalus uses a first-class test declaration attribute named `LAYER` in `tests/CMakeLists.txt`.
 
+Plain CTest runs tests in the declaration order from `tests/CMakeLists.txt`. The file is intentionally ordered by validation layer:
+
+```text
+contracts -> unit -> synthetic -> scenario
+```
+
+So the normal command already executes the suite layer-by-layer:
+
+```bash
+ctest --test-dir build-staging --output-on-failure
+```
+
 Each test is declared through one of the helper functions:
 
 ```cmake
@@ -24,29 +36,36 @@ dedalus_add_python_test(
 )
 ```
 
-The helper derives three things from the layer:
+The helper derives:
 
 ```text
 CTest display name:
   target_selector (contracts)
 
-CTest LABELS:
-  contracts;unit
+Primary CTest LABEL:
+  contracts
+
+Extra CTest tags:
+  tag:unit
 
 CTest custom property:
   DEDALUS_LAYER=contracts
 ```
 
-Plain CTest still runs the full suite:
-
-```bash
-ctest --test-dir build-staging --output-on-failure
-```
-
-Layered runs use `-L`:
+The primary layer label is intentionally separate from extra tags. This keeps layer filters precise:
 
 ```bash
 ctest --test-dir build-staging --output-on-failure -L contracts
+ctest --test-dir build-staging --output-on-failure -L unit
+ctest --test-dir build-staging --output-on-failure -L synthetic
+ctest --test-dir build-staging --output-on-failure -L scenario
+```
+
+Extra tags use a `tag:` prefix:
+
+```bash
+ctest --test-dir build-staging --output-on-failure -L tag:integration
+ctest --test-dir build-staging --output-on-failure -L tag:airsim
 ```
 
 ---
@@ -83,6 +102,18 @@ Deterministic native C++ unit tests. Most use synthetic in-memory state or mocke
 ctest --test-dir build-staging --output-on-failure -L unit
 ```
 
+Examples:
+
+```text
+perception_world_model_flow (unit)
+video_only_world_model_flow (unit)
+recorded_frame_world_model_flow (unit)
+pipeline_profiler (unit)
+trajectory_mission_controller (unit)
+mission_runtime (unit)
+latest_world_snapshot (unit)
+```
+
 ### synthetic
 
 Tests that exercise synthetic or recorded data, generated mission artifacts, or CI-safe mission loops. These do not require a live AirSim/PX4 session.
@@ -94,16 +125,11 @@ ctest --test-dir build-staging --output-on-failure -L synthetic
 Examples:
 
 ```text
-perception_world_model_flow (unit)
-video_only_world_model_flow (unit)
-recorded_frame_world_model_flow (unit)
 replay_recording_smoke (synthetic)
 replay_artifact_validator (synthetic)
+ppm_sequence_mp4_export (synthetic)
 replay_mission_smoke (synthetic)
 mission_artifact_validator (synthetic)
-mission_scenario_runner (scenario)
-mission_campaign_runner (scenario)
-mission_abort_scenario (scenario)
 ```
 
 ### scenario
@@ -122,12 +148,12 @@ mission_campaign_runner (scenario)
 mission_abort_scenario (scenario)
 ```
 
-### airsim
+### airsim tag
 
-AirSim-facing boundary tests that remain CI-safe. These do not require a live simulator unless explicitly documented later.
+AirSim-facing boundary tests that remain CI-safe are tagged, not layered, unless a future AirSim-specific layer is needed.
 
 ```bash
-ctest --test-dir build-staging --output-on-failure -L airsim
+ctest --test-dir build-staging --output-on-failure -L tag:airsim
 ```
 
 Current example:
@@ -161,7 +187,7 @@ python3 simulation/run-mission-campaign.py \
 
 ## Inspecting Layers
 
-List all tests with their display names:
+List all tests with their display names in execution order:
 
 ```bash
 ctest --test-dir build-staging -N
@@ -171,7 +197,16 @@ List tests for a layer:
 
 ```bash
 ctest --test-dir build-staging -N -L contracts
+ctest --test-dir build-staging -N -L unit
+ctest --test-dir build-staging -N -L synthetic
 ctest --test-dir build-staging -N -L scenario
+```
+
+List tests for a tag:
+
+```bash
+ctest --test-dir build-staging -N -L tag:integration
+ctest --test-dir build-staging -N -L tag:airsim
 ```
 
 CTest can filter using `LABELS`. The `DEDALUS_LAYER` property is stored for structured inspection tooling, but the standard command-line filter remains `-L`.
@@ -188,7 +223,7 @@ ctest --test-dir build-staging --output-on-failure -L contracts
 ctest --test-dir build-staging --output-on-failure -L unit
 ```
 
-Before handing off or committing larger behavior/runtime changes:
+Before handing off or committing larger behavior/runtime changes, run plain CTest. It already executes in layer order:
 
 ```bash
 ctest --test-dir build-staging --output-on-failure
