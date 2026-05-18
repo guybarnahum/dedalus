@@ -71,6 +71,12 @@ struct AgentState {
     AgentId agent_id;
     IdentityId identity_id;
     TrackId source_track_id;
+    DetectionId source_detection_id;
+    bool has_source_detection{false};
+    Rect2 source_bbox_px;
+    bool has_source_bbox{false};
+    FrameId source_frame_id;
+    bool has_source_frame{false};
     TimePoint last_seen;
     Vec3 position_local;
     Vec3 velocity_local;
