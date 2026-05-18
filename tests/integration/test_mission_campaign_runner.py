@@ -39,14 +39,15 @@ def main() -> int:
     campaign_dir = out_root / "synthetic_ci" / "campaign_0001"
     summary_json = campaign_dir / "campaign_summary.json"
     summary_txt = campaign_dir / "campaign_summary.txt"
-    if not summary_json.exists() or not summary_txt.exists():
-        print(f"missing campaign summary under: {campaign_dir}", file=sys.stderr)
+    report_md = campaign_dir / "campaign_report.md"
+    if not summary_json.exists() or not summary_txt.exists() or not report_md.exists():
+        print(f"missing campaign summary/report under: {campaign_dir}", file=sys.stderr)
         return 1
 
     summary = json.loads(summary_json.read_text(encoding="utf-8"))
-    if summary.get("schema_version") != 2:
+    if summary.get("schema_version") != 3:
         print(json.dumps(summary, indent=2), file=sys.stderr)
-        print("campaign summary did not use schema_version=2", file=sys.stderr)
+        print("campaign summary did not use schema_version=3", file=sys.stderr)
         return 1
     if summary.get("status") != "passed" or summary.get("passed") != 3 or summary.get("failed") != 0:
         print(json.dumps(summary, indent=2), file=sys.stderr)
@@ -91,6 +92,24 @@ def main() -> int:
         print(summary_text)
         print("text summary missing abort scenario row", file=sys.stderr)
         return 1
+
+    report_text = report_md.read_text(encoding="utf-8")
+    required_report_fragments = [
+        "# Mission Campaign Report: synthetic_ci",
+        "| Status | **passed** |",
+        "`synthetic_lifecycle/run_0001`",
+        "`synthetic_lifecycle/run_0002`",
+        "`synthetic_abort_land_timeout/run_0001`",
+        "[metadata](runs/synthetic_lifecycle/run_0001/metadata.json)",
+        "[validator](runs/synthetic_abort_land_timeout/run_0001/validator_result.txt)",
+        "Abort",
+        "Complete",
+    ]
+    for fragment in required_report_fragments:
+        if fragment not in report_text:
+            print(report_text)
+            print(f"markdown report missing fragment: {fragment}", file=sys.stderr)
+            return 1
 
     return 0
 
