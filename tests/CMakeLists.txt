@@ -243,6 +243,16 @@ if(Python3_Interpreter_FOUND)
     )
 
     dedalus_add_python_test(
+        NAME ghost_annotation_artifacts
+        LAYER synthetic
+        TAGS integration visualization
+        COMMAND_ARGS
+            ${PROJECT_SOURCE_DIR}/tests/integration/test_ghost_annotation_artifacts.py
+            ${PROJECT_SOURCE_DIR}
+            ${PROJECT_BINARY_DIR}
+    )
+
+    dedalus_add_python_test(
         NAME replay_mission_smoke
         LAYER synthetic
         TAGS integration
