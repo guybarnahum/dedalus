@@ -96,6 +96,25 @@ def count_color_near(
     return count
 
 
+def require_close(actual: float, expected: float, tolerance: float, message: str) -> None:
+    if abs(actual - expected) > tolerance:
+        raise AssertionError(f"{message}: actual={actual} expected={expected} tolerance={tolerance}")
+
+
+def require_vec3_close(actual: list[float], expected: tuple[float, float, float], tolerance: float, message: str) -> None:
+    if len(actual) != 3:
+        raise AssertionError(f"{message}: expected 3-vector, got {actual}")
+    for index, expected_value in enumerate(expected):
+        require_close(float(actual[index]), expected_value, tolerance, f"{message}[{index}]")
+
+
+def find_agent(sidecar: dict, source_track_id: str) -> dict:
+    for agent in sidecar.get("agents", []):
+        if agent.get("source_track_id") == source_track_id:
+            return agent
+    raise AssertionError(f"missing sidecar agent for source_track_id={source_track_id}")
+
+
 def main() -> int:
     if len(sys.argv) != 3:
         print("usage: test_world_reprojection_artifacts.py <repo-root> <build-dir>", file=sys.stderr)
@@ -139,22 +158,46 @@ def main() -> int:
         raise AssertionError(f"expected header + 3 manifest rows, got {len(rows)}")
 
     first_frame = annotation_dir / "frame_000001.ppm"
+    first_sidecar = annotation_dir / "frame_000001.world_overlay.json"
     for index in range(1, 4):
         frame = annotation_dir / f"frame_{index:06d}.ppm"
+        sidecar = annotation_dir / f"frame_{index:06d}.world_overlay.json"
         if not frame.exists() or frame.stat().st_size == 0:
             raise AssertionError(f"missing non-empty annotated frame: {frame}")
         if frame.read_bytes()[:2] != b"P6":
             raise AssertionError(f"annotated frame is not P6 PPM: {frame}")
+        if not sidecar.exists() or sidecar.stat().st_size == 0:
+            raise AssertionError(f"missing non-empty world overlay sidecar: {sidecar}")
 
     width, height, pixels = read_ppm(first_frame)
     # synthetic_mission first frame timestamp is 0.1s and initial ego height is 0,
     # so ghost_person_001 is at x=12.03, y=-4.0, z=0.0 in ego/body convention.
-    expected_marker = project_point(width, height, (12.03, -4.0, 0.0))
+    expected_point = (12.03, -4.0, 0.0)
+    expected_marker = project_point(width, height, expected_point)
     marker_pixels = count_color_near(width, height, pixels, expected_marker, radius=8, color=AGENT_COLOR)
     if marker_pixels < 8:
         raise AssertionError(
             f"expected projected world-agent marker pixels near {expected_marker}, found {marker_pixels}"
         )
+
+    sidecar = json.loads(first_sidecar.read_text(encoding="utf-8"))
+    if sidecar.get("frame_index") != 1:
+        raise AssertionError(f"unexpected sidecar frame_index: {sidecar.get('frame_index')}")
+    if sidecar.get("coordinate_products", {}).get("viewport") != "camera pixel coordinates":
+        raise AssertionError("sidecar missing viewport coordinate product description")
+    camera_model = sidecar.get("camera_model", {})
+    if camera_model.get("width") != width or camera_model.get("height") != height:
+        raise AssertionError(f"sidecar camera dimensions do not match PPM: {camera_model}")
+
+    ghost = find_agent(sidecar, "ghost_person_001")
+    if ghost.get("visible") is not True:
+        raise AssertionError(f"expected ghost_person_001 visible in sidecar: {ghost}")
+    if ghost.get("reason") != "visible":
+        raise AssertionError(f"expected ghost_person_001 reason=visible, got {ghost.get('reason')}")
+    require_close(float(ghost.get("u_px")), float(expected_marker[0]), 1.0, "sidecar u_px")
+    require_close(float(ghost.get("v_px")), float(expected_marker[1]), 1.0, "sidecar v_px")
+    require_vec3_close(ghost.get("position_ego_relative", []), expected_point, 0.02, "position_ego_relative")
+    require_close(float(ghost.get("depth_m")), expected_point[0], 0.02, "sidecar depth_m")
 
     subprocess.run(
         [
