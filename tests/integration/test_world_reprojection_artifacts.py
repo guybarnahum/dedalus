@@ -203,7 +203,7 @@ def main() -> int:
     camera_agent = find_agent(sidecar, "track_0001")
     if camera_agent.get("source_detection_id") != "det_0001":
         raise AssertionError(f"camera-derived agent missing source_detection_id: {camera_agent}")
-    if camera_agent.get("source_frame_id") != "synthetic_mission_000001":
+    if camera_agent.get("source_frame_id") != "synthetic_mission_1":
         raise AssertionError(f"camera-derived agent missing source_frame_id: {camera_agent}")
     bbox = camera_agent.get("source_bbox_px", {})
     if bbox != {"x": 260.0, "y": 160.0, "width": 80.0, "height": 180.0}:
@@ -212,6 +212,8 @@ def main() -> int:
     reprojected_center = (float(camera_agent.get("u_px")), float(camera_agent.get("v_px")))
     require_vec2_close(camera_agent.get("source_center_px", []), source_center, 0.001, "source_center_px")
     require_vec2_close(camera_agent.get("reprojected_center_px", []), reprojected_center, 0.001, "reprojected_center_px")
+    if camera_agent.get("reason") != "outside_image":
+        raise AssertionError(f"expected camera-derived reprojection outside_image, got {camera_agent.get('reason')}")
     require_close(
         float(camera_agent.get("residual_px")),
         residual_px(source_center, reprojected_center),
