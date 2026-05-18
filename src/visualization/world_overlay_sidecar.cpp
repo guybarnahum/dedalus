@@ -70,6 +70,11 @@ double pixel_residual(const Vec2& source_center, const ProjectedWorldPoint& proj
     return std::sqrt(du * du + dv * dv);
 }
 
+bool has_finite_pixel_projection(const ProjectedWorldPoint& projected) {
+    return std::isfinite(projected.u_px) && std::isfinite(projected.v_px) &&
+           (projected.visible || projected.reason == "outside_image");
+}
+
 void write_json_string(std::ostream& output, const std::string& value) {
     output << '"';
     for (const char ch : value) {
@@ -214,7 +219,7 @@ void write_world_overlay_sidecar(
             write_vec2_json(output, source_center);
             output << ",\n";
             output << "      \"reprojected_center_px\": [" << projected.u_px << ',' << projected.v_px << "],\n";
-            if (projected.visible) {
+            if (has_finite_pixel_projection(projected)) {
                 output << "      \"residual_px\": " << pixel_residual(source_center, projected) << ",\n";
             }
         }
