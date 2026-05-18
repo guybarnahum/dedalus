@@ -1,6 +1,9 @@
 #include "dedalus/world_model/in_memory_world_model.hpp"
 
 #include <cmath>
+#include <iomanip>
+#include <sstream>
+#include <string>
 
 namespace dedalus {
 namespace {
@@ -17,6 +20,34 @@ EgoState mission_ready_ego(EgoState ego) {
         ego.flight_status = ego.height_m > 0.25 ? EgoFlightStatus::Airborne : EgoFlightStatus::Landed;
     }
     return ego;
+}
+
+std::string sanitized_id_suffix(const std::string& value) {
+    std::string suffix;
+    suffix.reserve(value.size());
+    for (const char ch : value) {
+        const auto uch = static_cast<unsigned char>(ch);
+        if (std::isalnum(uch) || ch == '_' || ch == '-') {
+            suffix.push_back(ch);
+        } else {
+            suffix.push_back('_');
+        }
+    }
+    return suffix;
+}
+
+std::string fallback_observation_suffix(std::size_t index) {
+    std::ostringstream out;
+    out << "observation_" << std::setw(4) << std::setfill('0') << (index + 1U);
+    return out.str();
+}
+
+std::string track_suffix_or_fallback(const TrackId& track_id, std::size_t observation_index) {
+    const auto suffix = sanitized_id_suffix(track_id.value);
+    if (!suffix.empty()) {
+        return suffix;
+    }
+    return fallback_observation_suffix(observation_index);
 }
 
 }  // namespace
@@ -70,10 +101,13 @@ void InMemoryWorldModel::update_appearance(const AppearanceCondition& appearance
 void InMemoryWorldModel::ingest(const PerceptionPipelineOutput& perception_output) {
     snapshot_.agents.clear();
 
+    std::size_t observation_index = 0;
     for (const auto& observation : perception_output.observations) {
+        const auto id_suffix = track_suffix_or_fallback(observation.track_id, observation_index);
+
         AgentState agent;
-        agent.agent_id = AgentId{"agent_0001"};
-        agent.identity_id = IdentityId{"identity_unknown_0001"};
+        agent.agent_id = AgentId{"agent_" + id_suffix};
+        agent.identity_id = IdentityId{"identity_" + id_suffix};
         agent.source_track_id = observation.track_id;
         agent.last_seen = observation.timestamp;
         agent.position_local = observation.position_local;
@@ -84,6 +118,7 @@ void InMemoryWorldModel::ingest(const PerceptionPipelineOutput& perception_outpu
         agent.lifecycle = AgentLifecycle::Active;
         agent.confidence = observation.confidence;
         snapshot_.agents.push_back(agent);
+        ++observation_index;
     }
 
     snapshot_.tactical_exclusion_zones = cone_exclusion_mapper_.map(
