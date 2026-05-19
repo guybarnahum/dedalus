@@ -13,6 +13,7 @@ namespace {
 constexpr double kMinArrivedDistanceM = 0.5;
 constexpr double kLandHeightM = 0.25;
 constexpr double kTakeoffVelocityAssistHeightM = 0.5;
+constexpr double kHeadingEpsilonMps = 0.05;
 
 std::string json_escape(const std::string& value) {
     std::string escaped;
@@ -64,6 +65,17 @@ double norm_xy(const Vec3& value) {
     return std::sqrt(value.x * value.x + value.y * value.y);
 }
 
+double norm3(const Vec3& value) {
+    return std::sqrt(value.x * value.x + value.y * value.y + value.z * value.z);
+}
+
+double clamp_abs(double value, double limit) {
+    if (limit <= 0.0) {
+        return 0.0;
+    }
+    return std::clamp(value, -limit, limit);
+}
+
 Vec3 velocity_toward_xy(const Vec3& from, const Vec3& to, double speed_mps) {
     const Vec3 delta{to.x - from.x, to.y - from.y, 0.0};
     const double distance = norm_xy(delta);
@@ -71,6 +83,64 @@ Vec3 velocity_toward_xy(const Vec3& from, const Vec3& to, double speed_mps) {
         return Vec3{0.0, 0.0, 0.0};
     }
     return Vec3{delta.x / distance * speed_mps, delta.y / distance * speed_mps, 0.0};
+}
+
+Vec3 clamp_velocity(const Vec3& desired, double max_horizontal_mps, double max_vertical_mps) {
+    Vec3 velocity = desired;
+    const double horizontal = norm_xy(velocity);
+    if (horizontal > max_horizontal_mps && max_horizontal_mps > 0.0) {
+        const double scale = max_horizontal_mps / horizontal;
+        velocity.x *= scale;
+        velocity.y *= scale;
+    }
+    velocity.z = clamp_abs(velocity.z, max_vertical_mps);
+    return velocity;
+}
+
+Vec3 desired_follow_position(const EgoState& ego, const TargetSelection& selection, const BehaviorSpec& behavior) {
+    const auto& offset = behavior.relative_offset_m;
+    Vec3 desired = selection.position_local;
+    const double target_speed_xy = norm_xy(selection.velocity_local);
+    if (behavior.target_frame == ReferenceFrame::TargetHeadingFrame && target_speed_xy > kHeadingEpsilonMps) {
+        const double forward_x = selection.velocity_local.x / target_speed_xy;
+        const double forward_y = selection.velocity_local.y / target_speed_xy;
+        const double right_x = -forward_y;
+        const double right_y = forward_x;
+        desired.x += forward_x * offset.x + right_x * offset.y;
+        desired.y += forward_y * offset.x + right_y * offset.y;
+    } else if (behavior.target_frame == ReferenceFrame::DroneHeadingFrame) {
+        const double yaw = ego.local_T_body.rotation_rpy.z;
+        const double forward_x = std::cos(yaw);
+        const double forward_y = std::sin(yaw);
+        const double right_x = -forward_y;
+        const double right_y = forward_x;
+        desired.x += forward_x * offset.x + right_x * offset.y;
+        desired.y += forward_y * offset.x + right_y * offset.y;
+    } else {
+        desired.x += offset.x;
+        desired.y += offset.y;
+    }
+    desired.z -= offset.z;
+    return desired;
+}
+
+Vec3 bounded_follow_velocity(const EgoState& ego, const TargetSelection& selection, const BehaviorSpec& behavior) {
+    const Vec3 desired = desired_follow_position(ego, selection, behavior);
+    const Vec3 error{
+        desired.x - ego.local_T_body.position.x,
+        desired.y - ego.local_T_body.position.y,
+        desired.z - ego.local_T_body.position.z};
+    if (norm3(error) <= behavior.position_tolerance_m) {
+        return Vec3{0.0, 0.0, 0.0};
+    }
+    return clamp_velocity(error, behavior.max_speed_mps, behavior.max_vertical_speed_mps);
+}
+
+Vec3 behavior_velocity(const EgoState& ego, const TargetSelection& selection, const BehaviorSpec& behavior) {
+    if (behavior.type == BehaviorType::Follow) {
+        return bounded_follow_velocity(ego, selection, behavior);
+    }
+    return Vec3{0.0, 0.0, 0.0};
 }
 
 std::string class_label_event_string(ClassLabel label) {
@@ -147,8 +217,7 @@ VelocityCommand ObjectBehaviorMissionController::command_from_velocity(
 }
 
 VelocityCommand ObjectBehaviorMissionController::command_with_kind(
-    TimePoint timestamp,
-    FlightCommandKind kind) const {
+    TimePoint timestamp, FlightCommandKind kind) const {
     VelocityCommand command;
     command.kind = kind;
     command.timestamp = timestamp;
@@ -181,6 +250,17 @@ std::string ObjectBehaviorMissionController::behavior_event(
             ",\"identity_id\":" + q(previous_selection_->identity_id.value);
     }
     return fields;
+}
+
+std::string behavior_tick_event(const BehaviorMissionSpec& spec, const TargetSelection& selection, const Vec3& velocity) {
+    return "\"event\":\"behavior_tick_sample\""
+        ",\"behavior\":" + q(to_string(spec.behavior.type)) +
+        ",\"mission\":" + q(spec.mission_name) +
+        ",\"agent_id\":" + q(selection.agent_id.value) +
+        ",\"source_track_id\":" + q(selection.source_track_id.value) +
+        ",\"vx\":" + std::to_string(velocity.x) +
+        ",\"vy\":" + std::to_string(velocity.y) +
+        ",\"vz\":" + std::to_string(velocity.z);
 }
 
 bool ObjectBehaviorMissionController::completion_elapsed(TimePoint now) const {
@@ -288,9 +368,7 @@ MissionTickOutput ObjectBehaviorMissionController::tick(const MissionTickInput& 
                 output.command = command_with_kind(input.now, FlightCommandKind::Takeoff);
                 output.status = "takeoff_request";
             } else if (height_m >= kTakeoffVelocityAssistHeightM) {
-                output.command = command_from_velocity(
-                    input.now,
-                    Vec3{0.0, 0.0, -std::abs(config_.takeoff_velocity_mps)});
+                output.command = command_from_velocity(input.now, Vec3{0.0, 0.0, -std::abs(config_.takeoff_velocity_mps)});
                 output.status = "takeoff_climb";
             } else if (elapsed_at_least(takeoff_last_command_time_, input.now, config_.takeoff_retry_interval_s)) {
                 output.status = "waiting_for_takeoff_climb";
@@ -322,8 +400,13 @@ MissionTickOutput ObjectBehaviorMissionController::tick(const MissionTickInput& 
                     state_start_ = input.now;
                     output.status = input.finish_requested ? "object_behavior_finish_requested" : "object_behavior_complete";
                 } else {
-                    output.command = command_from_velocity(input.now, Vec3{0.0, 0.0, 0.0});
-                    output.status = "object_behavior_hold";
+                    const Vec3 velocity = behavior_velocity(ego, selection, config_.behavior_spec.behavior);
+                    output.command = command_from_velocity(input.now, velocity);
+                    if (config_.behavior_spec.behavior.type == BehaviorType::Follow && !behavior_tick_sample_emitted_) {
+                        behavior_tick_sample_emitted_ = true;
+                        output.events.push_back(behavior_tick_event(config_.behavior_spec, selection, velocity));
+                    }
+                    output.status = config_.behavior_spec.behavior.type == BehaviorType::Follow ? "object_behavior_follow" : "object_behavior_hold";
                 }
             } else if (input.finish_requested) {
                 state_ = MissionLifecycleState::GoHome;
