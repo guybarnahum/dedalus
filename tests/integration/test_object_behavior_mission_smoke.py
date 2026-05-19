@@ -105,6 +105,7 @@ def main() -> int:
     events = read_events(events_path)
     target_selected = require_event(events, "target_selected")
     behavior_start = require_event(events, "behavior_start")
+    behavior_tick_sample = require_event(events, "behavior_tick_sample")
     behavior_complete = require_event(events, "behavior_complete")
     runtime_stop = require_event(events, "runtime_stop")
 
@@ -121,6 +122,8 @@ def main() -> int:
         raise AssertionError(f"behavior_start should carry selected source_track_id: {behavior_start}")
     if behavior_complete.get("source_track_id") != "ghost_person_001":
         raise AssertionError(f"behavior_complete should carry selected source_track_id: {behavior_complete}")
+    if behavior_tick_sample.get("source_track_id") != "ghost_person_001":
+        raise AssertionError(f"behavior_tick_sample should carry selected source_track_id: {behavior_tick_sample}")
     if runtime_stop.get("state") != "Complete" or runtime_stop.get("terminal_settled") is not True:
         raise AssertionError(f"runtime_stop should be terminal Complete: {runtime_stop}")
 
@@ -134,13 +137,21 @@ def main() -> int:
     if not velocity_dispatches:
         raise AssertionError("expected at least one hold Velocity command during object behavior")
     behavior_velocity_seen = False
+    nonzero_behavior_velocity_seen = False
     for event in velocity_dispatches:
         if event.get("state") == "ExecuteMission":
             behavior_velocity_seen = True
-            if any(abs(float(event.get(axis, 0.0))) > 1.0e-9 for axis in ["vx", "vy", "vz", "yaw_rate"]):
-                raise AssertionError(f"object behavior skeleton should emit zero/hold velocity during ExecuteMission: {event}")
+            if any(abs(float(event.get(axis, 0.0))) > 1.0e-6 for axis in ["vx", "vy", "vz"]):
+                nonzero_behavior_velocity_seen = True
+            horizontal_speed = (float(event.get("vx", 0.0)) ** 2 + float(event.get("vy", 0.0)) ** 2) ** 0.5
+            if horizontal_speed > 2.0001:
+                raise AssertionError(f"follow horizontal velocity exceeded max_speed_mps: {event}")
+            if abs(float(event.get("vz", 0.0))) > 1.0001:
+                raise AssertionError(f"follow vertical velocity exceeded max_vertical_speed_mps: {event}")
     if not behavior_velocity_seen:
         raise AssertionError("expected at least one ExecuteMission hold Velocity command")
+    if not nonzero_behavior_velocity_seen:
+        raise AssertionError("expected at least one non-zero ExecuteMission follow Velocity command")
 
     state_path = [event.get("to") for event in events if event.get("event") == "state_transition"]
     for expected in ["Prepare", "Takeoff", "ExecuteMission", "GoHome", "Land", "Complete"]:

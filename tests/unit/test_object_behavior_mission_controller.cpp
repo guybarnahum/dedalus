@@ -1,5 +1,6 @@
 #include "dedalus/behavior/object_behavior_mission_controller.hpp"
 
+#include <cmath>
 #include <iostream>
 #include <stdexcept>
 #include <string>
@@ -9,6 +10,12 @@ namespace {
 void require(bool condition, const std::string& message) {
     if (!condition) {
         throw std::runtime_error(message);
+    }
+}
+
+void require_near(double actual, double expected, double tolerance, const std::string& message) {
+    if (std::abs(actual - expected) > tolerance) {
+        throw std::runtime_error(message + ": actual=" + std::to_string(actual) + " expected=" + std::to_string(expected));
     }
 }
 
@@ -65,6 +72,11 @@ dedalus::ObjectBehaviorMissionConfig make_config() {
     config.behavior_spec.target.confidence_min = 0.55;
     config.behavior_spec.target.policy = dedalus::TargetSelectionPolicy::PersistentTrack;
     config.behavior_spec.behavior.type = dedalus::BehaviorType::Follow;
+    config.behavior_spec.behavior.target_frame = dedalus::ReferenceFrame::TargetHeadingFrame;
+    config.behavior_spec.behavior.relative_offset_m = dedalus::BehaviorVector3{-8.0, 0.0, 4.0};
+    config.behavior_spec.behavior.max_speed_mps = 2.0;
+    config.behavior_spec.behavior.max_vertical_speed_mps = 1.0;
+    config.behavior_spec.behavior.position_tolerance_m = 1.5;
     config.behavior_spec.completion.after_s = 0.2;
     config.safe_height_m = 2.0;
     config.arm_timeout_s = 5.0;
@@ -100,16 +112,17 @@ void lifecycle_gates_before_behavior_and_emits_events() {
     input.snapshot = make_snapshot(300000000, 2.0, true);
     const auto behavior = controller.tick(input);
     require(behavior.state == dedalus::MissionLifecycleState::ExecuteMission, "behavior tick should remain ExecuteMission");
-    require(behavior.command.has_value(), "behavior tick should emit hold velocity command");
-    require(behavior.command->kind == dedalus::FlightCommandKind::Velocity, "hold command should be velocity");
-    require(behavior.command->velocity_local_mps.x == 0.0, "hold vx should be zero");
-    require(behavior.command->velocity_local_mps.y == 0.0, "hold vy should be zero");
-    require(behavior.command->velocity_local_mps.z == 0.0, "hold vz should be zero");
-    require(behavior.events.size() == 2U, "behavior tick should emit target_selected and behavior_start");
+    require(behavior.command.has_value(), "behavior tick should emit follow velocity command");
+    require(behavior.command->kind == dedalus::FlightCommandKind::Velocity, "follow command should be velocity");
+    require_near(behavior.command->velocity_local_mps.x, 2.0, 1.0e-9, "follow vx should be bounded by max_speed");
+    require_near(behavior.command->velocity_local_mps.y, -4.0 / 3.0, 1.0e-6, "follow vy should move toward standoff point");
+    require_near(behavior.command->velocity_local_mps.z, -1.0, 1.0e-9, "follow vz should be bounded by max_vertical_speed");
+    require(behavior.events.size() == 3U, "behavior tick should emit target_selected, behavior_start, behavior_tick_sample");
     require(behavior.events[0].find("\"event\":\"target_selected\"") != std::string::npos, "missing target_selected event");
     require(behavior.events[0].find("\"source_track_id\":\"ghost_person_001\"") != std::string::npos, "selected target should be ghost_person_001");
     require(behavior.events[0].find("ghost_person_002") == std::string::npos, "must not select higher confidence neighbor");
     require(behavior.events[1].find("\"event\":\"behavior_start\"") != std::string::npos, "missing behavior_start event");
+    require(behavior.events[2].find("\"event\":\"behavior_tick_sample\"") != std::string::npos, "missing behavior_tick_sample event");
 
     input.now = dedalus::TimePoint{600000000};
     input.snapshot = make_snapshot(600000000, 2.0, true);
