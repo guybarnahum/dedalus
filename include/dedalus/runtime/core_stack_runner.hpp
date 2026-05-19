@@ -37,6 +37,7 @@ private:
     std::unique_ptr<PipelineProfiler> timing_writer_;
     std::shared_ptr<LatestWorldSnapshot> latest_snapshot_;
     std::future<std::optional<FramePacket>> prefetched_frame_;
+    std::optional<TimePoint> ghost_scenario_start_;
 };
 
 }  // namespace dedalus
