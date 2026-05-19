@@ -1,6 +1,6 @@
 # Object Behavior AirSim Ghost Runbook
 
-This runbook validates the next object-conditioned behavior slice against live AirSim frames while still using ghost/scripted targets as deterministic target input.
+This runbook validates object-conditioned behavior against live AirSim frames while still using ghost/scripted targets as deterministic target input.
 
 The purpose is to prove this path:
 
@@ -12,65 +12,243 @@ AirSim live frame + ego sidecar
   -> WorldSnapshot.agents
   -> TargetSelector
   -> ObjectBehaviorMissionController
-  -> target_selected / behavior_start / behavior_complete
+  -> target_selected / behavior_start / behavior_tick_sample / behavior_complete
   -> Px4BridgeCommandSink
   -> PX4 / AirSim
   -> Dedalus annotated artifacts + sidecar JSON
 ```
 
-This is not yet non-zero follow/circle motion. The object behavior still emits safe zero/hold velocity during ExecuteMission. Follow/circle/approach velocity math comes next.
+As of 2.26A, `follow` emits bounded non-zero velocity during `ExecuteMission`. Circle/approach/sequence behavior math remains future work.
 
 ---
 
-## 1. Create the local AirSim ghost object-behavior config
+## 1. Runtime and Dataflow Boundaries
 
-Create this file locally:
+The AirSim ghost object-behavior run has three parallel paths. They intentionally do not depend on one another for correctness.
 
-```bash
-cat > config/core_stack_object_behavior_airsim_ghost.yaml <<'EOF'
-frame_source: airsim
-ego_provider: frame_hint
-detector: scripted
-camera_stabilizer: null
-tracker: simple_centroid
-identity_resolver: appearance_only
-projector: flat_ground
-ghost_targets_enabled: true
-ghost_targets_scenario: person_pair_crossing
-world_model: in_memory
-frame_annotator: ppm_sequence
-annotation_output_path: out/object_behavior_airsim_ghost_annotation
-annotation_output_fps: 5
-fallback_map_frame_id: map_airsim_mission_0001
+```text
+1. Sensor/data input path
+2. Command/control output path
+3. Visualization/debug overlay path
+```
 
+### 1.1 Sensor / data input path
+
+Dedalus receives live camera frames and ego telemetry from AirSim/PX4 through a binary frame bridge:
+
+```text
+AirSim / PX4
+  -> simulation/airsim-stream-frames-binary.py
+  -> stdout binary frame protocol
+  -> AirSimFrameSource
+  -> FrameHintEgoProvider
+  -> CoreStackRunner
+  -> PerceptionPipelineOutput
+  -> InMemoryWorldModel
+  -> WorldSnapshot
+  -> LatestWorldSnapshot
+```
+
+The binary bridge stdout must remain protocol bytes only. Human diagnostics must go to stderr.
+
+In the AirSim ghost config:
+
+```yaml
 bridge_mode: stream_binary_ego
 bridge_transport: pipe
 bridge_command: python3 simulation/airsim-stream-frames-binary.py --include-ego --rate-hz 5 --mavlink-armed-endpoints udpin:127.0.0.1:14540
-source_host: 127.0.0.1
-source_rpc_port: 41451
-vehicle_name: PX4
-vehicle_camera_name: front_center
+```
 
-mission_controller: object_behavior
-mission_tick_hz: 10
-flight_command_sink: px4_bridge
-mission_options.behavior_spec_path: config/behaviors/follow_specific_track.yaml
-mission_options.object_behavior_hold_velocity_mps: 0.0
-mission_options.object_behavior_completion_after_s: 8.0
-mission_options.flight_control_mode: px4
-mission_options.flight_prepare_session_command: python3 simulation/airsim-prepare-session.py --host 127.0.0.1 --rpc-port 41451 --vehicle-name PX4 --mavlink-endpoints udpin:127.0.0.1:14550,udpin:127.0.0.1:14540,udpin:127.0.0.1:14600
-mission_options.flight_safe_height_m: 16
-mission_options.flight_px4_command_bridge: python3 simulation/px4-command-bridge.py --mavlink-endpoints udpin:127.0.0.1:14550 --px4-tmux-target dedalus-sim:px4 --safe-height 8
-mission_options.flight_home_policy: initial_ego_pose
-mission_options.flight_arm_retry_interval_s: 4.0
-mission_options.flight_arm_timeout_s: 30.0
-mission_options.flight_arm_dispatch_fallback_s: 2.0
-mission_options.flight_takeoff_retry_interval_s: 4.0
-mission_options.flight_land_retry_interval_s: 4.0
-mission_options.flight_land_timeout_s: 90.0
-mission_options.flight_disarm_retry_interval_s: 4.0
-mission_options.flight_disarm_timeout_s: 30.0
-EOF
+Ghost/scripted targets enter before the world model, like real detections eventually will:
+
+```text
+GhostTargetProvider
+  -> PerceptionPipelineOutput.observations
+  -> InMemoryWorldModel
+  -> WorldSnapshot.agents
+```
+
+This means behavior consumes normal `WorldSnapshot.agents`; it does not know or care whether the source was a real detector or a ghost/scripted validation target.
+
+### 1.2 Mission / behavior runtime path
+
+The autonomy loop consumes the latest world snapshot and emits mission commands:
+
+```text
+LatestWorldSnapshot
+  -> MissionRuntime async loop
+  -> ObjectBehaviorMissionController
+  -> TargetSelector
+  -> behavior velocity
+  -> FlightCommandSink
+```
+
+For the ghost follow run:
+
+```text
+WorldSnapshot.agents[]
+  agent_id: agent_ghost_person_001
+  source_track_id: ghost_person_001
+  class: person
+  confidence: 0.82
+
+TargetSelector
+  -> selected target
+
+ObjectBehaviorMissionController
+  -> target_selected
+  -> behavior_start
+  -> behavior_tick_sample
+  -> bounded follow velocity
+  -> behavior_complete
+```
+
+The behavior controller does not talk to AirSim directly. It only emits mission commands:
+
+```text
+Arm
+Takeoff
+Velocity
+Land
+Disarm
+```
+
+### 1.3 Command/control output path
+
+Commands go back to PX4/AirSim through the PX4 bridge command sink:
+
+```text
+ObjectBehaviorMissionController
+  -> VelocityCommand / lifecycle command
+  -> Px4BridgeCommandSink
+  -> simulation/px4-command-bridge.py
+  -> PX4 shell / pymavlink
+  -> PX4 / AirSim
+```
+
+The split remains:
+
+```text
+PX4 shell:
+  commander arm
+  commander takeoff
+  commander land
+  commander disarm
+
+pymavlink:
+  OFFBOARD setup
+  SET_POSITION_TARGET_LOCAL_NED velocity commands
+  LOCAL_POSITION_NED feedback for climb/safe-height behavior
+```
+
+Command helper OK is not vehicle truth. Vehicle truth comes back through ego/world telemetry. The mission does not enter `ExecuteMission` until ego height reaches the configured safe height.
+
+### 1.4 Artifact / validation path
+
+`dedalus_mission_loop` writes durable artifacts:
+
+```text
+out/object_behavior_airsim_ghost/
+  mission_events.jsonl
+  snapshot_manifest.txt
+  snapshot_0001.json
+  snapshot_0002.json
+  ...
+
+out/object_behavior_airsim_ghost_annotation/
+  frame_000001.ppm
+  frame_000001.world_overlay.json
+  ...
+```
+
+The validator reads those artifacts after the run:
+
+```text
+simulation/validate-object-behavior-airsim-ghost.py
+  -> mission_events.jsonl
+  -> snapshots
+  -> annotation sidecars
+```
+
+This is the validation truth path.
+
+### 1.5 AirSim viewport/debug overlay path
+
+`simulation/airsim-world-overlay.py` is not part of the autonomy loop. It is display-only.
+
+```text
+snapshot_manifest.txt
+  -> latest snapshot_XXXX.json
+  -> WorldSnapshot.agents[]
+  -> mission_events.jsonl selected target
+  -> AirSim debug draw API
+  -> Unreal/AirSim viewport markers
+```
+
+It draws:
+
+```text
+snapshot agent position_local
+  -> airsim.Vector3r(x, y, z - lift)
+  -> client.simPlotPoints(...)
+  -> client.simPlotStrings(...)
+```
+
+The script waits for both independent readiness conditions:
+
+```text
+AirSim RPC reachable:
+  proves the viewport/debug overlay can be injected into AirSim.
+
+WorldSnapshot ghost agents present:
+  proves dedalus_mission_loop has injected ghost/virtual detections into the perception/world-model path that affects behavior.
+```
+
+`Ctrl-C` exits either wait with no mission-state change.
+
+Why this renders into the AirSim camera view:
+
+```text
+WorldSnapshot 3D position
+  -> AirSim 3D debug marker
+  -> Unreal renders marker in world
+  -> AirSim camera sees marker if marker is inside the camera frustum
+```
+
+It does not paint camera pixels directly. Pixel-accurate reprojection validation remains in:
+
+```text
+frame_XXXXXX.world_overlay.json
+  u_px
+  v_px
+  visible
+  reason
+```
+
+Clean boundary:
+
+```text
+airsim-stream-frames-binary.py:
+  AirSim/PX4 -> Dedalus sensor input
+
+px4-command-bridge.py:
+  Dedalus command output -> PX4/AirSim
+
+airsim-world-overlay.py:
+  Dedalus artifacts -> AirSim human debug display
+
+validate-object-behavior-airsim-ghost.py:
+  Dedalus artifacts -> validation result
+```
+
+---
+
+## 2. AirSim ghost object-behavior config
+
+The config is committed here:
+
+```text
+config/core_stack_object_behavior_airsim_ghost.yaml
 ```
 
 The canonical behavior spec remains:
@@ -87,7 +265,7 @@ simulation/ghost_targets/person_pair_crossing.yaml
 
 ---
 
-## 2. Run with AirSim/PX4 already running
+## 3. Run with AirSim/PX4 already running
 
 ```bash
 rm -rf out/object_behavior_airsim_ghost out/object_behavior_airsim_ghost_annotation
@@ -105,6 +283,7 @@ Expected mission events:
 ```text
 target_selected
 behavior_start
+behavior_tick_sample
 behavior_complete
 command_dispatch Arm
 command_dispatch Takeoff
@@ -126,7 +305,7 @@ The behavior should not switch to `ghost_person_002` merely because it has highe
 
 ---
 
-## 3. Validate the run artifacts
+## 4. Validate the run artifacts
 
 ```bash
 python3 simulation/validate-object-behavior-airsim-ghost.py \
@@ -151,7 +330,93 @@ sidecars include ghost_person_001
 
 ---
 
-## 4. Export MP4 review artifact
+## 5. AirSim viewport overlay
+
+The overlay can be started before or after the mission loop. It waits independently for AirSim RPC and for Dedalus snapshots that contain the expected ghost tracks.
+
+Terminal 1, mission loop:
+
+```bash
+rm -rf out/object_behavior_airsim_ghost out/object_behavior_airsim_ghost_annotation
+
+./build-staging/apps/dedalus_mission_loop \
+  --config config/core_stack_object_behavior_airsim_ghost.yaml \
+  --output-dir out/object_behavior_airsim_ghost \
+  --max-frames 900 \
+  --shutdown-max-frames 400 \
+  --progress
+```
+
+Terminal 2, viewport overlay:
+
+```bash
+python3 simulation/airsim-world-overlay.py \
+  --snapshot-dir out/object_behavior_airsim_ghost \
+  --follow \
+  --rate-hz 2 \
+  --duration-s 180 \
+  --clear \
+  --label
+```
+
+Expected waiting messages if started early:
+
+```text
+airsim-world-overlay: waiting for AirSim RPC at 127.0.0.1:41451 (...)
+airsim-world-overlay: waiting for Dedalus snapshots under out/object_behavior_airsim_ghost
+airsim-world-overlay: waiting for ghost agents in WorldSnapshot (...)
+```
+
+Expected ready message:
+
+```text
+airsim-world-overlay: WorldSnapshot ghost agents ready from snapshot_XXXX.json (...)
+```
+
+What should appear in AirSim/Unreal:
+
+```text
+green marker/text:
+  SEL person ghost_person_001
+
+yellow marker/text:
+  AG person ghost_person_002
+  AG car ghost_car_001
+```
+
+Dry-run without AirSim drawing:
+
+```bash
+python3 simulation/airsim-world-overlay.py \
+  --snapshot-dir out/object_behavior_airsim_ghost \
+  --dry-run \
+  --label
+```
+
+One-shot draw after a completed run:
+
+```bash
+python3 simulation/airsim-world-overlay.py \
+  --snapshot-dir out/object_behavior_airsim_ghost \
+  --clear \
+  --label \
+  --persistent
+```
+
+Clear persistent markers:
+
+```bash
+python3 - <<'PY'
+import airsim
+client = airsim.MultirotorClient(ip='127.0.0.1', port=41451)
+client.confirmConnection()
+client.simFlushPersistentMarkers()
+PY
+```
+
+---
+
+## 6. Export MP4 review artifact
 
 ```bash
 python3 scripts/export-ppm-sequence-to-mp4.py \
@@ -163,7 +428,7 @@ The MP4 is a human review artifact. Mission events and snapshots remain the vali
 
 ---
 
-## 5. What this proves
+## 7. What this proves
 
 This run proves:
 
@@ -172,23 +437,24 @@ Live AirSim frames can drive the normal CoreStackRunner path.
 Ghost targets can be injected into WorldSnapshot agents during a live AirSim run.
 TargetSelector can select the requested lower-confidence ghost target by source_track_id.
 ObjectBehaviorMissionController can trigger behavior events from WorldSnapshot state.
+Follow behavior can emit bounded non-zero velocity.
 Mission lifecycle still reaches GoHome / Land / Disarm / Complete.
 Dedalus artifact overlays can show the ghost world-model agents on live AirSim camera frames.
+AirSim viewport overlay can mirror WorldSnapshot agents into the Unreal/AirSim view without affecting autonomy.
 ```
 
 ---
 
-## 6. What this does not prove yet
+## 8. What this does not prove yet
 
 This does not yet prove:
 
 ```text
-non-zero follow velocity math
 circle / approach / sequence motion
-AirSim/Unreal viewport debug overlay
 real camera detector quality
 real 3D perception quality
 obstacle avoidance
+viewport overlay as validation truth
 ```
 
 Those are subsequent slices.
