@@ -111,6 +111,10 @@ ObjectBehaviorMissionConfig load_object_behavior_mission_config(const MissionOpt
     }
     config.behavior_spec = parse_behavior_spec_file(behavior_spec_path);
     config.hold_velocity_mps = std::stod(options.get_or("object_behavior_hold_velocity_mps", "0.0"));
+    const auto completion_after_override = options.get_or("object_behavior_completion_after_s", "");
+    if (!completion_after_override.empty()) {
+        config.behavior_spec.completion.after_s = std::stod(completion_after_override);
+    }
     config.safe_height_m = std::stod(options.get_or("flight_safe_height_m", "8"));
     config.takeoff_velocity_mps = std::stod(options.get_or("flight_takeoff_velocity_mps", "1.0"));
     config.go_home_velocity_mps = std::stod(options.get_or("flight_go_home_velocity_mps", "1.0"));
