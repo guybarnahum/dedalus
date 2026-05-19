@@ -267,6 +267,16 @@ if(Python3_Interpreter_FOUND)
     )
 
     dedalus_add_python_test(
+        NAME object_behavior_mission_smoke
+        LAYER synthetic
+        TAGS integration behavior
+        COMMAND_ARGS
+            ${PROJECT_SOURCE_DIR}/tests/integration/test_object_behavior_mission_smoke.py
+            ${PROJECT_SOURCE_DIR}
+            ${PROJECT_BINARY_DIR}
+    )
+
+    dedalus_add_python_test(
         NAME replay_mission_smoke
         LAYER synthetic
         TAGS integration
