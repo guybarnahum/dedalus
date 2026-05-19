@@ -1,0 +1,22 @@
+mission:
+  name: approach_target_demo
+
+target:
+  selector:
+    class: vehicle
+    confidence_min: 0.6
+    policy: nearest
+
+behavior:
+  type: approach
+  stop_distance_m: 8.0
+  altitude_offset_m: 4.0
+  max_speed_mps: 2.0
+  position_tolerance_m: 1.0
+
+completion:
+  then: go_home_land
+
+fallback:
+  on_target_lost: hold_then_go_home
+  hold_s: 3.0
