@@ -115,11 +115,11 @@ def require_vec3_close(actual: list[float], expected: tuple[float, float, float]
         require_close(float(actual[index]), expected_value, tolerance, f"{message}[{index}]")
 
 
-def find_agent(sidecar: dict, source_track_id: str) -> dict:
-    for agent in sidecar.get("agents", []):
+def find_agent(container: dict, source_track_id: str) -> dict:
+    for agent in container.get("agents", []):
         if agent.get("source_track_id") == source_track_id:
             return agent
-    raise AssertionError(f"missing sidecar agent for source_track_id={source_track_id}")
+    raise AssertionError(f"missing agent for source_track_id={source_track_id}")
 
 
 def residual_px(source_center: tuple[float, float], reprojection: tuple[float, float]) -> float:
@@ -161,6 +161,18 @@ def main() -> int:
     if not expected_tracks <= source_track_ids:
         raise AssertionError(f"snapshot missing deterministic world-agent tracks: got {sorted(source_track_ids)}")
 
+    snapshot_camera_agent = find_agent(snapshot, "track_0001")
+    evidence = snapshot_camera_agent.get("latest_view_evidence")
+    if not evidence:
+        raise AssertionError(f"camera-derived snapshot agent missing latest_view_evidence: {snapshot_camera_agent}")
+    if evidence.get("source_frame_id") != "synthetic_mission_3":
+        raise AssertionError(f"unexpected snapshot evidence source_frame_id: {evidence}")
+    if evidence.get("source_detection_id") != "det_0001":
+        raise AssertionError(f"unexpected snapshot evidence source_detection_id: {evidence}")
+    require_vec2_close(evidence.get("source_center_px", []), (300.0, 250.0), 0.001, "snapshot source_center_px")
+    if "latest_view_evidence" in find_agent(snapshot, "ghost_person_001"):
+        raise AssertionError("ghost agent should not have camera-derived latest_view_evidence")
+
     manifest = annotation_dir / "manifest.txt"
     if not manifest.exists():
         raise AssertionError(f"missing annotation manifest: {manifest}")
@@ -181,8 +193,6 @@ def main() -> int:
             raise AssertionError(f"missing non-empty world overlay sidecar: {sidecar}")
 
     width, height, pixels = read_ppm(first_frame)
-    # synthetic_mission first frame timestamp is 0.1s and initial ego height is 0,
-    # so ghost_person_001 is at x=12.03, y=-4.0, z=0.0 in ego/body convention.
     expected_point = (12.03, -4.0, 0.0)
     expected_marker = project_point(width, height, expected_point)
     marker_pixels = count_color_near(width, height, pixels, expected_marker, radius=8, color=AGENT_COLOR)
