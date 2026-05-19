@@ -70,6 +70,30 @@ GhostTargetProvider
 
 This means behavior consumes normal `WorldSnapshot.agents`; it does not know or care whether the source was a real detector or a ghost/scripted validation target.
 
+Ghost target time is anchored to the first processed mission frame:
+
+```text
+first AirSim frame timestamp
+  -> ghost_scenario_start
+  -> ghost position = start_local_m + velocity_local_mps * elapsed_since_first_frame
+```
+
+This avoids a common live-sim bug where AirSim frame timestamps are already large by the time the mission starts, causing ghost targets to appear far along their trajectory on the first snapshot.
+
+WorldSnapshot injection is not instantaneous. The earliest possible ghost AG marker appears after this full frame pipeline has completed at least once:
+
+```text
+AirSim frame arrives
+  -> ego estimate succeeds
+  -> perception pipeline runs
+  -> ghost observations are appended
+  -> world_model.ingest(...)
+  -> world_model.snapshot(...)
+  -> dedalus_mission_loop writes snapshot_XXXX.json + manifest row
+```
+
+Before that, the viewport overlay may show only faint PLAN markers. That is expected.
+
 ### 1.2 Mission / behavior runtime path
 
 The autonomy loop consumes the latest world snapshot and emits mission commands:
@@ -244,6 +268,37 @@ position_local
 ```
 
 In `combined` mode, the overlay does not block planned ghost drawing while it waits for Dedalus snapshots. In `world_snapshot` mode, it waits for the required `WorldSnapshot` tracks because that mode explicitly means “show me what Dedalus knows.”
+
+Coordinate and time convergence rules:
+
+```text
+Position frame:
+  PLAN and AG both use the same local map/mission coordinates from the ghost fixture and WorldSnapshot.position_local.
+
+Vertical convention:
+  AirSim is NED-like, so the overlay draws markers at z - lift to place the marker visually above the target.
+
+Scenario clock:
+  Dedalus anchors ghost motion at the first processed frame timestamp.
+  The overlay uses static fixture positions by default.
+  With --animate-planned, the overlay uses snapshot timestamp deltas once snapshots exist, falling back to wall-clock deltas before snapshots exist.
+```
+
+Expected convergence behavior:
+
+```text
+No snapshots yet:
+  PLAN markers are visible; AG/SEL are absent.
+
+First snapshots available:
+  AG markers appear at the same local positions as PLAN markers, up to the small visual z-lift difference.
+
+Mission selects target:
+  the world-model marker for ghost_person_001 becomes SEL.
+
+With --animate-planned:
+  PLAN and AG should remain close after snapshots exist because both use elapsed time from the first mission frame.
+```
 
 `Ctrl-C` exits either wait with no mission-state change.
 
