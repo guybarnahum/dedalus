@@ -28,13 +28,19 @@ Status: implemented through 2.24G.9 baseline.
 - reprojection residual metadata for camera-derived agents
 - CTest layers: contracts -> unit -> synthetic -> scenario
 
-Current prep for Milestone 2.25:
-Behavior specs are autonomy configuration and live under `config/behaviors/`, not `simulation/behaviors/`.
-Simulation-only fixtures, such as ghost targets, remain under `simulation/ghost_targets/`.
-
-Next milestone:
 Milestone 2.25 — ObjectBehaviorMissionController skeleton.
-Goal: consume WorldSnapshot + behavior spec + TargetSelector, emit target/behavior mission events, hold/no-op safely during ExecuteMission, and complete through GoHome/Land/Disarm.
+Status: implemented through 2.25D lifecycle integration baseline.
+
+2.25 highlights:
+- behavior specs are canonical autonomy config under config/behaviors/
+- ObjectBehaviorMissionController loads config/behaviors/follow_specific_track.yaml
+- object behavior consumes WorldSnapshot agents through TargetSelector
+- object behavior emits target_selected, behavior_start, behavior_complete
+- object behavior uses the normal Prepare -> Takeoff -> ExecuteMission -> GoHome -> Land -> Complete lifecycle
+- synthetic object_behavior_mission_smoke validates ghost_person_001 selection, zero/hold behavior velocity, Arm/Takeoff/Land/Disarm, and Complete/status=complete
+
+Next milestone slice:
+2.25E / 2.26 — extract BehaviorRuntime hold/fallback mechanics and then implement first follow behavior math.
 ```
 
 Patch policy:
@@ -52,6 +58,12 @@ Validation after code patches:
 ```bash
 cmake --build build-staging -j$(nproc)
 ctest --test-dir build-staging --output-on-failure
+```
+
+Focused object behavior validation:
+
+```bash
+ctest --test-dir build-staging --output-on-failure -R 'object_behavior_mission_controller|object_behavior_mission_smoke|core_stack_config_loader|behavior_spec|target_selector'
 ```
 
 Focused reprojection / world evidence validation:
@@ -93,7 +105,7 @@ AirSim live frame + ego sidecar
   -> InMemoryWorldModel
   -> LatestWorldSnapshot
   -> MissionRuntime async loop
-  -> TrajectoryMissionController
+  -> TrajectoryMissionController today / ObjectBehaviorMissionController for object behavior
   -> Px4BridgeCommandSink
   -> persistent simulation/px4-command-bridge.py
        - PX4 shell: arm, takeoff, land, disarm
@@ -281,7 +293,7 @@ Synthetic / AirSim frame
   -> InMemoryWorldModel
   -> WorldSnapshot.agents with stable source_track_id
   -> TargetSelector
-  -> ObjectBehaviorMissionController later
+  -> ObjectBehaviorMissionController
 ```
 
 Bad shortcut:
@@ -356,7 +368,7 @@ tests/unit/test_behavior_spec.cpp
 
 ## 7. Mission Events and Validation Expectations for M3
 
-Expected later M3 events should include both world-model and tracker handles when available:
+Expected M3 events include both world-model and tracker handles when available:
 
 ```json
 {"event":"target_selected","class":"person","agent_id":"agent_ghost_person_001","source_track_id":"ghost_person_001","identity_id":"identity_ghost_person_001","confidence":0.82}
@@ -364,7 +376,20 @@ Expected later M3 events should include both world-model and tracker handles whe
 {"event":"behavior_complete","behavior":"follow","reason":"duration_elapsed"}
 ```
 
-M3 validation should prove:
+Current 2.25D synthetic lifecycle validation proves:
+
+```text
+final_state == Complete
+terminal_settled == true
+Arm / Takeoff / Land / Disarm commands dispatched and succeed via disabled sink
+safe height reached before behavior execution
+target_selected selects ghost_person_001
+behavior_start and behavior_complete are emitted
+Velocity commands during ExecuteMission are zero/hold only
+GoHome / Land / Complete reached
+```
+
+Full M3 validation should later prove:
 
 ```text
 final_state == Complete
@@ -374,7 +399,7 @@ at least one target_selected event
 selected target identity remains stable unless reacquire/lost is expected
 at least one behavior_start event
 expected behavior_complete event
-velocity commands emitted during behavior
+non-zero bounded behavior velocity once follow/circle/approach math exists
 GoHome / Land / Complete reached
 ```
 
@@ -390,6 +415,7 @@ simulation/run-mission-campaign.py
 simulation/validate-mission-artifacts.py
 config/core_stack_synthetic_mission_ci.yaml
 config/core_stack_synthetic_mission_abort_ci.yaml
+config/core_stack_object_behavior_mission.yaml
 config/mission_campaigns/synthetic_ci.json
 config/mission_campaigns/airsim_live_smoke.json
 docs/mission_scenario_runner.md
@@ -420,6 +446,8 @@ Second Ctrl-C:
 - Do not hide arming inside velocity commands.
 - Do not collapse flight_control.arm_state and ego.armed.
 - Do not move to ExecuteMission until Takeoff is confirmed by ego height.
+- Do not stop at raw Complete state; wait for terminal_settled / Complete status=complete.
+- Do not treat Abort as stop immediately when recovery is possible.
 - Do not make the native C++ MAVLink sink the default live path; use px4_bridge.
 - Do not rewrite the working pymavlink control path in C++ while stabilizing behavior.
 - Do not let telemetry sidecar and command bridge bind the same MAVLink endpoint.
