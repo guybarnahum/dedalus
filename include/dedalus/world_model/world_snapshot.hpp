@@ -67,6 +67,19 @@ struct EgoState {
     std::optional<TimePoint> home_timestamp;
 };
 
+struct AgentViewEvidence {
+    FrameId source_frame_id;
+    bool has_source_frame{false};
+    DetectionId source_detection_id;
+    bool has_source_detection{false};
+    Rect2 source_bbox_px;
+    bool has_source_bbox{false};
+    Vec2 source_center_px;
+    bool has_source_center{false};
+    TimePoint timestamp;
+    std::string camera_name;
+};
+
 struct AgentState {
     AgentId agent_id;
     IdentityId identity_id;
@@ -77,6 +90,8 @@ struct AgentState {
     bool has_source_bbox{false};
     FrameId source_frame_id;
     bool has_source_frame{false};
+    AgentViewEvidence latest_view_evidence;
+    bool has_latest_view_evidence{false};
     TimePoint last_seen;
     Vec3 position_local;
     Vec3 velocity_local;
