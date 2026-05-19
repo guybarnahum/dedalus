@@ -63,7 +63,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--wait-for-world-model-s", type=float, default=0.0, help="0 means wait until Ctrl-C in world_snapshot mode only.")
     parser.add_argument("--required-track", action="append", default=None)
     parser.add_argument("--allow-partial-tracks", action="store_true")
-    parser.add_argument("--animate-planned", action="store_true", help="Move planned ghost markers using wall-clock time and fixture velocity.")
+    parser.add_argument(
+        "--animate-planned",
+        action="store_true",
+        help="Move planned ghost markers using snapshot time when available, falling back to wall-clock time before snapshots exist.",
+    )
     return parser.parse_args()
 
 
@@ -150,6 +154,15 @@ def latest_existing_snapshot(snapshot_dir: Path) -> tuple[Path, dict[str, Any]] 
     for path in reversed(snapshot_paths_from_manifest(snapshot_dir)):
         if path.exists():
             return path, read_json(path)
+    return None
+
+
+def snapshot_timestamp_ns(snapshot: dict[str, Any]) -> int | None:
+    value = snapshot.get("timestamp_ns")
+    if isinstance(value, int):
+        return value
+    if isinstance(value, float):
+        return int(value)
     return None
 
 
@@ -284,19 +297,31 @@ def main() -> int:
     world_model_wait_start = time.time()
     waiting_reported = False
     ready_reported = False
+    first_snapshot_timestamp_ns: int | None = None
 
     while True:
         if args.clear and client is not None:
             client.simFlushPersistentMarkers()
 
-        elapsed = time.time() - start
+        latest = latest_existing_snapshot(args.snapshot_dir) if args.source in {"combined", "world_snapshot"} else None
+        snapshot_path = None
+        snapshot = None
+        snapshot_elapsed_s: float | None = None
+        if latest is not None:
+            snapshot_path, snapshot = latest
+            timestamp_ns = snapshot_timestamp_ns(snapshot)
+            if timestamp_ns is not None:
+                if first_snapshot_timestamp_ns is None:
+                    first_snapshot_timestamp_ns = timestamp_ns
+                snapshot_elapsed_s = max(0.0, (timestamp_ns - first_snapshot_timestamp_ns) / 1_000_000_000.0)
+
+        elapsed = snapshot_elapsed_s if snapshot_elapsed_s is not None else time.time() - start
         selected_track = selected_source_track_id(events_path)
 
         if args.source in {"combined", "ghost_scenario"}:
             planned_agents = [planned_agent_at(target, elapsed, args.animate_planned) for target in planned_targets]
             draw_agents(client, "planned", planned_agents, selected_track, args)
 
-        latest = latest_existing_snapshot(args.snapshot_dir) if args.source in {"combined", "world_snapshot"} else None
         if latest is None:
             if args.source == "world_snapshot":
                 if not waiting_reported:
@@ -310,7 +335,6 @@ def main() -> int:
                 print(f"airsim-world-overlay: drawing planned ghosts; waiting for Dedalus snapshots under {args.snapshot_dir}", file=sys.stderr)
                 waiting_reported = True
         else:
-            snapshot_path, snapshot = latest
             ready, reason = snapshot_ready(snapshot, required_tracks, args.allow_partial_tracks)
             if ready:
                 if not ready_reported:
