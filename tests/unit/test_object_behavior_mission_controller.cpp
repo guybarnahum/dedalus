@@ -114,8 +114,8 @@ void lifecycle_gates_before_behavior_and_emits_events() {
     require(behavior.state == dedalus::MissionLifecycleState::ExecuteMission, "behavior tick should remain ExecuteMission");
     require(behavior.command.has_value(), "behavior tick should emit follow velocity command");
     require(behavior.command->kind == dedalus::FlightCommandKind::Velocity, "follow command should be velocity");
-    require_near(behavior.command->velocity_local_mps.x, 2.0, 1.0e-9, "follow vx should be bounded by max_speed");
-    require_near(behavior.command->velocity_local_mps.y, -4.0 / 3.0, 1.0e-6, "follow vy should move toward standoff point");
+    require_near(behavior.command->velocity_local_mps.x, std::sqrt(2.0), 1.0e-6, "follow vx should be vector-clamped by max_speed");
+    require_near(behavior.command->velocity_local_mps.y, -std::sqrt(2.0), 1.0e-6, "follow vy should be vector-clamped by max_speed");
     require_near(behavior.command->velocity_local_mps.z, -1.0, 1.0e-9, "follow vz should be bounded by max_vertical_speed");
     require(behavior.events.size() == 3U, "behavior tick should emit target_selected, behavior_start, behavior_tick_sample");
     require(behavior.events[0].find("\"event\":\"target_selected\"") != std::string::npos, "missing target_selected event");
