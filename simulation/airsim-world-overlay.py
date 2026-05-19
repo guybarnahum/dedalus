@@ -4,6 +4,15 @@
 Visualization-only helper. Reads mission artifacts and mirrors WorldSnapshot
 agents into AirSim using debug plot primitives. It does not feed perception,
 modify autonomy state, or write to binary bridge stdout.
+
+The helper deliberately waits for two independent readiness signals:
+
+1. AirSim RPC is reachable, so viewport/debug drawing can be injected.
+2. Dedalus mission artifacts contain ghost/world-model agents, proving the
+   mission loop has injected ghost detections into the perception/world-model
+   path that drives behavior.
+
+Ctrl-C exits either wait without changing mission state.
 """
 
 from __future__ import annotations
@@ -25,6 +34,7 @@ except ImportError as exc:
 SELECTED_COLOR = [0.0, 1.0, 0.2, 1.0]
 AGENT_COLOR = [1.0, 0.85, 0.0, 1.0]
 STALE_COLOR = [0.5, 0.5, 0.5, 1.0]
+DEFAULT_REQUIRED_TRACKS = ["ghost_person_001", "ghost_person_002", "ghost_car_001"]
 
 
 def parse_args() -> argparse.Namespace:
@@ -43,10 +53,27 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--z-lift-m", type=float, default=1.5)
     parser.add_argument("--dry-run", action="store_true")
     parser.add_argument(
-        "--wait-for-snapshots-s",
+        "--wait-for-airsim-s",
         type=float,
-        default=30.0,
-        help="How long to wait for snapshot_manifest rows when --follow is active.",
+        default=0.0,
+        help="How long to wait for AirSim RPC. 0 means wait until Ctrl-C.",
+    )
+    parser.add_argument(
+        "--wait-for-world-model-s",
+        type=float,
+        default=0.0,
+        help="How long to wait for snapshots containing required tracks. 0 means wait until Ctrl-C.",
+    )
+    parser.add_argument(
+        "--required-track",
+        action="append",
+        default=None,
+        help="Track that must appear in WorldSnapshot.agents before drawing. Repeatable. Defaults to the ghost scenario tracks.",
+    )
+    parser.add_argument(
+        "--allow-partial-tracks",
+        action="store_true",
+        help="Draw as soon as any agent exists instead of waiting for all required ghost tracks.",
     )
     return parser.parse_args()
 
@@ -104,6 +131,24 @@ def distance_xy(a: Any, b: Any) -> float:
         return float("inf")
 
 
+def agent_track_ids(snapshot: dict[str, Any]) -> set[str]:
+    tracks: set[str] = set()
+    for agent in snapshot.get("agents", []):
+        if isinstance(agent, dict) and agent.get("source_track_id"):
+            tracks.add(str(agent["source_track_id"]))
+    return tracks
+
+
+def snapshot_ready(snapshot: dict[str, Any], required_tracks: list[str], allow_partial: bool) -> tuple[bool, str]:
+    tracks = agent_track_ids(snapshot)
+    if allow_partial:
+        return (bool(tracks), f"tracks={sorted(tracks)}")
+    missing = [track for track in required_tracks if track not in tracks]
+    if missing:
+        return (False, f"waiting_for_tracks={missing} present={sorted(tracks)}")
+    return (True, f"tracks={sorted(tracks)}")
+
+
 def agents_to_draw(snapshot: dict[str, Any], max_agents: int, selected_track: str | None) -> list[dict[str, Any]]:
     agents = [agent for agent in snapshot.get("agents", []) if isinstance(agent, dict)]
     ego_position = snapshot.get("ego", {}).get("position_local", [0.0, 0.0, 0.0])
@@ -143,6 +188,33 @@ def label_for(agent: dict[str, Any], selected_track: str | None) -> str:
         f"{agent.get('source_track_id', '')} "
         f"{float(agent.get('confidence', 0.0)):.2f}"
     )
+
+
+def connect_airsim(args: argparse.Namespace) -> Any | None:
+    if args.dry_run:
+        return None
+
+    start = time.time()
+    reported = False
+    while True:
+        try:
+            client = airsim.MultirotorClient(ip=args.host, port=args.rpc_port)
+            client.confirmConnection()
+            if args.clear:
+                client.simFlushPersistentMarkers()
+            return client
+        except KeyboardInterrupt:
+            raise
+        except Exception as exc:  # noqa: BLE001 - AirSim RPC throws several exception types.
+            if not reported:
+                print(
+                    f"airsim-world-overlay: waiting for AirSim RPC at {args.host}:{args.rpc_port} ({exc})",
+                    file=sys.stderr,
+                )
+                reported = True
+            if args.wait_for_airsim_s > 0.0 and time.time() - start >= args.wait_for_airsim_s:
+                raise TimeoutError(f"timed out waiting for AirSim RPC at {args.host}:{args.rpc_port}") from exc
+            time.sleep(1.0 / max(args.rate_hz, 0.1))
 
 
 def draw_snapshot(
@@ -197,32 +269,51 @@ def main() -> int:
     if args.rate_hz <= 0.0:
         raise ValueError("--rate-hz must be positive")
 
+    required_tracks = args.required_track or DEFAULT_REQUIRED_TRACKS
     events_path = args.mission_events or (args.snapshot_dir / "mission_events.jsonl")
-
-    client = None
-    if not args.dry_run:
-        client = airsim.MultirotorClient(ip=args.host, port=args.rpc_port)
-        client.confirmConnection()
-        if args.clear:
-            client.simFlushPersistentMarkers()
+    client = connect_airsim(args)
 
     start = time.time()
     deadline = None if args.duration_s <= 0.0 else start + args.duration_s
-    wait_deadline = start + max(0.0, args.wait_for_snapshots_s)
-    waiting_reported = False
+    world_model_wait_start = time.time()
+    wait_reported = False
+    ready_reported = False
 
     while True:
         latest = latest_existing_snapshot(args.snapshot_dir)
         if latest is None:
-            if args.follow and time.time() <= wait_deadline:
-                if not waiting_reported:
-                    print(f"airsim-world-overlay: waiting for snapshots under {args.snapshot_dir}", file=sys.stderr)
-                    waiting_reported = True
-                time.sleep(1.0 / args.rate_hz)
-                continue
-            raise FileNotFoundError(f"no snapshot rows found under {args.snapshot_dir}")
+            if not wait_reported:
+                print(
+                    f"airsim-world-overlay: waiting for Dedalus snapshots under {args.snapshot_dir}",
+                    file=sys.stderr,
+                )
+                wait_reported = True
+            if args.wait_for_world_model_s > 0.0 and time.time() - world_model_wait_start >= args.wait_for_world_model_s:
+                raise TimeoutError(f"timed out waiting for Dedalus snapshots under {args.snapshot_dir}")
+            time.sleep(1.0 / args.rate_hz)
+            continue
 
         snapshot_path, snapshot = latest
+        ready, reason = snapshot_ready(snapshot, required_tracks, args.allow_partial_tracks)
+        if not ready:
+            if not wait_reported:
+                print(
+                    f"airsim-world-overlay: waiting for ghost agents in WorldSnapshot ({reason})",
+                    file=sys.stderr,
+                )
+                wait_reported = True
+            if args.wait_for_world_model_s > 0.0 and time.time() - world_model_wait_start >= args.wait_for_world_model_s:
+                raise TimeoutError(f"timed out waiting for ghost agents in WorldSnapshot: {reason}")
+            time.sleep(1.0 / args.rate_hz)
+            continue
+
+        if not ready_reported:
+            print(
+                f"airsim-world-overlay: WorldSnapshot ghost agents ready from {snapshot_path.name} ({reason})",
+                file=sys.stderr,
+            )
+            ready_reported = True
+
         selected_track = selected_source_track_id(events_path)
         draw_snapshot(client, snapshot_path, snapshot, selected_track, args)
 
@@ -240,6 +331,9 @@ def main() -> int:
 if __name__ == "__main__":
     try:
         raise SystemExit(main())
+    except KeyboardInterrupt:
+        print("airsim-world-overlay: interrupted", file=sys.stderr)
+        raise SystemExit(130)
     except Exception as exc:
         print(f"airsim-world-overlay: {exc}", file=sys.stderr)
         raise SystemExit(1)
