@@ -12,18 +12,19 @@ To generate a current handoff, read `LLM.md` and the current repo state, then fi
 
 1. Read `LLM.md` first. Treat it as the active operating brief.
 2. Read `docs/mission_scenario_runner.md` for the current scenario/campaign harness workflow.
-3. Read `docs/object_conditioned_behavior_plan.md` before Milestone 2.23 / 2.24 / M3 behavior work.
-4. Read `WHITEPAPER.md` when architectural rationale is needed.
-5. Read `LLM.back.md` only for historical context when needed.
-6. Run `git log --oneline -1` to get the current commit SHA.
-7. Substitute all `<PLACEHOLDER>` values below with current state.
-8. Emit the filled-in prompt as plain text — no surrounding explanation.
+3. Read `docs/object_conditioned_behavior_plan.md` before M3 behavior work.
+4. Read `docs/world_model_reprojection_validation_plan.md` before reprojection, annotation, or world-model evidence work.
+5. Read `WHITEPAPER.md` when architectural rationale is needed.
+6. Read `LLM.back.md` only for historical context when needed.
+7. Run `git log --oneline -1` to get the current commit SHA.
+8. Substitute all `<PLACEHOLDER>` values below with current state.
+9. Emit the filled-in prompt as plain text — no surrounding explanation.
 
 ---
 
 ## Template
 
-```
+```text
 You are continuing work on the Dedalus repo.
 
 Repository:
@@ -38,6 +39,7 @@ First read:
 Then read:
   docs/mission_scenario_runner.md
   docs/object_conditioned_behavior_plan.md
+  docs/world_model_reprojection_validation_plan.md
 
 Historical context, only if needed:
   LLM.back.md
@@ -52,7 +54,7 @@ Current observed behavior:
   <MOST_RECENT_NOTABLE_LOGS_OR_RUNTIME_OUTPUT>
 
 Current diagnosis:
-  <WHAT_IS_LIKELY_MISSING_OR_BROKEN>
+  <WHAT_IS LIKELY MISSING OR BROKEN>
 
 Immediate tasks:
   <NUMBERED_TASK_LIST — copy from LLM.md recommended next stage or update to reflect current state>
@@ -70,6 +72,10 @@ Validation:
 
     cmake --build build-staging -j$(nproc)
     ctest --test-dir build-staging --output-on-failure
+
+  For reprojection/world-evidence changes, also include:
+
+    ctest --test-dir build-staging --output-on-failure -R 'world_to_image_projector|world_reprojection_artifacts'
 
   For scenario/campaign harness changes, also include:
 
@@ -94,9 +100,9 @@ Expected success:
 
 ## Reference — Current Strategic Handoff Shape
 
-This reference is valid after Milestone 2.23 and during Milestone 2.24. When generating a new handoff, update the commit SHA and any current runtime observations.
+This reference is valid after the 2.25 prep cleanup. When generating a new handoff, update the commit SHA and any current runtime observations.
 
-```
+```text
 You are continuing work on the Dedalus repo.
 
 Repository:
@@ -111,12 +117,13 @@ First read:
 Then read:
   docs/mission_scenario_runner.md
   docs/object_conditioned_behavior_plan.md
+  docs/world_model_reprojection_validation_plan.md
 
 Historical context, only if needed:
   LLM.back.md
 
 Active milestone:
-  Milestone 2.24 — TargetSelector from WorldSnapshot agents
+  Milestone 2.25 — ObjectBehaviorMissionController skeleton
 
 Current architecture:
   AirSim live frame + ego sidecar
@@ -126,7 +133,7 @@ Current architecture:
     -> InMemoryWorldModel
     -> LatestWorldSnapshot
     -> MissionRuntime async loop
-    -> TrajectoryMissionController
+    -> TrajectoryMissionController today / ObjectBehaviorMissionController next
     -> Px4BridgeCommandSink
     -> simulation/px4-command-bridge.py
     -> PX4 / AirSim
@@ -135,7 +142,7 @@ Current architecture:
     AirSim live frame + ego sidecar
       -> AirSimFrameSource
       -> detector / tracker / projector, or ghost/scripted target provider for pre-camera validation
-      -> WorldSnapshot agents with agent_id, source_track_id, identity_id, class, confidence, local position, velocity
+      -> WorldSnapshot agents with agent_id, source_track_id, identity_id, class, confidence, local position, velocity, latest_view_evidence when camera-derived
       -> TargetSelector
       -> BehaviorRuntime / ObjectBehaviorMissionController
       -> desired velocity vector
@@ -143,55 +150,42 @@ Current architecture:
       -> PX4 / AirSim
 
 Current observed behavior:
-  Milestones 2.20, 2.21, 2.22, and 2.23 are implemented.
+  Milestones 2.20, 2.21, 2.22, and 2.23 are implemented / validated.
 
-  The live AirSim/PX4 mission loop works through flight_command_sink=px4_bridge:
-    - takeoff reaches safe height
-    - trajectory executes
-    - GoHome / Land / Disarm complete
-    - repeated mission runs work without restarting AirSim
-    - mission_events.jsonl validates successful runs
+  Milestone 2.24 is implemented through 2.24G.9 baseline:
+    - track-addressable WorldSnapshot agents
+    - TargetSelectorSpec track_id / agent_id support
+    - TargetSelector policies and tests
+    - ghost/scripted targets for pre-camera validation
+    - WorldSnapshot-to-camera reprojection projector
+    - projected AG markers in annotation artifacts
+    - frame_XXXXXX.world_overlay.json sidecars
+    - camera-derived 2D provenance carried into AgentState.latest_view_evidence
+    - reprojection residual metadata for camera-derived agents
+    - world_reprojection_artifacts synthetic test validates PPM marker, sidecar metadata, residuals, and snapshot latest_view_evidence
 
-  Scenario/campaign harness is available:
-    - run-mission-scenario.py runs one archive-grade scenario
-    - run-mission-campaign.py runs/dry-runs campaigns
-    - validate-mission-artifacts.py validates Complete and Abort final states
-    - campaign reports write JSON, text, and Markdown summaries
-    - Ctrl-C during a campaign gracefully finishes the active mission and then stops the campaign
+  Behavior specs are now canonical runtime/autonomy config under:
+    config/behaviors/
+      follow_person.yaml
+      follow_specific_track.yaml
+      circle_car.yaml
+      approach_target.yaml
+      sequence_approach_circle.yaml
 
-  Behavior spec parser foundation is available:
-    - include/dedalus/behavior/behavior_spec.hpp
-    - src/behavior/behavior_spec.cpp
-    - tests/unit/test_behavior_spec.cpp
-    - sample specs under simulation/behaviors/
-
-  Milestone 2.24A track-addressable WorldSnapshot agents is implemented:
-    - AgentState.agent_id is derived from Observation3D.track_id
-    - AgentState.identity_id is derived from Observation3D.track_id
-    - AgentState.source_track_id preserves the tracker ID
-    - WorldSnapshot JSON emits source_track_id
-    - tests cover multi-agent track preservation and JSON artifacts
+  Simulation-only target fixtures remain under:
+    simulation/ghost_targets/person_pair_crossing.yaml
 
 Current diagnosis:
-  The drone can fly and validate reliable preconfigured missions and scenario/campaign artifacts. Behavior specs parse. The gap to Milestone 3 is target selection and object-conditioned behavior. Next step: make TargetSelectorSpec and TargetSelector explicitly support class, source_track_id/track_id, agent_id, and persistent target selection from WorldSnapshot agents.
+  The drone can fly and validate reliable preconfigured missions and scenario/campaign artifacts. Behavior specs parse, TargetSelector works, ghost targets and world-model reprojection validation work. The next gap to M3 is wiring ObjectBehaviorMissionController into the mission path so behavior can consume WorldSnapshot + behavior specs and emit target/behavior events safely.
 
-Important identity model:
-  Do not collapse detection_id, track_id, source_track_id, agent_id, and identity_id.
+Important architectural rules:
+  PerceptionPipelineOutput is evidence.
+  WorldSnapshot is autonomy state.
+  Behavior consumes WorldSnapshot, not perception internals.
 
-  detection_id:
-    single detector observation in one frame
-
-  track_id:
-    tracker-owned frame-to-frame continuity
-
-  source_track_id:
-    tracker ID preserved inside WorldSnapshot AgentState as provenance
-
-  agent_id:
-    world-model-owned object handle that behavior/planning should select
-
-  identity_id:
-    recognized real-world identity, future-facing for people/vehicles/drones across missions
+  Behavior specs are global autonomy/runtime configuration, not simulation assets.
+  Use config/behaviors/*.yaml for behavior specs.
+  Use simulation/ghost_targets/*.yaml only for simulation/synthetic target fixtures.
 
 Immediate tasks:
   1. Build/test current head:
@@ -199,17 +193,20 @@ Immediate tasks:
        cmake --build build-staging -j$(nproc)
        ctest --test-dir build-staging --output-on-failure
 
-  2. Continue Milestone 2.24:
-       - extend TargetSelectorSpec with optional track_id and agent_id fields
-       - validate at least one of class, track_id, or agent_id is present
-       - add TargetSelection output with agent_id, source_track_id, identity_id, class, confidence, position, velocity, status, reason
-       - implement highest_confidence, nearest, and persistent_track policies
-       - add tests proving explicit track/agent selection from groups and persistence over higher-confidence neighbors
+  2. Start Milestone 2.25A/B:
+       - add ObjectBehaviorMissionController skeleton
+       - add config path for mission_controller: object_behavior
+       - load behavior spec from config/behaviors/follow_specific_track.yaml
+       - consume LatestWorldSnapshot / WorldSnapshot agents
+       - run TargetSelector during ExecuteMission
+       - emit target_selected, behavior_start, behavior_complete events
+       - emit safe zero/hold velocity only; no follow/circle motion math yet
+       - complete normally through GoHome -> Land -> Disarm
 
-  3. Plan expressive pre-camera validation:
-       - add ghost/scripted targets that enter as PerceptionPipelineOutput.observations
-       - feed them through InMemoryWorldModel into WorldSnapshot.agents
-       - validate TargetSelector over ghost_person_001 vs ghost_person_002 instead of directly setting selected_target from config
+  3. Add tests:
+       - unit test ObjectBehaviorMissionController target selection and no-op/hold command behavior
+       - synthetic scenario using ghost_person_001 validates stable selected lower-confidence target
+       - mission_events prove target_selected, behavior_start, behavior_complete
 
 Do not:
   - Do not use dedalus_replay_mission. Use dedalus_mission_loop.
@@ -217,16 +214,20 @@ Do not:
   - Do not hide arming inside velocity commands.
   - Do not collapse flight_control.arm_state and ego.armed.
   - Do not move to ExecuteMission until Takeoff is confirmed by ego height.
+  - Do not stop at raw Complete state; wait for terminal_settled / Complete status=complete.
+  - Do not treat Abort as stop immediately when recovery is possible.
   - Do not make the native C++ MAVLink sink the default live path; use px4_bridge.
   - Do not rewrite the working pymavlink control path in C++ while stabilizing behavior.
+  - Do not let telemetry sidecar and command bridge bind the same MAVLink endpoint.
   - Do not let human diagnostics contaminate binary bridge stdout; binary frame bridge stdout is protocol bytes only.
   - Do not make mission_campaign_runner CTest execute repeated real missions.
   - Do not put obstacle avoidance inside the flight sink.
   - Do not let route memory override fresh tactical sensing.
   - Do not let Milestone 3 balloon into full obstacle avoidance; M3 is object-conditioned behavior. Avoidance starts post-M3.
-  - Do not collapse track_id/source_track_id/agent_id/identity_id into one field.
+  - Do not collapse detection_id/track_id/source_track_id/agent_id/identity_id/latest_view_evidence.
   - Do not select targets only by confidence when a stable track/agent target is specified.
   - Do not bypass WorldSnapshot/TargetSelector by hardcoding selected_target in config for main validation.
+  - Do not keep global behavior specs under simulation/behaviors; use config/behaviors.
   - Do not create branches or PRs unless explicitly requested.
 
 Patch policy:
@@ -240,9 +241,9 @@ Validation:
     cmake --build build-staging -j$(nproc)
     ctest --test-dir build-staging --output-on-failure
 
-  For current 2.24A / selector work:
+  For current behavior/reprojection work:
 
-    ctest --test-dir build-staging --output-on-failure -R 'world_snapshot_json|perception_world_model_flow|behavior_spec|target_selector'
+    ctest --test-dir build-staging --output-on-failure -R 'behavior_spec|target_selector|world_to_image_projector|world_reprojection_artifacts'
 
   For scenario/campaign harness changes:
 
@@ -260,16 +261,10 @@ Validation:
       --overwrite
 
 Expected success:
-  For 2.24:
-    TargetSelector can deterministically select one WorldSnapshot agent by class, source_track_id/track_id, or agent_id.
-    persistent_track keeps the prior selected object even when a neighboring same-class object has higher confidence.
-    Tests prove no direct selected_target shortcut is needed.
-
-  For later M3:
-    mission_events + snapshots should prove:
-      target_selected with agent_id and source_track_id
-      behavior_start
-      velocity commands during behavior
-      behavior_complete
-      GoHome / Land / Complete
+  For 2.25 skeleton:
+    ObjectBehaviorMissionController consumes WorldSnapshot agents through TargetSelector.
+    target_selected includes agent_id and source_track_id.
+    behavior_start and behavior_complete are emitted.
+    selected ghost_person_001 remains stable despite ghost_person_002 having higher confidence.
+    Mission still reaches GoHome -> Land -> Complete/status=complete.
 ```
