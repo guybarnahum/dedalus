@@ -203,6 +203,13 @@ dedalus_add_native_test(
 )
 
 dedalus_add_native_test(
+    NAME object_behavior_mission_controller
+    LAYER unit
+    TAGS synthetic behavior
+    SOURCES unit/test_object_behavior_mission_controller.cpp
+)
+
+dedalus_add_native_test(
     NAME mission_runtime
     LAYER unit
     TAGS synthetic
