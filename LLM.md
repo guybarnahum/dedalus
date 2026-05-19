@@ -11,21 +11,30 @@ guybarnahum/dedalus
 Active milestone state:
 
 ```text
-Milestone 2.20 — Mission robustness, observability, and cleanup
-Status: closed / validated.
+Milestones 2.20, 2.21, 2.22, and 2.23 are implemented / validated.
 
-Milestone 2.21 — Mission artifact validation and replay-grade diagnostics
-Status: implemented / validated.
+Milestone 2.24 — TargetSelector, ghost validation, reprojection validation, and world-model evidence plumbing.
+Status: implemented through 2.24G.9 baseline.
 
-Milestone 2.22 — Scenario/campaign harness
-Status: implemented / validated.
+2.24 highlights:
+- track-addressable WorldSnapshot agents
+- TargetSelectorSpec track_id / agent_id support
+- TargetSelector policies and tests
+- ghost/scripted targets for pre-camera validation
+- WorldSnapshot-to-camera reprojection projector
+- projected AG markers in annotation artifacts
+- frame_XXXXXX.world_overlay.json sidecars
+- camera-derived 2D provenance carried into AgentState.latest_view_evidence
+- reprojection residual metadata for camera-derived agents
+- CTest layers: contracts -> unit -> synthetic -> scenario
 
-Milestone 2.23 — Behavior spec parser foundation
-Status: implemented on main; local validation still expected after checkout.
+Current prep for Milestone 2.25:
+Behavior specs are autonomy configuration and live under `config/behaviors/`, not `simulation/behaviors/`.
+Simulation-only fixtures, such as ghost targets, remain under `simulation/ghost_targets/`.
 
-Current active milestone:
-Milestone 2.24 — TargetSelector from WorldSnapshot agents.
-Current slice: 2.24A track-addressable WorldSnapshot agents is implemented; continue with TargetSelectorSpec track/agent fields and TargetSelector tests.
+Next milestone:
+Milestone 2.25 — ObjectBehaviorMissionController skeleton.
+Goal: consume WorldSnapshot + behavior spec + TargetSelector, emit target/behavior mission events, hold/no-op safely during ExecuteMission, and complete through GoHome/Land/Disarm.
 ```
 
 Patch policy:
@@ -45,10 +54,10 @@ cmake --build build-staging -j$(nproc)
 ctest --test-dir build-staging --output-on-failure
 ```
 
-Focused current 2.24A validation:
+Focused reprojection / world evidence validation:
 
 ```bash
-ctest --test-dir build-staging --output-on-failure -R 'world_snapshot_json|perception_world_model_flow|behavior_spec'
+ctest --test-dir build-staging --output-on-failure -R 'world_to_image_projector|world_reprojection_artifacts'
 ```
 
 Scenario/campaign validation:
@@ -99,7 +108,7 @@ Milestone 3 target architecture:
 AirSim live frame + ego sidecar
   -> AirSimFrameSource
   -> detector / tracker / projector, or ghost/scripted target provider for pre-camera validation
-  -> WorldSnapshot agents with agent_id, source_track_id, identity_id, class, confidence, local position, velocity
+  -> WorldSnapshot agents with agent_id, source_track_id, identity_id, class, confidence, local position, velocity, latest_view_evidence when camera-derived
   -> TargetSelector
   -> BehaviorRuntime / ObjectBehaviorMissionController
   -> desired velocity vector
@@ -161,7 +170,7 @@ Do not reintroduce the hand-written native C++ MAVLink encoder as the default li
 
 ---
 
-## 3. Object Identity Model
+## 3. Object Identity and Evidence Model
 
 Do not collapse detections, tracks, agents, and identities. They answer different questions.
 
@@ -192,12 +201,19 @@ agent_id:
 identity_id:
   Identity-resolver-owned recognized real-world identity.
   Later this may be a known person, vehicle plate, drone serial, or cross-mission identity.
+
+latest_view_evidence:
+  World-model-owned camera-scoped evidence on AgentState.
+  Camera-derived agents carry source_frame_id, source_detection_id, source_bbox_px, and source_center_px.
+  Ghost/scripted agents normally omit latest_view_evidence because they have no source camera detection.
 ```
 
-Current 2.24A implementation rule:
+Current implementation rule:
 
 ```text
-InMemoryWorldModel derives agent_id and identity_id from Observation3D.track_id, and stores the original tracker ID in AgentState.source_track_id. Snapshot JSON includes source_track_id so artifacts can prove which tracker target became which world-model agent.
+PerceptionPipelineOutput is evidence.
+WorldSnapshot is autonomy state.
+Behavior consumes WorldSnapshot, not perception internals.
 ```
 
 Example:
@@ -217,36 +233,37 @@ Target selection must be able to focus on one specific object in a group. It mus
 
 ---
 
-## 4. Milestone 2.24 Plan
+## 4. Behavior Config Location
 
-2.24A is implemented:
+Behavior specs are global autonomy/runtime configuration, not simulation assets.
+
+Canonical behavior spec location:
 
 ```text
-- AgentState.agent_id is derived from Observation3D.track_id.
-- AgentState.identity_id is derived from Observation3D.track_id.
-- AgentState.source_track_id preserves the original tracker ID.
-- WorldSnapshot JSON emits source_track_id.
-- Unit tests verify multiple observations produce distinct agents and serialized source_track_id artifacts.
+config/behaviors/follow_person.yaml
+config/behaviors/follow_specific_track.yaml
+config/behaviors/circle_car.yaml
+config/behaviors/approach_target.yaml
+config/behaviors/sequence_approach_circle.yaml
 ```
 
-Next 2.24 tasks:
+Simulation-only target fixtures remain here:
 
 ```text
-1. Extend TargetSelectorSpec with optional track_id and agent_id fields.
-2. Parser validation: at least one of class, track_id, or agent_id must be present.
-3. Add TargetSelector output model with agent_id, source_track_id, identity_id, class, confidence, position, velocity, status, reason.
-4. Add selection policies:
-     highest_confidence
-     nearest
-     persistent_track
-5. Add tests over hand-built WorldSnapshot agents:
-     explicit track_id selection
-     explicit agent_id selection
-     highest_confidence among matching class
-     nearest among matching class
-     persistent_track keeps prior target even if another object has higher confidence
-     wrong class / low confidence / stale lifecycle ignored
-     no candidates returns selected=false
+simulation/ghost_targets/person_pair_crossing.yaml
+```
+
+Rule:
+
+```text
+Behavior spec:
+  config/behaviors/*.yaml
+
+Ghost/scripted target scenario:
+  simulation/ghost_targets/*.yaml
+
+Core-stack config that references behavior:
+  config/core_stack_object_behavior_mission.yaml
 ```
 
 ---
@@ -320,10 +337,11 @@ sequence
 Sample specs live in:
 
 ```text
-simulation/behaviors/follow_person.yaml
-simulation/behaviors/circle_car.yaml
-simulation/behaviors/approach_target.yaml
-simulation/behaviors/sequence_approach_circle.yaml
+config/behaviors/follow_person.yaml
+config/behaviors/follow_specific_track.yaml
+config/behaviors/circle_car.yaml
+config/behaviors/approach_target.yaml
+config/behaviors/sequence_approach_circle.yaml
 ```
 
 2.23 parser files:
@@ -412,6 +430,7 @@ Second Ctrl-C:
 - Do not let Milestone 3 balloon into full obstacle avoidance; M3 is object-conditioned behavior. Avoidance starts post-M3.
 - Do not collapse track_id/source_track_id/agent_id/identity_id into one field.
 - Do not select targets only by confidence when a stable track/agent target is specified.
+- Do not keep global behavior specs under simulation/behaviors; use config/behaviors.
 - Do not create branches or PRs unless explicitly requested.
 ```
 
@@ -422,7 +441,8 @@ Second Ctrl-C:
 Read next when relevant:
 
 ```text
-docs/object_conditioned_behavior_plan.md     detailed 2.24/M3 behavior + identity plan
+docs/object_conditioned_behavior_plan.md     detailed M3 behavior + identity plan
+docs/world_model_reprojection_validation_plan.md reprojection and world-model evidence plan
 docs/mission_scenario_runner.md             scenario/campaign harness
 docs/mission_pipeline_current_state.md       mission loop architecture
 docs/core_stack_current_state.md             broader core-stack status
