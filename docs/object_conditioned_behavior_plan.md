@@ -4,6 +4,8 @@ This document is the focused implementation plan for the Milestone 3 object-cond
 
 Milestone 2.20 proved that Dedalus can run a repeatable live AirSim/PX4 mission loop. Milestone 2.23 added the behavior-spec parser foundation. Milestone 2.24 added target-selection foundations, ghost/scripted pre-camera validation, world-model reprojection validation, and camera-scoped view evidence on `WorldSnapshot` agents.
 
+Milestone 2.25 starts the controller integration path. As of 2.25C, Dedalus has an `ObjectBehaviorMissionController` skeleton that runs against synthetic ghost targets, selects a target through `TargetSelector`, emits durable target/behavior mission events, sends safe zero/hold velocity, and reaches a synthetic terminal Complete path. Full flight lifecycle integration for object behavior is still pending.
+
 Related detailed plan:
 
 ```text
@@ -594,13 +596,18 @@ Level 1 — Pure unit tests:
 Level 2 — Synthetic pipeline tests:
   Feed ghost observations into InMemoryWorldModel and validate agent IDs, source_track_id artifacts, and selector output.
 
-Level 3 — Mission scenario tests:
-  Run dedalus_mission_loop with ghost targets enabled and validate mission_events + snapshots contain target_selected and stable target identity.
+Level 3 — Mission event smoke tests:
+  Run dedalus_mission_loop with mission_controller=object_behavior, ghost targets enabled, and a disabled flight sink.
+  Validate mission_events contains target_selected, behavior_start, behavior_complete, stable selected source_track_id, zero/hold Velocity commands, and terminal Complete.
 
-Level 4 — Visual artifact tests:
+Level 4 — Full mission scenario tests:
+  Run dedalus_mission_loop with object behavior integrated into the normal flight lifecycle.
+  Validate safe-height gate, behavior execution, GoHome, Land, Disarm, and Complete/status=complete.
+
+Level 5 — Visual artifact tests:
   Render WorldSnapshot agents back onto captured camera frames and export deterministic annotated frame artifacts, sidecar JSON, and MP4 clips.
 
-Level 5 — AirSim viewport debug overlay:
+Level 6 — AirSim viewport debug overlay:
   Optionally mirror WorldSnapshot agents back into the AirSim/Unreal viewport using debug markers or spawned debug actors. This is for operator visibility only; the authoritative validation artifacts remain mission_events, snapshots, and Dedalus-generated annotated video.
 ```
 
@@ -730,7 +737,22 @@ Do not rely on console prints for validation. The event log is the durable artif
 
 ## 17. M3 Validation Expectations
 
-Required checks:
+Current 2.25C synthetic event-smoke expectations:
+
+```text
+mission_controller == object_behavior
+flight_command_sink == disabled
+final runtime_stop state == Complete
+target_selected event exists
+selected source_track_id == ghost_person_001
+selected agent_id == agent_ghost_person_001
+behavior_start event exists
+behavior_complete event exists
+Velocity commands are zero/hold only
+ghost_person_002 is not selected merely because confidence is higher
+```
+
+Full M3 flight validation expectations, once object behavior is integrated with the normal flight lifecycle:
 
 ```text
 final_state == Complete
@@ -859,10 +881,10 @@ cmake --build build-staging -j$(nproc)
 ctest --test-dir build-staging --output-on-failure
 ```
 
-Focused TargetSelector checks:
+Focused TargetSelector / object behavior checks:
 
 ```bash
-ctest --test-dir build-staging --output-on-failure -R 'world_snapshot_json|perception_world_model_flow|target_selector|core_stack_config_loader'
+ctest --test-dir build-staging --output-on-failure -R 'behavior_spec|target_selector|object_behavior_mission_controller|object_behavior_mission_smoke|core_stack_config_loader'
 ```
 
 After visual artifact / reprojection changes:
@@ -883,12 +905,18 @@ After object-conditioned behavior exists:
 ./build-staging/apps/dedalus_mission_loop \
   --config config/core_stack_object_behavior_mission.yaml \
   --output-dir out/object_behavior_mission \
-  --max-frames 900 \
-  --shutdown-max-frames 400 \
-  --progress
-
-python3 simulation/validate-mission-artifacts.py out/object_behavior_mission --expect-final-state Complete --expect-behavior
+  --max-frames 30 \
+  --shutdown-max-frames 30 \
+  --no-progress
 ```
+
+For the current 2.25C skeleton, validate events directly or run:
+
+```bash
+ctest --test-dir build-staging --output-on-failure -R object_behavior_mission_smoke
+```
+
+Do not use the full lifecycle `--expect-final-state Complete --expect-behavior` validator for the 2.25C skeleton yet; it intentionally does not arm/takeoff/land/disarm through the real flight lifecycle. Use that validator after the next integration slice wires object behavior into the normal mission lifecycle.
 
 ---
 
@@ -904,14 +932,15 @@ python3 simulation/validate-mission-artifacts.py out/object_behavior_mission --e
 7. WorldSnapshot-to-annotation overlays for agents/selection/behavior and MP4 review export. DONE for 2.24F baseline.
 8. World-model reprojection validation: project WorldSnapshot agents back into camera viewport and measure residuals. DONE for 2.24G baseline.
 9. Behavior config location cleanup: canonical behavior specs under config/behaviors, simulation fixtures stay under simulation. DONE as 2.25 prep.
-10. ObjectBehaviorMissionController skeleton.
-11. BehaviorRuntime for hold/fallback/sequence mechanics.
-12. Follow behavior math and unit tests.
-13. Circle behavior math and unit tests.
-14. Approach behavior math and unit tests.
-15. Mission event extensions.
-16. Artifact validator extensions.
-17. Live AirSim/PX4 object-conditioned demo.
+10. ObjectBehaviorMissionController skeleton and app/config wiring. DONE for 2.25A/B.
+11. Synthetic object-behavior mission event smoke test. DONE for 2.25C.
+12. Integrate object behavior with the normal Prepare/Takeoff/GoHome/Land/Disarm lifecycle.
+13. BehaviorRuntime for hold/fallback/sequence mechanics.
+14. Follow behavior math and unit tests.
+15. Circle behavior math and unit tests.
+16. Approach behavior math and unit tests.
+17. Artifact validator extensions for full object-conditioned flight lifecycle.
+18. Live AirSim/PX4 object-conditioned demo.
 ```
 
 Keep every step artifact-driven and testable.
