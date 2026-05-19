@@ -42,6 +42,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--max-agents", type=int, default=20)
     parser.add_argument("--z-lift-m", type=float, default=1.5)
     parser.add_argument("--dry-run", action="store_true")
+    parser.add_argument(
+        "--wait-for-snapshots-s",
+        type=float,
+        default=30.0,
+        help="How long to wait for snapshot_manifest rows when --follow is active.",
+    )
     return parser.parse_args()
 
 
@@ -55,7 +61,7 @@ def read_json(path: Path) -> dict[str, Any]:
 def snapshot_paths_from_manifest(snapshot_dir: Path) -> list[Path]:
     manifest = snapshot_dir / "snapshot_manifest.txt"
     if not manifest.exists():
-        raise FileNotFoundError(f"missing snapshot manifest: {manifest}")
+        return []
 
     paths: list[Path] = []
     for raw in manifest.read_text(encoding="utf-8").splitlines():
@@ -64,18 +70,14 @@ def snapshot_paths_from_manifest(snapshot_dir: Path) -> list[Path]:
         fields = raw.split()
         if len(fields) >= 2:
             paths.append(snapshot_dir / fields[1])
-
-    if not paths:
-        raise ValueError(f"snapshot manifest contains no rows: {manifest}")
-
     return paths
 
 
-def latest_existing_snapshot(snapshot_dir: Path) -> tuple[Path, dict[str, Any]]:
+def latest_existing_snapshot(snapshot_dir: Path) -> tuple[Path, dict[str, Any]] | None:
     for path in reversed(snapshot_paths_from_manifest(snapshot_dir)):
         if path.exists():
             return path, read_json(path)
-    raise FileNotFoundError(f"no snapshot files found under {snapshot_dir}")
+    return None
 
 
 def selected_source_track_id(events_path: Path) -> str | None:
@@ -204,10 +206,23 @@ def main() -> int:
         if args.clear:
             client.simFlushPersistentMarkers()
 
-    deadline = None if args.duration_s <= 0.0 else time.time() + args.duration_s
+    start = time.time()
+    deadline = None if args.duration_s <= 0.0 else start + args.duration_s
+    wait_deadline = start + max(0.0, args.wait_for_snapshots_s)
+    waiting_reported = False
 
     while True:
-        snapshot_path, snapshot = latest_existing_snapshot(args.snapshot_dir)
+        latest = latest_existing_snapshot(args.snapshot_dir)
+        if latest is None:
+            if args.follow and time.time() <= wait_deadline:
+                if not waiting_reported:
+                    print(f"airsim-world-overlay: waiting for snapshots under {args.snapshot_dir}", file=sys.stderr)
+                    waiting_reported = True
+                time.sleep(1.0 / args.rate_hz)
+                continue
+            raise FileNotFoundError(f"no snapshot rows found under {args.snapshot_dir}")
+
+        snapshot_path, snapshot = latest
         selected_track = selected_source_track_id(events_path)
         draw_snapshot(client, snapshot_path, snapshot, selected_track, args)
 
