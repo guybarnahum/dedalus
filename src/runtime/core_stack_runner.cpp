@@ -101,9 +101,13 @@ bool CoreStackRunner::run_once() {
     start = SteadyClock::now();
     auto perception_output = pipeline.process(*frame, *ego_estimate.ego);
     if (providers_.ghost_targets) {
+        if (!ghost_scenario_start_.has_value()) {
+            ghost_scenario_start_ = frame->timestamp;
+        }
         const auto ghost_observations = providers_.ghost_targets->observations_at(
             frame->timestamp,
-            ego_estimate.ego->map_frame_id);
+            ego_estimate.ego->map_frame_id,
+            *ghost_scenario_start_);
         perception_output.observations.insert(
             perception_output.observations.end(),
             ghost_observations.begin(),
