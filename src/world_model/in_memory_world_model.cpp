@@ -50,6 +50,10 @@ std::string track_suffix_or_fallback(const TrackId& track_id, std::size_t observ
     return fallback_observation_suffix(observation_index);
 }
 
+Vec2 bbox_center(const Rect2& bbox) {
+    return Vec2{bbox.x + bbox.width * 0.5, bbox.y + bbox.height * 0.5};
+}
+
 }  // namespace
 
 InMemoryWorldModel::InMemoryWorldModel(MapFrameId map_frame_id) {
@@ -115,6 +119,20 @@ void InMemoryWorldModel::ingest(const PerceptionPipelineOutput& perception_outpu
         agent.has_source_bbox = observation.has_source_bbox;
         agent.source_frame_id = observation.source_frame_id;
         agent.has_source_frame = observation.has_source_frame;
+        if (observation.has_source_detection || observation.has_source_bbox || observation.has_source_frame) {
+            agent.has_latest_view_evidence = true;
+            agent.latest_view_evidence.source_frame_id = observation.source_frame_id;
+            agent.latest_view_evidence.has_source_frame = observation.has_source_frame;
+            agent.latest_view_evidence.source_detection_id = observation.source_detection_id;
+            agent.latest_view_evidence.has_source_detection = observation.has_source_detection;
+            agent.latest_view_evidence.source_bbox_px = observation.source_bbox_px;
+            agent.latest_view_evidence.has_source_bbox = observation.has_source_bbox;
+            if (observation.has_source_bbox) {
+                agent.latest_view_evidence.source_center_px = bbox_center(observation.source_bbox_px);
+                agent.latest_view_evidence.has_source_center = true;
+            }
+            agent.latest_view_evidence.timestamp = observation.timestamp;
+        }
         agent.last_seen = observation.timestamp;
         agent.position_local = observation.position_local;
         agent.velocity_local = Vec3{2.0, 0.4, 0.0};
