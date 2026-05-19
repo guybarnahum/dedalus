@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Synthetic smoke test for the object-behavior mission-controller skeleton."""
+"""Synthetic smoke test for object-behavior mission lifecycle integration."""
 
 from __future__ import annotations
 
@@ -33,6 +33,16 @@ def require_event(events: list[dict[str, Any]], event_name: str) -> dict[str, An
     raise AssertionError(f"missing event {event_name}")
 
 
+def require_command(events: list[dict[str, Any]], command: str) -> None:
+    if not any(event.get("event") == "command_dispatch" and event.get("command") == command for event in events):
+        raise AssertionError(f"missing command_dispatch for {command}")
+    if not any(
+        event.get("event") == "command_result" and event.get("command") == command and event.get("success") is True
+        for event in events
+    ):
+        raise AssertionError(f"missing successful command_result for {command}")
+
+
 def main() -> int:
     if len(sys.argv) != 3:
         print("usage: test_object_behavior_mission_smoke.py <repo-root> <build-dir>", file=sys.stderr)
@@ -55,9 +65,9 @@ def main() -> int:
         "--output-dir",
         str(output_dir),
         "--max-frames",
-        "30",
+        "220",
         "--shutdown-max-frames",
-        "30",
+        "50",
         "--no-progress",
     ]
     result = subprocess.run(
@@ -78,6 +88,9 @@ def main() -> int:
     if "Mission events:" not in result.stdout:
         print(result.stdout)
         raise AssertionError("console output missing Mission events artifact line")
+    if "mission terminal state settled=Complete" not in result.stdout:
+        print(result.stdout)
+        raise AssertionError("console output missing terminal settled Complete line")
 
     events_path = output_dir / "mission_events.jsonl"
     manifest_path = output_dir / "snapshot_manifest.txt"
@@ -111,20 +124,35 @@ def main() -> int:
     if runtime_stop.get("state") != "Complete" or runtime_stop.get("terminal_settled") is not True:
         raise AssertionError(f"runtime_stop should be terminal Complete: {runtime_stop}")
 
+    for command_name in ["Arm", "Takeoff", "Land", "Disarm"]:
+        require_command(events, command_name)
+
     velocity_dispatches = [
         event for event in events
         if event.get("event") == "command_dispatch" and event.get("command") == "Velocity"
     ]
     if not velocity_dispatches:
         raise AssertionError("expected at least one hold Velocity command during object behavior")
-    for event in velocity_dispatches[:5]:
-        if any(abs(float(event.get(axis, 0.0))) > 1.0e-9 for axis in ["vx", "vy", "vz", "yaw_rate"]):
-            raise AssertionError(f"object behavior skeleton should emit zero/hold velocity only: {event}")
+    behavior_velocity_seen = False
+    for event in velocity_dispatches:
+        if event.get("state") == "ExecuteMission":
+            behavior_velocity_seen = True
+            if any(abs(float(event.get(axis, 0.0))) > 1.0e-9 for axis in ["vx", "vy", "vz", "yaw_rate"]):
+                raise AssertionError(f"object behavior skeleton should emit zero/hold velocity during ExecuteMission: {event}")
+    if not behavior_velocity_seen:
+        raise AssertionError("expected at least one ExecuteMission hold Velocity command")
 
     state_path = [event.get("to") for event in events if event.get("event") == "state_transition"]
-    for expected in ["ExecuteMission", "GoHome", "Land", "Complete"]:
+    for expected in ["Prepare", "Takeoff", "ExecuteMission", "GoHome", "Land", "Complete"]:
         if expected not in state_path:
             raise AssertionError(f"state transitions missing {expected}: {state_path}")
+
+    complete_transitions = [event for event in events if event.get("event") == "state_transition" and event.get("to") == "Complete"]
+    if not complete_transitions:
+        raise AssertionError("missing Complete state transition")
+    landed_height = complete_transitions[-1].get("ego_height_m")
+    if not isinstance(landed_height, (int, float)) or float(landed_height) > 1.0:
+        raise AssertionError(f"Complete should occur at landed height, got {landed_height}")
 
     return 0
 
