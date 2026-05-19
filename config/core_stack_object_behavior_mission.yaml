@@ -18,3 +18,13 @@ mission_tick_hz: 10
 flight_command_sink: disabled
 mission_options.behavior_spec_path: config/behaviors/follow_specific_track.yaml
 mission_options.object_behavior_hold_velocity_mps: 0.0
+mission_options.flight_safe_height_m: 2
+mission_options.flight_home_policy: initial_ego_pose
+mission_options.flight_arm_retry_interval_s: 0.2
+mission_options.flight_arm_timeout_s: 2.0
+mission_options.flight_arm_dispatch_fallback_s: 0.0
+mission_options.flight_takeoff_retry_interval_s: 0.2
+mission_options.flight_land_retry_interval_s: 0.2
+mission_options.flight_land_timeout_s: 14.0
+mission_options.flight_disarm_retry_interval_s: 0.2
+mission_options.flight_disarm_timeout_s: 8.0
