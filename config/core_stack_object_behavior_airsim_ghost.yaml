@@ -1,0 +1,45 @@
+frame_source: airsim
+ego_provider: frame_hint
+detector: scripted
+camera_stabilizer: null
+tracker: simple_centroid
+identity_resolver: appearance_only
+projector: flat_ground
+ghost_targets_enabled: true
+ghost_targets_scenario: person_pair_crossing
+world_model: in_memory
+frame_annotator: ppm_sequence
+annotation_output_path: out/object_behavior_airsim_ghost_annotation
+annotation_output_fps: 5
+fallback_map_frame_id: map_airsim_mission_0001
+
+bridge_mode: stream_binary_ego
+bridge_transport: pipe
+bridge_command: python3 simulation/airsim-stream-frames-binary.py --include-ego --rate-hz 5 --mavlink-armed-endpoints udpin:127.0.0.1:14540
+source_host: 127.0.0.1
+source_rpc_port: 41451
+vehicle_name: PX4
+vehicle_camera_name: front_center
+
+mission_controller: object_behavior
+mission_tick_hz: 10
+flight_command_sink: px4_bridge
+
+mission_options.behavior_spec_path: config/behaviors/follow_specific_track.yaml
+mission_options.object_behavior_hold_velocity_mps: 0.0
+mission_options.object_behavior_completion_after_s: 8.0
+
+mission_options.flight_control_mode: px4
+mission_options.flight_prepare_session_command: python3 simulation/airsim-prepare-session.py --host 127.0.0.1 --rpc-port 41451 --vehicle-name PX4 --mavlink-endpoints udpin:127.0.0.1:14550,udpin:127.0.0.1:14540,udpin:127.0.0.1:14600
+mission_options.flight_safe_height_m: 16
+mission_options.flight_px4_command_bridge: python3 simulation/px4-command-bridge.py --mavlink-endpoints udpin:127.0.0.1:14550 --px4-tmux-target dedalus-sim:px4 --safe-height 8
+mission_options.flight_home_policy: initial_ego_pose
+
+mission_options.flight_arm_retry_interval_s: 4.0
+mission_options.flight_arm_timeout_s: 30.0
+mission_options.flight_arm_dispatch_fallback_s: 2.0
+mission_options.flight_takeoff_retry_interval_s: 4.0
+mission_options.flight_land_retry_interval_s: 4.0
+mission_options.flight_land_timeout_s: 90.0
+mission_options.flight_disarm_retry_interval_s: 4.0
+mission_options.flight_disarm_timeout_s: 30.0
