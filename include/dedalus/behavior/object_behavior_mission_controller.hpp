@@ -12,6 +12,18 @@ namespace dedalus {
 struct ObjectBehaviorMissionConfig {
     BehaviorMissionSpec behavior_spec;
     double hold_velocity_mps{0.0};
+    double safe_height_m{8.0};
+    double takeoff_velocity_mps{1.0};
+    double go_home_velocity_mps{1.0};
+    double arm_retry_interval_s{1.0};
+    double arm_timeout_s{10.0};
+    double arm_dispatch_fallback_s{0.0};
+    double takeoff_retry_interval_s{1.0};
+    double land_retry_interval_s{1.0};
+    double land_timeout_s{60.0};
+    double disarm_retry_interval_s{1.0};
+    double disarm_timeout_s{10.0};
+    std::string home_policy{"initial_ego_pose"};
 };
 
 ObjectBehaviorMissionConfig load_object_behavior_mission_config(const MissionOptions& options);
@@ -24,19 +36,37 @@ public:
 
 private:
     [[nodiscard]] VelocityCommand command_from_velocity(TimePoint timestamp, Vec3 velocity_local_mps) const;
+    [[nodiscard]] VelocityCommand command_with_kind(TimePoint timestamp, FlightCommandKind kind) const;
     [[nodiscard]] std::string target_event(const TargetSelection& selection) const;
     [[nodiscard]] std::string behavior_event(const std::string& event, const std::string& reason) const;
     [[nodiscard]] bool completion_elapsed(TimePoint now) const;
+    [[nodiscard]] Vec3 go_home_velocity(const EgoState& ego) const;
+    void begin_abort_recovery(TimePoint now, double height_m, const std::string& reason);
+    void reset_behavior_run(TimePoint now);
 
     ObjectBehaviorMissionConfig config_;
     TargetSelector selector_;
     MissionLifecycleState state_{MissionLifecycleState::Idle};
     TimePoint mission_start_;
+    TimePoint state_start_;
+    TimePoint last_tick_time_;
     TimePoint behavior_start_;
+    TimePoint arm_last_command_time_;
+    TimePoint takeoff_last_command_time_;
+    TimePoint land_last_command_time_;
+    TimePoint disarm_last_command_time_;
+    Pose3 home_pose_;
     bool mission_started_{false};
+    bool home_initialized_{false};
     bool target_selected_emitted_{false};
     bool behavior_start_emitted_{false};
     bool behavior_complete_emitted_{false};
+    bool arm_command_sent_{false};
+    bool takeoff_command_sent_{false};
+    bool land_command_sent_{false};
+    bool disarm_command_sent_{false};
+    bool aborting_{false};
+    std::string abort_reason_;
     std::optional<TargetSelection> previous_selection_;
 };
 
