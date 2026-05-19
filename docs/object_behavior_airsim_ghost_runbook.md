@@ -176,40 +176,81 @@ This is the validation truth path.
 
 `simulation/airsim-world-overlay.py` is not part of the autonomy loop. It is display-only.
 
+It now supports three overlay sources:
+
 ```text
+combined:
+  Draw planned ghost-scenario markers immediately, then overlay world-model agents when snapshots exist.
+
+world_snapshot:
+  Draw only agents that Dedalus has actually written into WorldSnapshot artifacts.
+
+ghost_scenario:
+  Draw only planned ghost targets from simulation/ghost_targets/person_pair_crossing.yaml.
+```
+
+The visual semantics are:
+
+```text
+PLAN:
+  faint planned ghost-scenario marker, read directly from simulation/ghost_targets/*.yaml.
+
+AG:
+  solid world-model agent marker, read from snapshot_XXXX.json.
+
+SEL:
+  selected target marker, read from mission_events.jsonl target_selected.
+```
+
+This makes the state explicit:
+
+```text
+planned ghost exists but no AG marker:
+  AirSim/debug preview is working, but Dedalus has not yet put that ghost into WorldSnapshot.
+
+AG marker exists but no SEL marker:
+  Dedalus has the world-model agent, but TargetSelector has not selected it yet or mission_events are not available.
+
+SEL marker exists:
+  TargetSelector selected that WorldSnapshot agent and behavior can act on it.
+```
+
+Viewport overlay dataflow:
+
+```text
+simulation/ghost_targets/person_pair_crossing.yaml
+  -> planned PLAN markers
+
 snapshot_manifest.txt
   -> latest snapshot_XXXX.json
   -> WorldSnapshot.agents[]
-  -> mission_events.jsonl selected target
-  -> AirSim debug draw API
+  -> solid AG markers
+
+mission_events.jsonl
+  -> target_selected.source_track_id
+  -> green SEL marker
+
+AirSim debug draw API
   -> Unreal/AirSim viewport markers
 ```
 
 It draws:
 
 ```text
-snapshot agent position_local
+position_local
   -> airsim.Vector3r(x, y, z - lift)
   -> client.simPlotPoints(...)
   -> client.simPlotStrings(...)
 ```
 
-The script waits for both independent readiness conditions:
-
-```text
-AirSim RPC reachable:
-  proves the viewport/debug overlay can be injected into AirSim.
-
-WorldSnapshot ghost agents present:
-  proves dedalus_mission_loop has injected ghost/virtual detections into the perception/world-model path that affects behavior.
-```
+In `combined` mode, the overlay does not block planned ghost drawing while it waits for Dedalus snapshots. In `world_snapshot` mode, it waits for the required `WorldSnapshot` tracks because that mode explicitly means “show me what Dedalus knows.”
 
 `Ctrl-C` exits either wait with no mission-state change.
 
 Why this renders into the AirSim camera view:
 
 ```text
-WorldSnapshot 3D position
+WorldSnapshot or ghost-scenario 3D position
   -> AirSim 3D debug marker
   -> Unreal renders marker in world
   -> AirSim camera sees marker if marker is inside the camera frustum
@@ -235,7 +276,7 @@ px4-command-bridge.py:
   Dedalus command output -> PX4/AirSim
 
 airsim-world-overlay.py:
-  Dedalus artifacts -> AirSim human debug display
+  Ghost fixture + Dedalus artifacts -> AirSim human debug display
 
 validate-object-behavior-airsim-ghost.py:
   Dedalus artifacts -> validation result
@@ -332,7 +373,7 @@ sidecars include ghost_person_001
 
 ## 5. AirSim viewport overlay
 
-The overlay can be started before or after the mission loop. It waits independently for AirSim RPC and for Dedalus snapshots that contain the expected ghost tracks.
+The overlay can be started before or after the mission loop. In default `combined` mode, it immediately draws planned ghosts from the ghost fixture, then adds solid world-model agents as soon as Dedalus snapshots are available.
 
 Terminal 1, mission loop:
 
@@ -352,6 +393,7 @@ Terminal 2, viewport overlay:
 ```bash
 python3 simulation/airsim-world-overlay.py \
   --snapshot-dir out/object_behavior_airsim_ghost \
+  --source combined \
   --follow \
   --rate-hz 2 \
   --duration-s 180 \
@@ -359,12 +401,12 @@ python3 simulation/airsim-world-overlay.py \
   --label
 ```
 
-Expected waiting messages if started early:
+Expected messages if started early:
 
 ```text
 airsim-world-overlay: waiting for AirSim RPC at 127.0.0.1:41451 (...)
-airsim-world-overlay: waiting for Dedalus snapshots under out/object_behavior_airsim_ghost
-airsim-world-overlay: waiting for ghost agents in WorldSnapshot (...)
+airsim-world-overlay: drawing planned ghosts; waiting for Dedalus snapshots under out/object_behavior_airsim_ghost
+airsim-world-overlay: drawing planned ghosts; waiting for WorldSnapshot ghosts (...)
 ```
 
 Expected ready message:
@@ -376,12 +418,44 @@ airsim-world-overlay: WorldSnapshot ghost agents ready from snapshot_XXXX.json (
 What should appear in AirSim/Unreal:
 
 ```text
-green marker/text:
-  SEL person ghost_person_001
+faint PLAN markers:
+  PLAN person ghost_person_001
+  PLAN person ghost_person_002
+  PLAN car ghost_car_001
 
-yellow marker/text:
+solid AG markers once WorldSnapshot exists:
+  AG person ghost_person_001
   AG person ghost_person_002
   AG car ghost_car_001
+
+green SEL marker after selection:
+  SEL person ghost_person_001
+```
+
+Draw only planned ghosts, independent of mission loop:
+
+```bash
+python3 simulation/airsim-world-overlay.py \
+  --snapshot-dir out/object_behavior_airsim_ghost \
+  --source ghost_scenario \
+  --follow \
+  --rate-hz 2 \
+  --duration-s 180 \
+  --clear \
+  --label
+```
+
+Draw only what Dedalus has put into WorldSnapshot:
+
+```bash
+python3 simulation/airsim-world-overlay.py \
+  --snapshot-dir out/object_behavior_airsim_ghost \
+  --source world_snapshot \
+  --follow \
+  --rate-hz 2 \
+  --duration-s 180 \
+  --clear \
+  --label
 ```
 
 Dry-run without AirSim drawing:
@@ -389,6 +463,7 @@ Dry-run without AirSim drawing:
 ```bash
 python3 simulation/airsim-world-overlay.py \
   --snapshot-dir out/object_behavior_airsim_ghost \
+  --source combined \
   --dry-run \
   --label
 ```
@@ -398,9 +473,24 @@ One-shot draw after a completed run:
 ```bash
 python3 simulation/airsim-world-overlay.py \
   --snapshot-dir out/object_behavior_airsim_ghost \
+  --source combined \
   --clear \
   --label \
   --persistent
+```
+
+Animate planned ghost positions using the fixture velocity fields:
+
+```bash
+python3 simulation/airsim-world-overlay.py \
+  --snapshot-dir out/object_behavior_airsim_ghost \
+  --source combined \
+  --follow \
+  --animate-planned \
+  --rate-hz 2 \
+  --duration-s 180 \
+  --clear \
+  --label
 ```
 
 Clear persistent markers:
@@ -440,7 +530,7 @@ ObjectBehaviorMissionController can trigger behavior events from WorldSnapshot s
 Follow behavior can emit bounded non-zero velocity.
 Mission lifecycle still reaches GoHome / Land / Disarm / Complete.
 Dedalus artifact overlays can show the ghost world-model agents on live AirSim camera frames.
-AirSim viewport overlay can mirror WorldSnapshot agents into the Unreal/AirSim view without affecting autonomy.
+AirSim viewport overlay can show planned ghosts, world-model agents, and selected target as distinct states without affecting autonomy.
 ```
 
 ---
