@@ -1,3 +1,4 @@
+#include <algorithm>
 #include <cmath>
 #include <iostream>
 
@@ -9,6 +10,10 @@ namespace {
 
 bool near(double lhs, double rhs) {
     return std::abs(lhs - rhs) < 1.0e-9;
+}
+
+bool contains(const std::vector<std::string>& values, const std::string& expected) {
+    return std::find(values.begin(), values.end(), expected) != values.end();
 }
 
 }  // namespace
@@ -90,6 +95,25 @@ int main() {
         return 1;
     }
 
+    const auto object_behavior_config = dedalus::load_core_stack_config("config/core_stack_object_behavior_mission.yaml");
+    if (object_behavior_config.mission_controller != "object_behavior") {
+        std::cerr << "object behavior config did not parse mission_controller\n";
+        return 1;
+    }
+    if (object_behavior_config.flight_command_sink != "disabled") {
+        std::cerr << "object behavior config should use disabled sink for synthetic skeleton validation\n";
+        return 1;
+    }
+    if (!object_behavior_config.ghost_targets_enabled || object_behavior_config.ghost_targets_scenario != "person_pair_crossing") {
+        std::cerr << "object behavior config should enable ghost target scenario\n";
+        return 1;
+    }
+    if (object_behavior_config.mission_options.get_or("behavior_spec_path", "") !=
+        "config/behaviors/follow_specific_track.yaml") {
+        std::cerr << "object behavior config did not use canonical config/behaviors spec path\n";
+        return 1;
+    }
+
     dedalus::ProviderRegistry registry;
     dedalus::CoreStackRunner runner{registry.create(config)};
     if (!runner.run_once()) {
@@ -125,8 +149,8 @@ int main() {
     }
 
     const auto mission_controllers = registry.mission_controllers();
-    if (mission_controllers.empty()) {
-        std::cerr << "mission controller registry list is empty\n";
+    if (!contains(mission_controllers, "trajectory_mission") || !contains(mission_controllers, "object_behavior")) {
+        std::cerr << "mission controller registry missing expected entries\n";
         return 1;
     }
 

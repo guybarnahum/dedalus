@@ -11,21 +11,36 @@ guybarnahum/dedalus
 Active milestone state:
 
 ```text
-Milestone 2.20 — Mission robustness, observability, and cleanup
-Status: closed / validated.
+Milestones 2.20, 2.21, 2.22, and 2.23 are implemented / validated.
 
-Milestone 2.21 — Mission artifact validation and replay-grade diagnostics
-Status: implemented / validated.
+Milestone 2.24 — TargetSelector, ghost validation, reprojection validation, and world-model evidence plumbing.
+Status: implemented through 2.24G.9 baseline.
 
-Milestone 2.22 — Scenario/campaign harness
-Status: implemented / validated.
+2.24 highlights:
+- track-addressable WorldSnapshot agents
+- TargetSelectorSpec track_id / agent_id support
+- TargetSelector policies and tests
+- ghost/scripted targets for pre-camera validation
+- WorldSnapshot-to-camera reprojection projector
+- projected AG markers in annotation artifacts
+- frame_XXXXXX.world_overlay.json sidecars
+- camera-derived 2D provenance carried into AgentState.latest_view_evidence
+- reprojection residual metadata for camera-derived agents
+- CTest layers: contracts -> unit -> synthetic -> scenario
 
-Milestone 2.23 — Behavior spec parser foundation
-Status: implemented on main; local validation still expected after checkout.
+Milestone 2.25 — ObjectBehaviorMissionController skeleton.
+Status: implemented through 2.25D lifecycle integration baseline.
 
-Current active milestone:
-Milestone 2.24 — TargetSelector from WorldSnapshot agents.
-Current slice: 2.24A track-addressable WorldSnapshot agents is implemented; continue with TargetSelectorSpec track/agent fields and TargetSelector tests.
+2.25 highlights:
+- behavior specs are canonical autonomy config under config/behaviors/
+- ObjectBehaviorMissionController loads config/behaviors/follow_specific_track.yaml
+- object behavior consumes WorldSnapshot agents through TargetSelector
+- object behavior emits target_selected, behavior_start, behavior_complete
+- object behavior uses the normal Prepare -> Takeoff -> ExecuteMission -> GoHome -> Land -> Complete lifecycle
+- synthetic object_behavior_mission_smoke validates ghost_person_001 selection, zero/hold behavior velocity, Arm/Takeoff/Land/Disarm, and Complete/status=complete
+
+Next milestone slice:
+2.25E / 2.26 — extract BehaviorRuntime hold/fallback mechanics and then implement first follow behavior math.
 ```
 
 Patch policy:
@@ -45,10 +60,16 @@ cmake --build build-staging -j$(nproc)
 ctest --test-dir build-staging --output-on-failure
 ```
 
-Focused current 2.24A validation:
+Focused object behavior validation:
 
 ```bash
-ctest --test-dir build-staging --output-on-failure -R 'world_snapshot_json|perception_world_model_flow|behavior_spec'
+ctest --test-dir build-staging --output-on-failure -R 'object_behavior_mission_controller|object_behavior_mission_smoke|core_stack_config_loader|behavior_spec|target_selector'
+```
+
+Focused reprojection / world evidence validation:
+
+```bash
+ctest --test-dir build-staging --output-on-failure -R 'world_to_image_projector|world_reprojection_artifacts'
 ```
 
 Scenario/campaign validation:
@@ -84,7 +105,7 @@ AirSim live frame + ego sidecar
   -> InMemoryWorldModel
   -> LatestWorldSnapshot
   -> MissionRuntime async loop
-  -> TrajectoryMissionController
+  -> TrajectoryMissionController today / ObjectBehaviorMissionController for object behavior
   -> Px4BridgeCommandSink
   -> persistent simulation/px4-command-bridge.py
        - PX4 shell: arm, takeoff, land, disarm
@@ -99,7 +120,7 @@ Milestone 3 target architecture:
 AirSim live frame + ego sidecar
   -> AirSimFrameSource
   -> detector / tracker / projector, or ghost/scripted target provider for pre-camera validation
-  -> WorldSnapshot agents with agent_id, source_track_id, identity_id, class, confidence, local position, velocity
+  -> WorldSnapshot agents with agent_id, source_track_id, identity_id, class, confidence, local position, velocity, latest_view_evidence when camera-derived
   -> TargetSelector
   -> BehaviorRuntime / ObjectBehaviorMissionController
   -> desired velocity vector
@@ -161,7 +182,7 @@ Do not reintroduce the hand-written native C++ MAVLink encoder as the default li
 
 ---
 
-## 3. Object Identity Model
+## 3. Object Identity and Evidence Model
 
 Do not collapse detections, tracks, agents, and identities. They answer different questions.
 
@@ -192,12 +213,19 @@ agent_id:
 identity_id:
   Identity-resolver-owned recognized real-world identity.
   Later this may be a known person, vehicle plate, drone serial, or cross-mission identity.
+
+latest_view_evidence:
+  World-model-owned camera-scoped evidence on AgentState.
+  Camera-derived agents carry source_frame_id, source_detection_id, source_bbox_px, and source_center_px.
+  Ghost/scripted agents normally omit latest_view_evidence because they have no source camera detection.
 ```
 
-Current 2.24A implementation rule:
+Current implementation rule:
 
 ```text
-InMemoryWorldModel derives agent_id and identity_id from Observation3D.track_id, and stores the original tracker ID in AgentState.source_track_id. Snapshot JSON includes source_track_id so artifacts can prove which tracker target became which world-model agent.
+PerceptionPipelineOutput is evidence.
+WorldSnapshot is autonomy state.
+Behavior consumes WorldSnapshot, not perception internals.
 ```
 
 Example:
@@ -217,36 +245,37 @@ Target selection must be able to focus on one specific object in a group. It mus
 
 ---
 
-## 4. Milestone 2.24 Plan
+## 4. Behavior Config Location
 
-2.24A is implemented:
+Behavior specs are global autonomy/runtime configuration, not simulation assets.
+
+Canonical behavior spec location:
 
 ```text
-- AgentState.agent_id is derived from Observation3D.track_id.
-- AgentState.identity_id is derived from Observation3D.track_id.
-- AgentState.source_track_id preserves the original tracker ID.
-- WorldSnapshot JSON emits source_track_id.
-- Unit tests verify multiple observations produce distinct agents and serialized source_track_id artifacts.
+config/behaviors/follow_person.yaml
+config/behaviors/follow_specific_track.yaml
+config/behaviors/circle_car.yaml
+config/behaviors/approach_target.yaml
+config/behaviors/sequence_approach_circle.yaml
 ```
 
-Next 2.24 tasks:
+Simulation-only target fixtures remain here:
 
 ```text
-1. Extend TargetSelectorSpec with optional track_id and agent_id fields.
-2. Parser validation: at least one of class, track_id, or agent_id must be present.
-3. Add TargetSelector output model with agent_id, source_track_id, identity_id, class, confidence, position, velocity, status, reason.
-4. Add selection policies:
-     highest_confidence
-     nearest
-     persistent_track
-5. Add tests over hand-built WorldSnapshot agents:
-     explicit track_id selection
-     explicit agent_id selection
-     highest_confidence among matching class
-     nearest among matching class
-     persistent_track keeps prior target even if another object has higher confidence
-     wrong class / low confidence / stale lifecycle ignored
-     no candidates returns selected=false
+simulation/ghost_targets/person_pair_crossing.yaml
+```
+
+Rule:
+
+```text
+Behavior spec:
+  config/behaviors/*.yaml
+
+Ghost/scripted target scenario:
+  simulation/ghost_targets/*.yaml
+
+Core-stack config that references behavior:
+  config/core_stack_object_behavior_mission.yaml
 ```
 
 ---
@@ -264,7 +293,7 @@ Synthetic / AirSim frame
   -> InMemoryWorldModel
   -> WorldSnapshot.agents with stable source_track_id
   -> TargetSelector
-  -> ObjectBehaviorMissionController later
+  -> ObjectBehaviorMissionController
 ```
 
 Bad shortcut:
@@ -320,10 +349,11 @@ sequence
 Sample specs live in:
 
 ```text
-simulation/behaviors/follow_person.yaml
-simulation/behaviors/circle_car.yaml
-simulation/behaviors/approach_target.yaml
-simulation/behaviors/sequence_approach_circle.yaml
+config/behaviors/follow_person.yaml
+config/behaviors/follow_specific_track.yaml
+config/behaviors/circle_car.yaml
+config/behaviors/approach_target.yaml
+config/behaviors/sequence_approach_circle.yaml
 ```
 
 2.23 parser files:
@@ -338,7 +368,7 @@ tests/unit/test_behavior_spec.cpp
 
 ## 7. Mission Events and Validation Expectations for M3
 
-Expected later M3 events should include both world-model and tracker handles when available:
+Expected M3 events include both world-model and tracker handles when available:
 
 ```json
 {"event":"target_selected","class":"person","agent_id":"agent_ghost_person_001","source_track_id":"ghost_person_001","identity_id":"identity_ghost_person_001","confidence":0.82}
@@ -346,7 +376,20 @@ Expected later M3 events should include both world-model and tracker handles whe
 {"event":"behavior_complete","behavior":"follow","reason":"duration_elapsed"}
 ```
 
-M3 validation should prove:
+Current 2.25D synthetic lifecycle validation proves:
+
+```text
+final_state == Complete
+terminal_settled == true
+Arm / Takeoff / Land / Disarm commands dispatched and succeed via disabled sink
+safe height reached before behavior execution
+target_selected selects ghost_person_001
+behavior_start and behavior_complete are emitted
+Velocity commands during ExecuteMission are zero/hold only
+GoHome / Land / Complete reached
+```
+
+Full M3 validation should later prove:
 
 ```text
 final_state == Complete
@@ -356,7 +399,7 @@ at least one target_selected event
 selected target identity remains stable unless reacquire/lost is expected
 at least one behavior_start event
 expected behavior_complete event
-velocity commands emitted during behavior
+non-zero bounded behavior velocity once follow/circle/approach math exists
 GoHome / Land / Complete reached
 ```
 
@@ -372,6 +415,7 @@ simulation/run-mission-campaign.py
 simulation/validate-mission-artifacts.py
 config/core_stack_synthetic_mission_ci.yaml
 config/core_stack_synthetic_mission_abort_ci.yaml
+config/core_stack_object_behavior_mission.yaml
 config/mission_campaigns/synthetic_ci.json
 config/mission_campaigns/airsim_live_smoke.json
 docs/mission_scenario_runner.md
@@ -402,6 +446,8 @@ Second Ctrl-C:
 - Do not hide arming inside velocity commands.
 - Do not collapse flight_control.arm_state and ego.armed.
 - Do not move to ExecuteMission until Takeoff is confirmed by ego height.
+- Do not stop at raw Complete state; wait for terminal_settled / Complete status=complete.
+- Do not treat Abort as stop immediately when recovery is possible.
 - Do not make the native C++ MAVLink sink the default live path; use px4_bridge.
 - Do not rewrite the working pymavlink control path in C++ while stabilizing behavior.
 - Do not let telemetry sidecar and command bridge bind the same MAVLink endpoint.
@@ -412,6 +458,7 @@ Second Ctrl-C:
 - Do not let Milestone 3 balloon into full obstacle avoidance; M3 is object-conditioned behavior. Avoidance starts post-M3.
 - Do not collapse track_id/source_track_id/agent_id/identity_id into one field.
 - Do not select targets only by confidence when a stable track/agent target is specified.
+- Do not keep global behavior specs under simulation/behaviors; use config/behaviors.
 - Do not create branches or PRs unless explicitly requested.
 ```
 
@@ -422,7 +469,8 @@ Second Ctrl-C:
 Read next when relevant:
 
 ```text
-docs/object_conditioned_behavior_plan.md     detailed 2.24/M3 behavior + identity plan
+docs/object_conditioned_behavior_plan.md     detailed M3 behavior + identity plan
+docs/world_model_reprojection_validation_plan.md reprojection and world-model evidence plan
 docs/mission_scenario_runner.md             scenario/campaign harness
 docs/mission_pipeline_current_state.md       mission loop architecture
 docs/core_stack_current_state.md             broader core-stack status

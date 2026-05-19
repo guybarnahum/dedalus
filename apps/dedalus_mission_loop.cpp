@@ -19,6 +19,7 @@
 #include "dedalus/behavior/flight_command_sinks.hpp"
 #include "dedalus/behavior/latest_world_snapshot.hpp"
 #include "dedalus/behavior/mission_runtime.hpp"
+#include "dedalus/behavior/object_behavior_mission_controller.hpp"
 #include "dedalus/behavior/trajectory_mission_controller.hpp"
 #include "dedalus/runtime/config_loader.hpp"
 #include "dedalus/runtime/core_stack_runner.hpp"
@@ -307,6 +308,8 @@ MissionEventSummary read_mission_event_summary(const std::filesystem::path& path
             summary.tick_count = std::max(summary.tick_count, json_int_field(line, "tick_count", summary.tick_count));
         } else if (event == "finish_requested") {
             summary.tick_count = std::max(summary.tick_count, json_int_field(line, "tick", summary.tick_count));
+        } else if (event == "target_selected" || event == "behavior_start" || event == "behavior_complete") {
+            summary.tick_count = std::max(summary.tick_count, json_int_field(line, "tick", summary.tick_count));
         }
     }
 
@@ -416,6 +419,10 @@ std::unique_ptr<dedalus::MissionController> create_mission_controller(
     if (config.mission_controller == "trajectory_mission") {
         return std::make_unique<dedalus::TrajectoryMissionController>(
             dedalus::load_trajectory_mission_config(config.mission_options));
+    }
+    if (config.mission_controller == "object_behavior") {
+        return std::make_unique<dedalus::ObjectBehaviorMissionController>(
+            dedalus::load_object_behavior_mission_config(config.mission_options));
     }
     if (config.mission_controller == "disabled") {
         return nullptr;

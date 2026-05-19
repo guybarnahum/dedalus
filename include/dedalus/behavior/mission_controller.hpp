@@ -3,6 +3,7 @@
 #include <optional>
 #include <string>
 #include <unordered_map>
+#include <vector>
 
 #include "dedalus/core/types.hpp"
 #include "dedalus/world_model/world_snapshot.hpp"
@@ -108,6 +109,7 @@ struct MissionTickOutput {
     MissionLifecycleState state{MissionLifecycleState::Idle};
     std::optional<VelocityCommand> command;
     std::string status;
+    std::vector<std::string> events;
 };
 
 class MissionController {

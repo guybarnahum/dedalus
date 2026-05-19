@@ -156,6 +156,9 @@ bool MissionRuntime::tick_once() {
             ",\"ego_height_m\":" + std::to_string(input.snapshot.ego.height_m) +
             ",\"finish_requested\":" + (input.finish_requested ? std::string{"true"} : std::string{"false"}));
     }
+    for (const auto& event_fields : output.events) {
+        write_event("\"tick\":" + std::to_string(tick_count_) + ",\"state\":" + q(to_string(output.state)) + "," + event_fields);
+    }
     if (state_changed || detailed_tick) {
         std::cerr << "dedalus_mission: tick=" << tick_count_
                   << " state=" << to_string(output.state)

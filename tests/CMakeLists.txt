@@ -203,6 +203,13 @@ dedalus_add_native_test(
 )
 
 dedalus_add_native_test(
+    NAME object_behavior_mission_controller
+    LAYER unit
+    TAGS synthetic behavior
+    SOURCES unit/test_object_behavior_mission_controller.cpp
+)
+
+dedalus_add_native_test(
     NAME mission_runtime
     LAYER unit
     TAGS synthetic
@@ -255,6 +262,16 @@ if(Python3_Interpreter_FOUND)
         TAGS integration visualization reprojection
         COMMAND_ARGS
             ${PROJECT_SOURCE_DIR}/tests/integration/test_world_reprojection_artifacts.py
+            ${PROJECT_SOURCE_DIR}
+            ${PROJECT_BINARY_DIR}
+    )
+
+    dedalus_add_python_test(
+        NAME object_behavior_mission_smoke
+        LAYER synthetic
+        TAGS integration behavior
+        COMMAND_ARGS
+            ${PROJECT_SOURCE_DIR}/tests/integration/test_object_behavior_mission_smoke.py
             ${PROJECT_SOURCE_DIR}
             ${PROJECT_BINARY_DIR}
     )

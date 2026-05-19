@@ -1,6 +1,7 @@
 add_library(dedalus_core
     behavior/behavior_spec.cpp
     behavior/mission_runtime.cpp
+    behavior/object_behavior_mission_controller.cpp
     behavior/px4_bridge_command_sink.cpp
     behavior/px4_mavlink_command_sink.cpp
     behavior/target_selector.cpp
