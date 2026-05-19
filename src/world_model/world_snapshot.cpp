@@ -203,8 +203,17 @@ const char* bool_string(bool value) {
     return value ? "true" : "false";
 }
 
+void write_vec2(std::ostringstream& out, const Vec2& value) {
+    out << "[" << value.x << "," << value.y << "]";
+}
+
 void write_vec3(std::ostringstream& out, const Vec3& value) {
     out << "[" << value.x << "," << value.y << "," << value.z << "]";
+}
+
+void write_rect2(std::ostringstream& out, const Rect2& value) {
+    out << "{\"x\":" << value.x << ",\"y\":" << value.y << ",\"width\":" << value.width
+        << ",\"height\":" << value.height << "}";
 }
 
 void write_pose3(std::ostringstream& out, const Pose3& value) {
@@ -221,6 +230,29 @@ void write_bounds3(std::ostringstream& out, const Bounds3& value) {
     out << ",\"max\":";
     write_vec3(out, value.max);
     out << "}";
+}
+
+void write_agent_view_evidence(std::ostringstream& out, const AgentViewEvidence& evidence) {
+    out << "{\n";
+    out << "        \"timestamp_ns\": " << evidence.timestamp.timestamp_ns;
+    if (evidence.has_source_frame) {
+        out << ",\n        \"source_frame_id\": \"" << escape_json(evidence.source_frame_id.value) << "\"";
+    }
+    if (evidence.has_source_detection) {
+        out << ",\n        \"source_detection_id\": \"" << escape_json(evidence.source_detection_id.value) << "\"";
+    }
+    if (evidence.has_source_bbox) {
+        out << ",\n        \"source_bbox_px\": ";
+        write_rect2(out, evidence.source_bbox_px);
+    }
+    if (evidence.has_source_center) {
+        out << ",\n        \"source_center_px\": ";
+        write_vec2(out, evidence.source_center_px);
+    }
+    if (!evidence.camera_name.empty()) {
+        out << ",\n        \"camera_name\": \"" << escape_json(evidence.camera_name) << "\"";
+    }
+    out << "\n      }";
 }
 
 }  // namespace
@@ -292,6 +324,22 @@ std::string to_json(const WorldSnapshot& snapshot) {
         out << "      \"agent_id\": \"" << escape_json(agent.agent_id.value) << "\",\n";
         out << "      \"identity_id\": \"" << escape_json(agent.identity_id.value) << "\",\n";
         out << "      \"source_track_id\": \"" << escape_json(agent.source_track_id.value) << "\",\n";
+        if (agent.has_source_detection) {
+            out << "      \"source_detection_id\": \"" << escape_json(agent.source_detection_id.value) << "\",\n";
+        }
+        if (agent.has_source_frame) {
+            out << "      \"source_frame_id\": \"" << escape_json(agent.source_frame_id.value) << "\",\n";
+        }
+        if (agent.has_source_bbox) {
+            out << "      \"source_bbox_px\": ";
+            write_rect2(out, agent.source_bbox_px);
+            out << ",\n";
+        }
+        if (agent.has_latest_view_evidence) {
+            out << "      \"latest_view_evidence\": ";
+            write_agent_view_evidence(out, agent.latest_view_evidence);
+            out << ",\n";
+        }
         out << "      \"class\": \"" << to_string(agent.class_label) << "\",\n";
         out << "      \"faction\": \"" << to_string(agent.faction) << "\",\n";
         out << "      \"lifecycle\": \"" << to_string(agent.lifecycle) << "\",\n";
