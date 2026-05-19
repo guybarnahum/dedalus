@@ -61,6 +61,7 @@ private:
     bool target_selected_emitted_{false};
     bool behavior_start_emitted_{false};
     bool behavior_complete_emitted_{false};
+    bool behavior_tick_sample_emitted_{false};
     bool arm_command_sent_{false};
     bool takeoff_command_sent_{false};
     bool land_command_sent_{false};
