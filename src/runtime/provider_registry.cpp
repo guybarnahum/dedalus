@@ -203,7 +203,7 @@ std::vector<std::string> ProviderRegistry::frame_annotators() const {
 }
 
 std::vector<std::string> ProviderRegistry::mission_controllers() const {
-    return {"disabled", "trajectory_mission"};
+    return {"disabled", "trajectory_mission", "object_behavior"};
 }
 
 std::vector<std::string> ProviderRegistry::flight_command_sinks() const {
