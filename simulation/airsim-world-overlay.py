@@ -514,8 +514,8 @@ if __name__ == "__main__":
     try:
         raise SystemExit(main())
     except KeyboardInterrupt:
-        print("airsim-world-overlay: interrupted", file=sys.stderr)
+        print("\nairsim-world-overlay: interrupted", file=sys.stderr)
         raise SystemExit(130)
     except Exception as exc:
-        print(f"airsim-world-overlay: {exc}", file=sys.stderr)
+        print(f"\nairsim-world-overlay: {exc}", file=sys.stderr)
         raise SystemExit(1)
