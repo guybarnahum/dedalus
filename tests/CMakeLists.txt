@@ -180,6 +180,10 @@ dedalus_add_native_test(
     TAGS synthetic
     SOURCES unit/test_perception_world_model_flow.cpp
 )
+set_tests_properties("perception_world_model_flow (unit)"
+    PROPERTIES
+        WORKING_DIRECTORY ${PROJECT_SOURCE_DIR}
+)
 
 dedalus_add_native_test(
     NAME video_only_world_model_flow
