@@ -33,6 +33,8 @@ SELECTED_COLOR = [0.0, 1.0, 0.2, 1.0]
 WORLD_AGENT_COLOR = [1.0, 0.85, 0.0, 1.0]
 PLANNED_GHOST_COLOR = [0.2, 0.6, 1.0, 0.35]
 STALE_COLOR = [0.5, 0.5, 0.5, 1.0]
+ORIGIN_COLOR = [1.0, 1.0, 1.0, 1.0]
+EGO_COLOR = [1.0, 0.0, 1.0, 1.0]
 DEFAULT_REQUIRED_TRACKS = ["ghost_person_001", "ghost_person_002", "ghost_car_001"]
 DEFAULT_GHOST_TARGETS = Path("simulation/ghost_targets/person_pair_crossing.yaml")
 
@@ -59,6 +61,9 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--max-agents", type=int, default=20)
     parser.add_argument("--z-lift-m", type=float, default=1.5)
     parser.add_argument("--dry-run", action="store_true")
+    parser.add_argument("--debug", action="store_true", help="Print PLAN/AG/SEL coordinate comparisons and draw ORIGIN/EGO reference markers.")
+    parser.add_argument("--debug-every-s", type=float, default=1.0, help="Minimum seconds between repeated debug print blocks.")
+    parser.add_argument("--debug-json", type=Path, default=None, help="Optional path to write the latest coordinate debug JSON object.")
     parser.add_argument("--wait-for-airsim-s", type=float, default=0.0, help="0 means wait until Ctrl-C.")
     parser.add_argument("--wait-for-world-model-s", type=float, default=0.0, help="0 means wait until Ctrl-C in world_snapshot mode only.")
     parser.add_argument("--required-track", action="append", default=None)
@@ -132,6 +137,7 @@ def planned_agent_at(target: dict[str, Any], elapsed_s: float, animate: bool) ->
         "class": target.get("class", "unknown"),
         "confidence": float(target.get("confidence", 0.0)),
         "position_local": position,
+        "velocity_local": velocity,
         "lifecycle": "planned",
     }
 
@@ -189,6 +195,37 @@ def distance_xy(a: Any, b: Any) -> float:
         return float("inf")
 
 
+def vec3(value: Any) -> list[float] | None:
+    if not isinstance(value, list) or len(value) != 3:
+        return None
+    try:
+        return [float(value[0]), float(value[1]), float(value[2])]
+    except Exception:
+        return None
+
+
+def vec_delta(a: list[float] | None, b: list[float] | None) -> list[float] | None:
+    if a is None or b is None:
+        return None
+    return [a[i] - b[i] for i in range(3)]
+
+
+def vec_norm(value: list[float] | None) -> float | None:
+    if value is None:
+        return None
+    return math.sqrt(sum(component * component for component in value))
+
+
+def rounded(value: Any) -> Any:
+    if isinstance(value, float):
+        return round(value, 4)
+    if isinstance(value, list):
+        return [rounded(item) for item in value]
+    if isinstance(value, dict):
+        return {key: rounded(item) for key, item in value.items()}
+    return value
+
+
 def agent_track_ids(snapshot: dict[str, Any]) -> set[str]:
     tracks: set[str] = set()
     for agent in snapshot.get("agents", []):
@@ -215,10 +252,19 @@ def world_agents_to_draw(snapshot: dict[str, Any], max_agents: int, selected_tra
 
 
 def vector3_from_position(position: Any, z_lift_m: float, source: str) -> airsim.Vector3r:
-    if not isinstance(position, list) or len(position) != 3:
+    position_vec = vec3(position)
+    if position_vec is None:
         raise ValueError(f"invalid position_local: {position!r}")
     lift = z_lift_m * (0.55 if source == "planned" else 1.0)
-    return airsim.Vector3r(float(position[0]), float(position[1]), float(position[2]) - lift)
+    return airsim.Vector3r(position_vec[0], position_vec[1], position_vec[2] - lift)
+
+
+def draw_vec_from_position(position: Any, z_lift_m: float, source: str) -> list[float] | None:
+    position_vec = vec3(position)
+    if position_vec is None:
+        return None
+    lift = z_lift_m * (0.55 if source == "planned" else 1.0)
+    return [position_vec[0], position_vec[1], position_vec[2] - lift]
 
 
 def marker_color(agent: dict[str, Any], selected_track: str | None) -> list[float]:
@@ -262,6 +308,23 @@ def connect_airsim(args: argparse.Namespace) -> Any | None:
             time.sleep(1.0 / max(args.rate_hz, 0.1))
 
 
+def draw_reference_markers(client: Any, snapshot: dict[str, Any] | None, args: argparse.Namespace) -> None:
+    if not args.debug or client is None:
+        return
+    duration = 0.0 if args.persistent else max(0.5, 1.5 / max(args.rate_hz, 0.1))
+    origin = airsim.Vector3r(0.0, 0.0, -0.25)
+    client.simPlotPoints([origin], color_rgba=ORIGIN_COLOR, size=16.0, duration=duration, is_persistent=args.persistent)
+    client.simPlotStrings(["ORIGIN [0,0,0]"], [airsim.Vector3r(0.0, 0.0, -1.0)], scale=1.0, color_rgba=ORIGIN_COLOR, duration=duration)
+    if snapshot is None:
+        return
+    ego_position = vec3(snapshot.get("ego", {}).get("position_local"))
+    if ego_position is None:
+        return
+    ego_point = airsim.Vector3r(ego_position[0], ego_position[1], ego_position[2] - 0.75)
+    client.simPlotPoints([ego_point], color_rgba=EGO_COLOR, size=18.0, duration=duration, is_persistent=args.persistent)
+    client.simPlotStrings(["EGO"], [airsim.Vector3r(ego_point.x_val, ego_point.y_val, ego_point.z_val - 0.8)], scale=1.0, color_rgba=EGO_COLOR, duration=duration)
+
+
 def draw_agents(client: Any, label: str, agents: list[dict[str, Any]], selected_track: str | None, args: argparse.Namespace) -> None:
     duration = 0.0 if args.persistent else max(0.5, 1.5 / max(args.rate_hz, 0.1))
     if args.dry_run:
@@ -282,6 +345,96 @@ def draw_agents(client: Any, label: str, agents: list[dict[str, Any]], selected_
             client.simPlotStrings([label_for(agent, selected_track)], [label_point], scale=0.9 if agent.get("source") == "planned" else 1.2, color_rgba=color, duration=duration)
 
 
+def build_debug_report(
+    snapshot_path: Path | None,
+    snapshot: dict[str, Any] | None,
+    planned_agents: list[dict[str, Any]],
+    world_agents: list[dict[str, Any]],
+    selected_track: str | None,
+    elapsed_s: float,
+    args: argparse.Namespace,
+) -> dict[str, Any]:
+    planned_by_track = {str(agent.get("source_track_id")): agent for agent in planned_agents if agent.get("source_track_id")}
+    world_by_track = {str(agent.get("source_track_id")): agent for agent in world_agents if agent.get("source_track_id")}
+    tracks = sorted(set(planned_by_track) | set(world_by_track))
+    ego = snapshot.get("ego", {}) if snapshot is not None else {}
+    ego_position = vec3(ego.get("position_local"))
+    report_tracks: list[dict[str, Any]] = []
+    for track in tracks:
+        planned = planned_by_track.get(track)
+        world = world_by_track.get(track)
+        planned_position = vec3(planned.get("position_local")) if planned else None
+        world_position = vec3(world.get("position_local")) if world else None
+        delta_plan_minus_world = vec_delta(planned_position, world_position)
+        world_minus_ego = vec_delta(world_position, ego_position)
+        report_tracks.append(
+            {
+                "source_track_id": track,
+                "selected": track == selected_track,
+                "planned_position_local": planned_position,
+                "world_position_local": world_position,
+                "delta_plan_minus_world": delta_plan_minus_world,
+                "delta_plan_minus_world_norm_m": vec_norm(delta_plan_minus_world),
+                "world_minus_ego": world_minus_ego,
+                "world_minus_ego_norm_m": vec_norm(world_minus_ego),
+                "planned_draw_position": draw_vec_from_position(planned_position, args.z_lift_m, "planned") if planned_position else None,
+                "world_draw_position": draw_vec_from_position(world_position, args.z_lift_m, "world") if world_position else None,
+                "planned_velocity_local": vec3(planned.get("velocity_local")) if planned else None,
+                "world_velocity_local": vec3(world.get("velocity_local")) if world else None,
+            }
+        )
+    return {
+        "snapshot": str(snapshot_path) if snapshot_path is not None else None,
+        "snapshot_timestamp_ns": snapshot_timestamp_ns(snapshot) if snapshot is not None else None,
+        "elapsed_s": elapsed_s,
+        "selected_source_track_id": selected_track,
+        "ego": {
+            "position_local": ego_position,
+            "height_m": ego.get("height_m"),
+            "map_frame_id": ego.get("map_frame_id"),
+        },
+        "tracks": report_tracks,
+    }
+
+
+def maybe_print_debug_report(report: dict[str, Any], args: argparse.Namespace, state: dict[str, float]) -> None:
+    if not args.debug:
+        return
+    now = time.time()
+    if now - state.get("last_debug_print_s", 0.0) < max(0.0, args.debug_every_s):
+        return
+    state["last_debug_print_s"] = now
+    print("airsim-world-overlay debug:", file=sys.stderr)
+    print(
+        f"  snapshot={report.get('snapshot')} ts={report.get('snapshot_timestamp_ns')} elapsed_s={report.get('elapsed_s'):.3f} selected={report.get('selected_source_track_id') or '-'}",
+        file=sys.stderr,
+    )
+    ego = report.get("ego", {})
+    print(f"  ego position_local={rounded(ego.get('position_local'))} height_m={rounded(ego.get('height_m'))} map={ego.get('map_frame_id')}", file=sys.stderr)
+    for track in report.get("tracks", []):
+        print(
+            "  track={track} selected={selected} plan={plan} ag={ag} delta={delta} norm={norm} ag_minus_ego={rel} draw_plan={draw_plan} draw_ag={draw_ag}".format(
+                track=track.get("source_track_id"),
+                selected=track.get("selected"),
+                plan=rounded(track.get("planned_position_local")),
+                ag=rounded(track.get("world_position_local")),
+                delta=rounded(track.get("delta_plan_minus_world")),
+                norm=rounded(track.get("delta_plan_minus_world_norm_m")),
+                rel=rounded(track.get("world_minus_ego")),
+                draw_plan=rounded(track.get("planned_draw_position")),
+                draw_ag=rounded(track.get("world_draw_position")),
+            ),
+            file=sys.stderr,
+        )
+
+
+def maybe_write_debug_json(report: dict[str, Any], args: argparse.Namespace) -> None:
+    if args.debug_json is None:
+        return
+    args.debug_json.parent.mkdir(parents=True, exist_ok=True)
+    args.debug_json.write_text(json.dumps(rounded(report), indent=2, sort_keys=True) + "\n", encoding="utf-8")
+
+
 def main() -> int:
     args = parse_args()
     if args.rate_hz <= 0.0:
@@ -298,6 +451,7 @@ def main() -> int:
     waiting_reported = False
     ready_reported = False
     first_snapshot_timestamp_ns: int | None = None
+    debug_state = {"last_debug_print_s": 0.0}
 
     while True:
         if args.clear and client is not None:
@@ -317,6 +471,8 @@ def main() -> int:
 
         elapsed = snapshot_elapsed_s if snapshot_elapsed_s is not None else time.time() - start
         selected_track = selected_source_track_id(events_path)
+        planned_agents: list[dict[str, Any]] = []
+        world_agents: list[dict[str, Any]] = []
 
         if args.source in {"combined", "ghost_scenario"}:
             planned_agents = [planned_agent_at(target, elapsed, args.animate_planned) for target in planned_targets]
@@ -353,6 +509,12 @@ def main() -> int:
             elif args.source == "combined" and not waiting_reported:
                 print(f"airsim-world-overlay: drawing planned ghosts; waiting for WorldSnapshot ghosts ({reason})", file=sys.stderr)
                 waiting_reported = True
+
+        draw_reference_markers(client, snapshot, args)
+        if args.debug:
+            report = build_debug_report(snapshot_path, snapshot, planned_agents, world_agents, selected_track, elapsed, args)
+            maybe_print_debug_report(report, args, debug_state)
+            maybe_write_debug_json(report, args)
 
         if not args.follow:
             break
