@@ -193,7 +193,10 @@ def main() -> int:
             raise AssertionError(f"missing non-empty world overlay sidecar: {sidecar}")
 
     width, height, pixels = read_ppm(first_frame)
-    expected_point = (12.03, -4.0, 0.0)
+    # Ghost scenarios are anchored to the first processed frame. Therefore the
+    # first annotation frame should contain the fixture start position exactly,
+    # not start + velocity * frame_timestamp.
+    expected_point = (12.0, -4.0, 0.0)
     expected_marker = project_point(width, height, expected_point)
     marker_pixels = count_color_near(width, height, pixels, expected_marker, radius=8, color=AGENT_COLOR)
     if marker_pixels < 8:
