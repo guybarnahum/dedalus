@@ -13,37 +13,30 @@ double elapsed_seconds(TimePoint timestamp, TimePoint scenario_start) {
     return static_cast<double>(delta_ns) / kNsPerSecond;
 }
 
-Vec3 linear_position(const GhostTargetTrajectory& trajectory, double elapsed_s) {
-    return Vec3{
-        trajectory.start_local_m.x + trajectory.velocity_local_mps.x * elapsed_s,
-        trajectory.start_local_m.y + trajectory.velocity_local_mps.y * elapsed_s,
-        trajectory.start_local_m.z + trajectory.velocity_local_mps.z * elapsed_s,
-    };
-}
-
 }  // namespace
 
-GhostTargetProvider::GhostTargetProvider(std::vector<GhostTargetSpec> targets)
-    : targets_(std::move(targets)) {}
+GhostTargetProvider::GhostTargetProvider(GhostScenario scenario)
+    : scenario_(std::move(scenario)) {}
 
 std::vector<Observation3D> GhostTargetProvider::observations_at(
     TimePoint timestamp,
     MapFrameId map_frame_id,
     TimePoint scenario_start) const {
     const double elapsed_s = elapsed_seconds(timestamp, scenario_start);
+    const auto states = scenario_.evaluate(elapsed_s);
     std::vector<Observation3D> observations;
-    observations.reserve(targets_.size());
+    observations.reserve(states.size());
 
-    for (const auto& target : targets_) {
+    for (const auto& state : states) {
         Observation3D observation;
-        observation.track_id = target.track_id;
+        observation.track_id = state.source_track_id;
         observation.timestamp = timestamp;
-        observation.position_local = linear_position(target.trajectory, elapsed_s);
-        observation.position_body = observation.position_local;
+        observation.position_local = state.position_local_m;
+        observation.position_body = state.position_local_m;
         observation.map_frame_id = map_frame_id;
-        observation.class_label = target.class_label;
-        observation.faction = target.faction;
-        observation.confidence = target.confidence;
+        observation.class_label = state.class_label;
+        observation.faction = FactionLabel::Unknown;
+        observation.confidence = static_cast<float>(state.confidence);
         observations.push_back(observation);
     }
 
