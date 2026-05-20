@@ -41,3 +41,14 @@ target_link_libraries(dedalus_mission_loop
 )
 
 target_compile_features(dedalus_mission_loop PRIVATE cxx_std_20)
+
+add_executable(dedalus_ghost_scenario_eval
+    dedalus_ghost_scenario_eval.cpp
+)
+
+target_link_libraries(dedalus_ghost_scenario_eval
+    PRIVATE
+        dedalus_core
+)
+
+target_compile_features(dedalus_ghost_scenario_eval PRIVATE cxx_std_20)
