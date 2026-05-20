@@ -13,57 +13,24 @@ bool near(double lhs, double rhs) {
     return std::abs(lhs - rhs) < 1.0e-9;
 }
 
-dedalus::GhostTargetSpec scripted_agent(
-    const std::string& track_id,
-    dedalus::ClassLabel class_label,
-    float confidence,
-    dedalus::Vec3 start,
-    dedalus::Vec3 velocity) {
-    dedalus::GhostTargetSpec spec;
-    spec.track_id = dedalus::TrackId{track_id};
-    spec.class_label = class_label;
-    spec.confidence = confidence;
-    spec.trajectory.start_local_m = start;
-    spec.trajectory.velocity_local_mps = velocity;
-    return spec;
-}
-
 bool validate_scripted_observation_chain() {
     const dedalus::TimePoint start{0};
     const dedalus::TimePoint timestamp{2000000000};
     const dedalus::MapFrameId map_frame_id{"map_local_0001"};
-    const dedalus::GhostTargetProvider provider{{
-        scripted_agent(
-            "script_person_001",
-            dedalus::ClassLabel::Person,
-            0.82F,
-            dedalus::Vec3{12.0, -4.0, 0.0},
-            dedalus::Vec3{0.3, 0.0, 0.0}),
-        scripted_agent(
-            "script_person_002",
-            dedalus::ClassLabel::Person,
-            0.91F,
-            dedalus::Vec3{8.0, 4.0, 0.0},
-            dedalus::Vec3{-0.2, 0.0, 0.0}),
-        scripted_agent(
-            "script_car_001",
-            dedalus::ClassLabel::Car,
-            0.95F,
-            dedalus::Vec3{4.0, 0.0, 0.0},
-            dedalus::Vec3{0.0, 0.0, 0.0}),
-    }};
+    const dedalus::GhostTargetProvider provider{
+        dedalus::GhostScenario::load_from_file("simulation/ghost_detections/person_pair_crossing.json")};
 
     const auto observations = provider.observations_at(timestamp, map_frame_id, start);
     if (observations.size() != 3U) {
         std::cerr << "scripted provider did not emit expected observations\n";
         return false;
     }
-    if (observations.front().track_id.value != "script_person_001") {
+    if (observations.front().track_id.value != "ghost_person_001") {
         std::cerr << "scripted provider did not preserve track id\n";
         return false;
     }
     if (!near(observations.front().position_local.x, 12.6)) {
-        std::cerr << "scripted provider did not advance linear position\n";
+        std::cerr << "scripted provider did not advance trajectory-backed position\n";
         return false;
     }
 
@@ -85,25 +52,25 @@ bool validate_scripted_observation_chain() {
         std::cerr << "scripted observations did not become expected agents\n";
         return false;
     }
-    if (snapshot.agents[0].agent_id.value != "agent_script_person_001" ||
-        snapshot.agents[0].source_track_id.value != "script_person_001") {
+    if (snapshot.agents[0].agent_id.value != "agent_ghost_person_001" ||
+        snapshot.agents[0].source_track_id.value != "ghost_person_001") {
         std::cerr << "first scripted agent did not preserve track-derived identity\n";
         return false;
     }
-    if (snapshot.agents[1].agent_id.value != "agent_script_person_002" ||
-        snapshot.agents[1].source_track_id.value != "script_person_002") {
+    if (snapshot.agents[1].agent_id.value != "agent_ghost_person_002" ||
+        snapshot.agents[1].source_track_id.value != "ghost_person_002") {
         std::cerr << "second scripted agent did not preserve track-derived identity\n";
         return false;
     }
 
     dedalus::TargetSelectorSpec specific_spec;
     specific_spec.class_label = "person";
-    specific_spec.track_id = "script_person_001";
+    specific_spec.track_id = "ghost_person_001";
     specific_spec.policy = dedalus::TargetSelectionPolicy::PersistentTrack;
     specific_spec.confidence_min = 0.5;
 
     const auto specific_selection = dedalus::TargetSelector{}.select(snapshot, specific_spec);
-    if (!specific_selection.selected || specific_selection.source_track_id.value != "script_person_001") {
+    if (!specific_selection.selected || specific_selection.source_track_id.value != "ghost_person_001") {
         std::cerr << "specific lower-confidence scripted track was not selected\n";
         return false;
     }
@@ -114,7 +81,7 @@ bool validate_scripted_observation_chain() {
     class_spec.confidence_min = 0.5;
 
     const auto class_selection = dedalus::TargetSelector{}.select(snapshot, class_spec);
-    if (!class_selection.selected || class_selection.source_track_id.value != "script_person_002") {
+    if (!class_selection.selected || class_selection.source_track_id.value != "ghost_person_002") {
         std::cerr << "highest-confidence scripted class selection failed\n";
         return false;
     }
