@@ -20,6 +20,7 @@ add_library(dedalus_core
     runtime/provider_registry.cpp
     simulation/airsim_providers.cpp
     simulation/bridge_transport.cpp
+    simulation/ghost_scenario.cpp
     visualization/frame_annotator.cpp
     visualization/world_overlay_sidecar.cpp
     visualization/world_to_image_projector.cpp
