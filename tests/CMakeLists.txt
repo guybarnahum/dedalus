@@ -51,7 +51,7 @@ function(dedalus_add_python_test)
         message(FATAL_ERROR "dedalus_add_python_test(${DEDALUS_TEST_NAME}) requires LAYER")
     endif()
     if(NOT DEDALUS_TEST_COMMAND_ARGS)
-        message(FATAL_ERROR "dedalus_add_python_test(${DEDALUS_TEST_NAME}) requires COMMAND_ARGS")
+        message(FATAL_ERROR "dedalus_add_python_test requires COMMAND_ARGS")
     endif()
 
     set(display_name "${DEDALUS_TEST_NAME} (${DEDALUS_TEST_LAYER})")
@@ -161,6 +161,17 @@ dedalus_add_native_test(
     LAYER unit
     TAGS visualization reprojection
     SOURCES unit/test_world_to_image_projector.cpp
+)
+
+dedalus_add_native_test(
+    NAME ghost_scenario
+    LAYER unit
+    TAGS synthetic simulation
+    SOURCES unit/test_ghost_scenario.cpp
+)
+set_tests_properties("ghost_scenario (unit)"
+    PROPERTIES
+        WORKING_DIRECTORY ${PROJECT_SOURCE_DIR}
 )
 
 dedalus_add_native_test(
