@@ -242,6 +242,16 @@ find_package(Python3 COMPONENTS Interpreter)
 if(Python3_Interpreter_FOUND)
     # Layer 3: synthetic / recorded data and generated artifact tests.
     dedalus_add_python_test(
+        NAME ghost_scenario_eval_cli
+        LAYER synthetic
+        TAGS integration simulation
+        COMMAND_ARGS
+            ${PROJECT_SOURCE_DIR}/tests/integration/test_ghost_scenario_eval_cli.py
+            ${PROJECT_SOURCE_DIR}
+            ${PROJECT_BINARY_DIR}
+    )
+
+    dedalus_add_python_test(
         NAME replay_recording_smoke
         LAYER synthetic
         TAGS integration
