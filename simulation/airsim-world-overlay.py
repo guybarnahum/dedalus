@@ -71,7 +71,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--animate-planned",
         action="store_true",
-        help="Move planned ghost markers using snapshot time when available, falling back to wall-clock time before snapshots exist.",
+        help="Move planned ghost markers using mission artifact time when available, falling back to wall-clock time before snapshots exist.",
     )
     return parser.parse_args()
 
@@ -163,6 +163,13 @@ def latest_existing_snapshot(snapshot_dir: Path) -> tuple[Path, dict[str, Any]] 
     return None
 
 
+def first_existing_snapshot(snapshot_dir: Path) -> tuple[Path, dict[str, Any]] | None:
+    for path in snapshot_paths_from_manifest(snapshot_dir):
+        if path.exists():
+            return path, read_json(path)
+    return None
+
+
 def snapshot_timestamp_ns(snapshot: dict[str, Any]) -> int | None:
     value = snapshot.get("timestamp_ns")
     if isinstance(value, int):
@@ -172,9 +179,10 @@ def snapshot_timestamp_ns(snapshot: dict[str, Any]) -> int | None:
     return None
 
 
-def selected_source_track_id(events_path: Path) -> str | None:
-    if not events_path.exists():
+def selected_source_track_id(events_path: Path, snapshot: dict[str, Any] | None) -> str | None:
+    if snapshot is None or not events_path.exists():
         return None
+    snapshot_ts = snapshot_timestamp_ns(snapshot)
     selected: str | None = None
     for raw in events_path.read_text(encoding="utf-8").splitlines():
         if not raw.strip():
@@ -183,8 +191,12 @@ def selected_source_track_id(events_path: Path) -> str | None:
             event = json.loads(raw)
         except json.JSONDecodeError:
             continue
-        if event.get("event") == "target_selected" and event.get("source_track_id"):
-            selected = str(event["source_track_id"])
+        if event.get("event") != "target_selected" or not event.get("source_track_id"):
+            continue
+        event_ts = event.get("timestamp_ns")
+        if snapshot_ts is not None and isinstance(event_ts, int) and event_ts > snapshot_ts:
+            continue
+        selected = str(event["source_track_id"])
     return selected
 
 
@@ -435,6 +447,20 @@ def maybe_write_debug_json(report: dict[str, Any], args: argparse.Namespace) -> 
     args.debug_json.write_text(json.dumps(rounded(report), indent=2, sort_keys=True) + "\n", encoding="utf-8")
 
 
+def snapshot_time_window(snapshot_dir: Path) -> tuple[int | None, Path | None, dict[str, Any] | None, Path | None, dict[str, Any] | None]:
+    first = first_existing_snapshot(snapshot_dir)
+    latest = latest_existing_snapshot(snapshot_dir)
+    if first is None or latest is None:
+        return None, None, None, None, None
+    first_path, first_snapshot = first
+    latest_path, latest_snapshot = latest
+    first_ts = snapshot_timestamp_ns(first_snapshot)
+    latest_ts = snapshot_timestamp_ns(latest_snapshot)
+    if first_ts is None or latest_ts is None:
+        return None, first_path, first_snapshot, latest_path, latest_snapshot
+    return max(0, latest_ts - first_ts), first_path, first_snapshot, latest_path, latest_snapshot
+
+
 def main() -> int:
     args = parse_args()
     if args.rate_hz <= 0.0:
@@ -450,27 +476,27 @@ def main() -> int:
     world_model_wait_start = time.time()
     waiting_reported = False
     ready_reported = False
-    first_snapshot_timestamp_ns: int | None = None
     debug_state = {"last_debug_print_s": 0.0}
 
     while True:
         if args.clear and client is not None:
             client.simFlushPersistentMarkers()
 
-        latest = latest_existing_snapshot(args.snapshot_dir) if args.source in {"combined", "world_snapshot"} else None
+        latest = None
         snapshot_path = None
         snapshot = None
         snapshot_elapsed_s: float | None = None
-        if latest is not None:
-            snapshot_path, snapshot = latest
-            timestamp_ns = snapshot_timestamp_ns(snapshot)
-            if timestamp_ns is not None:
-                if first_snapshot_timestamp_ns is None:
-                    first_snapshot_timestamp_ns = timestamp_ns
-                snapshot_elapsed_s = max(0.0, (timestamp_ns - first_snapshot_timestamp_ns) / 1_000_000_000.0)
+        if args.source in {"combined", "world_snapshot"}:
+            elapsed_ns, _first_path, _first_snapshot, latest_path, latest_snapshot = snapshot_time_window(args.snapshot_dir)
+            if latest_path is not None and latest_snapshot is not None:
+                latest = (latest_path, latest_snapshot)
+                snapshot_path = latest_path
+                snapshot = latest_snapshot
+                if elapsed_ns is not None:
+                    snapshot_elapsed_s = elapsed_ns / 1_000_000_000.0
 
         elapsed = snapshot_elapsed_s if snapshot_elapsed_s is not None else time.time() - start
-        selected_track = selected_source_track_id(events_path)
+        selected_track = selected_source_track_id(events_path, snapshot)
         planned_agents: list[dict[str, Any]] = []
         world_agents: list[dict[str, Any]] = []
 
