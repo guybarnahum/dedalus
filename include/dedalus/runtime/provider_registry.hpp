@@ -24,6 +24,7 @@ struct CoreStackProviderConfig {
     std::string projector{"flat_ground"};
     bool ghost_targets_enabled{false};
     std::string ghost_targets_scenario{"person_pair_crossing"};
+    std::string ghost_targets_scenario_path;
     std::string world_model{"in_memory"};
     std::string frame_annotator{"null"};
     std::string annotation_output_path{"out/annotated.mp4"};
