@@ -63,6 +63,8 @@ void apply_config_value(CoreStackProviderConfig& config, const std::string& key,
         config.ghost_targets_enabled = parse_bool(value);
     } else if (key == "ghost_targets_scenario") {
         config.ghost_targets_scenario = value;
+    } else if (key == "ghost_targets_scenario_path") {
+        config.ghost_targets_scenario_path = value;
     } else if (key == "world_model") {
         config.world_model = value;
     } else if (key == "frame_annotator") {
