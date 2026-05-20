@@ -9,7 +9,7 @@
       "confidence": 0.82,
       "initial_position_local_m": [12.0, -4.0, 0.0],
       "size_m": [0.6, 0.6, 1.8],
-      "trajectory_path": "simulation/trajectories/ghost_person_001_crossing.json"
+      "trajectory_path": "../trajectories/ghost_person_001_crossing.json"
     },
     {
       "source_track_id": "ghost_person_002",
@@ -17,7 +17,7 @@
       "confidence": 0.91,
       "initial_position_local_m": [8.0, 4.0, 0.0],
       "size_m": [0.6, 0.6, 1.8],
-      "trajectory_path": "simulation/trajectories/ghost_person_002_crossing.json"
+      "trajectory_path": "../trajectories/ghost_person_002_crossing.json"
     },
     {
       "source_track_id": "ghost_car_001",
