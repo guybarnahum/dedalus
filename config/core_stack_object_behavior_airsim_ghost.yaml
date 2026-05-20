@@ -6,7 +6,7 @@ tracker: simple_centroid
 identity_resolver: appearance_only
 projector: flat_ground
 ghost_targets_enabled: true
-ghost_targets_scenario: person_pair_crossing
+ghost_targets_scenario_path: simulation/ghost_detections/person_pair_crossing.json
 world_model: in_memory
 frame_annotator: ppm_sequence
 annotation_output_path: out/object_behavior_airsim_ghost_annotation
