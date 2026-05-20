@@ -1,0 +1,12 @@
+{
+  "segments": [
+    {
+      "type": "hold",
+      "label": "cross_left",
+      "duration_s": 90.0,
+      "vx_mps": -0.2,
+      "vy_mps": 0.0,
+      "vz_mps": 0.0
+    }
+  ]
+}
