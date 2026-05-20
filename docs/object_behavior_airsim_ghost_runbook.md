@@ -1,38 +1,139 @@
 # Object Behavior AirSim Ghost Runbook
 
-This runbook validates object-conditioned behavior against live AirSim frames while still using ghost/scripted targets as deterministic target input.
+This runbook validates object-conditioned behavior against live AirSim frames while using a deterministic ghost-detection scenario as the object source.
 
-The purpose is to prove this path:
+As of 2.26C, ghost simulation is no longer hardcoded and no longer depends on mission artifacts for visualization. The canonical source is now:
 
 ```text
-AirSim live frame + ego sidecar
-  -> AirSimFrameSource
-  -> ghost/scripted targets
-  -> InMemoryWorldModel
-  -> WorldSnapshot.agents
-  -> TargetSelector
-  -> ObjectBehaviorMissionController
-  -> target_selected / behavior_start / behavior_tick_sample / behavior_complete
-  -> Px4BridgeCommandSink
-  -> PX4 / AirSim
-  -> Dedalus annotated artifacts + sidecar JSON
+simulation/ghost_detections/person_pair_crossing.json
+  -> references simulation/trajectories/*.json
+  -> loaded by GhostScenario
+  -> evaluated by VelocityTrajectory-backed motion
+```
+
+The same ghost scenario is consumed by two independent runtime paths:
+
+```text
+Ghost detection scenario JSON
+        │
+        ├── AirSim visualization consumer
+        │     -> dedalus_ghost_scenario_eval
+        │     -> simulation/airsim-world-overlay.py
+        │     -> AirSim debug markers
+        │
+        └── Dedalus perception/world-model consumer
+              -> GhostTargetProvider
+              -> PerceptionPipelineOutput.observations
+              -> InMemoryWorldModel
+              -> WorldSnapshot.agents
+              -> TargetSelector / ObjectBehaviorMissionController
+```
+
+This is the important boundary:
+
+```text
+AirSim overlay does not inject into WorldSnapshot.
+Mission-loop ghost injection does not depend on AirSim overlay.
+Artifacts are validation/debug outputs only, not simulation inputs.
 ```
 
 As of 2.26A, `follow` emits bounded non-zero velocity during `ExecuteMission`. Circle/approach/sequence behavior math remains future work.
 
 ---
 
-## 1. Runtime and Dataflow Boundaries
+## 1. Scenario and trajectory inputs
 
-The AirSim ghost object-behavior run has three parallel paths. They intentionally do not depend on one another for correctness.
+The ghost detection scenario describes objects, not motion internals:
+
+```text
+simulation/ghost_detections/person_pair_crossing.json
+```
+
+Each dynamic detection references an existing trajectory JSON file:
+
+```text
+simulation/trajectories/ghost_person_001_crossing.json
+simulation/trajectories/ghost_person_002_crossing.json
+```
+
+Static detections use `trajectory_path: null`.
+
+The trajectory files use the same `VelocityTrajectory` schema used by drone flight trajectory code. Do not embed trajectory segments inside the ghost detection JSON.
+
+Example detection shape:
+
+```json
+{
+  "source_track_id": "ghost_person_001",
+  "class": "person",
+  "confidence": 0.82,
+  "initial_position_local_m": [12.0, -4.0, 0.0],
+  "size_m": [0.6, 0.6, 1.8],
+  "trajectory_path": "../trajectories/ghost_person_001_crossing.json"
+}
+```
+
+Coordinate contract:
+
+```text
+initial_position_local_m:
+  map-local / AirSim-local NED coordinates, not ego-relative.
+
+position_local_m from GhostScenario.evaluate(t):
+  same map-local / AirSim-local NED frame.
+
+WorldSnapshot.agents[].position_local:
+  same map-local frame after mission-loop injection.
+
+position_ego_relative:
+  derived view of object relative to current ego, not the canonical ghost placement.
+```
+
+---
+
+## 2. Shared evaluator CLI
+
+The evaluator CLI is the easiest way to validate scenario authoring and to feed Python visualization without duplicating trajectory parsing logic:
+
+```bash
+./build-staging/apps/dedalus_ghost_scenario_eval \
+  --scenario simulation/ghost_detections/person_pair_crossing.json \
+  --time-s 10
+```
+
+Expected positions at `time-s 10`:
+
+```text
+ghost_person_001:
+  start x=12.0 + 0.3*10 = 15.0
+
+ghost_person_002:
+  start x=8.0 - 0.2*10 = 6.0
+
+ghost_car_001:
+  static x=4.0
+```
+
+The CLI is covered by CTest:
+
+```bash
+ctest --test-dir build-staging --output-on-failure -R ghost_scenario_eval_cli
+```
+
+---
+
+## 3. Runtime and dataflow boundaries
+
+The AirSim ghost object-behavior run has four paths. They intentionally remain separate:
 
 ```text
 1. Sensor/data input path
-2. Command/control output path
-3. Visualization/debug overlay path
+2. Ghost simulation path
+3. Command/control output path
+4. Artifact/validation path
 ```
 
-### 1.1 Sensor / data input path
+### 3.1 Sensor / data input path
 
 Dedalus receives live camera frames and ego telemetry from AirSim/PX4 through a binary frame bridge:
 
@@ -59,28 +160,27 @@ bridge_transport: pipe
 bridge_command: python3 simulation/airsim-stream-frames-binary.py --include-ego --rate-hz 5 --mavlink-armed-endpoints udpin:127.0.0.1:14540
 ```
 
-Ghost/scripted targets enter before the world model, like real detections eventually will:
+### 3.2 Ghost simulation path
+
+Mission-loop ghost injection is configured with:
+
+```yaml
+ghost_targets_enabled: true
+ghost_targets_scenario_path: simulation/ghost_detections/person_pair_crossing.json
+```
+
+Runtime path:
 
 ```text
-GhostTargetProvider
-  -> PerceptionPipelineOutput.observations
-  -> InMemoryWorldModel
+CoreStackRunner
+  -> first valid frame establishes ghost_scenario_start
+  -> GhostTargetProvider evaluates GhostScenario at frame elapsed time
+  -> appends ghost observations to PerceptionPipelineOutput.observations
+  -> InMemoryWorldModel.ingest(...)
   -> WorldSnapshot.agents
 ```
 
-This means behavior consumes normal `WorldSnapshot.agents`; it does not know or care whether the source was a real detector or a ghost/scripted validation target.
-
-Ghost target time is anchored to the first processed mission frame:
-
-```text
-first AirSim frame timestamp
-  -> ghost_scenario_start
-  -> ghost position = start_local_m + velocity_local_mps * elapsed_since_first_frame
-```
-
-This avoids a common live-sim bug where AirSim frame timestamps are already large by the time the mission starts, causing ghost targets to appear far along their trajectory on the first snapshot.
-
-WorldSnapshot injection is not instantaneous. The earliest possible ghost AG marker appears after this full frame pipeline has completed at least once:
+The earliest possible WorldSnapshot ghost agent appears after one full frame pipeline pass:
 
 ```text
 AirSim frame arrives
@@ -89,12 +189,52 @@ AirSim frame arrives
   -> ghost observations are appended
   -> world_model.ingest(...)
   -> world_model.snapshot(...)
-  -> dedalus_mission_loop writes snapshot_XXXX.json + manifest row
 ```
 
-Before that, the viewport overlay may show only faint PLAN markers. That is expected.
+That delay is expected. It is not caused by AirSim visualization and does not depend on artifacts.
 
-### 1.2 Mission / behavior runtime path
+### 3.3 AirSim visualization path
+
+`simulation/airsim-world-overlay.py` is display-only. Its default mode is artifact-free:
+
+```bash
+python3 simulation/airsim-world-overlay.py \
+  --ghost-scenario simulation/ghost_detections/person_pair_crossing.json \
+  --ghost-evaluator ./build-staging/apps/dedalus_ghost_scenario_eval \
+  --source ghost_scenario \
+  --follow \
+  --rate-hz 2 \
+  --duration-s 180 \
+  --clear \
+  --label
+```
+
+This path is:
+
+```text
+ghost detection JSON
+  -> dedalus_ghost_scenario_eval
+  -> simulation/airsim-world-overlay.py
+  -> AirSim simPlotPoints / simPlotStrings
+```
+
+Static detections:
+
+```text
+trajectory_path: null
+  -> drawn persistently once by default
+```
+
+Dynamic detections:
+
+```text
+trajectory_path present / non-zero evaluated velocity
+  -> redrawn while --follow is active
+```
+
+The overlay does not modify Dedalus perception, world model, target selection, or mission state.
+
+### 3.4 Mission / behavior runtime path
 
 The autonomy loop consumes the latest world snapshot and emits mission commands:
 
@@ -137,7 +277,7 @@ Land
 Disarm
 ```
 
-### 1.3 Command/control output path
+### 3.5 Command/control output path
 
 Commands go back to PX4/AirSim through the PX4 bridge command sink:
 
@@ -150,24 +290,9 @@ ObjectBehaviorMissionController
   -> PX4 / AirSim
 ```
 
-The split remains:
-
-```text
-PX4 shell:
-  commander arm
-  commander takeoff
-  commander land
-  commander disarm
-
-pymavlink:
-  OFFBOARD setup
-  SET_POSITION_TARGET_LOCAL_NED velocity commands
-  LOCAL_POSITION_NED feedback for climb/safe-height behavior
-```
-
 Command helper OK is not vehicle truth. Vehicle truth comes back through ego/world telemetry. The mission does not enter `ExecuteMission` until ego height reaches the configured safe height.
 
-### 1.4 Artifact / validation path
+### 3.6 Artifact / validation path
 
 `dedalus_mission_loop` writes durable artifacts:
 
@@ -194,178 +319,64 @@ simulation/validate-object-behavior-airsim-ghost.py
   -> annotation sidecars
 ```
 
-This is the validation truth path.
-
-### 1.5 AirSim viewport/debug overlay path
-
-`simulation/airsim-world-overlay.py` is not part of the autonomy loop. It is display-only.
-
-It now supports three overlay sources:
-
-```text
-combined:
-  Draw planned ghost-scenario markers immediately, then overlay world-model agents when snapshots exist.
-
-world_snapshot:
-  Draw only agents that Dedalus has actually written into WorldSnapshot artifacts.
-
-ghost_scenario:
-  Draw only planned ghost targets from simulation/ghost_targets/person_pair_crossing.yaml.
-```
-
-The visual semantics are:
-
-```text
-PLAN:
-  faint planned ghost-scenario marker, read directly from simulation/ghost_targets/*.yaml.
-
-AG:
-  solid world-model agent marker, read from snapshot_XXXX.json.
-
-SEL:
-  selected target marker, read from mission_events.jsonl target_selected.
-```
-
-This makes the state explicit:
-
-```text
-planned ghost exists but no AG marker:
-  AirSim/debug preview is working, but Dedalus has not yet put that ghost into WorldSnapshot.
-
-AG marker exists but no SEL marker:
-  Dedalus has the world-model agent, but TargetSelector has not selected it yet or mission_events are not available.
-
-SEL marker exists:
-  TargetSelector selected that WorldSnapshot agent and behavior can act on it.
-```
-
-Viewport overlay dataflow:
-
-```text
-simulation/ghost_targets/person_pair_crossing.yaml
-  -> planned PLAN markers
-
-snapshot_manifest.txt
-  -> latest snapshot_XXXX.json
-  -> WorldSnapshot.agents[]
-  -> solid AG markers
-
-mission_events.jsonl
-  -> target_selected.source_track_id
-  -> green SEL marker
-
-AirSim debug draw API
-  -> Unreal/AirSim viewport markers
-```
-
-It draws:
-
-```text
-position_local
-  -> airsim.Vector3r(x, y, z - lift)
-  -> client.simPlotPoints(...)
-  -> client.simPlotStrings(...)
-```
-
-In `combined` mode, the overlay does not block planned ghost drawing while it waits for Dedalus snapshots. In `world_snapshot` mode, it waits for the required `WorldSnapshot` tracks because that mode explicitly means “show me what Dedalus knows.”
-
-Coordinate and time convergence rules:
-
-```text
-Position frame:
-  PLAN and AG both use the same local map/mission coordinates from the ghost fixture and WorldSnapshot.position_local.
-
-Vertical convention:
-  AirSim is NED-like, so the overlay draws markers at z - lift to place the marker visually above the target.
-
-Scenario clock:
-  Dedalus anchors ghost motion at the first processed frame timestamp.
-  The overlay uses static fixture positions by default.
-  With --animate-planned, the overlay uses snapshot timestamp deltas once snapshots exist, falling back to wall-clock deltas before snapshots exist.
-```
-
-Expected convergence behavior:
-
-```text
-No snapshots yet:
-  PLAN markers are visible; AG/SEL are absent.
-
-First snapshots available:
-  AG markers appear at the same local positions as PLAN markers, up to the small visual z-lift difference.
-
-Mission selects target:
-  the world-model marker for ghost_person_001 becomes SEL.
-
-With --animate-planned:
-  PLAN and AG should remain close after snapshots exist because both use elapsed time from the first mission frame.
-```
-
-`Ctrl-C` exits either wait with no mission-state change.
-
-Why this renders into the AirSim camera view:
-
-```text
-WorldSnapshot or ghost-scenario 3D position
-  -> AirSim 3D debug marker
-  -> Unreal renders marker in world
-  -> AirSim camera sees marker if marker is inside the camera frustum
-```
-
-It does not paint camera pixels directly. Pixel-accurate reprojection validation remains in:
-
-```text
-frame_XXXXXX.world_overlay.json
-  u_px
-  v_px
-  visible
-  reason
-```
-
-Clean boundary:
-
-```text
-airsim-stream-frames-binary.py:
-  AirSim/PX4 -> Dedalus sensor input
-
-px4-command-bridge.py:
-  Dedalus command output -> PX4/AirSim
-
-airsim-world-overlay.py:
-  Ghost fixture + Dedalus artifacts -> AirSim human debug display
-
-validate-object-behavior-airsim-ghost.py:
-  Dedalus artifacts -> validation result
-```
+This is the validation truth path. It is not a simulation input path.
 
 ---
 
-## 2. AirSim ghost object-behavior config
+## 4. AirSim ghost object-behavior config
 
-The config is committed here:
+The live AirSim ghost behavior config is:
 
 ```text
 config/core_stack_object_behavior_airsim_ghost.yaml
 ```
 
-The canonical behavior spec remains:
+The behavior spec remains:
 
 ```text
 config/behaviors/follow_specific_track.yaml
 ```
 
-The sim-only ghost fixture remains:
+The ghost detection scenario is:
 
 ```text
-simulation/ghost_targets/person_pair_crossing.yaml
+simulation/ghost_detections/person_pair_crossing.json
+```
+
+The referenced trajectories are:
+
+```text
+simulation/trajectories/ghost_person_001_crossing.json
+simulation/trajectories/ghost_person_002_crossing.json
 ```
 
 ---
 
-## 3. Run with AirSim/PX4 already running
+## 5. Run with AirSim/PX4 already running
+
+Clean generated artifacts:
 
 ```bash
 rm -rf out/object_behavior_airsim_ghost out/object_behavior_airsim_ghost_annotation
+```
 
+Terminal 1, visualize ghost scenario in AirSim:
+
+```bash
+python3 simulation/airsim-world-overlay.py \
+  --ghost-scenario simulation/ghost_detections/person_pair_crossing.json \
+  --ghost-evaluator ./build-staging/apps/dedalus_ghost_scenario_eval \
+  --source ghost_scenario \
+  --follow \
+  --rate-hz 2 \
+  --duration-s 180 \
+  --clear \
+  --label
+```
+
+Terminal 2, run mission-loop:
+
+```bash
 ./build-staging/apps/dedalus_mission_loop \
   --config config/core_stack_object_behavior_airsim_ghost.yaml \
   --output-dir out/object_behavior_airsim_ghost \
@@ -401,7 +412,59 @@ The behavior should not switch to `ghost_person_002` merely because it has highe
 
 ---
 
-## 4. Validate the run artifacts
+## 6. Optional artifact comparison overlay
+
+Normal AirSim visualization does not read artifacts. For debugging, `combined` and `world_snapshot` modes can compare planned ghost state against generated snapshots.
+
+Combined comparison:
+
+```bash
+python3 simulation/airsim-world-overlay.py \
+  --ghost-scenario simulation/ghost_detections/person_pair_crossing.json \
+  --ghost-evaluator ./build-staging/apps/dedalus_ghost_scenario_eval \
+  --snapshot-dir out/object_behavior_airsim_ghost \
+  --source combined \
+  --follow \
+  --rate-hz 2 \
+  --duration-s 180 \
+  --clear \
+  --label \
+  --debug
+```
+
+WorldSnapshot-only comparison:
+
+```bash
+python3 simulation/airsim-world-overlay.py \
+  --snapshot-dir out/object_behavior_airsim_ghost \
+  --source world_snapshot \
+  --follow \
+  --rate-hz 2 \
+  --duration-s 180 \
+  --clear \
+  --label \
+  --debug
+```
+
+Visual semantics in comparison modes:
+
+```text
+PLAN:
+  planned/evaluated GhostScenario state.
+
+PLAN*:
+  static planned/evaluated GhostScenario state, drawn persistently by default.
+
+AG:
+  solid world-model agent from snapshot artifacts.
+
+SEL:
+  selected target from mission_events.jsonl target_selected.
+```
+
+---
+
+## 7. Validate the run artifacts
 
 ```bash
 python3 simulation/validate-object-behavior-airsim-ghost.py \
@@ -426,142 +489,7 @@ sidecars include ghost_person_001
 
 ---
 
-## 5. AirSim viewport overlay
-
-The overlay can be started before or after the mission loop. In default `combined` mode, it immediately draws planned ghosts from the ghost fixture, then adds solid world-model agents as soon as Dedalus snapshots are available.
-
-Terminal 1, mission loop:
-
-```bash
-rm -rf out/object_behavior_airsim_ghost out/object_behavior_airsim_ghost_annotation
-
-./build-staging/apps/dedalus_mission_loop \
-  --config config/core_stack_object_behavior_airsim_ghost.yaml \
-  --output-dir out/object_behavior_airsim_ghost \
-  --max-frames 900 \
-  --shutdown-max-frames 400 \
-  --progress
-```
-
-Terminal 2, viewport overlay:
-
-```bash
-python3 simulation/airsim-world-overlay.py \
-  --snapshot-dir out/object_behavior_airsim_ghost \
-  --source combined \
-  --follow \
-  --rate-hz 2 \
-  --duration-s 180 \
-  --clear \
-  --label
-```
-
-Expected messages if started early:
-
-```text
-airsim-world-overlay: waiting for AirSim RPC at 127.0.0.1:41451 (...)
-airsim-world-overlay: drawing planned ghosts; waiting for Dedalus snapshots under out/object_behavior_airsim_ghost
-airsim-world-overlay: drawing planned ghosts; waiting for WorldSnapshot ghosts (...)
-```
-
-Expected ready message:
-
-```text
-airsim-world-overlay: WorldSnapshot ghost agents ready from snapshot_XXXX.json (...)
-```
-
-What should appear in AirSim/Unreal:
-
-```text
-faint PLAN markers:
-  PLAN person ghost_person_001
-  PLAN person ghost_person_002
-  PLAN car ghost_car_001
-
-solid AG markers once WorldSnapshot exists:
-  AG person ghost_person_001
-  AG person ghost_person_002
-  AG car ghost_car_001
-
-green SEL marker after selection:
-  SEL person ghost_person_001
-```
-
-Draw only planned ghosts, independent of mission loop:
-
-```bash
-python3 simulation/airsim-world-overlay.py \
-  --snapshot-dir out/object_behavior_airsim_ghost \
-  --source ghost_scenario \
-  --follow \
-  --rate-hz 2 \
-  --duration-s 180 \
-  --clear \
-  --label
-```
-
-Draw only what Dedalus has put into WorldSnapshot:
-
-```bash
-python3 simulation/airsim-world-overlay.py \
-  --snapshot-dir out/object_behavior_airsim_ghost \
-  --source world_snapshot \
-  --follow \
-  --rate-hz 2 \
-  --duration-s 180 \
-  --clear \
-  --label
-```
-
-Dry-run without AirSim drawing:
-
-```bash
-python3 simulation/airsim-world-overlay.py \
-  --snapshot-dir out/object_behavior_airsim_ghost \
-  --source combined \
-  --dry-run \
-  --label
-```
-
-One-shot draw after a completed run:
-
-```bash
-python3 simulation/airsim-world-overlay.py \
-  --snapshot-dir out/object_behavior_airsim_ghost \
-  --source combined \
-  --clear \
-  --label \
-  --persistent
-```
-
-Animate planned ghost positions using the fixture velocity fields:
-
-```bash
-python3 simulation/airsim-world-overlay.py \
-  --snapshot-dir out/object_behavior_airsim_ghost \
-  --source combined \
-  --follow \
-  --animate-planned \
-  --rate-hz 2 \
-  --duration-s 180 \
-  --clear \
-  --label
-```
-
-Clear persistent markers:
-
-```bash
-python3 - <<'PY'
-import airsim
-client = airsim.MultirotorClient(ip='127.0.0.1', port=41451)
-client.confirmConnection()
-client.simFlushPersistentMarkers()
-PY
-```
-
----
-
-## 6. Export MP4 review artifact
+## 8. Export MP4 review artifact
 
 ```bash
 python3 scripts/export-ppm-sequence-to-mp4.py \
@@ -573,24 +501,41 @@ The MP4 is a human review artifact. Mission events and snapshots remain the vali
 
 ---
 
-## 7. What this proves
+## 9. Test commands
+
+Targeted regression:
+
+```bash
+ctest --test-dir build-staging --output-on-failure -R 'ghost_scenario|ghost_scenario_eval_cli|perception_world_model_flow|object_behavior_mission_smoke'
+```
+
+Full regression:
+
+```bash
+ctest --test-dir build-staging --output-on-failure
+```
+
+---
+
+## 10. What this proves
 
 This run proves:
 
 ```text
 Live AirSim frames can drive the normal CoreStackRunner path.
-Ghost targets can be injected into WorldSnapshot agents during a live AirSim run.
+Ghost detections are authored as JSON objects with referenced VelocityTrajectory JSON paths.
+GhostScenario can evaluate static and dynamic ghost detections deterministically.
+AirSim visualization can consume the shared evaluator without reading mission artifacts.
+Mission-loop ghost injection can consume the same scenario/evaluator path into WorldSnapshot agents.
 TargetSelector can select the requested lower-confidence ghost target by source_track_id.
 ObjectBehaviorMissionController can trigger behavior events from WorldSnapshot state.
 Follow behavior can emit bounded non-zero velocity.
 Mission lifecycle still reaches GoHome / Land / Disarm / Complete.
-Dedalus artifact overlays can show the ghost world-model agents on live AirSim camera frames.
-AirSim viewport overlay can show planned ghosts, world-model agents, and selected target as distinct states without affecting autonomy.
 ```
 
 ---
 
-## 8. What this does not prove yet
+## 11. What this does not prove yet
 
 This does not yet prove:
 
@@ -599,6 +544,7 @@ circle / approach / sequence motion
 real camera detector quality
 real 3D perception quality
 obstacle avoidance
+AirSim mesh/proxy actors for people/cars
 viewport overlay as validation truth
 ```
 
