@@ -556,6 +556,7 @@ int main(int argc, char** argv) {
             throw std::runtime_error("failed to open snapshot manifest: " + manifest_path.string());
         }
         manifest << "# index path timestamp_ns active_map_frame_id\n";
+        manifest.flush();
 
         ProgressReporter progress{args.progress_mode, args.max_frames};
 
@@ -621,15 +622,19 @@ int main(int argc, char** argv) {
             const auto snapshot_name = "snapshot_" + zero_padded(frame_count, 4) + ".json";
             const auto snapshot_path = args.output_dir / snapshot_name;
 
-            std::ofstream snapshot_file{snapshot_path};
-            if (!snapshot_file) {
-                throw std::runtime_error("failed to open snapshot output: " + snapshot_path.string());
+            {
+                std::ofstream snapshot_file{snapshot_path};
+                if (!snapshot_file) {
+                    throw std::runtime_error("failed to open snapshot output: " + snapshot_path.string());
+                }
+                snapshot_file << dedalus::to_json(snapshot);
+                snapshot_file.flush();
             }
-            snapshot_file << dedalus::to_json(snapshot);
 
             manifest << frame_count << " " << snapshot_name << " "
                      << snapshot.timestamp.timestamp_ns << " "
                      << snapshot.active_map_frame_id.value << "\n";
+            manifest.flush();
             progress.update(frame_count);
         }
 
