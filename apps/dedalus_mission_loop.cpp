@@ -5,7 +5,6 @@
 #include <exception>
 #include <filesystem>
 #include <fstream>
-#include <iomanip>
 #include <iostream>
 #include <map>
 #include <memory>
@@ -26,6 +25,8 @@
 #include "dedalus/runtime/pipeline_profiler.hpp"
 #include "dedalus/runtime/provider_registry.hpp"
 #include "dedalus/world_model/world_snapshot.hpp"
+#include "dedalus/world_model/world_snapshot_publisher.hpp"
+#include "dedalus/world_model/world_snapshot_subscribers.hpp"
 
 namespace {
 
@@ -151,12 +152,6 @@ private:
     Clock::time_point last_emit_;
     bool finished_{false};
 };
-
-std::string zero_padded(int value, int width) {
-    std::ostringstream out;
-    out << std::setw(width) << std::setfill('0') << value;
-    return out.str();
-}
 
 std::string json_string_field(const std::string& line, const std::string& key) {
     const std::string marker = "\"" + key + "\":";
@@ -525,10 +520,16 @@ int main(int argc, char** argv) {
         }
 
         auto latest_snapshot = std::make_shared<dedalus::LatestWorldSnapshot>();
+        auto snapshot_publisher = std::make_shared<dedalus::WorldSnapshotPublisher>();
+        auto latest_snapshot_subscriber = std::make_shared<dedalus::LatestWorldSnapshotSubscriber>(latest_snapshot);
+        auto artifact_snapshot_writer = std::make_shared<dedalus::ArtifactSnapshotWriter>(args.output_dir);
+        snapshot_publisher->subscribe(latest_snapshot_subscriber);
+        snapshot_publisher->subscribe(artifact_snapshot_writer);
+
         dedalus::CoreStackRunner runner{
             registry.create(config),
             std::move(timing_writer),
-            latest_snapshot};
+            snapshot_publisher};
 
         const auto mission_events_path = args.output_dir / "mission_events.jsonl";
         std::unique_ptr<dedalus::MissionRuntime> mission_runtime;
@@ -550,17 +551,8 @@ int main(int argc, char** argv) {
             std::cout << "Mission runtime: disabled\n";
         }
 
-        const auto manifest_path = args.output_dir / "snapshot_manifest.txt";
-        std::ofstream manifest{manifest_path};
-        if (!manifest) {
-            throw std::runtime_error("failed to open snapshot manifest: " + manifest_path.string());
-        }
-        manifest << "# index path timestamp_ns active_map_frame_id\n";
-        manifest.flush();
-
         ProgressReporter progress{args.progress_mode, args.max_frames};
 
-        int frame_count = 0;
         int shutdown_frame_count = 0;
         bool finish_requested = false;
         while (true) {
@@ -584,6 +576,7 @@ int main(int argc, char** argv) {
                 break;
             }
 
+            const int frame_count = artifact_snapshot_writer->frame_count();
             const bool frame_limit_reached = args.max_frames > 0 && frame_count >= args.max_frames;
             if (frame_limit_reached && mission_runtime && !finish_requested) {
                 finish_requested = true;
@@ -609,35 +602,21 @@ int main(int argc, char** argv) {
                 break;
             }
 
-            ++frame_count;
-            const auto latest = latest_snapshot->latest();
-            const auto snapshot = latest.has_value() ? *latest : runner.snapshot();
-            if (args.verbosity >= 2 && (frame_count <= 3 || frame_count % 30 == 0)) {
-                std::cerr << "dedalus_mission_loop: world_snapshot frame=" << frame_count
-                          << " ts=" << snapshot.timestamp.timestamp_ns
-                          << " ego_height_m=" << snapshot.ego.height_m
-                          << " agents=" << snapshot.agents.size()
-                          << "\n";
-            }
-            const auto snapshot_name = "snapshot_" + zero_padded(frame_count, 4) + ".json";
-            const auto snapshot_path = args.output_dir / snapshot_name;
-
-            {
-                std::ofstream snapshot_file{snapshot_path};
-                if (!snapshot_file) {
-                    throw std::runtime_error("failed to open snapshot output: " + snapshot_path.string());
+            const int updated_frame_count = artifact_snapshot_writer->frame_count();
+            if (args.verbosity >= 2 && (updated_frame_count <= 3 || updated_frame_count % 30 == 0)) {
+                const auto latest = latest_snapshot->latest();
+                if (latest.has_value()) {
+                    std::cerr << "dedalus_mission_loop: world_snapshot frame=" << updated_frame_count
+                              << " ts=" << latest->timestamp.timestamp_ns
+                              << " ego_height_m=" << latest->ego.height_m
+                              << " agents=" << latest->agents.size()
+                              << "\n";
                 }
-                snapshot_file << dedalus::to_json(snapshot);
-                snapshot_file.flush();
             }
-
-            manifest << frame_count << " " << snapshot_name << " "
-                     << snapshot.timestamp.timestamp_ns << " "
-                     << snapshot.active_map_frame_id.value << "\n";
-            manifest.flush();
-            progress.update(frame_count);
+            progress.update(updated_frame_count);
         }
 
+        const int frame_count = artifact_snapshot_writer->frame_count();
         progress.finish(frame_count);
         if (mission_runtime) {
             std::this_thread::sleep_for(std::chrono::milliseconds{100});
@@ -650,8 +629,8 @@ int main(int argc, char** argv) {
             return 1;
         }
 
-        std::cout << "Wrote " << frame_count << " snapshot(s) to " << args.output_dir << "\n";
-        std::cout << "Manifest: " << manifest_path << "\n";
+        std::cout << "Wrote " << frame_count << " snapshot(s) to " << artifact_snapshot_writer->output_dir() << "\n";
+        std::cout << "Manifest: " << artifact_snapshot_writer->manifest_path() << "\n";
         if (mission_runtime) {
             std::cout << "Mission events: " << mission_events_path << "\n";
         }
