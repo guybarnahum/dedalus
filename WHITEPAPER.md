@@ -192,6 +192,62 @@ landmark-relative position
 confidence and ambiguity
 ```
 
+### 2.9 Runtime Event Boundaries
+
+The runtime is organized around typed publishers and subscribers. The key distinction is between control-critical in-process handoff and external/debug subscription.
+
+```text
+Control-critical path:
+  Publisher<T>
+    -> in-process subscriber
+    -> behavior / mission runtime / flight sink
+
+External observation path:
+  Publisher<T>
+    -> RuntimeEventStreamServer
+    -> TCP JSONL event stream
+    -> visualization, diagnostics, customer tools
+
+Evidence path:
+  Publisher<T>
+    -> artifact writer
+    -> files for validation/debug after the run
+```
+
+This means the world model does not know who consumes it, and the AirSim overlay does not compute runtime state. Producers publish typed events. Subscribers decide what to consume.
+
+Current runtime event flow:
+
+```text
+AirSim / PX4
+  -> AirSimFrameSource + FrameHintEgoProvider
+  -> CoreStackRunner
+       -> PerceptionPipeline
+       -> optional GhostTargetProvider::frame_at(...)
+            -> GhostDetectionsPublisher
+            -> PerceptionPipelineOutput.observations
+       -> InMemoryWorldModel
+       -> WorldSnapshotPublisher
+            -> LatestWorldSnapshotSubscriber -> MissionRuntime -> FlightCommandSink -> PX4 / AirSim
+            -> ArtifactSnapshotWriter        -> snapshot artifacts
+            -> RuntimeEventStreamServer      -> TCP JSONL stream
+
+RuntimeEventStreamServer
+  -> ghost_detections events
+  -> world_snapshot events
+  -> simulation/airsim-world-overlay.py and external/debug subscribers
+```
+
+The design rule is:
+
+```text
+Artifacts are evidence, not IPC.
+Behavior consumes WorldSnapshot, not GhostDetectionsFrame.
+GhostDetectionsFrame exists to make simulation/debug visibility consume the same ghost evaluation that was injected into perception.
+```
+
+The detailed source-to-sink diagrams live in [docs/runtime_dataflow.md](docs/runtime_dataflow.md).
+
 ---
 
 ## 3. Current Proven Mission Control Baseline
@@ -203,10 +259,14 @@ AirSim live frame + ego sidecar
   -> AirSimFrameSource
   -> FrameHintEgoProvider
   -> CoreStackRunner
-  -> InMemoryWorldModel
+       -> optional GhostTargetProvider::frame_at(...)
+       -> InMemoryWorldModel
+       -> WorldSnapshotPublisher
+            -> LatestWorldSnapshotSubscriber
+            -> RuntimeEventStreamServer, if enabled
   -> LatestWorldSnapshot
   -> MissionRuntime async loop
-  -> TrajectoryMissionController
+  -> TrajectoryMissionController / ObjectBehaviorMissionController
   -> Px4BridgeCommandSink
   -> simulation/px4-command-bridge.py
   -> PX4 / AirSim
@@ -296,8 +356,9 @@ A good pre-camera validation path is:
 
 ```text
 Synthetic / AirSim frame
-  -> GhostDetectionProvider or ScriptedTargetProvider
-  -> PerceptionPipelineOutput.observations
+  -> GhostTargetProvider::frame_at(...)
+       -> GhostDetectionsFrame for runtime-event stream/debug subscribers
+       -> Observation3D objects appended to PerceptionPipelineOutput.observations
   -> InMemoryWorldModel
   -> WorldSnapshot.agents with stable source_track_id
   -> TargetSelector
@@ -511,9 +572,9 @@ Persistent memory is advisory, not truth. Current tactical sensing overrides sta
 2.21  Mission artifact validator                            DONE
 2.22  Scenario/campaign harness                             DONE
 2.23  Behavior spec parser foundation                       DONE
-2.24  Target selector from WorldSnapshot agents             ACTIVE
-2.25  ObjectBehaviorMissionController
-2.26  Follow behavior
+2.24  Target selector from WorldSnapshot agents             DONE
+2.25  ObjectBehaviorMissionController baseline              DONE
+2.26  Follow behavior + runtime-event stream                ACTIVE
 2.27  Circle behavior
 2.28  Approach + behavior sequence
 2.29  M3 demo hardening
@@ -541,6 +602,10 @@ Milestone 3 configuration should look conceptually like:
 runtime:
   rate_hz: 30
   mode: in_process
+  event_stream:
+    enabled: true
+    bind_host: 127.0.0.1
+    port: 47770
 
 sensors:
   frame_source:
@@ -564,7 +629,7 @@ world_model:
 behavior:
   controller:
     type: object_behavior_mission
-  spec_path: simulation/behaviors/follow_person.yaml
+  spec_path: config/behaviors/follow_specific_track.yaml
 
 flight:
   sink: px4_bridge
@@ -591,14 +656,18 @@ src/behavior/
   object_behavior_mission_controller.cpp
   behavior_runtime.cpp
 
-simulation/behaviors/
+config/behaviors/
   follow_person.yaml
   circle_car.yaml
   approach_target.yaml
   sequence_approach_circle.yaml
 
-simulation/ghost_targets/
-  person_pair_crossing.yaml
+simulation/ghost_detections/
+  person_pair_crossing.json
+
+simulation/trajectories/
+  ghost_person_001_crossing.json
+  ghost_person_002_crossing.json
 ```
 
 Recommended post-M3 spatial additions:
