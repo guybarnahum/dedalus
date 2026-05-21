@@ -539,6 +539,7 @@ int main(int argc, char** argv) {
         auto latest_snapshot = std::make_shared<dedalus::LatestWorldSnapshot>();
         auto snapshot_publisher = std::make_shared<dedalus::WorldSnapshotPublisher>();
         auto ghost_detections_publisher = std::make_shared<dedalus::GhostDetectionsPublisher>();
+        auto mission_event_publisher = std::make_shared<dedalus::MissionEventPublisher>();
         auto latest_snapshot_subscriber = std::make_shared<dedalus::LatestWorldSnapshotSubscriber>(latest_snapshot);
         auto artifact_snapshot_writer = std::make_shared<dedalus::ArtifactSnapshotWriter>(args.output_dir);
         snapshot_publisher->subscribe(latest_snapshot_subscriber);
@@ -553,6 +554,7 @@ int main(int argc, char** argv) {
             runtime_event_stream_server->start();
             snapshot_publisher->subscribe(runtime_event_stream_server);
             ghost_detections_publisher->subscribe(runtime_event_stream_server);
+            mission_event_publisher->subscribe(runtime_event_stream_server);
             std::cerr << "dedalus_mission_loop: runtime event stream listening on "
                       << args.world_snapshot_stream_host << ":" << runtime_event_stream_server->port() << "\n";
         }
@@ -574,7 +576,8 @@ int main(int argc, char** argv) {
                     .event_log_path = mission_events_path.string()},
                 latest_snapshot,
                 std::move(controller),
-                create_flight_command_sink(config, args.verbosity));
+                create_flight_command_sink(config, args.verbosity),
+                mission_event_publisher);
             mission_runtime->start();
             std::cout << "Mission runtime: " << config.mission_controller
                       << " @ " << config.mission_tick_hz << " Hz"
