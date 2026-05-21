@@ -254,7 +254,11 @@ struct Px4BridgeCommandSink::Impl {
                     << "\"vx\":" << v.x << ","
                     << "\"vy\":" << v.y << ","
                     << "\"vz\":" << v.z << ","
-                    << "\"duration\":" << config.command_duration_s << "}";
+                    << "\"duration\":" << config.command_duration_s;
+                if (command.yaw_valid) {
+                    out << ",\"yaw\":" << command.yaw_rad;
+                }
+                out << "}";
                 return out.str();
             }
         }
@@ -278,9 +282,11 @@ FlightCommandResult Px4BridgeCommandSink::send(const VelocityCommand& command) {
         std::cerr << "dedalus_px4_bridge_sink: command=" << to_string(command.kind)
                   << " vx=" << v.x
                   << " vy=" << v.y
-                  << " vz=" << v.z
-                  << " request=" << request
-                  << "\n";
+                  << " vz=" << v.z;
+        if (command.yaw_valid) {
+            std::cerr << " yaw=" << command.yaw_rad;
+        }
+        std::cerr << " request=" << request << "\n";
     }
     auto result = impl_->send_json(command, request);
     if (impl_->config.debug_logging) {
