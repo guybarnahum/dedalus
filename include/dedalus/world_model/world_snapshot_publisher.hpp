@@ -5,7 +5,7 @@
 
 namespace dedalus {
 
-class WorldSnapshotSubscriber : public Subscriber<WorldSnapshot> {
+class WorldSnapshotSubscriber : public EventSubscriber<WorldSnapshot> {
 public:
     ~WorldSnapshotSubscriber() override = default;
 
@@ -16,6 +16,6 @@ public:
     virtual void on_snapshot(const WorldSnapshot& snapshot) = 0;
 };
 
-using WorldSnapshotPublisher = Publisher<WorldSnapshot>;
+using WorldSnapshotPublisher = EventPublisher<WorldSnapshot>;
 
 }  // namespace dedalus
