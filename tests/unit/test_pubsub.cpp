@@ -1,6 +1,7 @@
 #include "dedalus/runtime/pubsub.hpp"
 
 #include <iostream>
+#include <memory>
 #include <stdexcept>
 #include <string>
 #include <vector>
@@ -12,7 +13,7 @@ struct TestEvent {
     std::string label;
 };
 
-class RecordingSubscriber final : public dedalus::Subscriber<TestEvent> {
+class RecordingSubscriber final : public dedalus::EventSubscriber<TestEvent> {
 public:
     void on_event(const TestEvent& event) override {
         seqs.push_back(event.seq);
@@ -30,7 +31,7 @@ void require(bool condition, const std::string& message) {
 }
 
 void publishes_typed_events_to_multiple_subscribers() {
-    dedalus::Publisher<TestEvent> publisher;
+    dedalus::EventPublisher<TestEvent> publisher;
     auto first = std::make_shared<RecordingSubscriber>();
     auto second = std::make_shared<RecordingSubscriber>();
 
@@ -47,7 +48,7 @@ void publishes_typed_events_to_multiple_subscribers() {
 }
 
 void expired_subscribers_are_pruned_on_publish() {
-    dedalus::Publisher<TestEvent> publisher;
+    dedalus::EventPublisher<TestEvent> publisher;
     auto survivor = std::make_shared<RecordingSubscriber>();
     {
         auto temporary = std::make_shared<RecordingSubscriber>();
@@ -62,7 +63,7 @@ void expired_subscribers_are_pruned_on_publish() {
 }
 
 void rejects_null_subscriber() {
-    dedalus::Publisher<TestEvent> publisher;
+    dedalus::EventPublisher<TestEvent> publisher;
     bool rejected = false;
     try {
         publisher.subscribe(nullptr);
