@@ -181,6 +181,9 @@ ObjectBehaviorMissionConfig load_object_behavior_mission_config(const MissionOpt
     }
     config.behavior_spec = parse_behavior_spec_file(behavior_spec_path);
     config.hold_velocity_mps = std::stod(options.get_or("object_behavior_hold_velocity_mps", "0.0"));
+    config.yaw_offset_rad = std::stod(options.get_or(
+        "object_behavior_yaw_offset_rad",
+        options.get_or("flight_yaw_offset_rad", "0.0")));
     const auto completion_after_override = options.get_or("object_behavior_completion_after_s", "");
     if (!completion_after_override.empty()) {
         config.behavior_spec.completion.after_s = std::stod(completion_after_override);
@@ -205,7 +208,8 @@ ObjectBehaviorMissionController::ObjectBehaviorMissionController(ObjectBehaviorM
 
 VelocityCommand ObjectBehaviorMissionController::command_from_velocity(
     TimePoint timestamp,
-    Vec3 velocity_local_mps) const {
+    Vec3 velocity_local_mps,
+    double yaw_offset_rad) const {
     VelocityCommand command;
     command.kind = FlightCommandKind::Velocity;
     command.timestamp = timestamp;
@@ -213,6 +217,11 @@ VelocityCommand ObjectBehaviorMissionController::command_from_velocity(
     command.yaw_rate_radps = 0.0;
     command.yaw_rate_valid = true;
     command.yaw_valid = false;
+    const double horizontal = norm_xy(velocity_local_mps);
+    if (horizontal > kHeadingEpsilonMps) {
+        command.yaw_valid = true;
+        command.yaw_rad = std::atan2(velocity_local_mps.y, velocity_local_mps.x) + yaw_offset_rad;
+    }
     return command;
 }
 
@@ -401,7 +410,10 @@ MissionTickOutput ObjectBehaviorMissionController::tick(const MissionTickInput& 
                     output.status = input.finish_requested ? "object_behavior_finish_requested" : "object_behavior_complete";
                 } else {
                     const Vec3 velocity = behavior_velocity(ego, selection, config_.behavior_spec.behavior);
-                    output.command = command_from_velocity(input.now, velocity);
+                    output.command = command_from_velocity(
+                        input.now,
+                        velocity,
+                        config_.yaw_offset_rad + config_.behavior_spec.behavior.yaw_offset_rad);
                     if (config_.behavior_spec.behavior.type == BehaviorType::Follow && !behavior_tick_sample_emitted_) {
                         behavior_tick_sample_emitted_ = true;
                         output.events.push_back(behavior_tick_event(config_.behavior_spec, selection, velocity));
@@ -425,7 +437,7 @@ MissionTickOutput ObjectBehaviorMissionController::tick(const MissionTickInput& 
                 state_start_ = input.now;
                 output.status = aborting_ ? "abort_recovery_home_reached" : "home_reached";
             } else {
-                output.command = command_from_velocity(input.now, velocity);
+                output.command = command_from_velocity(input.now, velocity, config_.yaw_offset_rad);
                 output.status = aborting_ ? "abort_recovery_go_home" : "go_home";
             }
             break;
