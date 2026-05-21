@@ -32,6 +32,10 @@ std::string read_pipe_to_end(FILE* pipe) {
     return output;
 }
 
+std::string ignore_sigint_command(const std::string& command) {
+    return "trap '' INT; exec " + command;
+}
+
 }  // namespace
 
 struct PipeBridgeTransport::Impl {
@@ -45,7 +49,8 @@ PipeBridgeTransport::~PipeBridgeTransport() {
 }
 
 std::string PipeBridgeTransport::request_once(const std::string& command) {
-    FILE* pipe = popen(command.c_str(), "r");
+    const auto child_command = ignore_sigint_command(command);
+    FILE* pipe = popen(child_command.c_str(), "r");
     if (pipe == nullptr) {
         throw std::runtime_error("failed to start bridge command");
     }
@@ -75,7 +80,8 @@ std::optional<std::string> PipeBridgeTransport::read_stream_line(const std::stri
     }
 
     if (impl_->stream_pipe == nullptr) {
-        impl_->stream_pipe = popen(command.c_str(), "r");
+        const auto child_command = ignore_sigint_command(command);
+        impl_->stream_pipe = popen(child_command.c_str(), "r");
         if (impl_->stream_pipe == nullptr) {
             throw std::runtime_error("failed to start persistent bridge command");
         }
@@ -113,7 +119,8 @@ std::optional<std::vector<std::uint8_t>> PipeBridgeTransport::read_stream_byte_v
     }
 
     if (impl_->stream_pipe == nullptr) {
-        impl_->stream_pipe = popen(command.c_str(), "r");
+        const auto child_command = ignore_sigint_command(command);
+        impl_->stream_pipe = popen(child_command.c_str(), "r");
         if (impl_->stream_pipe == nullptr) {
             throw std::runtime_error("failed to start persistent bridge command");
         }
