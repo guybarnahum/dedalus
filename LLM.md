@@ -20,7 +20,7 @@ Milestone 2.25 — ObjectBehaviorMissionController skeleton and first object-con
 Status: implemented through object behavior lifecycle and bounded follow behavior baseline.
 
 Milestone 2.26 — AirSim ghost behavior validation and live runtime-event plumbing.
-Status: implemented through 2.26E.2 config/schema parsing baseline.
+Status: implemented through 2.26E.3 AirSim existing-object ghost source baseline.
 ```
 
 Current 2.26D/E state:
@@ -34,7 +34,7 @@ Ghost simulation, implemented trajectory source:
 
 Ghost people now move cross -> wait -> cross back -> wait.
 
-2.26E AirSim existing-object config/schema, implemented:
+2.26E AirSim existing-object config/source, implemented:
   ghost_targets_source: airsim_objects
   ghost_targets_airsim.objects.<N>.source_track_id
   ghost_targets_airsim.objects.<N>.airsim_object_name
@@ -45,15 +45,17 @@ Ghost people now move cross -> wait -> cross back -> wait.
 Example config:
   config/core_stack_object_behavior_airsim_existing_object_example.yaml
 
-Provider implementation status:
-  Config parsing is implemented and contract-tested.
-  Provider creation intentionally fails with a clear "scheduled for 2.26E.3" error until the AirSim object pose source is implemented.
+AirSim object pose bridge:
+  simulation/airsim-object-poses.py
+    -> calls AirSim simGetObjectPose(object_name)
+    -> returns compact JSON object poses
+    -> stdout is machine JSON, stderr is diagnostics
 
-Planned 2.26E AirSim existing-object source:
-  existing AirSim scene object name
-    -> simGetObjectPose(object_name)
-    -> GhostDetectionState at that AirSim-local NED pose
-    -> GhostDetectionsFrame + Observation3D list
+AirSim object source runtime path:
+  GhostTargetProvider(AirSimGhostObjectSourceConfig)
+    -> calls simulation/airsim-object-poses.py through BridgeTransport
+    -> converts selected AirSim object poses to GhostDetectionState
+    -> emits GhostDetectionsFrame + Observation3D list
 
 Do not start with random/all selection modes. Add those only after deterministic explicit binding works.
 
@@ -121,11 +123,10 @@ Artifact files remain evidence/debug outputs, not IPC.
 Next milestone slice:
 
 ```text
-2.26E.3:
-  implement AirSim scene-object ghost provider/source that reads selected object poses and emits GhostDetectionsFrame + Observation3D.
-
 2.26E.4:
-  add an explicit existing-object config and live validation flow. First target should be a visible BRPlayer_* or static visible object discovered by simulation/airsim-list-objects.py.
+  perform live AirSim validation with an explicit discovered object name.
+  Update config/core_stack_object_behavior_airsim_existing_object_example.yaml or create a run-specific config with a visible BRPlayer_* or static object.
+  Validate PLAN / AG / SEL align over the visible object.
 
 2.27:
   circle an existing visible static object after explicit AirSim object binding works.
@@ -265,6 +266,13 @@ python3 simulation/airsim-list-objects.py \
   --match-class person \
   --sort distance \
   --format table
+```
+
+Existing AirSim object pose bridge smoke:
+
+```bash
+python3 simulation/airsim-object-poses.py \
+  --object BRPlayer_01_96
 ```
 
 ---
@@ -665,9 +673,11 @@ simulation/run-mission-campaign.py
 simulation/validate-mission-artifacts.py
 simulation/validate-object-behavior-airsim-ghost.py
 simulation/airsim-list-objects.py
+simulation/airsim-object-poses.py
 config/core_stack_synthetic_mission_ci.yaml
 config/core_stack_synthetic_mission_abort_ci.yaml
 config/core_stack_object_behavior_airsim_ghost.yaml
+config/core_stack_object_behavior_airsim_existing_object_example.yaml
 config/mission_campaigns/synthetic_ci.json
 config/mission_campaigns/airsim_live_smoke.json
 docs/mission_scenario_runner.md
