@@ -1,9 +1,12 @@
 # Example config for 2.26E AirSim existing-object ghost binding.
 #
-# This config is parseable now, but the provider implementation is scheduled for 2.26E.3.
 # Replace BRPlayer_01_96 with an object discovered from:
 #
 #   python3 simulation/airsim-list-objects.py --match-class person --sort distance --format table
+#
+# The AirSim object ghost source reads selected object poses through:
+#
+#   python3 simulation/airsim-object-poses.py
 
 frame_source: airsim
 ego_provider: frame_hint
