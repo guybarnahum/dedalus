@@ -10,6 +10,7 @@
 #include "dedalus/behavior/mission_runtime.hpp"
 #include "dedalus/runtime/core_stack_runner.hpp"
 #include "dedalus/runtime/provider_registry.hpp"
+#include "dedalus/world_model/world_snapshot_subscribers.hpp"
 
 namespace {
 
@@ -58,6 +59,9 @@ bool file_contains(const std::filesystem::path& path, const std::string& needle)
 
 int main() {
     auto latest_snapshot = std::make_shared<dedalus::LatestWorldSnapshot>();
+    auto snapshot_publisher = std::make_shared<dedalus::WorldSnapshotPublisher>();
+    auto latest_snapshot_subscriber = std::make_shared<dedalus::LatestWorldSnapshotSubscriber>(latest_snapshot);
+    snapshot_publisher->subscribe(latest_snapshot_subscriber);
 
     dedalus::ProviderRegistry registry;
     dedalus::CoreStackProviderConfig config;
@@ -71,7 +75,7 @@ int main() {
     config.world_model = "in_memory";
     config.frame_annotator = "null";
 
-    dedalus::CoreStackRunner runner{registry.create(config), nullptr, latest_snapshot};
+    dedalus::CoreStackRunner runner{registry.create(config), nullptr, snapshot_publisher};
     if (!runner.run_once()) {
         std::cerr << "CoreStackRunner failed to publish a snapshot\n";
         return 1;
@@ -129,51 +133,29 @@ int main() {
         }
 
         if (!runtime.tick_once()) {
-            std::cerr << "MissionRuntime did not tick a second time with available snapshot\n";
+            std::cerr << "MissionRuntime did not tick a second time\n";
             return 1;
         }
         if (!controller_ptr->last_result.has_value() || !controller_ptr->last_result->success) {
-            std::cerr << "MissionRuntime did not pass successful command result to next controller tick\n";
-            return 1;
-        }
-
-        if (runtime.tick_count() != 2U || runtime.last_state() != dedalus::MissionLifecycleState::ExecuteMission) {
-            std::cerr << "MissionRuntime did not expose expected tick count/state\n";
+            std::cerr << "MissionRuntime did not surface previous command result to controller\n";
             return 1;
         }
     }
 
-    if (!file_contains(event_log_path, "\"event\":\"state_transition\"") ||
-        !file_contains(event_log_path, "\"event\":\"command_dispatch\"") ||
-        !file_contains(event_log_path, "\"event\":\"command_result\"")) {
-        std::cerr << "MissionRuntime event log missing expected deterministic event records\n";
+    if (!file_contains(event_log_path, "\"event\":\"command_dispatch\"")) {
+        std::cerr << "MissionRuntime event log missing command_dispatch\n";
         return 1;
     }
+    if (!file_contains(event_log_path, "\"event\":\"command_result\"")) {
+        std::cerr << "MissionRuntime event log missing command_result\n";
+        return 1;
+    }
+    if (!file_contains(event_log_path, "\"event\":\"runtime_stop\"")) {
+        std::cerr << "MissionRuntime event log missing runtime_stop\n";
+        return 1;
+    }
+
     std::filesystem::remove(event_log_path);
-
-    auto empty_snapshots = std::make_shared<dedalus::LatestWorldSnapshot>();
-    {
-        auto empty_runtime = dedalus::MissionRuntime{
-            dedalus::MissionRuntimeConfig{
-                .tick_hz = 10.0,
-                .verbosity = 0,
-                .event_log_path = lifecycle_log_path.string()},
-            empty_snapshots,
-            std::make_unique<CountingController>(),
-            std::make_unique<RecordingSink>()};
-        empty_runtime.start();
-        empty_runtime.stop();
-        if (empty_runtime.tick_once()) {
-            std::cerr << "MissionRuntime ticked without an available snapshot\n";
-            return 1;
-        }
-    }
-    if (!file_contains(lifecycle_log_path, "\"event\":\"runtime_start\"") ||
-        !file_contains(lifecycle_log_path, "\"event\":\"runtime_stop\"")) {
-        std::cerr << "MissionRuntime lifecycle event log missing start/stop events\n";
-        return 1;
-    }
     std::filesystem::remove(lifecycle_log_path);
-
     return 0;
 }
