@@ -51,11 +51,13 @@ MissionRuntime::MissionRuntime(
     MissionRuntimeConfig config,
     std::shared_ptr<LatestWorldSnapshot> snapshots,
     std::unique_ptr<MissionController> controller,
-    std::unique_ptr<FlightCommandSink> sink)
+    std::unique_ptr<FlightCommandSink> sink,
+    std::shared_ptr<MissionEventPublisher> mission_event_publisher)
     : config_(std::move(config)),
       snapshots_(std::move(snapshots)),
       controller_(std::move(controller)),
-      sink_(std::move(sink)) {
+      sink_(std::move(sink)),
+      mission_event_publisher_(std::move(mission_event_publisher)) {
     if (config_.tick_hz <= 0.0) {
         throw std::invalid_argument("MissionRuntime requires positive tick_hz");
     }
@@ -273,11 +275,15 @@ void MissionRuntime::loop() {
 }
 
 void MissionRuntime::write_event(std::string json_fields) {
+    const auto event_json = "{" + json_fields + "}";
+    if (mission_event_publisher_) {
+        mission_event_publisher_->publish(MissionEvent{.timestamp = now_timepoint(), .json = event_json});
+    }
     if (!event_log_) {
         return;
     }
     std::lock_guard<std::mutex> lock{event_log_mutex_};
-    event_log_ << "{" << json_fields << "}\n";
+    event_log_ << event_json << "\n";
     event_log_.flush();
 }
 
