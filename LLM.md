@@ -16,31 +16,104 @@ Milestones 2.20, 2.21, 2.22, and 2.23 are implemented / validated.
 Milestone 2.24 — TargetSelector, ghost validation, reprojection validation, and world-model evidence plumbing.
 Status: implemented through 2.24G.9 baseline.
 
-2.24 highlights:
-- track-addressable WorldSnapshot agents
-- TargetSelectorSpec track_id / agent_id support
-- TargetSelector policies and tests
-- ghost/scripted targets for pre-camera validation
-- WorldSnapshot-to-camera reprojection projector
-- projected AG markers in annotation artifacts
-- frame_XXXXXX.world_overlay.json sidecars
-- camera-derived 2D provenance carried into AgentState.latest_view_evidence
-- reprojection residual metadata for camera-derived agents
-- CTest layers: contracts -> unit -> synthetic -> scenario
+Milestone 2.25 — ObjectBehaviorMissionController skeleton and first object-conditioned behavior runtime.
+Status: implemented through object behavior lifecycle and bounded follow behavior baseline.
 
-Milestone 2.25 — ObjectBehaviorMissionController skeleton.
-Status: implemented through 2.25D lifecycle integration baseline.
+Milestone 2.26 — AirSim ghost behavior validation and live WorldSnapshot plumbing.
+Status: implemented through 2.26D.3 plus reusable typed pub/sub cleanup.
+```
 
-2.25 highlights:
-- behavior specs are canonical autonomy config under config/behaviors/
-- ObjectBehaviorMissionController loads config/behaviors/follow_specific_track.yaml
-- object behavior consumes WorldSnapshot agents through TargetSelector
-- object behavior emits target_selected, behavior_start, behavior_complete
-- object behavior uses the normal Prepare -> Takeoff -> ExecuteMission -> GoHome -> Land -> Complete lifecycle
-- synthetic object_behavior_mission_smoke validates ghost_person_001 selection, zero/hold behavior velocity, Arm/Takeoff/Land/Disarm, and Complete/status=complete
+Current 2.26D state:
+
+```text
+Ghost simulation:
+  simulation/ghost_detections/person_pair_crossing.json
+    -> references simulation/trajectories/*.json
+    -> loaded by GhostScenario
+    -> evaluated by VelocityTrajectory-backed motion
+
+Ghost people now move cross -> wait -> cross back -> wait.
+
+Mission-loop ghost injection:
+  CoreStackRunner
+    -> GhostTargetProvider
+    -> PerceptionPipelineOutput.observations
+    -> InMemoryWorldModel
+    -> WorldSnapshot.agents
+
+WorldSnapshot publish path:
+  CoreStackRunner
+    -> WorldSnapshotPublisher
+       -> LatestWorldSnapshotSubscriber       behavior / MissionRuntime
+       -> ArtifactSnapshotWriter              durable evidence/debug snapshots
+       -> WorldSnapshotStreamServer           optional live TCP JSONL stream
+
+Reusable event service:
+  include/dedalus/runtime/pubsub.hpp
+    EventPublisher<T>
+    EventSubscriber<T>
+
+WorldSnapshot domain adapter:
+  include/dedalus/world_model/world_snapshot_publisher.hpp
+    WorldSnapshotPublisher = EventPublisher<WorldSnapshot>
+    WorldSnapshotSubscriber keeps on_snapshot(...) while adapting to generic on_event(...)
+
+Live stream:
+  dedalus_mission_loop --world-snapshot-stream-port 47770
+  emits JSONL records:
+    {"type":"world_snapshot","seq":N,"timestamp_ns":...,"active_map_frame_id":"...","snapshot":{...}}
+
+Artifact files remain evidence/debug outputs, not IPC.
+```
 
 Next milestone slice:
-2.25E / 2.26 — extract BehaviorRuntime hold/fallback mechanics and then implement first follow behavior math.
+
+```text
+2.26D.4 / 2.26D.5:
+  update simulation/airsim-world-overlay.py to consume the live WorldSnapshot JSONL stream for AG/EGO markers.
+  keep artifact comparison as explicit debug/fallback, not the primary marker transport.
+
+2.26D.6:
+  add live mission-event stream or event bus subscriber so SEL markers are also live instead of mission_events.jsonl-polled.
+
+Post-2.26D:
+  continue behavior-facing dynamic ghost validation and then expand behavior math beyond follow.
+```
+
+---
+
+## 0. Engineering Hygiene Policy
+
+Use this policy for every implementation pass, especially after refactors.
+
+```text
+Review the implementation and look for legacy pre-refactor leftovers to clean up.
+Always strive for state-of-the-art clean code, carefully balancing code structure, runtime efficiency, and complexity.
+Do not carry legacy code through shims or other inelegant solutions due to momentum.
+When appropriate, suggest and perform refactors that avoid drift, duplication, and bloat.
+Keep code streamlined: one clear ownership boundary, one canonical path, and explicit compatibility only when it has a current user and a removal plan.
+```
+
+Refactor expectations:
+
+```text
+Prefer deleting stale call paths over adding compatibility shims.
+Prefer typed adapters at domain boundaries over leaking generic names everywhere.
+Prefer evidence/debug artifacts as outputs, not as runtime IPC.
+Prefer small reusable services when the same mechanism will be used by WorldSnapshot, mission events, telemetry, detections, or health streams.
+Prefer synchronous in-process subscribers for control-critical handoff unless a stage explicitly requires async transport.
+For async/external subscribers, expose sequence numbers and dropped-client/frame stats.
+```
+
+Recent cleanup examples that should guide future work:
+
+```text
+WorldSnapshotPublisher was generalized into EventPublisher<T> / EventSubscriber<T>.
+WorldSnapshotSubscriber preserves domain-specific on_snapshot(...) while adapting to generic on_event(...).
+Inline snapshot file writing was removed from dedalus_mission_loop and moved to ArtifactSnapshotWriter.
+LatestWorldSnapshot is now fed through LatestWorldSnapshotSubscriber, not a special CoreStackRunner constructor path.
+The obsolete world_snapshot_publisher.cpp implementation was deleted after moving to header-only typed pub/sub.
+Tests were updated to use the actual WorldSnapshot AgentState type instead of stale AgentTrack assumptions.
 ```
 
 Patch policy:
@@ -60,16 +133,22 @@ cmake --build build-staging -j$(nproc)
 ctest --test-dir build-staging --output-on-failure
 ```
 
+Focused 2.26D pub/sub and stream validation:
+
+```bash
+ctest --test-dir build-staging --output-on-failure -R 'pubsub|world_snapshot_publisher|world_snapshot_stream_server|mission_runtime'
+```
+
 Focused object behavior validation:
 
 ```bash
 ctest --test-dir build-staging --output-on-failure -R 'object_behavior_mission_controller|object_behavior_mission_smoke|core_stack_config_loader|behavior_spec|target_selector'
 ```
 
-Focused reprojection / world evidence validation:
+Focused ghost / reprojection / world evidence validation:
 
 ```bash
-ctest --test-dir build-staging --output-on-failure -R 'world_to_image_projector|world_reprojection_artifacts'
+ctest --test-dir build-staging --output-on-failure -R 'ghost_scenario|ghost_scenario_eval_cli|perception_world_model_flow|world_to_image_projector|world_reprojection_artifacts'
 ```
 
 Scenario/campaign validation:
@@ -91,6 +170,20 @@ python3 simulation/run-mission-campaign.py \
   --overwrite
 ```
 
+Live WorldSnapshot stream smoke:
+
+```bash
+./build-staging/apps/dedalus_mission_loop \
+  --config config/core_stack_object_behavior_airsim_ghost.yaml \
+  --output-dir out/object_behavior_airsim_ghost \
+  --max-frames 900 \
+  --shutdown-max-frames 400 \
+  --world-snapshot-stream-port 47770 \
+  --progress
+
+nc 127.0.0.1 47770 | head -5
+```
+
 ---
 
 ## 1. Current Architecture
@@ -103,6 +196,10 @@ AirSim live frame + ego sidecar
   -> FrameHintEgoProvider
   -> CoreStackRunner
   -> InMemoryWorldModel
+  -> WorldSnapshotPublisher
+       -> LatestWorldSnapshotSubscriber
+       -> ArtifactSnapshotWriter
+       -> optional WorldSnapshotStreamServer
   -> LatestWorldSnapshot
   -> MissionRuntime async loop
   -> TrajectoryMissionController today / ObjectBehaviorMissionController for object behavior
@@ -121,6 +218,7 @@ AirSim live frame + ego sidecar
   -> AirSimFrameSource
   -> detector / tracker / projector, or ghost/scripted target provider for pre-camera validation
   -> WorldSnapshot agents with agent_id, source_track_id, identity_id, class, confidence, local position, velocity, latest_view_evidence when camera-derived
+  -> WorldSnapshotPublisher
   -> TargetSelector
   -> BehaviorRuntime / ObjectBehaviorMissionController
   -> desired velocity vector
@@ -182,7 +280,43 @@ Do not reintroduce the hand-written native C++ MAVLink encoder as the default li
 
 ---
 
-## 3. Object Identity and Evidence Model
+## 3. WorldSnapshot Publish / Subscribe Boundary
+
+WorldSnapshot is now published once per produced frame and consumed by subscribers.
+
+```text
+CoreStackRunner::run_once()
+  -> world_model.snapshot()
+  -> WorldSnapshotPublisher.publish(snapshot)
+```
+
+Current subscribers:
+
+```text
+LatestWorldSnapshotSubscriber:
+  in-process behavior handoff.
+
+ArtifactSnapshotWriter:
+  writes snapshot_XXXX.json and snapshot_manifest.txt.
+  artifacts are durable evidence/debug outputs, not runtime IPC.
+
+WorldSnapshotStreamServer:
+  optional TCP JSONL live stream for external tools/customers.
+  enabled by --world-snapshot-stream-port.
+```
+
+Design rule:
+
+```text
+The world model should not know who consumes it.
+Consumers should subscribe to typed state/events and own their side effects.
+```
+
+Do not add direct file-writing or overlay-specific behavior back into `CoreStackRunner` or `InMemoryWorldModel`.
+
+---
+
+## 4. Object Identity and Evidence Model
 
 Do not collapse detections, tracks, agents, and identities. They answer different questions.
 
@@ -245,7 +379,7 @@ Target selection must be able to focus on one specific object in a group. It mus
 
 ---
 
-## 4. Behavior Config Location
+## 5. Behavior Config Location
 
 Behavior specs are global autonomy/runtime configuration, not simulation assets.
 
@@ -259,10 +393,12 @@ config/behaviors/approach_target.yaml
 config/behaviors/sequence_approach_circle.yaml
 ```
 
-Simulation-only target fixtures remain here:
+Simulation-only target scenarios live under simulation, currently:
 
 ```text
-simulation/ghost_targets/person_pair_crossing.yaml
+simulation/ghost_detections/person_pair_crossing.json
+simulation/trajectories/ghost_person_001_crossing.json
+simulation/trajectories/ghost_person_002_crossing.json
 ```
 
 Rule:
@@ -272,15 +408,18 @@ Behavior spec:
   config/behaviors/*.yaml
 
 Ghost/scripted target scenario:
-  simulation/ghost_targets/*.yaml
+  simulation/ghost_detections/*.json
+
+Trajectory referenced by ghost scenario:
+  simulation/trajectories/*.json
 
 Core-stack config that references behavior:
-  config/core_stack_object_behavior_mission.yaml
+  config/core_stack_object_behavior_airsim_ghost.yaml
 ```
 
 ---
 
-## 5. Ghost / Scripted Target Validation
+## 6. Ghost / Scripted Target Validation
 
 Before real camera detections are reliable, use ghost targets that enter at the same semantic boundary as real detections.
 
@@ -288,10 +427,11 @@ Good validation path:
 
 ```text
 Synthetic / AirSim frame
-  -> GhostDetectionProvider or ScriptedTargetProvider
+  -> GhostTargetProvider
   -> PerceptionPipelineOutput.observations
   -> InMemoryWorldModel
   -> WorldSnapshot.agents with stable source_track_id
+  -> WorldSnapshotPublisher
   -> TargetSelector
   -> ObjectBehaviorMissionController
 ```
@@ -318,7 +458,7 @@ Expected result:
 
 ---
 
-## 6. Behavior Language v1
+## 7. Behavior Language v1
 
 The behavior language is small and declarative:
 
@@ -356,7 +496,7 @@ config/behaviors/approach_target.yaml
 config/behaviors/sequence_approach_circle.yaml
 ```
 
-2.23 parser files:
+Parser files:
 
 ```text
 include/dedalus/behavior/behavior_spec.hpp
@@ -366,46 +506,44 @@ tests/unit/test_behavior_spec.cpp
 
 ---
 
-## 7. Mission Events and Validation Expectations for M3
+## 8. Mission Events and Validation Expectations
 
-Expected M3 events include both world-model and tracker handles when available:
+Expected object behavior events include both world-model and tracker handles when available:
 
 ```json
 {"event":"target_selected","class":"person","agent_id":"agent_ghost_person_001","source_track_id":"ghost_person_001","identity_id":"identity_ghost_person_001","confidence":0.82}
 {"event":"behavior_start","behavior":"follow","agent_id":"agent_ghost_person_001","source_track_id":"ghost_person_001"}
+{"event":"behavior_tick_sample","behavior":"follow","source_track_id":"ghost_person_001"}
 {"event":"behavior_complete","behavior":"follow","reason":"duration_elapsed"}
 ```
 
-Current 2.25D synthetic lifecycle validation proves:
+Current validation proves:
 
 ```text
 final_state == Complete
 terminal_settled == true
-Arm / Takeoff / Land / Disarm commands dispatched and succeed via disabled sink
+Arm / Takeoff / Land / Disarm commands dispatched and succeed
 safe height reached before behavior execution
 target_selected selects ghost_person_001
-behavior_start and behavior_complete are emitted
-Velocity commands during ExecuteMission are zero/hold only
+behavior_start / behavior_tick_sample / behavior_complete are emitted
+follow emits bounded non-zero velocity during ExecuteMission
 GoHome / Land / Complete reached
+WorldSnapshot publisher/subscriber and stream-server unit tests pass
 ```
 
-Full M3 validation should later prove:
+Future validation should later prove:
 
 ```text
-final_state == Complete
-failures == 0
-safe height reached before behavior execution
-at least one target_selected event
-selected target identity remains stable unless reacquire/lost is expected
-at least one behavior_start event
-expected behavior_complete event
-non-zero bounded behavior velocity once follow/circle/approach math exists
-GoHome / Land / Complete reached
+selected target identity remains stable across crossing/waiting/crossing-back motion
+AG/EGO markers update from live WorldSnapshot stream in AirSim overlay
+SEL marker updates from live mission-event stream or selected-target state
+circle / approach / sequence behavior math emits correct bounded velocity
+obstacle avoidance remains outside M3 unless explicitly started post-M3
 ```
 
 ---
 
-## 8. Scenario / Campaign Harness
+## 9. Scenario / Campaign Harness
 
 Key files:
 
@@ -413,12 +551,14 @@ Key files:
 simulation/run-mission-scenario.py
 simulation/run-mission-campaign.py
 simulation/validate-mission-artifacts.py
+simulation/validate-object-behavior-airsim-ghost.py
 config/core_stack_synthetic_mission_ci.yaml
 config/core_stack_synthetic_mission_abort_ci.yaml
-config/core_stack_object_behavior_mission.yaml
+config/core_stack_object_behavior_airsim_ghost.yaml
 config/mission_campaigns/synthetic_ci.json
 config/mission_campaigns/airsim_live_smoke.json
 docs/mission_scenario_runner.md
+docs/object_behavior_airsim_ghost_runbook.md
 ```
 
 Campaign Ctrl-C semantics:
@@ -438,7 +578,7 @@ Second Ctrl-C:
 
 ---
 
-## 9. Known Traps
+## 10. Known Traps
 
 ```text
 - Do not use dedalus_replay_mission. Use dedalus_mission_loop.
@@ -459,16 +599,19 @@ Second Ctrl-C:
 - Do not collapse track_id/source_track_id/agent_id/identity_id into one field.
 - Do not select targets only by confidence when a stable track/agent target is specified.
 - Do not keep global behavior specs under simulation/behaviors; use config/behaviors.
+- Do not use artifact files as runtime IPC when a live stream or in-process subscriber is the right boundary.
+- Do not add shims to preserve stale pre-refactor APIs unless there is a current user and an explicit removal plan.
 - Do not create branches or PRs unless explicitly requested.
 ```
 
 ---
 
-## 10. Pointers
+## 11. Pointers
 
 Read next when relevant:
 
 ```text
+docs/object_behavior_airsim_ghost_runbook.md current AirSim ghost behavior + live stream runbook
 docs/object_conditioned_behavior_plan.md     detailed M3 behavior + identity plan
 docs/world_model_reprojection_validation_plan.md reprojection and world-model evidence plan
 docs/mission_scenario_runner.md             scenario/campaign harness
