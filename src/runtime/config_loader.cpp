@@ -39,12 +39,85 @@ bool parse_bool(const std::string& value) {
     throw std::invalid_argument("invalid boolean config value: " + value);
 }
 
+Vec3 parse_vec3(const std::string& value) {
+    std::string normalized;
+    normalized.reserve(value.size());
+    for (const char ch : value) {
+        if (ch == '[' || ch == ']' || ch == ',') {
+            normalized.push_back(' ');
+        } else {
+            normalized.push_back(ch);
+        }
+    }
+
+    std::istringstream input{normalized};
+    Vec3 result;
+    if (!(input >> result.x >> result.y >> result.z)) {
+        throw std::invalid_argument("invalid vec3 config value: " + value);
+    }
+    std::string extra;
+    if (input >> extra) {
+        throw std::invalid_argument("invalid vec3 config value with extra data: " + value);
+    }
+    return result;
+}
+
 std::string mission_option_key_from(const std::string& key) {
     constexpr auto prefix = "mission_options.";
     return key.substr(std::string{prefix}.size());
 }
 
+bool parse_airsim_object_binding_key(
+    CoreStackProviderConfig& config,
+    const std::string& key,
+    const std::string& value) {
+    constexpr auto prefix = "ghost_targets_airsim.objects.";
+    if (key.rfind(prefix, 0U) != 0U) {
+        return false;
+    }
+
+    const auto remainder = key.substr(std::string{prefix}.size());
+    const auto dot_pos = remainder.find('.');
+    if (dot_pos == std::string::npos || dot_pos == 0U || dot_pos + 1U >= remainder.size()) {
+        throw std::invalid_argument("invalid AirSim ghost object binding key: " + key);
+    }
+
+    const auto index_text = remainder.substr(0U, dot_pos);
+    const auto field = remainder.substr(dot_pos + 1U);
+    std::size_t parsed_chars = 0U;
+    const auto index = std::stoul(index_text, &parsed_chars);
+    if (parsed_chars != index_text.size()) {
+        throw std::invalid_argument("invalid AirSim ghost object binding index: " + key);
+    }
+    if (index >= 1024U) {
+        throw std::invalid_argument("unreasonable AirSim ghost object binding index: " + key);
+    }
+    if (config.ghost_targets_airsim_objects.size() <= index) {
+        config.ghost_targets_airsim_objects.resize(index + 1U);
+    }
+
+    auto& binding = config.ghost_targets_airsim_objects[index];
+    if (field == "source_track_id") {
+        binding.source_track_id = TrackId{value};
+    } else if (field == "airsim_object_name") {
+        binding.airsim_object_name = value;
+    } else if (field == "class") {
+        binding.class_label = value;
+    } else if (field == "confidence") {
+        binding.confidence = std::stod(value);
+    } else if (field == "size_m") {
+        binding.size_m = parse_vec3(value);
+    } else {
+        throw std::invalid_argument("unknown AirSim ghost object binding field: " + key);
+    }
+    return true;
+}
+
 void apply_config_value(CoreStackProviderConfig& config, const std::string& key, const std::string& value) {
+    if (parse_airsim_object_binding_key(config, key, value)) {
+        return;
+    }
+
     if (key == "frame_source") {
         config.frame_source = value;
     } else if (key == "ego_provider") {
@@ -61,6 +134,8 @@ void apply_config_value(CoreStackProviderConfig& config, const std::string& key,
         config.projector = value;
     } else if (key == "ghost_targets_enabled") {
         config.ghost_targets_enabled = parse_bool(value);
+    } else if (key == "ghost_targets_source") {
+        config.ghost_targets_source = value;
     } else if (key == "ghost_targets_scenario") {
         config.ghost_targets_scenario = value;
     } else if (key == "ghost_targets_scenario_path") {
@@ -114,6 +189,44 @@ void apply_config_value(CoreStackProviderConfig& config, const std::string& key,
     }
 }
 
+void validate_airsim_object_bindings(const CoreStackProviderConfig& config) {
+    if (config.ghost_targets_source != "airsim_objects") {
+        return;
+    }
+    if (config.ghost_targets_airsim_objects.empty()) {
+        throw std::invalid_argument("ghost_targets_source=airsim_objects requires at least one ghost_targets_airsim.objects.<N> binding");
+    }
+    for (std::size_t index = 0; index < config.ghost_targets_airsim_objects.size(); ++index) {
+        const auto& binding = config.ghost_targets_airsim_objects[index];
+        const auto prefix = "ghost_targets_airsim.objects." + std::to_string(index);
+        if (binding.source_track_id.value.empty()) {
+            throw std::invalid_argument(prefix + ".source_track_id is required");
+        }
+        if (binding.airsim_object_name.empty()) {
+            throw std::invalid_argument(prefix + ".airsim_object_name is required");
+        }
+        if (binding.class_label.empty()) {
+            throw std::invalid_argument(prefix + ".class is required");
+        }
+        if (binding.confidence < 0.0 || binding.confidence > 1.0) {
+            throw std::invalid_argument(prefix + ".confidence must be in [0, 1]");
+        }
+        if (binding.size_m.x <= 0.0 || binding.size_m.y <= 0.0 || binding.size_m.z <= 0.0) {
+            throw std::invalid_argument(prefix + ".size_m components must be positive");
+        }
+    }
+}
+
+void validate_config(const CoreStackProviderConfig& config) {
+    if (config.ghost_targets_source != "trajectory_scenario" && config.ghost_targets_source != "airsim_objects") {
+        throw std::invalid_argument("unknown ghost_targets_source: " + config.ghost_targets_source);
+    }
+    if (config.ghost_targets_source != "airsim_objects" && !config.ghost_targets_airsim_objects.empty()) {
+        throw std::invalid_argument("ghost_targets_airsim.objects.* requires ghost_targets_source=airsim_objects");
+    }
+    validate_airsim_object_bindings(config);
+}
+
 }  // namespace
 
 CoreStackProviderConfig load_core_stack_config(const std::string& path) {
@@ -152,9 +265,15 @@ CoreStackProviderConfig load_core_stack_config(const std::string& path) {
                 "invalid core-stack config line " + std::to_string(line_number) + ": empty key or value");
         }
 
-        apply_config_value(config, key, value);
+        try {
+            apply_config_value(config, key, value);
+        } catch (const std::exception& ex) {
+            throw std::runtime_error(
+                "invalid core-stack config line " + std::to_string(line_number) + ": " + ex.what());
+        }
     }
 
+    validate_config(config);
     return config;
 }
 
