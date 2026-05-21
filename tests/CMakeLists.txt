@@ -218,6 +218,13 @@ dedalus_add_native_test(
 )
 
 dedalus_add_native_test(
+    NAME world_snapshot_stream_server
+    LAYER unit
+    TAGS world_model stream tcp
+    SOURCES unit/test_world_snapshot_stream_server.cpp
+)
+
+dedalus_add_native_test(
     NAME trajectory_mission_controller
     LAYER unit
     TAGS synthetic
