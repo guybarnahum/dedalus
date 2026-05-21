@@ -2,27 +2,13 @@
 
 This runbook validates object-conditioned behavior against live AirSim frames while using a deterministic ghost-detection scenario as the object source.
 
-As of 2.26C, ghost simulation is no longer hardcoded and no longer depends on mission artifacts for visualization. The canonical source is:
+Canonical runtime diagrams live in:
 
 ```text
-simulation/ghost_detections/person_pair_crossing.json
-  -> references simulation/trajectories/*.json
-  -> loaded by GhostScenario
-  -> evaluated by VelocityTrajectory-backed motion
+docs/runtime_dataflow.md
 ```
 
-As of 2.26D, WorldSnapshot delivery is no longer a file-IO hack inside `dedalus_mission_loop`. The runtime publishes snapshots through a reusable typed pub/sub service:
-
-```text
-CoreStackRunner
-  -> InMemoryWorldModel
-  -> WorldSnapshotPublisher
-       -> LatestWorldSnapshotSubscriber       behavior / MissionRuntime
-       -> ArtifactSnapshotWriter              durable evidence/debug files
-       -> optional WorldSnapshotStreamServer  TCP JSONL live stream
-```
-
-Artifacts remain important, but they are evidence/debug outputs, not runtime IPC.
+As of 2.26D.6, `simulation/airsim-world-overlay.py` is a stream-only subscriber/renderer. It does not evaluate ghost scenarios locally and does not read `snapshot_manifest.txt` in normal operation.
 
 ---
 
@@ -57,11 +43,14 @@ Coordinate contract:
 initial_position_local_m:
   map-local / AirSim-local NED coordinates, not ego-relative.
 
-position_local_m from GhostScenario.evaluate(t):
+GhostDetectionState.position_local_m:
   same map-local / AirSim-local NED frame.
 
+Observation3D.position_local:
+  same value injected into perception.
+
 WorldSnapshot.agents[].position_local:
-  same map-local frame after mission-loop injection.
+  same map-local frame after world-model ingestion.
 
 position_ego_relative:
   derived view of object relative to current ego, not the canonical ghost placement.
@@ -69,52 +58,20 @@ position_ego_relative:
 
 ---
 
-## 2. Shared evaluator CLI
+## 2. Runtime and dataflow boundaries
 
-The evaluator CLI validates scenario authoring and feeds Python visualization without duplicating trajectory parsing logic:
-
-```bash
-./build-staging/apps/dedalus_ghost_scenario_eval \
-  --scenario simulation/ghost_detections/person_pair_crossing.json \
-  --time-s 10
-```
-
-Expected positions at `time-s 10`:
-
-```text
-ghost_person_001:
-  start x=12.0 + 0.3*10 = 15.0
-
-ghost_person_002:
-  start x=8.0 - 0.2*10 = 6.0
-
-ghost_car_001:
-  static x=4.0
-```
-
-At `time-s 50`, both people have completed one cross/wait/back/wait cycle and are back near their start positions.
-
-The CLI is covered by CTest:
-
-```bash
-ctest --test-dir build-staging --output-on-failure -R ghost_scenario_eval_cli
-```
-
----
-
-## 3. Runtime and dataflow boundaries
-
-The AirSim ghost object-behavior run has five separate paths:
+The AirSim ghost object-behavior run has six separate paths:
 
 ```text
 1. Sensor/data input path
-2. Ghost simulation path
-3. WorldSnapshot publish/subscribe path
-4. Command/control output path
-5. Artifact/validation path
+2. Ghost simulation/injection path
+3. Runtime publish/subscribe path
+4. AirSim visualization subscriber path
+5. Command/control output path
+6. Artifact/validation path
 ```
 
-### 3.1 Sensor / data input path
+### 2.1 Sensor / data input path
 
 Dedalus receives live camera frames and ego telemetry from AirSim/PX4 through a binary frame bridge:
 
@@ -125,9 +82,6 @@ AirSim / PX4
   -> AirSimFrameSource
   -> FrameHintEgoProvider
   -> CoreStackRunner
-  -> PerceptionPipelineOutput
-  -> InMemoryWorldModel
-  -> WorldSnapshotPublisher
 ```
 
 The binary bridge stdout must remain protocol bytes only. Human diagnostics must go to stderr.
@@ -140,7 +94,7 @@ bridge_transport: pipe
 bridge_command: python3 simulation/airsim-stream-frames-binary.py --include-ego --rate-hz 5 --mavlink-armed-endpoints udpin:127.0.0.1:14540
 ```
 
-### 3.2 Ghost simulation path
+### 2.2 Ghost simulation / perception injection path
 
 Mission-loop ghost injection is configured with:
 
@@ -154,8 +108,11 @@ Runtime path:
 ```text
 CoreStackRunner
   -> first valid frame establishes ghost_scenario_start
-  -> GhostTargetProvider evaluates GhostScenario at frame elapsed time
-  -> appends ghost observations to PerceptionPipelineOutput.observations
+  -> GhostTargetProvider::frame_at(timestamp, map_frame, scenario_start)
+       evaluates GhostScenario exactly once for that frame time
+       returns GhostDetectionsFrame for runtime-event subscribers
+       returns matching Observation3D objects
+  -> append Observation3D objects to PerceptionPipelineOutput.observations
   -> InMemoryWorldModel.ingest(...)
   -> WorldSnapshot.agents
 ```
@@ -172,17 +129,20 @@ AirSim frame arrives
   -> WorldSnapshotPublisher.publish(...)
 ```
 
-That delay is expected. It is not caused by AirSim visualization and does not depend on artifacts.
+That delay is expected. PLAN markers can appear as soon as `ghost_detections` events arrive; AG markers appear after world-model ingestion and snapshot publication.
 
-### 3.3 WorldSnapshot publish / subscribe path
+### 2.3 Runtime publish / subscribe path
 
-Current in-process and external consumers receive snapshots through one publisher boundary:
+Current in-process and external consumers receive typed events through publisher boundaries:
 
 ```text
+GhostDetectionsPublisher.publish(frame)
+  -> RuntimeEventStreamServer
+
 WorldSnapshotPublisher.publish(snapshot)
   -> LatestWorldSnapshotSubscriber
   -> ArtifactSnapshotWriter
-  -> optional WorldSnapshotStreamServer
+  -> RuntimeEventStreamServer
 ```
 
 `LatestWorldSnapshotSubscriber` is the in-process behavior handoff:
@@ -203,25 +163,31 @@ WorldSnapshotPublisher
   -> snapshot_manifest.txt
 ```
 
-`WorldSnapshotStreamServer` is an optional live TCP JSONL stream for external customers/tools:
+`RuntimeEventStreamServer` is an optional live TCP JSONL stream for external tools/customers:
 
 ```text
-WorldSnapshotPublisher
-  -> WorldSnapshotStreamServer
+GhostDetectionsPublisher + WorldSnapshotPublisher
+  -> RuntimeEventStreamServer
   -> tcp://127.0.0.1:<port>
 ```
 
-Enable it with:
+Enable it with the current compatibility flag:
 
 ```bash
 --world-snapshot-stream-port 47770
 ```
 
-The stream emits lines shaped like:
+The stream emits records shaped like:
 
 ```json
-{"type":"world_snapshot","seq":1,"timestamp_ns":123,"active_map_frame_id":"map_airsim_mission_0001","snapshot":{}}
+{"type":"ghost_detections","seq":1,"timestamp_ns":123,"map_frame_id":"map_airsim_mission_0001","ghost_detections":{"detections":[]}}
 ```
+
+```json
+{"type":"world_snapshot","seq":2,"timestamp_ns":123,"active_map_frame_id":"map_airsim_mission_0001","snapshot":{}}
+```
+
+Sequence numbers are stream-local and shared across event types. Consumers should dispatch by `type` and use `seq` to detect gaps.
 
 The stream server is opt-in, non-blocking, and drops broken/slow clients rather than blocking the mission loop. It reports stats on shutdown:
 
@@ -232,56 +198,66 @@ connected_clients
 dropped_clients
 ```
 
-### 3.4 AirSim visualization path
+### 2.4 AirSim visualization subscriber path
 
-`simulation/airsim-world-overlay.py` is display-only. Its default mode is artifact-free for planned ghost visualization:
-
-```bash
-python3 simulation/airsim-world-overlay.py \
-  --ghost-scenario simulation/ghost_detections/person_pair_crossing.json \
-  --ghost-evaluator ./build-staging/apps/dedalus_ghost_scenario_eval \
-  --source ghost_scenario \
-  --follow \
-  --rate-hz 2 \
-  --duration-s 180 \
-  --clear \
-  --label
-```
-
-This path is:
+`simulation/airsim-world-overlay.py` is display-only:
 
 ```text
-ghost detection JSON
-  -> dedalus_ghost_scenario_eval
+RuntimeEventStreamServer
+  -> TCP JSONL stream
   -> simulation/airsim-world-overlay.py
+       caches latest ghost_detections
+       caches latest world_snapshot
+       renders PLAN / PLAN* from ghost_detections
+       renders AG from world_snapshot.agents
+       renders EGO from world_snapshot.ego
   -> AirSim simPlotPoints / simPlotStrings
 ```
 
-Static detections:
+Run:
 
-```text
-trajectory_path: null
-  -> drawn persistently once by default
-```
-
-Dynamic detections:
-
-```text
-trajectory_path present / non-zero evaluated velocity
-  -> redrawn while --follow is active
+```bash
+python3 simulation/airsim-world-overlay.py \
+  --stream-port 47770 \
+  --follow \
+  --rate-hz 5 \
+  --duration-s 180 \
+  --clear \
+  --label \
+  --debug
 ```
 
 The overlay does not modify Dedalus perception, world model, target selection, or mission state.
 
-Current limitation:
+It must not:
 
 ```text
-AG/EGO/SEL marker rendering in simulation/airsim-world-overlay.py still has artifact-comparison modes.
-The next stage should make AG/EGO consume the live WorldSnapshot stream instead of snapshot_manifest.txt.
-SEL should later consume a live mission-event stream or selected-target state instead of mission_events.jsonl.
+- evaluate GhostScenario locally
+- poll snapshot_manifest.txt in normal mode
+- read mission_events.jsonl for normal SEL state
+- own source modes such as combined/world_snapshot/artifact_snapshot
 ```
 
-### 3.5 Mission / behavior runtime path
+Current marker semantics:
+
+```text
+PLAN:
+  dynamic planned/evaluated ghost detection from ghost_detections event.
+
+PLAN*:
+  static planned/evaluated ghost detection from ghost_detections event.
+
+AG:
+  world-model agent from world_snapshot event.
+
+EGO:
+  ego pose from world_snapshot event.
+
+SEL:
+  not live yet. Future slice should stream mission events or selected-target state.
+```
+
+### 2.5 Mission / behavior runtime path
 
 The autonomy loop consumes the latest world snapshot and emits mission commands:
 
@@ -324,7 +300,7 @@ Land
 Disarm
 ```
 
-### 3.6 Command/control output path
+### 2.6 Command/control output path
 
 Commands go back to PX4/AirSim through the PX4 bridge command sink:
 
@@ -339,7 +315,7 @@ ObjectBehaviorMissionController
 
 Command helper OK is not vehicle truth. Vehicle truth comes back through ego/world telemetry. The mission does not enter `ExecuteMission` until ego height reaches the configured safe height.
 
-### 3.7 Artifact / validation path
+### 2.7 Artifact / validation path
 
 `ArtifactSnapshotWriter` writes durable snapshot artifacts:
 
@@ -370,7 +346,7 @@ This is the validation truth path. It is not a simulation input path.
 
 ---
 
-## 4. Run with AirSim/PX4 already running
+## 3. Run with AirSim/PX4 already running
 
 Clean generated artifacts:
 
@@ -378,21 +354,7 @@ Clean generated artifacts:
 rm -rf out/object_behavior_airsim_ghost out/object_behavior_airsim_ghost_annotation
 ```
 
-Terminal 1, visualize planned ghost scenario in AirSim:
-
-```bash
-python3 simulation/airsim-world-overlay.py \
-  --ghost-scenario simulation/ghost_detections/person_pair_crossing.json \
-  --ghost-evaluator ./build-staging/apps/dedalus_ghost_scenario_eval \
-  --source ghost_scenario \
-  --follow \
-  --rate-hz 2 \
-  --duration-s 180 \
-  --clear \
-  --label
-```
-
-Terminal 2, run mission-loop with live WorldSnapshot stream enabled:
+Terminal 1, run mission-loop with runtime event stream enabled:
 
 ```bash
 ./build-staging/apps/dedalus_mission_loop \
@@ -404,10 +366,30 @@ Terminal 2, run mission-loop with live WorldSnapshot stream enabled:
   --progress
 ```
 
+Terminal 2, visualize live runtime events in AirSim:
+
+```bash
+python3 simulation/airsim-world-overlay.py \
+  --stream-port 47770 \
+  --follow \
+  --rate-hz 5 \
+  --duration-s 180 \
+  --clear \
+  --label \
+  --debug
+```
+
 Optional terminal 3, inspect the live stream:
 
 ```bash
 nc 127.0.0.1 47770 | head -5
+```
+
+Expected stream event types:
+
+```text
+ghost_detections
+world_snapshot
 ```
 
 Expected mission events:
@@ -437,62 +419,7 @@ The behavior should not switch to `ghost_person_002` merely because it has highe
 
 ---
 
-## 5. Optional artifact comparison overlay
-
-Normal planned-ghost visualization does not read artifacts. Until the overlay consumes the live WorldSnapshot stream, `combined` and `world_snapshot` modes remain debug/fallback artifact comparison modes.
-
-Combined comparison:
-
-```bash
-python3 simulation/airsim-world-overlay.py \
-  --ghost-scenario simulation/ghost_detections/person_pair_crossing.json \
-  --ghost-evaluator ./build-staging/apps/dedalus_ghost_scenario_eval \
-  --snapshot-dir out/object_behavior_airsim_ghost \
-  --source combined \
-  --follow \
-  --rate-hz 2 \
-  --duration-s 180 \
-  --clear \
-  --label \
-  --debug
-```
-
-WorldSnapshot-only comparison:
-
-```bash
-python3 simulation/airsim-world-overlay.py \
-  --snapshot-dir out/object_behavior_airsim_ghost \
-  --source world_snapshot \
-  --follow \
-  --rate-hz 2 \
-  --duration-s 180 \
-  --clear \
-  --label \
-  --debug
-```
-
-Visual semantics in comparison modes:
-
-```text
-PLAN:
-  planned/evaluated GhostScenario state.
-
-PLAN*:
-  static planned/evaluated GhostScenario state, drawn persistently by default.
-
-AG:
-  world-model agent from snapshot artifacts today; should move to live WorldSnapshot stream next.
-
-EGO:
-  ego pose from snapshot artifacts today; should move to live WorldSnapshot stream next.
-
-SEL:
-  selected target from mission_events.jsonl target_selected today; should move to live mission-event stream next.
-```
-
----
-
-## 6. Validate the run artifacts
+## 4. Validate the run artifacts
 
 ```bash
 python3 simulation/validate-object-behavior-airsim-ghost.py \
@@ -517,7 +444,7 @@ sidecars include ghost_person_001
 
 ---
 
-## 7. Export MP4 review artifact
+## 5. Export MP4 review artifact
 
 ```bash
 python3 scripts/export-ppm-sequence-to-mp4.py \
@@ -529,9 +456,9 @@ The MP4 is a human review artifact. Mission events and snapshots remain the vali
 
 ---
 
-## 8. Test commands
+## 6. Test commands
 
-Targeted pub/sub and stream regression:
+Targeted pub/sub and runtime stream regression:
 
 ```bash
 ctest --test-dir build-staging --output-on-failure -R 'pubsub|world_snapshot_publisher|world_snapshot_stream_server|mission_runtime'
@@ -551,7 +478,7 @@ ctest --test-dir build-staging --output-on-failure
 
 ---
 
-## 9. What this proves
+## 7. What this proves
 
 This run proves:
 
@@ -559,12 +486,13 @@ This run proves:
 Live AirSim frames can drive the normal CoreStackRunner path.
 Ghost detections are authored as JSON objects with referenced VelocityTrajectory JSON paths.
 GhostScenario can evaluate static and dynamic ghost detections deterministically.
-AirSim planned-ghost visualization can consume the shared evaluator without reading mission artifacts.
-Mission-loop ghost injection can consume the same scenario/evaluator path into WorldSnapshot agents.
+CoreStackRunner publishes GhostDetectionsFrame from the same evaluation injected into perception.
+Mission-loop ghost injection enters PerceptionPipelineOutput.observations and then WorldSnapshot.agents.
 WorldSnapshots are published through a reusable typed pub/sub boundary.
 Behavior consumes WorldSnapshot through LatestWorldSnapshotSubscriber.
 Artifacts are written by ArtifactSnapshotWriter as evidence/debug outputs.
-A live WorldSnapshot TCP JSONL stream can be enabled for external customers/tools.
+A live runtime event TCP JSONL stream can be enabled for external customers/tools.
+AirSim overlay consumes live runtime events and renders PLAN / PLAN* / AG / EGO without artifact polling.
 TargetSelector can select the requested lower-confidence ghost target by source_track_id.
 ObjectBehaviorMissionController can trigger behavior events from WorldSnapshot state.
 Follow behavior can emit bounded non-zero velocity.
@@ -573,13 +501,12 @@ Mission lifecycle still reaches GoHome / Land / Disarm / Complete.
 
 ---
 
-## 10. What this does not prove yet
+## 8. What this does not prove yet
 
 This does not yet prove:
 
 ```text
-AirSim AG/EGO markers consuming the live WorldSnapshot stream.
-SEL marker consuming a live mission-event stream.
+SEL marker consuming a live mission-event stream or selected-target state.
 circle / approach / sequence motion
 real camera detector quality
 real 3D perception quality
@@ -592,7 +519,7 @@ Those are subsequent slices.
 
 ---
 
-## 11. Engineering cleanup rule
+## 9. Engineering cleanup rule
 
 For future work on this path:
 
@@ -609,6 +536,7 @@ Specific to this runbook:
 Do not use artifact files as runtime IPC when the live stream or in-process subscriber boundary is the right abstraction.
 Do not reintroduce direct snapshot file writing into dedalus_mission_loop; keep it behind ArtifactSnapshotWriter.
 Do not bypass WorldSnapshotPublisher for behavior-facing snapshot delivery.
+Do not make simulation/airsim-world-overlay.py evaluate GhostScenario or poll artifacts in normal mode.
 Keep generic event machinery generic: EventPublisher<T> / EventSubscriber<T>.
-Keep domain consumers readable: WorldSnapshotSubscriber::on_snapshot(...), not generic on_event(...) in world-model code.
+Keep domain consumers readable: WorldSnapshotSubscriber::on_snapshot(...), GhostDetectionsSubscriber::on_ghost_detections(...), not generic on_event(...) in domain code.
 ```
