@@ -20,7 +20,7 @@ Milestone 2.25 — ObjectBehaviorMissionController skeleton and first object-con
 Status: implemented through object behavior lifecycle and bounded follow behavior baseline.
 
 Milestone 2.26 — AirSim ghost behavior validation and live runtime-event plumbing.
-Status: implemented through 2.26E.1 docs/planning baseline.
+Status: implemented through 2.26E.2 config/schema parsing baseline.
 ```
 
 Current 2.26D/E state:
@@ -34,15 +34,26 @@ Ghost simulation, implemented trajectory source:
 
 Ghost people now move cross -> wait -> cross back -> wait.
 
+2.26E AirSim existing-object config/schema, implemented:
+  ghost_targets_source: airsim_objects
+  ghost_targets_airsim.objects.<N>.source_track_id
+  ghost_targets_airsim.objects.<N>.airsim_object_name
+  ghost_targets_airsim.objects.<N>.class
+  ghost_targets_airsim.objects.<N>.confidence
+  ghost_targets_airsim.objects.<N>.size_m
+
+Example config:
+  config/core_stack_object_behavior_airsim_existing_object_example.yaml
+
+Provider implementation status:
+  Config parsing is implemented and contract-tested.
+  Provider creation intentionally fails with a clear "scheduled for 2.26E.3" error until the AirSim object pose source is implemented.
+
 Planned 2.26E AirSim existing-object source:
   existing AirSim scene object name
     -> simGetObjectPose(object_name)
     -> GhostDetectionState at that AirSim-local NED pose
     -> GhostDetectionsFrame + Observation3D list
-
-Initial 2.26E implementation should support explicit object binding only:
-  ghost_targets_source: airsim_objects
-  source_track_id + airsim_object_name + class + confidence + size_m
 
 Do not start with random/all selection modes. Add those only after deterministic explicit binding works.
 
@@ -110,9 +121,6 @@ Artifact files remain evidence/debug outputs, not IPC.
 Next milestone slice:
 
 ```text
-2.26E.2:
-  add explicit AirSim object-binding config/schema parsing for ghost_targets_source: airsim_objects.
-
 2.26E.3:
   implement AirSim scene-object ghost provider/source that reads selected object poses and emits GhostDetectionsFrame + Observation3D.
 
