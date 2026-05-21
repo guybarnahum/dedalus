@@ -1,0 +1,55 @@
+# AirSim existing-object ghost binding run config.
+#
+# This config binds a Dedalus ghost detection to an object already present in the
+# AirSim environment. The initial object was selected from an observed AirSim
+# object listing:
+#
+#   BRPlayer_01_96  position_ned_m ~= [-19.19, 29.99, -2.50]
+#
+# To choose a different object:
+#
+#   python3 simulation/airsim-list-objects.py --match-class person --sort distance --format table
+#
+# Then replace ghost_targets_airsim.objects.0.airsim_object_name below.
+
+frame_source: airsim
+ego_provider: frame_hint
+detector: scripted
+camera_stabilizer: null
+tracker: simple_centroid
+identity_resolver: appearance_only
+projector: flat_ground
+world_model: in_memory
+frame_annotator: ppm_sequence
+annotation_output_path: out/object_behavior_airsim_existing_object_annotation
+annotation_output_fps: 5
+fallback_map_frame_id: map_airsim_mission_0001
+
+source_host: 127.0.0.1
+source_rpc_port: 41451
+vehicle_name: PX4
+vehicle_camera_name: front_center
+bridge_transport: pipe
+bridge_mode: stream_binary_ego
+bridge_command: python3 simulation/airsim-stream-frames-binary.py --include-ego --rate-hz 5 --mavlink-armed-endpoints udpin:127.0.0.1:14540
+
+# 2.26E explicit existing-object ghost binding.
+ghost_targets_enabled: true
+ghost_targets_source: airsim_objects
+ghost_targets_airsim.objects.0.source_track_id: ghost_person_001
+ghost_targets_airsim.objects.0.airsim_object_name: BRPlayer_01_96
+ghost_targets_airsim.objects.0.class: person
+ghost_targets_airsim.objects.0.confidence: 0.82
+ghost_targets_airsim.objects.0.size_m: [0.6, 0.6, 1.8]
+
+mission_controller: object_behavior
+mission_tick_hz: 10
+flight_command_sink: px4_bridge
+
+mission_options.behavior_spec_path: config/behaviors/follow_specific_track.yaml
+mission_options.flight_control_mode: px4
+mission_options.flight_safe_height_m: 16
+mission_options.flight_max_velocity_mps: 3.0
+mission_options.flight_home_policy: initial_ego_pose
+mission_options.flight_px4_command_bridge: python3 simulation/px4-command-bridge.py --endpoint udpin:127.0.0.1:14550 --px4-tmux-target dedalus-sim:px4 --safe-height-m 16
+mission_options.flight_prepare_session_command: python3 simulation/airsim-prepare-session.py --vehicle-name PX4 --px4-tmux-target dedalus-sim:px4 --mavlink-endpoints udpin:127.0.0.1:14540 --wait-gps --gps-timeout-s 20
