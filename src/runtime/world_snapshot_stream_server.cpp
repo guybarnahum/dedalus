@@ -124,6 +124,19 @@ std::string stream_line_for(std::uint64_t seq, const GhostDetectionsFrame& frame
     return line;
 }
 
+std::string stream_line_for(std::uint64_t seq, const MissionEvent& event) {
+    std::string line;
+    line.reserve(event.json.size() + 128U);
+    line += "{\"type\":\"mission_event\",\"seq\":";
+    line += std::to_string(seq);
+    line += ",\"timestamp_ns\":";
+    line += std::to_string(event.timestamp.timestamp_ns);
+    line += ",\"mission_event\":";
+    line += compact_json_object(event.json);
+    line += "}\n";
+    return line;
+}
+
 bool send_all_nonblocking(int fd, const std::string& payload) {
     const char* data = payload.data();
     std::size_t remaining = payload.size();
@@ -230,6 +243,15 @@ void RuntimeEventStreamServer::on_ghost_detections(const GhostDetectionsFrame& f
         seq = ++published_seq_;
     }
     publish_json_line(stream_line_for(seq, frame));
+}
+
+void RuntimeEventStreamServer::on_mission_event(const MissionEvent& event) {
+    std::uint64_t seq = 0;
+    {
+        std::lock_guard<std::mutex> lock{mutex_};
+        seq = ++published_seq_;
+    }
+    publish_json_line(stream_line_for(seq, event));
 }
 
 void RuntimeEventStreamServer::publish_json_line(const std::string& line) {
