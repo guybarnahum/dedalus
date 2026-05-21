@@ -48,7 +48,9 @@ flight_command_sink: px4_bridge
 
 mission_options.behavior_spec_path: config/behaviors/follow_specific_track.yaml
 mission_options.object_behavior_hold_velocity_mps: 0.0
-mission_options.object_behavior_completion_after_s: 8.0
+# Long enough for the drone to visibly close distance to the selected AirSim object
+# before GoHome/Land starts. Keep frame budgets high enough when running this config.
+mission_options.object_behavior_completion_after_s: 45.0
 
 mission_options.flight_control_mode: px4
 mission_options.flight_prepare_session_command: python3 simulation/airsim-prepare-session.py --host 127.0.0.1 --rpc-port 41451 --vehicle-name PX4 --mavlink-endpoints udpin:127.0.0.1:14550,udpin:127.0.0.1:14540,udpin:127.0.0.1:14600
