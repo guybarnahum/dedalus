@@ -20,13 +20,13 @@ Milestone 2.25 — ObjectBehaviorMissionController skeleton and first object-con
 Status: implemented through object behavior lifecycle and bounded follow behavior baseline.
 
 Milestone 2.26 — AirSim ghost behavior validation and live runtime-event plumbing.
-Status: implemented through 2.26D.7 baseline.
+Status: implemented through 2.26E.1 docs/planning baseline.
 ```
 
-Current 2.26D state:
+Current 2.26D/E state:
 
 ```text
-Ghost simulation:
+Ghost simulation, implemented trajectory source:
   simulation/ghost_detections/person_pair_crossing.json
     -> references simulation/trajectories/*.json
     -> loaded by GhostScenario
@@ -34,10 +34,26 @@ Ghost simulation:
 
 Ghost people now move cross -> wait -> cross back -> wait.
 
+Planned 2.26E AirSim existing-object source:
+  existing AirSim scene object name
+    -> simGetObjectPose(object_name)
+    -> GhostDetectionState at that AirSim-local NED pose
+    -> GhostDetectionsFrame + Observation3D list
+
+Initial 2.26E implementation should support explicit object binding only:
+  ghost_targets_source: airsim_objects
+  source_track_id + airsim_object_name + class + confidence + size_m
+
+Do not start with random/all selection modes. Add those only after deterministic explicit binding works.
+
+Useful discovery tool:
+  python3 simulation/airsim-list-objects.py --match-class person --sort distance --format table
+  python3 simulation/airsim-list-objects.py --only-matched --output out/airsim_scene_objects.json
+
 Mission-loop ghost injection and publication:
   CoreStackRunner
     -> GhostTargetProvider::frame_at(...)
-       -> one GhostScenario evaluation at frame time
+       -> one configured ghost source evaluation at frame time
        -> GhostDetectionsFrame event for live stream/debug subscribers
        -> Observation3D list injected into PerceptionPipelineOutput.observations
     -> InMemoryWorldModel
@@ -85,7 +101,7 @@ Live runtime event stream:
 
 AirSim overlay:
   simulation/airsim-world-overlay.py is now a stream-only subscriber/renderer.
-  It no longer evaluates ghost scenarios locally and no longer reads snapshot_manifest.txt.
+  It no longer evaluates ghost scenarios locally, does not discover AirSim objects, and no longer reads snapshot_manifest.txt.
   It renders PLAN / PLAN* from ghost_detections, AG / EGO from world_snapshot, and SEL from mission_event target_selected matched against the latest world_snapshot agent.
 
 Artifact files remain evidence/debug outputs, not IPC.
@@ -94,11 +110,17 @@ Artifact files remain evidence/debug outputs, not IPC.
 Next milestone slice:
 
 ```text
-2.26D.8:
-  prune naming drift around world_snapshot_stream_server file/test names if desired, or keep compatibility if churn outweighs value.
+2.26E.2:
+  add explicit AirSim object-binding config/schema parsing for ghost_targets_source: airsim_objects.
 
-Post-2.26D:
-  continue behavior-facing dynamic ghost validation and then expand behavior math beyond follow.
+2.26E.3:
+  implement AirSim scene-object ghost provider/source that reads selected object poses and emits GhostDetectionsFrame + Observation3D.
+
+2.26E.4:
+  add an explicit existing-object config and live validation flow. First target should be a visible BRPlayer_* or static visible object discovered by simulation/airsim-list-objects.py.
+
+2.27:
+  circle an existing visible static object after explicit AirSim object binding works.
 ```
 
 ---
@@ -164,7 +186,7 @@ cmake --build build-staging -j$(nproc)
 ctest --test-dir build-staging --output-on-failure
 ```
 
-Focused 2.26D pub/sub and runtime stream validation:
+Focused 2.26D/E pub/sub and runtime stream validation:
 
 ```bash
 ctest --test-dir build-staging --output-on-failure -R 'pubsub|world_snapshot_publisher|world_snapshot_stream_server|mission_runtime'
@@ -226,6 +248,15 @@ python3 simulation/airsim-world-overlay.py \
   --clear \
   --label \
   --debug
+```
+
+Existing AirSim object discovery:
+
+```bash
+python3 simulation/airsim-list-objects.py \
+  --match-class person \
+  --sort distance \
+  --format table
 ```
 
 ---
@@ -459,6 +490,8 @@ simulation/trajectories/ghost_person_001_crossing.json
 simulation/trajectories/ghost_person_002_crossing.json
 ```
 
+Planned AirSim existing-object ghost bindings should be referenced from core-stack config, not embedded in the overlay.
+
 Rule:
 
 ```text
@@ -470,6 +503,9 @@ Ghost/scripted target scenario:
 
 Trajectory referenced by ghost scenario:
   simulation/trajectories/*.json
+
+AirSim existing-object binding:
+  config/core_stack_*.yaml ghost_targets_airsim.objects[]
 
 Core-stack config that references behavior:
   config/core_stack_object_behavior_airsim_ghost.yaml
@@ -503,7 +539,7 @@ config says selected_target = ghost_person_001
 
 That bypasses the perception/world-model/selector chain and should not be the main validation path.
 
-Meaningful ghost scenario:
+Meaningful trajectory scenario:
 
 ```text
 Two person targets exist:
@@ -513,6 +549,15 @@ Two person targets exist:
 Behavior spec requests ghost_person_001 with policy=persistent_track.
 Expected result:
   TargetSelector keeps ghost_person_001 and does not switch to ghost_person_002 merely because confidence is higher.
+```
+
+Meaningful AirSim existing-object scenario:
+
+```text
+An existing visible AirSim object, such as BRPlayer_*, is bound to ghost_person_001.
+GhostDetectionsFrame uses the object's AirSim pose.
+WorldSnapshot.agents contains ghost_person_001 at that pose.
+Overlay PLAN / AG / SEL markers align over the visible object.
 ```
 
 ---
@@ -595,6 +640,7 @@ Future validation should later prove:
 ```text
 selected target identity remains stable across crossing/waiting/crossing-back motion
 PLAN/AG/EGO/SEL markers update from live runtime event stream in AirSim overlay
+explicitly bound existing AirSim objects can drive ghost detections and align with PLAN/AG/SEL markers
 circle / approach / sequence behavior math emits correct bounded velocity
 obstacle avoidance remains outside M3 unless explicitly started post-M3
 ```
@@ -610,6 +656,7 @@ simulation/run-mission-scenario.py
 simulation/run-mission-campaign.py
 simulation/validate-mission-artifacts.py
 simulation/validate-object-behavior-airsim-ghost.py
+simulation/airsim-list-objects.py
 config/core_stack_synthetic_mission_ci.yaml
 config/core_stack_synthetic_mission_abort_ci.yaml
 config/core_stack_object_behavior_airsim_ghost.yaml
@@ -659,7 +706,7 @@ Second Ctrl-C:
 - Do not select targets only by confidence when a stable track/agent target is specified.
 - Do not keep global behavior specs under simulation/behaviors; use config/behaviors.
 - Do not use artifact files as runtime IPC when a live stream or in-process subscriber is the right boundary.
-- Do not make simulation/airsim-world-overlay.py evaluate GhostScenario or poll snapshot artifacts in normal mode; it should subscribe and render.
+- Do not make simulation/airsim-world-overlay.py evaluate GhostScenario, discover AirSim objects, or poll snapshot artifacts in normal mode; it should subscribe and render.
 - Do not add shims to preserve stale pre-refactor APIs unless there is a current user and an explicit removal plan.
 - Do not create branches or PRs unless explicitly requested.
 ```
