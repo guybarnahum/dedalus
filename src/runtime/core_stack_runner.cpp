@@ -16,18 +16,26 @@ std::int64_t duration_us(const SteadyClock::time_point start) {
 }  // namespace
 
 CoreStackRunner::CoreStackRunner(CoreStackProviders providers)
-    : CoreStackRunner(std::move(providers), nullptr, nullptr) {}
+    : CoreStackRunner(std::move(providers), nullptr, nullptr, nullptr) {}
 
 CoreStackRunner::CoreStackRunner(CoreStackProviders providers, std::unique_ptr<PipelineProfiler> timing_writer)
-    : CoreStackRunner(std::move(providers), std::move(timing_writer), nullptr) {}
+    : CoreStackRunner(std::move(providers), std::move(timing_writer), nullptr, nullptr) {}
 
 CoreStackRunner::CoreStackRunner(
     CoreStackProviders providers,
     std::unique_ptr<PipelineProfiler> timing_writer,
     std::shared_ptr<WorldSnapshotPublisher> snapshot_publisher)
+    : CoreStackRunner(std::move(providers), std::move(timing_writer), std::move(snapshot_publisher), nullptr) {}
+
+CoreStackRunner::CoreStackRunner(
+    CoreStackProviders providers,
+    std::unique_ptr<PipelineProfiler> timing_writer,
+    std::shared_ptr<WorldSnapshotPublisher> snapshot_publisher,
+    std::shared_ptr<GhostDetectionsPublisher> ghost_detections_publisher)
     : providers_(std::move(providers)),
       timing_writer_(std::move(timing_writer)),
-      snapshot_publisher_(std::move(snapshot_publisher)) {
+      snapshot_publisher_(std::move(snapshot_publisher)),
+      ghost_detections_publisher_(std::move(ghost_detections_publisher)) {
     start_prefetch();
 }
 
@@ -104,14 +112,17 @@ bool CoreStackRunner::run_once() {
         if (!ghost_scenario_start_.has_value()) {
             ghost_scenario_start_ = frame->timestamp;
         }
-        const auto ghost_observations = providers_.ghost_targets->observations_at(
+        const auto ghost_frame = providers_.ghost_targets->frame_at(
             frame->timestamp,
             ego_estimate.ego->map_frame_id,
             *ghost_scenario_start_);
+        if (ghost_detections_publisher_) {
+            ghost_detections_publisher_->publish(ghost_frame);
+        }
         perception_output.observations.insert(
             perception_output.observations.end(),
-            ghost_observations.begin(),
-            ghost_observations.end());
+            ghost_frame.observations.begin(),
+            ghost_frame.observations.end());
     }
     if (timing_writer_) {
         timing_writer_->record_stage("perception_pipeline.process", duration_us(start));
