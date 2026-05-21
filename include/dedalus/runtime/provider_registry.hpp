@@ -5,6 +5,7 @@
 #include <vector>
 
 #include "dedalus/behavior/mission_controller.hpp"
+#include "dedalus/core/types.hpp"
 #include "dedalus/perception/ghost_targets.hpp"
 #include "dedalus/perception/perception_pipeline.hpp"
 #include "dedalus/sensors/ego_state_provider.hpp"
@@ -13,6 +14,14 @@
 #include "dedalus/world_model/in_memory_world_model.hpp"
 
 namespace dedalus {
+
+struct AirSimGhostObjectBinding {
+    TrackId source_track_id;
+    std::string airsim_object_name;
+    std::string class_label{"unknown"};
+    double confidence{1.0};
+    Vec3 size_m{1.0, 1.0, 1.0};
+};
 
 struct CoreStackProviderConfig {
     std::string frame_source{"synthetic"};
@@ -23,8 +32,10 @@ struct CoreStackProviderConfig {
     std::string identity_resolver{"appearance_only"};
     std::string projector{"flat_ground"};
     bool ghost_targets_enabled{false};
+    std::string ghost_targets_source{"trajectory_scenario"};
     std::string ghost_targets_scenario{"person_pair_crossing"};
     std::string ghost_targets_scenario_path;
+    std::vector<AirSimGhostObjectBinding> ghost_targets_airsim_objects;
     std::string world_model{"in_memory"};
     std::string frame_annotator{"null"};
     std::string annotation_output_path{"out/annotated.mp4"};
