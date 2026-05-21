@@ -46,7 +46,7 @@ Perception / simulation injection
   CoreStackRunner
     -> PerceptionPipeline.process(frame, ego)
     -> GhostTargetProvider::frame_at(timestamp, map_frame, scenario_start)
-         evaluates GhostScenario once at frame time
+         evaluates one configured ghost target source at frame time
          returns GhostDetectionsFrame
          returns matching Observation3D objects
     -> append ghost Observation3D objects to PerceptionPipelineOutput.observations
@@ -90,7 +90,70 @@ External live subscribers
 
 ---
 
-## 2. Publisher / subscriber topology
+## 2. Ghost target source modes
+
+Ghost targets are simulation/debug inputs that deliberately enter at the same semantic boundary as real 3D detections: `Observation3D` appended to `PerceptionPipelineOutput.observations`.
+
+Current implemented source mode:
+
+```text
+trajectory_scenario:
+  simulation/ghost_detections/*.json
+    -> references simulation/trajectories/*.json
+    -> GhostScenario evaluates static and dynamic detections at frame time
+    -> GhostDetectionsFrame + Observation3D list
+```
+
+Planned 2.26E source mode:
+
+```text
+airsim_scene_objects:
+  existing AirSim scene object name
+    -> simGetObjectPose(object_name)
+    -> GhostDetectionState at that AirSim pose
+    -> GhostDetectionsFrame + Observation3D list
+```
+
+Both modes must produce the same downstream products:
+
+```text
+GhostDetectionsFrame
+  -> GhostDetectionsPublisher
+  -> RuntimeEventStreamServer
+  -> overlay PLAN / PLAN*
+
+Observation3D list
+  -> PerceptionPipelineOutput.observations
+  -> InMemoryWorldModel
+  -> WorldSnapshot.agents
+  -> TargetSelector
+  -> ObjectBehaviorMissionController
+  -> MissionEventPublisher target_selected
+  -> overlay SEL
+```
+
+The overlay must not discover scene objects or generate ghosts. Existing-object binding belongs in the mission-loop/provider side so visualization and behavior share one source of truth.
+
+Initial 2.26E implementation should support explicit object selection only:
+
+```yaml
+ghost_targets_enabled: true
+ghost_targets_source: airsim_objects
+
+ghost_targets_airsim:
+  objects:
+    - source_track_id: ghost_person_001
+      airsim_object_name: BRPlayer_01_96
+      class: person
+      confidence: 0.82
+      size_m: [0.6, 0.6, 1.8]
+```
+
+Later convenience modes may add `all` and seeded `random`, but they should not precede deterministic explicit binding.
+
+---
+
+## 3. Publisher / subscriber topology
 
 ```text
                           +-----------------------------+
@@ -146,7 +209,7 @@ Behavior does not consume GhostDetectionsFrame directly.
 
 ---
 
-## 3. Runtime event stream records
+## 4. Runtime event stream records
 
 The optional runtime event stream is enabled by:
 
@@ -178,7 +241,7 @@ Sequence numbers are stream-local and shared across event types. A client should
 
 ---
 
-## 4. AirSim overlay subscriber dataflow
+## 5. AirSim overlay subscriber dataflow
 
 `simulation/airsim-world-overlay.py` is now a subscriber/renderer only.
 
@@ -213,6 +276,7 @@ The overlay must not:
 
 ```text
 - evaluate GhostScenario locally
+- discover/list AirSim objects for ghost binding
 - poll snapshot_manifest.txt in normal mode
 - read mission_events.jsonl for normal SEL state
 - decide between source modes such as combined/world_snapshot/artifact_snapshot
@@ -222,7 +286,7 @@ The overlay simply renders whichever event types arrive. Visibility controls sho
 
 ---
 
-## 5. Behavior / flight sink dataflow
+## 6. Behavior / flight sink dataflow
 
 ```text
 WorldSnapshotPublisher
@@ -249,7 +313,7 @@ Flight sinks receive bounded kinematic intent only. They must not own target sel
 
 ---
 
-## 6. Artifact dataflow
+## 7. Artifact dataflow
 
 ```text
 WorldSnapshotPublisher
@@ -272,7 +336,7 @@ Artifacts are still important for evidence, regression tests, and human debuggin
 
 ---
 
-## 7. Current live overlay markers
+## 8. Current live overlay markers
 
 ```text
 PLAN:
@@ -290,3 +354,5 @@ EGO:
 SEL:
   selected target from mission_event target_selected, rendered by matching source_track_id or agent_id to the latest world_snapshot agent.
 ```
+
+For future AirSim existing-object binding, PLAN / AG / SEL should appear over the real visible AirSim object whose pose drives the ghost detection.
