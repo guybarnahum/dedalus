@@ -5,7 +5,6 @@
 #include <vector>
 
 #include "dedalus/behavior/mission_controller.hpp"
-#include "dedalus/core/types.hpp"
 #include "dedalus/perception/ghost_targets.hpp"
 #include "dedalus/perception/perception_pipeline.hpp"
 #include "dedalus/sensors/ego_state_provider.hpp"
@@ -14,14 +13,6 @@
 #include "dedalus/world_model/in_memory_world_model.hpp"
 
 namespace dedalus {
-
-struct AirSimGhostObjectBinding {
-    TrackId source_track_id;
-    std::string airsim_object_name;
-    std::string class_label{"unknown"};
-    double confidence{1.0};
-    Vec3 size_m{1.0, 1.0, 1.0};
-};
 
 struct CoreStackProviderConfig {
     std::string frame_source{"synthetic"};
