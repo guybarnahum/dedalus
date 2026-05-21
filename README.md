@@ -21,6 +21,34 @@ Built specifically for **NVIDIA Jetson Orin** edge-compute modules, the system a
 * **Persistent World Model:** Extrapolates trajectories of dynamic targets via Extended Kalman Filters (EKF), maintaining lock during severe occlusions.
 * **Behavior Tree Intelligence:** Evaluates complex geometric triggers defined in `behaviors.yaml` to dynamically switch flight goals (Attract, Repulse, Circle, Intercept).
 
+## Runtime Dataflow
+
+The current runtime is organized around typed publishers and subscribers. Control-critical consumers subscribe in-process; external tools subscribe to the optional runtime event stream. Artifact files remain evidence/debug outputs, not runtime IPC.
+
+```text
+AirSim / PX4
+  -> AirSimFrameSource + FrameHintEgoProvider
+  -> CoreStackRunner
+       -> PerceptionPipeline
+       -> optional GhostTargetProvider::frame_at(...)
+            -> GhostDetectionsPublisher
+            -> PerceptionPipelineOutput.observations
+       -> InMemoryWorldModel
+       -> WorldSnapshotPublisher
+            -> LatestWorldSnapshotSubscriber -> MissionRuntime -> FlightCommandSink -> PX4 / AirSim
+            -> ArtifactSnapshotWriter        -> snapshot_XXXX.json / snapshot_manifest.txt
+            -> RuntimeEventStreamServer      -> TCP JSONL stream
+
+RuntimeEventStreamServer
+  -> ghost_detections events for planned simulation/debug markers
+  -> world_snapshot events for AG/EGO world-model markers
+  -> simulation/airsim-world-overlay.py and other external subscribers
+```
+
+The AirSim overlay is now a subscriber/renderer only: it consumes `ghost_detections` and `world_snapshot` records from the runtime stream and renders PLAN / PLAN* / AG / EGO markers. It does not evaluate ghost scenarios locally and does not poll snapshot artifacts in normal operation.
+
+See [docs/runtime_dataflow.md](docs/runtime_dataflow.md) for the full source → publisher → server → subscriber → sink diagrams.
+
 ## The Three-Tier Architecture (Sim-First Development)
 To guarantee stability and prevent hardware loss, Dedalus enforces a strict separation of environments:
 
