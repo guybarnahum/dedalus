@@ -20,6 +20,7 @@
 #include "dedalus/behavior/mission_runtime.hpp"
 #include "dedalus/behavior/object_behavior_mission_controller.hpp"
 #include "dedalus/behavior/trajectory_mission_controller.hpp"
+#include "dedalus/perception/ghost_targets.hpp"
 #include "dedalus/runtime/config_loader.hpp"
 #include "dedalus/runtime/core_stack_runner.hpp"
 #include "dedalus/runtime/pipeline_profiler.hpp"
@@ -537,27 +538,30 @@ int main(int argc, char** argv) {
 
         auto latest_snapshot = std::make_shared<dedalus::LatestWorldSnapshot>();
         auto snapshot_publisher = std::make_shared<dedalus::WorldSnapshotPublisher>();
+        auto ghost_detections_publisher = std::make_shared<dedalus::GhostDetectionsPublisher>();
         auto latest_snapshot_subscriber = std::make_shared<dedalus::LatestWorldSnapshotSubscriber>(latest_snapshot);
         auto artifact_snapshot_writer = std::make_shared<dedalus::ArtifactSnapshotWriter>(args.output_dir);
         snapshot_publisher->subscribe(latest_snapshot_subscriber);
         snapshot_publisher->subscribe(artifact_snapshot_writer);
 
-        std::shared_ptr<dedalus::WorldSnapshotStreamServer> snapshot_stream_server;
+        std::shared_ptr<dedalus::RuntimeEventStreamServer> runtime_event_stream_server;
         if (args.world_snapshot_stream_port > 0) {
-            snapshot_stream_server = std::make_shared<dedalus::WorldSnapshotStreamServer>(
-                dedalus::WorldSnapshotStreamServerConfig{
+            runtime_event_stream_server = std::make_shared<dedalus::RuntimeEventStreamServer>(
+                dedalus::RuntimeEventStreamServerConfig{
                     .bind_host = args.world_snapshot_stream_host,
                     .port = static_cast<std::uint16_t>(args.world_snapshot_stream_port)});
-            snapshot_stream_server->start();
-            snapshot_publisher->subscribe(snapshot_stream_server);
-            std::cerr << "dedalus_mission_loop: world snapshot stream listening on "
-                      << args.world_snapshot_stream_host << ":" << snapshot_stream_server->port() << "\n";
+            runtime_event_stream_server->start();
+            snapshot_publisher->subscribe(runtime_event_stream_server);
+            ghost_detections_publisher->subscribe(runtime_event_stream_server);
+            std::cerr << "dedalus_mission_loop: runtime event stream listening on "
+                      << args.world_snapshot_stream_host << ":" << runtime_event_stream_server->port() << "\n";
         }
 
         dedalus::CoreStackRunner runner{
             registry.create(config),
             std::move(timing_writer),
-            snapshot_publisher};
+            snapshot_publisher,
+            ghost_detections_publisher};
 
         const auto mission_events_path = args.output_dir / "mission_events.jsonl";
         std::unique_ptr<dedalus::MissionRuntime> mission_runtime;
@@ -652,13 +656,13 @@ int main(int argc, char** argv) {
             print_mission_event_summary(mission_events_path);
         }
 
-        if (snapshot_stream_server) {
-            const auto stats = snapshot_stream_server->stats();
-            std::cerr << "dedalus_mission_loop: world snapshot stream stats published_seq=" << stats.published_seq
+        if (runtime_event_stream_server) {
+            const auto stats = runtime_event_stream_server->stats();
+            std::cerr << "dedalus_mission_loop: runtime event stream stats published_seq=" << stats.published_seq
                       << " accepted_clients=" << stats.accepted_clients
                       << " connected_clients=" << stats.connected_clients
                       << " dropped_clients=" << stats.dropped_clients << "\n";
-            snapshot_stream_server->stop();
+            runtime_event_stream_server->stop();
         }
 
         if (frame_count == 0) {
