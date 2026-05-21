@@ -45,8 +45,13 @@ std::unique_ptr<GhostTargetProvider> make_ghost_target_provider(const CoreStackP
             GhostScenario::load_from_file(ghost_scenario_path_from(config)));
     }
     if (config.ghost_targets_source == "airsim_objects") {
-        throw std::invalid_argument(
-            "ghost_targets_source=airsim_objects parsed successfully but provider implementation is scheduled for 2.26E.3");
+        return std::make_unique<GhostTargetProvider>(
+            AirSimGhostObjectSourceConfig{
+                .host = config.source_host,
+                .rpc_port = config.source_rpc_port,
+                .bridge_command = "python3 simulation/airsim-object-poses.py",
+                .bridge_transport = config.bridge_transport,
+                .objects = config.ghost_targets_airsim_objects});
     }
     throw std::invalid_argument("unknown ghost_targets_source: " + config.ghost_targets_source);
 }
