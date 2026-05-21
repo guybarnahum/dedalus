@@ -13,6 +13,7 @@ struct TrajectoryMissionConfig {
     double takeoff_velocity_mps{1.0};
     double go_home_velocity_mps{1.0};
     double land_velocity_mps{0.5};
+    double yaw_offset_rad{0.0};
     double arm_retry_interval_s{1.0};
     double arm_timeout_s{10.0};
     double arm_dispatch_fallback_s{0.0};
@@ -36,7 +37,8 @@ public:
 private:
     [[nodiscard]] VelocityCommand command_from_velocity(
         TimePoint timestamp,
-        Vec3 velocity_local_mps) const;
+        Vec3 velocity_local_mps,
+        double yaw_offset_rad = 0.0) const;
     [[nodiscard]] VelocityCommand command_with_kind(
         TimePoint timestamp,
         FlightCommandKind kind) const;
