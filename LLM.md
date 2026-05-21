@@ -19,8 +19,8 @@ Status: implemented through 2.24G.9 baseline.
 Milestone 2.25 — ObjectBehaviorMissionController skeleton and first object-conditioned behavior runtime.
 Status: implemented through object behavior lifecycle and bounded follow behavior baseline.
 
-Milestone 2.26 — AirSim ghost behavior validation and live WorldSnapshot plumbing.
-Status: implemented through 2.26D.3 plus reusable typed pub/sub cleanup.
+Milestone 2.26 — AirSim ghost behavior validation and live runtime-event plumbing.
+Status: implemented through 2.26D.6 baseline.
 ```
 
 Current 2.26D state:
@@ -34,19 +34,23 @@ Ghost simulation:
 
 Ghost people now move cross -> wait -> cross back -> wait.
 
-Mission-loop ghost injection:
+Mission-loop ghost injection and publication:
   CoreStackRunner
-    -> GhostTargetProvider
-    -> PerceptionPipelineOutput.observations
+    -> GhostTargetProvider::frame_at(...)
+       -> one GhostScenario evaluation at frame time
+       -> GhostDetectionsFrame event for live stream/debug subscribers
+       -> Observation3D list injected into PerceptionPipelineOutput.observations
     -> InMemoryWorldModel
     -> WorldSnapshot.agents
 
-WorldSnapshot publish path:
+Runtime publish path:
   CoreStackRunner
+    -> GhostDetectionsPublisher
+       -> RuntimeEventStreamServer          optional TCP JSONL stream, event type ghost_detections
     -> WorldSnapshotPublisher
-       -> LatestWorldSnapshotSubscriber       behavior / MissionRuntime
-       -> ArtifactSnapshotWriter              durable evidence/debug snapshots
-       -> WorldSnapshotStreamServer           optional live TCP JSONL stream
+       -> LatestWorldSnapshotSubscriber     behavior / MissionRuntime
+       -> ArtifactSnapshotWriter            durable evidence/debug snapshots
+       -> RuntimeEventStreamServer          optional TCP JSONL stream, event type world_snapshot
 
 Reusable event service:
   include/dedalus/runtime/pubsub.hpp
@@ -58,10 +62,22 @@ WorldSnapshot domain adapter:
     WorldSnapshotPublisher = EventPublisher<WorldSnapshot>
     WorldSnapshotSubscriber keeps on_snapshot(...) while adapting to generic on_event(...)
 
-Live stream:
+Ghost detections domain adapter:
+  include/dedalus/perception/ghost_targets.hpp
+    GhostDetectionsPublisher = EventPublisher<GhostDetectionsFrame>
+    GhostDetectionsSubscriber keeps on_ghost_detections(...) while adapting to generic on_event(...)
+
+Live runtime event stream:
   dedalus_mission_loop --world-snapshot-stream-port 47770
-  emits JSONL records:
+  emits JSONL records on one TCP stream:
+    {"type":"ghost_detections","seq":N,"timestamp_ns":...,"map_frame_id":"...","ghost_detections":{...}}
     {"type":"world_snapshot","seq":N,"timestamp_ns":...,"active_map_frame_id":"...","snapshot":{...}}
+
+AirSim overlay:
+  simulation/airsim-world-overlay.py is now a stream-only subscriber/renderer.
+  It no longer evaluates ghost scenarios locally and no longer reads snapshot_manifest.txt.
+  It renders PLAN / PLAN* from ghost_detections and AG / EGO from world_snapshot.
+  SEL remains future work until mission events or selected-target state are live-streamed.
 
 Artifact files remain evidence/debug outputs, not IPC.
 ```
@@ -69,12 +85,11 @@ Artifact files remain evidence/debug outputs, not IPC.
 Next milestone slice:
 
 ```text
-2.26D.4 / 2.26D.5:
-  update simulation/airsim-world-overlay.py to consume the live WorldSnapshot JSONL stream for AG/EGO markers.
-  keep artifact comparison as explicit debug/fallback, not the primary marker transport.
+2.26D.7:
+  add live mission-event stream or selected-target state so SEL markers are also live instead of mission_events.jsonl-polled.
 
-2.26D.6:
-  add live mission-event stream or event bus subscriber so SEL markers are also live instead of mission_events.jsonl-polled.
+2.26D.8:
+  prune naming drift around world_snapshot_stream_server file/test names if desired, or keep compatibility if churn outweighs value.
 
 Post-2.26D:
   continue behavior-facing dynamic ghost validation and then expand behavior math beyond follow.
@@ -94,6 +109,13 @@ When appropriate, suggest and perform refactors that avoid drift, duplication, a
 Keep code streamlined: one clear ownership boundary, one canonical path, and explicit compatibility only when it has a current user and a removal plan.
 ```
 
+Design / implementation planning rule:
+
+```text
+When a design choice is non-trivial and/or has architectural or runtime importance, prepare a concise plan for approval before implementation.
+If the design choice is already agreed upon or trivial from architecture, complexity, and runtime perspectives, proceed directly with implementation.
+```
+
 Refactor expectations:
 
 ```text
@@ -110,9 +132,11 @@ Recent cleanup examples that should guide future work:
 ```text
 WorldSnapshotPublisher was generalized into EventPublisher<T> / EventSubscriber<T>.
 WorldSnapshotSubscriber preserves domain-specific on_snapshot(...) while adapting to generic on_event(...).
+GhostDetectionsSubscriber preserves domain-specific on_ghost_detections(...) while adapting to generic on_event(...).
 Inline snapshot file writing was removed from dedalus_mission_loop and moved to ArtifactSnapshotWriter.
 LatestWorldSnapshot is now fed through LatestWorldSnapshotSubscriber, not a special CoreStackRunner constructor path.
 The obsolete world_snapshot_publisher.cpp implementation was deleted after moving to header-only typed pub/sub.
+AirSim overlay no longer evaluates GhostScenario or polls artifacts in normal mode; it subscribes to runtime events.
 Tests were updated to use the actual WorldSnapshot AgentState type instead of stale AgentTrack assumptions.
 ```
 
@@ -133,7 +157,7 @@ cmake --build build-staging -j$(nproc)
 ctest --test-dir build-staging --output-on-failure
 ```
 
-Focused 2.26D pub/sub and stream validation:
+Focused 2.26D pub/sub and runtime stream validation:
 
 ```bash
 ctest --test-dir build-staging --output-on-failure -R 'pubsub|world_snapshot_publisher|world_snapshot_stream_server|mission_runtime'
@@ -170,7 +194,7 @@ python3 simulation/run-mission-campaign.py \
   --overwrite
 ```
 
-Live WorldSnapshot stream smoke:
+Live runtime event stream smoke:
 
 ```bash
 ./build-staging/apps/dedalus_mission_loop \
@@ -184,6 +208,19 @@ Live WorldSnapshot stream smoke:
 nc 127.0.0.1 47770 | head -5
 ```
 
+Live AirSim overlay smoke:
+
+```bash
+python3 simulation/airsim-world-overlay.py \
+  --stream-port 47770 \
+  --follow \
+  --rate-hz 5 \
+  --duration-s 180 \
+  --clear \
+  --label \
+  --debug
+```
+
 ---
 
 ## 1. Current Architecture
@@ -195,11 +232,14 @@ AirSim live frame + ego sidecar
   -> AirSimFrameSource
   -> FrameHintEgoProvider
   -> CoreStackRunner
+       -> optional GhostTargetProvider::frame_at(...)
+            -> GhostDetectionsPublisher
+            -> PerceptionPipelineOutput.observations
   -> InMemoryWorldModel
   -> WorldSnapshotPublisher
        -> LatestWorldSnapshotSubscriber
        -> ArtifactSnapshotWriter
-       -> optional WorldSnapshotStreamServer
+       -> optional RuntimeEventStreamServer
   -> LatestWorldSnapshot
   -> MissionRuntime async loop
   -> TrajectoryMissionController today / ObjectBehaviorMissionController for object behavior
@@ -280,14 +320,17 @@ Do not reintroduce the hand-written native C++ MAVLink encoder as the default li
 
 ---
 
-## 3. WorldSnapshot Publish / Subscribe Boundary
+## 3. Runtime Event Publish / Subscribe Boundary
 
-WorldSnapshot is now published once per produced frame and consumed by subscribers.
+WorldSnapshot and ghost detections are now published as typed runtime events.
 
 ```text
 CoreStackRunner::run_once()
+  -> GhostTargetProvider::frame_at(...), when enabled
+       -> GhostDetectionsPublisher.publish(frame)
+       -> append frame.observations to PerceptionPipelineOutput
   -> world_model.snapshot()
-  -> WorldSnapshotPublisher.publish(snapshot)
+       -> WorldSnapshotPublisher.publish(snapshot)
 ```
 
 Current subscribers:
@@ -300,19 +343,20 @@ ArtifactSnapshotWriter:
   writes snapshot_XXXX.json and snapshot_manifest.txt.
   artifacts are durable evidence/debug outputs, not runtime IPC.
 
-WorldSnapshotStreamServer:
+RuntimeEventStreamServer:
   optional TCP JSONL live stream for external tools/customers.
+  subscribes to both GhostDetectionsPublisher and WorldSnapshotPublisher.
   enabled by --world-snapshot-stream-port.
 ```
 
 Design rule:
 
 ```text
-The world model should not know who consumes it.
+The world model and ghost provider should not know who consumes their events.
 Consumers should subscribe to typed state/events and own their side effects.
 ```
 
-Do not add direct file-writing or overlay-specific behavior back into `CoreStackRunner` or `InMemoryWorldModel`.
+Do not add direct file-writing, AirSim overlay behavior, or stream-specific behavior back into `CoreStackRunner` or `InMemoryWorldModel`.
 
 ---
 
@@ -360,6 +404,7 @@ Current implementation rule:
 PerceptionPipelineOutput is evidence.
 WorldSnapshot is autonomy state.
 Behavior consumes WorldSnapshot, not perception internals.
+GhostDetectionsFrame is a simulation/debug runtime event emitted from the same evaluation that injects Observation3D into perception.
 ```
 
 Example:
@@ -427,8 +472,9 @@ Good validation path:
 
 ```text
 Synthetic / AirSim frame
-  -> GhostTargetProvider
-  -> PerceptionPipelineOutput.observations
+  -> GhostTargetProvider::frame_at(...)
+      -> GhostDetectionsFrame live event for visualization/debug
+      -> Observation3D objects appended to PerceptionPipelineOutput.observations
   -> InMemoryWorldModel
   -> WorldSnapshot.agents with stable source_track_id
   -> WorldSnapshotPublisher
@@ -528,14 +574,14 @@ target_selected selects ghost_person_001
 behavior_start / behavior_tick_sample / behavior_complete are emitted
 follow emits bounded non-zero velocity during ExecuteMission
 GoHome / Land / Complete reached
-WorldSnapshot publisher/subscriber and stream-server unit tests pass
+WorldSnapshot publisher/subscriber and runtime-event stream unit tests pass
 ```
 
 Future validation should later prove:
 
 ```text
 selected target identity remains stable across crossing/waiting/crossing-back motion
-AG/EGO markers update from live WorldSnapshot stream in AirSim overlay
+PLAN/AG/EGO markers update from live runtime event stream in AirSim overlay
 SEL marker updates from live mission-event stream or selected-target state
 circle / approach / sequence behavior math emits correct bounded velocity
 obstacle avoidance remains outside M3 unless explicitly started post-M3
@@ -600,6 +646,7 @@ Second Ctrl-C:
 - Do not select targets only by confidence when a stable track/agent target is specified.
 - Do not keep global behavior specs under simulation/behaviors; use config/behaviors.
 - Do not use artifact files as runtime IPC when a live stream or in-process subscriber is the right boundary.
+- Do not make simulation/airsim-world-overlay.py evaluate GhostScenario or poll snapshot artifacts in normal mode; it should subscribe and render.
 - Do not add shims to preserve stale pre-refactor APIs unless there is a current user and an explicit removal plan.
 - Do not create branches or PRs unless explicitly requested.
 ```
