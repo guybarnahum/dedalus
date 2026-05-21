@@ -65,7 +65,7 @@ dedalus::WorldSnapshot make_snapshot(std::int64_t timestamp_ns, const std::strin
     snapshot.ego.timestamp = snapshot.timestamp;
     snapshot.ego.map_frame_id = snapshot.active_map_frame_id;
 
-    dedalus::AgentTrack agent;
+    dedalus::AgentState agent;
     agent.agent_id = dedalus::AgentId{"agent_" + track_id};
     agent.source_track_id = dedalus::TrackId{track_id};
     agent.class_label = dedalus::ClassLabel::Person;
