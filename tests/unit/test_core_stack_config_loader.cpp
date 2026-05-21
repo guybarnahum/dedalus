@@ -180,14 +180,9 @@ int main() {
         return 1;
     }
 
-    bool saw_expected_provider_error = false;
-    try {
-        (void)registry.create(airsim_object_config);
-    } catch (const std::exception& ex) {
-        saw_expected_provider_error = std::string{ex.what()}.find("scheduled for 2.26E.3") != std::string::npos;
-    }
-    if (!saw_expected_provider_error) {
-        std::cerr << "AirSim existing-object provider should fail clearly until 2.26E.3 implementation\n";
+    const auto airsim_object_providers = registry.create(airsim_object_config);
+    if (!airsim_object_providers.ghost_targets) {
+        std::cerr << "AirSim existing-object provider did not compose a ghost target provider\n";
         return 1;
     }
 
