@@ -46,6 +46,10 @@ std::string json_string_value(const std::string& json, const std::string& key) {
     return json.substr(open + 1U, close - open - 1U);
 }
 
+std::string ignore_sigint_command(const std::string& command) {
+    return "trap '' INT; exec " + command;
+}
+
 }  // namespace
 
 struct Px4BridgeCommandSink::Impl {
@@ -106,6 +110,7 @@ struct Px4BridgeCommandSink::Impl {
         }
 
         if (child_pid == 0) {
+            ::signal(SIGINT, SIG_IGN);
             ::dup2(stdin_pipe[0], STDIN_FILENO);
             ::dup2(stdout_pipe[1], STDOUT_FILENO);
             ::close(stdin_pipe[0]);
@@ -115,7 +120,7 @@ struct Px4BridgeCommandSink::Impl {
 
             const std::string verbosity = std::to_string(config.verbosity);
             ::setenv("DEDALUS_PX4_BRIDGE_VERBOSITY", verbosity.c_str(), 1);
-            const std::string command = "exec " + config.bridge_command;
+            const std::string command = ignore_sigint_command(config.bridge_command);
             execl("/bin/sh", "sh", "-lc", command.c_str(), static_cast<char*>(nullptr));
             _exit(127);
         }
