@@ -211,6 +211,13 @@ dedalus_add_native_test(
 )
 
 dedalus_add_native_test(
+    NAME world_snapshot_publisher
+    LAYER unit
+    TAGS world_model publisher artifacts
+    SOURCES unit/test_world_snapshot_publisher.cpp
+)
+
+dedalus_add_native_test(
     NAME trajectory_mission_controller
     LAYER unit
     TAGS synthetic
