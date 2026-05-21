@@ -24,10 +24,10 @@ CoreStackRunner::CoreStackRunner(CoreStackProviders providers, std::unique_ptr<P
 CoreStackRunner::CoreStackRunner(
     CoreStackProviders providers,
     std::unique_ptr<PipelineProfiler> timing_writer,
-    std::shared_ptr<LatestWorldSnapshot> latest_snapshot)
+    std::shared_ptr<WorldSnapshotPublisher> snapshot_publisher)
     : providers_(std::move(providers)),
       timing_writer_(std::move(timing_writer)),
-      latest_snapshot_(std::move(latest_snapshot)) {
+      snapshot_publisher_(std::move(snapshot_publisher)) {
     start_prefetch();
 }
 
@@ -139,8 +139,8 @@ bool CoreStackRunner::run_once() {
 
     start = SteadyClock::now();
     const auto snapshot_for_annotation = providers_.world_model->snapshot();
-    if (latest_snapshot_) {
-        latest_snapshot_->publish(snapshot_for_annotation);
+    if (snapshot_publisher_) {
+        snapshot_publisher_->publish(snapshot_for_annotation);
     }
     if (timing_writer_) {
         timing_writer_->record_stage("world_model.snapshot", duration_us(start));
