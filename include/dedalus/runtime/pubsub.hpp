@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cstddef>
 #include <memory>
 #include <mutex>
 #include <stdexcept>
@@ -9,20 +10,20 @@
 namespace dedalus {
 
 template <typename EventT>
-class Subscriber {
+class EventSubscriber {
 public:
-    virtual ~Subscriber() = default;
+    virtual ~EventSubscriber() = default;
     virtual void on_event(const EventT& event) = 0;
 };
 
 template <typename EventT>
-class Publisher final {
+class EventPublisher final {
 public:
-    using SubscriberType = Subscriber<EventT>;
+    using SubscriberType = EventSubscriber<EventT>;
 
     void subscribe(std::shared_ptr<SubscriberType> subscriber) {
         if (!subscriber) {
-            throw std::invalid_argument("Publisher::subscribe requires a subscriber");
+            throw std::invalid_argument("EventPublisher::subscribe requires a subscriber");
         }
         std::lock_guard<std::mutex> lock{mutex_};
         subscribers_.push_back(std::move(subscriber));
