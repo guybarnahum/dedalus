@@ -178,6 +178,7 @@ std::vector<TrajectorySegment> parse_segments(const std::string& text) {
         segment.speed_mps = find_number_or(body, "speed_mps", 0.0);
         segment.radius_m = find_number_or(body, "radius_m", 1.0);
         segment.scale_m = find_number_or(body, "scale_m", segment.radius_m);
+        segment.yaw_offset_rad = find_number_or(body, "yaw_offset_rad", 0.0);
         segment.direction = lower_string(find_string_or(body, "direction", "ccw"));
         segment.keyframes = parse_keyframes(body);
 
