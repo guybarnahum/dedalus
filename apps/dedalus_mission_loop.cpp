@@ -5,6 +5,7 @@
 #include <exception>
 #include <filesystem>
 #include <fstream>
+#include <iomanip>
 #include <iostream>
 #include <map>
 #include <memory>
@@ -65,6 +66,7 @@ struct Args {
     int verbosity{0};
     std::string world_snapshot_stream_host{"127.0.0.1"};
     int world_snapshot_stream_port{0};
+    double safe_height_override_m{-1.0};
 };
 
 struct CommandCounts {
@@ -355,6 +357,50 @@ int run_shell_command(const std::string& command, int verbosity) {
     return std::system(command.c_str());
 }
 
+std::string format_double_for_cli(double value) {
+    std::ostringstream out;
+    out << std::setprecision(12) << value;
+    return out.str();
+}
+
+bool replace_option_value(std::string& command, const std::string& option, const std::string& value) {
+    const auto option_pos = command.find(option);
+    if (option_pos == std::string::npos) {
+        return false;
+    }
+    const auto value_start = command.find_first_not_of(" \t", option_pos + option.size());
+    if (value_start == std::string::npos) {
+        command += " " + value;
+        return true;
+    }
+    const auto value_end = command.find_first_of(" \t", value_start);
+    command.replace(value_start, value_end == std::string::npos ? std::string::npos : value_end - value_start, value);
+    return true;
+}
+
+void apply_safe_height_override(dedalus::CoreStackProviderConfig& config, double safe_height_m) {
+    if (safe_height_m <= 0.0) {
+        throw std::invalid_argument("--safe-height must be > 0");
+    }
+    const auto value = format_double_for_cli(safe_height_m);
+    config.mission_options.values["flight_safe_height_m"] = value;
+
+    auto bridge_it = config.mission_options.values.find("flight_px4_command_bridge");
+    if (bridge_it != config.mission_options.values.end() && !bridge_it->second.empty()) {
+        auto& command = bridge_it->second;
+        if (!replace_option_value(command, "--safe-height", value) &&
+            !replace_option_value(command, "--safe-height-m", value)) {
+            command += " --safe-height " + value;
+        }
+    }
+}
+
+void apply_cli_overrides(dedalus::CoreStackProviderConfig& config, const Args& args) {
+    if (args.safe_height_override_m > 0.0) {
+        apply_safe_height_override(config, args.safe_height_override_m);
+    }
+}
+
 int verbosity_from_flag(const std::string& arg) {
     if (arg == "--verbose") {
         return 3;
@@ -395,6 +441,14 @@ Args parse_args(int argc, char** argv) {
             args.shutdown_max_frames = std::stoi(argv[++i]);
             if (args.shutdown_max_frames < 0) {
                 throw std::invalid_argument("--shutdown-max-frames must be >= 0");
+            }
+        } else if (arg == "--safe-height") {
+            if (i + 1 >= argc) {
+                throw std::invalid_argument("--safe-height requires a value in meters");
+            }
+            args.safe_height_override_m = std::stod(argv[++i]);
+            if (args.safe_height_override_m <= 0.0) {
+                throw std::invalid_argument("--safe-height must be > 0");
             }
         } else if (arg == "--progress") {
             args.progress_mode = ProgressMode::On;
@@ -514,7 +568,8 @@ int main(int argc, char** argv) {
         const auto args = parse_args(argc, argv);
         std::filesystem::create_directories(args.output_dir);
 
-        const auto config = dedalus::load_core_stack_config(args.config_path);
+        auto config = dedalus::load_core_stack_config(args.config_path);
+        apply_cli_overrides(config, args);
         dedalus::ProviderRegistry registry;
 
         std::unique_ptr<dedalus::PipelineProfiler> timing_writer;
@@ -525,8 +580,11 @@ int main(int argc, char** argv) {
         std::cerr << "dedalus_mission_loop: frame_source=" << config.frame_source
                   << " bridge_mode=" << config.bridge_mode
                   << " flight_sink=" << config.flight_command_sink
-                  << " verbosity=" << args.verbosity
-                  << "\n";
+                  << " verbosity=" << args.verbosity;
+        if (args.safe_height_override_m > 0.0) {
+            std::cerr << " safe_height_override_m=" << args.safe_height_override_m;
+        }
+        std::cerr << "\n";
         if (config.frame_source == "airsim" && args.verbosity >= 1) {
             std::cerr << "dedalus_mission_loop: using LIVE AirSim bridge frames; snapshots are debug artifacts, not replay input\n";
         }
