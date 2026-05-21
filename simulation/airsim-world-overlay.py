@@ -1,14 +1,21 @@
 #!/usr/bin/env python3
-"""Draw ghost detections into the AirSim/Unreal viewport.
+"""Draw ghost detections and world-model state into the AirSim viewport.
 
-Default ghost-scenario mode is artifact-free: it evaluates the shared C++
-GhostScenario model through `dedalus_ghost_scenario_eval` and draws the returned
-3D detections into AirSim. Static detections can be drawn once persistently;
-dynamic detections are redrawn while following.
+Normal live modes are artifact-free:
 
-The optional world_snapshot and combined modes remain debug helpers for comparing
-planned ghost state against generated mission artifacts. They are not required
-for normal simulation visualization.
+  ghost_scenario:
+    planned ghost markers from the shared C++ GhostScenario evaluator.
+
+  world_snapshot:
+    AG/EGO markers from the live WorldSnapshot TCP JSONL stream.
+
+  combined:
+    planned ghost markers + live WorldSnapshot AG/EGO markers.
+
+Artifact modes remain explicit debug fallbacks only:
+
+  artifact_snapshot
+  artifact_combined
 """
 
 from __future__ import annotations
@@ -16,6 +23,7 @@ from __future__ import annotations
 import argparse
 import json
 import math
+import socket
 import subprocess
 import sys
 import time
@@ -38,20 +46,107 @@ EGO_COLOR = [1.0, 0.0, 1.0, 1.0]
 DEFAULT_REQUIRED_TRACKS = ["ghost_person_001", "ghost_person_002", "ghost_car_001"]
 DEFAULT_GHOST_SCENARIO = Path("simulation/ghost_detections/person_pair_crossing.json")
 DEFAULT_GHOST_EVALUATOR = Path("build-staging/apps/dedalus_ghost_scenario_eval")
+STREAM_SOURCES = {"world_snapshot", "combined"}
+ARTIFACT_SOURCES = {"artifact_snapshot", "artifact_combined"}
+PLANNED_SOURCES = {"ghost_scenario", "combined", "artifact_combined"}
+
+
+class WorldSnapshotStreamClient:
+    def __init__(self, host: str, port: int, reconnect_s: float = 1.0) -> None:
+        self.host = host
+        self.port = port
+        self.reconnect_s = reconnect_s
+        self.sock: socket.socket | None = None
+        self.buffer = ""
+        self.latest_snapshot: dict[str, Any] | None = None
+        self.latest_seq: int | None = None
+        self.last_connect_attempt_s = 0.0
+        self.reported_wait = False
+
+    def close(self) -> None:
+        if self.sock is not None:
+            try:
+                self.sock.close()
+            except OSError:
+                pass
+        self.sock = None
+
+    def connect_if_needed(self) -> None:
+        if self.sock is not None:
+            return
+        now = time.monotonic()
+        if now - self.last_connect_attempt_s < self.reconnect_s:
+            return
+        self.last_connect_attempt_s = now
+        try:
+            sock = socket.create_connection((self.host, self.port), timeout=0.2)
+            sock.setblocking(False)
+            self.sock = sock
+            self.buffer = ""
+            self.reported_wait = False
+            print(f"airsim-world-overlay: connected to WorldSnapshot stream {self.host}:{self.port}", file=sys.stderr)
+        except OSError as exc:
+            if not self.reported_wait:
+                print(f"airsim-world-overlay: waiting for WorldSnapshot stream {self.host}:{self.port} ({exc})", file=sys.stderr)
+                self.reported_wait = True
+            self.close()
+
+    def poll(self) -> tuple[dict[str, Any] | None, int | None]:
+        self.connect_if_needed()
+        if self.sock is None:
+            return self.latest_snapshot, self.latest_seq
+
+        while True:
+            try:
+                chunk = self.sock.recv(65536)
+            except BlockingIOError:
+                break
+            except OSError as exc:
+                print(f"airsim-world-overlay: WorldSnapshot stream disconnected ({exc})", file=sys.stderr)
+                self.close()
+                break
+            if not chunk:
+                print("airsim-world-overlay: WorldSnapshot stream closed", file=sys.stderr)
+                self.close()
+                break
+            self.buffer += chunk.decode("utf-8", errors="replace")
+
+        while "\n" in self.buffer:
+            raw, self.buffer = self.buffer.split("\n", 1)
+            raw = raw.strip()
+            if not raw:
+                continue
+            try:
+                message = json.loads(raw)
+            except json.JSONDecodeError as exc:
+                print(f"airsim-world-overlay: ignoring malformed WorldSnapshot stream line ({exc})", file=sys.stderr)
+                continue
+            if message.get("type") != "world_snapshot":
+                continue
+            snapshot = message.get("snapshot")
+            if not isinstance(snapshot, dict):
+                continue
+            seq = message.get("seq")
+            self.latest_snapshot = snapshot
+            self.latest_seq = int(seq) if isinstance(seq, int) else None
+
+        return self.latest_snapshot, self.latest_seq
 
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--snapshot-dir", type=Path, default=None)
-    parser.add_argument("--mission-events", type=Path, default=None)
+    parser.add_argument("--snapshot-dir", type=Path, default=None, help="Artifact snapshot directory for artifact_* debug modes only.")
+    parser.add_argument("--mission-events", type=Path, default=None, help="Optional mission_events.jsonl for SEL labels until live event stream exists.")
     parser.add_argument("--ghost-scenario", type=Path, default=DEFAULT_GHOST_SCENARIO)
     parser.add_argument("--ghost-evaluator", type=Path, default=DEFAULT_GHOST_EVALUATOR)
     parser.add_argument(
         "--source",
-        choices=["ghost_scenario", "world_snapshot", "combined"],
+        choices=["ghost_scenario", "world_snapshot", "combined", "artifact_snapshot", "artifact_combined"],
         default="ghost_scenario",
-        help="ghost_scenario is artifact-free; world_snapshot/combined are artifact comparison modes.",
+        help="world_snapshot/combined use live TCP stream; artifact_* modes are explicit debug fallbacks.",
     )
+    parser.add_argument("--world-snapshot-stream-host", default="127.0.0.1")
+    parser.add_argument("--world-snapshot-stream-port", type=int, default=0)
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--rpc-port", type=int, default=41451)
     parser.add_argument("--rate-hz", type=float, default=2.0)
@@ -141,7 +236,9 @@ def latest_existing_snapshot(snapshot_dir: Path) -> tuple[Path, dict[str, Any]] 
     return None
 
 
-def snapshot_timestamp_ns(snapshot: dict[str, Any]) -> int | None:
+def snapshot_timestamp_ns(snapshot: dict[str, Any] | None) -> int | None:
+    if snapshot is None:
+        return None
     value = snapshot.get("timestamp_ns")
     if isinstance(value, int):
         return value
@@ -155,9 +252,8 @@ def snapshot_time_window(snapshot_dir: Path) -> tuple[float | None, Path | None,
     latest = latest_existing_snapshot(snapshot_dir)
     if first is None or latest is None:
         return None, None, None
-    first_path, first_snapshot = first
+    _, first_snapshot = first
     latest_path, latest_snapshot = latest
-    del first_path
     first_ts = snapshot_timestamp_ns(first_snapshot)
     latest_ts = snapshot_timestamp_ns(latest_snapshot)
     elapsed_s = None
@@ -346,7 +442,7 @@ def draw_agents(client: Any, label: str, agents: list[dict[str, Any]], selected_
             client.simPlotStrings([label_for(agent, selected_track)], [label_point], scale=0.9 if agent.get("source") == "planned" else 1.2, color_rgba=color, duration=agent_duration)
 
 
-def build_debug_report(snapshot_path: Path | None, snapshot: dict[str, Any] | None, planned_agents: list[dict[str, Any]], world_agents: list[dict[str, Any]], selected_track: str | None, elapsed_s: float, args: argparse.Namespace) -> dict[str, Any]:
+def build_debug_report(snapshot_path: str | None, snapshot: dict[str, Any] | None, planned_agents: list[dict[str, Any]], world_agents: list[dict[str, Any]], selected_track: str | None, elapsed_s: float, args: argparse.Namespace, stream_seq: int | None) -> dict[str, Any]:
     planned_by_track = {str(agent.get("source_track_id")): agent for agent in planned_agents if agent.get("source_track_id")}
     world_by_track = {str(agent.get("source_track_id")): agent for agent in world_agents if agent.get("source_track_id")}
     tracks = sorted(set(planned_by_track) | set(world_by_track))
@@ -375,8 +471,9 @@ def build_debug_report(snapshot_path: Path | None, snapshot: dict[str, Any] | No
             "world_velocity_local": vec3(world.get("velocity_local")) if world else None,
         })
     return {
-        "snapshot": str(snapshot_path) if snapshot_path is not None else None,
-        "snapshot_timestamp_ns": snapshot_timestamp_ns(snapshot) if snapshot is not None else None,
+        "snapshot": snapshot_path,
+        "stream_seq": stream_seq,
+        "snapshot_timestamp_ns": snapshot_timestamp_ns(snapshot),
         "elapsed_s": elapsed_s,
         "selected_source_track_id": selected_track,
         "ego": {"position_local": ego_position, "height_m": ego.get("height_m"), "map_frame_id": ego.get("map_frame_id")},
@@ -392,7 +489,7 @@ def maybe_print_debug_report(report: dict[str, Any], args: argparse.Namespace, s
         return
     state["last_debug_print_s"] = now
     print("airsim-world-overlay debug:", file=sys.stderr)
-    print(f"  snapshot={report.get('snapshot')} ts={report.get('snapshot_timestamp_ns')} elapsed_s={report.get('elapsed_s'):.3f} selected={report.get('selected_source_track_id') or '-'}", file=sys.stderr)
+    print(f"  snapshot={report.get('snapshot')} seq={report.get('stream_seq')} ts={report.get('snapshot_timestamp_ns')} elapsed_s={report.get('elapsed_s'):.3f} selected={report.get('selected_source_track_id') or '-'}", file=sys.stderr)
     ego = report.get("ego", {})
     print(f"  ego position_local={rounded(ego.get('position_local'))} height_m={rounded(ego.get('height_m'))} map={ego.get('map_frame_id')}", file=sys.stderr)
     for track in report.get("tracks", []):
@@ -411,15 +508,30 @@ def maybe_write_debug_json(report: dict[str, Any], args: argparse.Namespace) -> 
     args.debug_json.write_text(json.dumps(rounded(report), indent=2, sort_keys=True) + "\n", encoding="utf-8")
 
 
+def source_uses_stream(source: str) -> bool:
+    return source in STREAM_SOURCES
+
+
+def source_uses_artifacts(source: str) -> bool:
+    return source in ARTIFACT_SOURCES
+
+
+def source_uses_planned(source: str) -> bool:
+    return source in PLANNED_SOURCES
+
+
 def main() -> int:
     args = parse_args()
     if args.rate_hz <= 0.0:
         raise ValueError("--rate-hz must be positive")
-    if args.source in {"world_snapshot", "combined"} and args.snapshot_dir is None:
-        raise ValueError("--snapshot-dir is required for world_snapshot or combined mode")
+    if source_uses_stream(args.source) and args.world_snapshot_stream_port <= 0:
+        raise ValueError("--world-snapshot-stream-port is required for world_snapshot and combined live modes")
+    if source_uses_artifacts(args.source) and args.snapshot_dir is None:
+        raise ValueError("--snapshot-dir is required for artifact_snapshot and artifact_combined modes")
 
     required_tracks = args.required_track or DEFAULT_REQUIRED_TRACKS
     events_path = args.mission_events or ((args.snapshot_dir / "mission_events.jsonl") if args.snapshot_dir else None)
+    stream_client = WorldSnapshotStreamClient(args.world_snapshot_stream_host, args.world_snapshot_stream_port) if source_uses_stream(args.source) else None
     client = connect_airsim(args)
 
     start = time.time()
@@ -435,21 +547,29 @@ def main() -> int:
             client.simFlushPersistentMarkers()
 
         elapsed = time.time() - start
-        snapshot_path = None
+        snapshot_name: str | None = None
         snapshot = None
+        stream_seq: int | None = None
         world_agents: list[dict[str, Any]] = []
-        if args.source in {"world_snapshot", "combined"} and args.snapshot_dir is not None:
+
+        if source_uses_stream(args.source) and stream_client is not None:
+            snapshot, stream_seq = stream_client.poll()
+            if stream_seq is not None:
+                snapshot_name = f"stream:{stream_seq}"
+        elif source_uses_artifacts(args.source) and args.snapshot_dir is not None:
             snapshot_elapsed, snapshot_path, snapshot = snapshot_time_window(args.snapshot_dir)
             if snapshot_elapsed is not None:
                 elapsed = snapshot_elapsed
+            if snapshot_path is not None:
+                snapshot_name = str(snapshot_path)
 
         planned_agents: list[dict[str, Any]] = []
-        if args.source in {"ghost_scenario", "combined"}:
+        if source_uses_planned(args.source):
             planned_agents = evaluate_ghost_scenario(args.ghost_evaluator, args.ghost_scenario, elapsed)
 
         selected_track = selected_source_track_id(events_path, snapshot)
 
-        if args.source in {"ghost_scenario", "combined"}:
+        if source_uses_planned(args.source):
             static_agents = [agent for agent in planned_agents if not agent.get("dynamic")]
             dynamic_agents = [agent for agent in planned_agents if agent.get("dynamic")]
             if args.clear and client is not None and dynamic_agents:
@@ -462,28 +582,30 @@ def main() -> int:
             if args.dry_run and not dynamic_agents and not args.follow:
                 draw_agents(client, "planned_static", static_agents, selected_track, args, static_once=True)
 
-        if args.source in {"world_snapshot", "combined"}:
+        if source_uses_stream(args.source) or source_uses_artifacts(args.source):
             if snapshot is None:
-                if args.source == "world_snapshot":
+                if args.source in {"world_snapshot", "artifact_snapshot"}:
                     if not waiting_reported:
-                        print(f"airsim-world-overlay: waiting for Dedalus snapshots under {args.snapshot_dir}", file=sys.stderr)
+                        source_description = f"stream {args.world_snapshot_stream_host}:{args.world_snapshot_stream_port}" if source_uses_stream(args.source) else f"snapshots under {args.snapshot_dir}"
+                        print(f"airsim-world-overlay: waiting for WorldSnapshot from {source_description}", file=sys.stderr)
                         waiting_reported = True
                     if args.wait_for_world_model_s > 0.0 and time.time() - world_model_wait_start >= args.wait_for_world_model_s:
-                        raise TimeoutError(f"timed out waiting for Dedalus snapshots under {args.snapshot_dir}")
+                        raise TimeoutError("timed out waiting for WorldSnapshot")
                     time.sleep(1.0 / args.rate_hz)
                     continue
-                if args.source == "combined" and not waiting_reported:
-                    print(f"airsim-world-overlay: drawing ghost scenario; waiting for Dedalus snapshots under {args.snapshot_dir}", file=sys.stderr)
+                if args.source in {"combined", "artifact_combined"} and not waiting_reported:
+                    source_description = f"stream {args.world_snapshot_stream_host}:{args.world_snapshot_stream_port}" if source_uses_stream(args.source) else f"snapshots under {args.snapshot_dir}"
+                    print(f"airsim-world-overlay: drawing ghost scenario; waiting for WorldSnapshot from {source_description}", file=sys.stderr)
                     waiting_reported = True
             else:
                 ready, reason = snapshot_ready(snapshot, required_tracks, args.allow_partial_tracks)
                 if ready:
                     if not ready_reported:
-                        print(f"airsim-world-overlay: WorldSnapshot ghost agents ready from {snapshot_path.name} ({reason})", file=sys.stderr)
+                        print(f"airsim-world-overlay: WorldSnapshot ghost agents ready from {snapshot_name} ({reason})", file=sys.stderr)
                         ready_reported = True
                     world_agents = world_agents_to_draw(snapshot, args.max_agents, selected_track)
                     draw_agents(client, "world", world_agents, selected_track, args)
-                elif args.source == "world_snapshot":
+                elif args.source in {"world_snapshot", "artifact_snapshot"}:
                     if not waiting_reported:
                         print(f"airsim-world-overlay: waiting for ghost agents in WorldSnapshot ({reason})", file=sys.stderr)
                         waiting_reported = True
@@ -491,13 +613,13 @@ def main() -> int:
                         raise TimeoutError(f"timed out waiting for ghost agents in WorldSnapshot: {reason}")
                     time.sleep(1.0 / args.rate_hz)
                     continue
-                elif args.source == "combined" and not waiting_reported:
+                elif args.source in {"combined", "artifact_combined"} and not waiting_reported:
                     print(f"airsim-world-overlay: drawing ghost scenario; waiting for WorldSnapshot ghosts ({reason})", file=sys.stderr)
                     waiting_reported = True
 
         draw_reference_markers(client, snapshot, args)
         if args.debug:
-            report = build_debug_report(snapshot_path, snapshot, planned_agents, world_agents, selected_track, elapsed, args)
+            report = build_debug_report(snapshot_name, snapshot, planned_agents, world_agents, selected_track, elapsed, args, stream_seq)
             maybe_print_debug_report(report, args, debug_state)
             maybe_write_debug_json(report, args)
 
@@ -507,6 +629,8 @@ def main() -> int:
             break
         time.sleep(1.0 / args.rate_hz)
 
+    if stream_client is not None:
+        stream_client.close()
     return 0
 
 
