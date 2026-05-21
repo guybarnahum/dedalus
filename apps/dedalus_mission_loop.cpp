@@ -24,6 +24,7 @@
 #include "dedalus/runtime/core_stack_runner.hpp"
 #include "dedalus/runtime/pipeline_profiler.hpp"
 #include "dedalus/runtime/provider_registry.hpp"
+#include "dedalus/runtime/world_snapshot_stream_server.hpp"
 #include "dedalus/world_model/world_snapshot.hpp"
 #include "dedalus/world_model/world_snapshot_publisher.hpp"
 #include "dedalus/world_model/world_snapshot_subscribers.hpp"
@@ -61,6 +62,8 @@ struct Args {
     int shutdown_max_frames{300};
     ProgressMode progress_mode{ProgressMode::Auto};
     int verbosity{0};
+    std::string world_snapshot_stream_host{"127.0.0.1"};
+    int world_snapshot_stream_port{0};
 };
 
 struct CommandCounts {
@@ -396,6 +399,19 @@ Args parse_args(int argc, char** argv) {
             args.progress_mode = ProgressMode::On;
         } else if (arg == "--no-progress") {
             args.progress_mode = ProgressMode::Off;
+        } else if (arg == "--world-snapshot-stream-host") {
+            if (i + 1 >= argc) {
+                throw std::invalid_argument("--world-snapshot-stream-host requires a value");
+            }
+            args.world_snapshot_stream_host = argv[++i];
+        } else if (arg == "--world-snapshot-stream-port") {
+            if (i + 1 >= argc) {
+                throw std::invalid_argument("--world-snapshot-stream-port requires a value");
+            }
+            args.world_snapshot_stream_port = std::stoi(argv[++i]);
+            if (args.world_snapshot_stream_port < 0 || args.world_snapshot_stream_port > 65535) {
+                throw std::invalid_argument("--world-snapshot-stream-port must be in [0, 65535]");
+            }
         } else {
             const int parsed_verbosity = verbosity_from_flag(arg);
             if (parsed_verbosity >= 0) {
@@ -526,6 +542,18 @@ int main(int argc, char** argv) {
         snapshot_publisher->subscribe(latest_snapshot_subscriber);
         snapshot_publisher->subscribe(artifact_snapshot_writer);
 
+        std::shared_ptr<dedalus::WorldSnapshotStreamServer> snapshot_stream_server;
+        if (args.world_snapshot_stream_port > 0) {
+            snapshot_stream_server = std::make_shared<dedalus::WorldSnapshotStreamServer>(
+                dedalus::WorldSnapshotStreamServerConfig{
+                    .bind_host = args.world_snapshot_stream_host,
+                    .port = static_cast<std::uint16_t>(args.world_snapshot_stream_port)});
+            snapshot_stream_server->start();
+            snapshot_publisher->subscribe(snapshot_stream_server);
+            std::cerr << "dedalus_mission_loop: world snapshot stream listening on "
+                      << args.world_snapshot_stream_host << ":" << snapshot_stream_server->port() << "\n";
+        }
+
         dedalus::CoreStackRunner runner{
             registry.create(config),
             std::move(timing_writer),
@@ -622,6 +650,15 @@ int main(int argc, char** argv) {
             std::this_thread::sleep_for(std::chrono::milliseconds{100});
             mission_runtime->stop();
             print_mission_event_summary(mission_events_path);
+        }
+
+        if (snapshot_stream_server) {
+            const auto stats = snapshot_stream_server->stats();
+            std::cerr << "dedalus_mission_loop: world snapshot stream stats published_seq=" << stats.published_seq
+                      << " accepted_clients=" << stats.accepted_clients
+                      << " connected_clients=" << stats.connected_clients
+                      << " dropped_clients=" << stats.dropped_clients << "\n";
+            snapshot_stream_server->stop();
         }
 
         if (frame_count == 0) {
