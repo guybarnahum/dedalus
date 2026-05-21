@@ -1,13 +1,31 @@
 #pragma once
 
+#include <memory>
 #include <string>
 #include <vector>
 
 #include "dedalus/perception/perception_pipeline.hpp"
 #include "dedalus/runtime/pubsub.hpp"
+#include "dedalus/simulation/bridge_transport.hpp"
 #include "dedalus/simulation/ghost_scenario.hpp"
 
 namespace dedalus {
+
+struct AirSimGhostObjectBinding {
+    TrackId source_track_id;
+    std::string airsim_object_name;
+    std::string class_label{"unknown"};
+    double confidence{1.0};
+    Vec3 size_m{1.0, 1.0, 1.0};
+};
+
+struct AirSimGhostObjectSourceConfig {
+    std::string host{"127.0.0.1"};
+    int rpc_port{41451};
+    std::string bridge_command{"python3 simulation/airsim-object-poses.py"};
+    std::string bridge_transport{"pipe"};
+    std::vector<AirSimGhostObjectBinding> objects;
+};
 
 struct GhostDetectionsFrame {
     TimePoint timestamp;
@@ -33,6 +51,13 @@ using GhostDetectionsPublisher = EventPublisher<GhostDetectionsFrame>;
 class GhostTargetProvider {
 public:
     explicit GhostTargetProvider(GhostScenario scenario);
+    explicit GhostTargetProvider(AirSimGhostObjectSourceConfig config);
+    ~GhostTargetProvider();
+
+    GhostTargetProvider(const GhostTargetProvider&) = delete;
+    GhostTargetProvider& operator=(const GhostTargetProvider&) = delete;
+    GhostTargetProvider(GhostTargetProvider&&) noexcept;
+    GhostTargetProvider& operator=(GhostTargetProvider&&) noexcept;
 
     GhostDetectionsFrame frame_at(
         TimePoint timestamp,
@@ -50,7 +75,8 @@ public:
         TimePoint scenario_start = TimePoint{0}) const;
 
 private:
-    GhostScenario scenario_;
+    struct Impl;
+    std::unique_ptr<Impl> impl_;
 };
 
 [[nodiscard]] std::string to_json(const GhostDetectionsFrame& frame);
