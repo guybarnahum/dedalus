@@ -8,9 +8,7 @@ JSONL events on the runtime event stream; this script renders whatever arrives.
 Consumed event types today:
   ghost_detections -> PLAN / PLAN* markers
   world_snapshot   -> AG and EGO markers
-
-Mission-event / selected-target streaming is a future slice, so SEL markers are
-not rendered from files here.
+  mission_event    -> SEL marker state from target_selected events
 """
 
 from __future__ import annotations
@@ -29,6 +27,7 @@ except ImportError as exc:
     raise SystemExit("airsim Python package is required for viewport overlay") from exc
 
 
+SELECTED_COLOR = [0.0, 1.0, 0.2, 1.0]
 WORLD_AGENT_COLOR = [1.0, 0.85, 0.0, 1.0]
 PLANNED_GHOST_COLOR = [0.2, 0.6, 1.0, 0.35]
 STATIC_GHOST_COLOR = [0.4, 0.8, 1.0, 0.55]
@@ -50,6 +49,8 @@ class RuntimeEventStreamClient:
         self.latest_ghost_seq: int | None = None
         self.latest_world_snapshot: dict[str, Any] | None = None
         self.latest_world_seq: int | None = None
+        self.latest_selected_target: dict[str, Any] | None = None
+        self.latest_mission_seq: int | None = None
         self.last_message_s: float | None = None
 
     def close(self) -> None:
@@ -91,11 +92,11 @@ class RuntimeEventStreamClient:
             except BlockingIOError:
                 break
             except OSError as exc:
-                print(f"airsim-world-overlay: runtime event stream disconnected ({exc})", file=sys.stderr)
+                print(f"airsim-world-overlay: runtime event stream closed; waiting for reconnect ({exc})", file=sys.stderr)
                 self.close()
                 break
             if not chunk:
-                print("airsim-world-overlay: runtime event stream closed", file=sys.stderr)
+                print("airsim-world-overlay: runtime event stream closed; waiting for reconnect", file=sys.stderr)
                 self.close()
                 break
             self.buffer += chunk.decode("utf-8", errors="replace")
@@ -116,18 +117,26 @@ class RuntimeEventStreamClient:
         message_type = message.get("type")
         seq = message.get("seq")
         seq_value = int(seq) if isinstance(seq, int) else None
+        now = time.monotonic()
         if message_type == "ghost_detections":
             payload = message.get("ghost_detections")
             if isinstance(payload, dict):
                 self.latest_ghost_detections = payload
                 self.latest_ghost_seq = seq_value
-                self.last_message_s = time.monotonic()
+                self.last_message_s = now
         elif message_type == "world_snapshot":
             snapshot = message.get("snapshot")
             if isinstance(snapshot, dict):
                 self.latest_world_snapshot = snapshot
                 self.latest_world_seq = seq_value
-                self.last_message_s = time.monotonic()
+                self.last_message_s = now
+        elif message_type == "mission_event":
+            event = message.get("mission_event")
+            if isinstance(event, dict):
+                if event.get("event") == "target_selected":
+                    self.latest_selected_target = event
+                self.latest_mission_seq = seq_value
+                self.last_message_s = now
 
 
 def parse_args() -> argparse.Namespace:
@@ -155,6 +164,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--hide-world", action="store_true")
     parser.add_argument("--hide-ego", action="store_true")
     parser.add_argument("--hide-origin", action="store_true")
+    parser.add_argument("--hide-selected", action="store_true")
     return parser.parse_args()
 
 
@@ -214,17 +224,26 @@ def planned_agents_from_event(event: dict[str, Any] | None) -> list[dict[str, An
                 "position_local": detection.get("position_local_m", [0.0, 0.0, 0.0]),
                 "velocity_local": velocity,
                 "dynamic": dynamic,
+                "selected": False,
             }
         )
     return agents
 
 
-def world_agents_from_snapshot(snapshot: dict[str, Any] | None, max_agents: int) -> list[dict[str, Any]]:
+def selected_track_id(selected_target: dict[str, Any] | None) -> str | None:
+    if selected_target is None:
+        return None
+    value = selected_target.get("source_track_id") or selected_target.get("agent_id")
+    return str(value) if value else None
+
+
+def world_agents_from_snapshot(snapshot: dict[str, Any] | None, max_agents: int, selected_target: dict[str, Any] | None) -> list[dict[str, Any]]:
     if snapshot is None:
         return []
-    agents = [dict(agent, source="world") for agent in snapshot.get("agents", []) if isinstance(agent, dict)]
+    selected_track = selected_track_id(selected_target)
+    agents = [dict(agent, source="world", selected=(selected_track is not None and (agent.get("source_track_id") == selected_track or agent.get("agent_id") == selected_track))) for agent in snapshot.get("agents", []) if isinstance(agent, dict)]
     ego_position = snapshot.get("ego", {}).get("position_local", [0.0, 0.0, 0.0])
-    agents.sort(key=lambda agent: distance_xy(agent.get("position_local"), ego_position))
+    agents.sort(key=lambda agent: (not agent.get("selected", False), distance_xy(agent.get("position_local"), ego_position)))
     return agents[: max(0, max_agents)]
 
 
@@ -233,6 +252,8 @@ def draw_vec_from_position(position: Any, z_lift_m: float, source: str) -> list[
     if position_vec is None:
         return None
     lift = z_lift_m * (0.55 if source == "planned" else 1.0)
+    if source == "selected":
+        lift = z_lift_m * 1.25
     return [position_vec[0], position_vec[1], position_vec[2] - lift]
 
 
@@ -244,6 +265,8 @@ def vector3_from_position(position: Any, z_lift_m: float, source: str) -> airsim
 
 
 def marker_color(agent: dict[str, Any]) -> list[float]:
+    if agent.get("selected"):
+        return SELECTED_COLOR
     if agent.get("source") == "planned":
         return STATIC_GHOST_COLOR if not agent.get("dynamic") else PLANNED_GHOST_COLOR
     if str(agent.get("lifecycle", "active")) not in {"new", "active"}:
@@ -252,7 +275,9 @@ def marker_color(agent: dict[str, Any]) -> list[float]:
 
 
 def label_for(agent: dict[str, Any]) -> str:
-    if agent.get("source") == "planned":
+    if agent.get("selected"):
+        prefix = "SEL"
+    elif agent.get("source") == "planned":
         prefix = "PLAN*" if not agent.get("dynamic") else "PLAN"
     else:
         prefix = "AG"
@@ -289,19 +314,20 @@ def draw_agents(client: Any, agents: list[dict[str, Any]], args: argparse.Namesp
             print(f"  {label_for(agent)} pos={agent.get('position_local')} vel={agent.get('velocity_local')}")
         return
     for agent in agents:
+        source = "selected" if agent.get("selected") else str(agent.get("source", "world"))
         try:
-            point = vector3_from_position(agent.get("position_local"), args.z_lift_m, str(agent.get("source", "world")))
+            point = vector3_from_position(agent.get("position_local"), args.z_lift_m, source)
         except ValueError:
             continue
         is_static = agent.get("source") == "planned" and not agent.get("dynamic")
         persistent = args.persistent or (args.persistent_static and is_static) or static_once
         agent_duration = 0.0 if persistent else duration
         color = marker_color(agent)
-        size = 12.0 if agent.get("source") == "planned" else 22.0
+        size = 28.0 if agent.get("selected") else (12.0 if agent.get("source") == "planned" else 22.0)
         client.simPlotPoints([point], color_rgba=color, size=size, duration=agent_duration, is_persistent=persistent)
         if args.label:
             label_point = airsim.Vector3r(point.x_val, point.y_val, point.z_val - (0.45 if agent.get("source") == "planned" else 0.8))
-            client.simPlotStrings([label_for(agent)], [label_point], scale=0.9 if agent.get("source") == "planned" else 1.2, color_rgba=color, duration=agent_duration)
+            client.simPlotStrings([label_for(agent)], [label_point], scale=1.25 if agent.get("selected") else (0.9 if agent.get("source") == "planned" else 1.2), color_rgba=color, duration=agent_duration)
 
 
 def draw_reference_markers(client: Any, snapshot: dict[str, Any] | None, args: argparse.Namespace) -> None:
@@ -328,6 +354,8 @@ def build_debug_report(
     ghost_seq: int | None,
     snapshot: dict[str, Any] | None,
     snapshot_seq: int | None,
+    mission_seq: int | None,
+    selected_target: dict[str, Any] | None,
     planned_agents: list[dict[str, Any]],
     world_agents: list[dict[str, Any]],
 ) -> dict[str, Any]:
@@ -345,6 +373,7 @@ def build_debug_report(
         tracks.append(
             {
                 "source_track_id": track,
+                "selected": bool(world.get("selected")) if world else False,
                 "planned_position_local": planned_position,
                 "world_position_local": world_position,
                 "delta_plan_minus_world": delta_plan_minus_world,
@@ -355,6 +384,8 @@ def build_debug_report(
     return {
         "ghost_seq": ghost_seq,
         "world_seq": snapshot_seq,
+        "mission_seq": mission_seq,
+        "selected_target": selected_target,
         "ghost_timestamp_ns": ghost_event.get("timestamp_ns") if ghost_event else None,
         "world_timestamp_ns": snapshot.get("timestamp_ns") if snapshot else None,
         "ghost_elapsed_s": ghost_event.get("scenario_elapsed_s") if ghost_event else None,
@@ -371,8 +402,10 @@ def maybe_print_debug_report(report: dict[str, Any], args: argparse.Namespace, s
         return
     state["last_debug_print_s"] = now
     print("airsim-world-overlay debug:", file=sys.stderr)
+    selected = report.get("selected_target") or {}
     print(
-        f"  ghost_seq={report.get('ghost_seq')} world_seq={report.get('world_seq')} "
+        f"  ghost_seq={report.get('ghost_seq')} world_seq={report.get('world_seq')} mission_seq={report.get('mission_seq')} "
+        f"selected={selected.get('source_track_id') or selected.get('agent_id') or '-'} "
         f"ghost_ts={report.get('ghost_timestamp_ns')} world_ts={report.get('world_timestamp_ns')} "
         f"ghost_elapsed_s={rounded(report.get('ghost_elapsed_s'))}",
         file=sys.stderr,
@@ -381,8 +414,9 @@ def maybe_print_debug_report(report: dict[str, Any], args: argparse.Namespace, s
     print(f"  ego position_local={rounded(ego.get('position_local'))} height_m={rounded(ego.get('height_m'))} map={ego.get('map_frame_id')}", file=sys.stderr)
     for track in report.get("tracks", []):
         print(
-            "  track={track} plan={plan} ag={ag} delta={delta} norm={norm} ag_minus_ego={rel}".format(
+            "  track={track} selected={selected} plan={plan} ag={ag} delta={delta} norm={norm} ag_minus_ego={rel}".format(
                 track=track.get("source_track_id"),
+                selected=track.get("selected"),
                 plan=rounded(track.get("planned_position_local")),
                 ag=rounded(track.get("world_position_local")),
                 delta=rounded(track.get("delta_plan_minus_world")),
@@ -436,7 +470,8 @@ def main() -> int:
             static_drawn = False
 
         planned_agents = [] if args.hide_planned else planned_agents_from_event(stream.latest_ghost_detections)
-        world_agents = [] if args.hide_world else world_agents_from_snapshot(stream.latest_world_snapshot, args.max_agents)
+        selected_target = None if args.hide_selected else stream.latest_selected_target
+        world_agents = [] if args.hide_world else world_agents_from_snapshot(stream.latest_world_snapshot, args.max_agents, selected_target)
 
         static_planned = [agent for agent in planned_agents if not agent.get("dynamic")]
         dynamic_planned = [agent for agent in planned_agents if agent.get("dynamic")]
@@ -452,6 +487,8 @@ def main() -> int:
             stream.latest_ghost_seq,
             stream.latest_world_snapshot,
             stream.latest_world_seq,
+            stream.latest_mission_seq,
+            selected_target,
             planned_agents,
             world_agents,
         )
