@@ -118,6 +118,12 @@ dedalus::GhostDetectionsFrame make_ghost_frame() {
     return frame;
 }
 
+dedalus::MissionEvent make_target_selected_event() {
+    return dedalus::MissionEvent{
+        .timestamp = dedalus::TimePoint{750},
+        .json = "{\"event\":\"target_selected\",\"tick\":12,\"source_track_id\":\"ghost_person_001\",\"agent_id\":\"agent_ghost_person_001\"}"};
+}
+
 void streams_jsonl_runtime_events_to_client() {
     dedalus::RuntimeEventStreamServer server{
         dedalus::RuntimeEventStreamServerConfig{.bind_host = "127.0.0.1", .port = 0}};
@@ -129,25 +135,29 @@ void streams_jsonl_runtime_events_to_client() {
     std::this_thread::sleep_for(std::chrono::milliseconds{80});
 
     server.on_ghost_detections(make_ghost_frame());
+    server.on_mission_event(make_target_selected_event());
     server.on_snapshot(make_snapshot(1000, "track_a"));
     server.on_snapshot(make_snapshot(2000, "track_b"));
 
-    const auto received = read_until_lines(fd, 3);
+    const auto received = read_until_lines(fd, 4);
     close_fd(fd);
     server.stop();
 
     require(received.find("\"type\":\"ghost_detections\"") != std::string::npos, "stream missing ghost_detections type");
+    require(received.find("\"type\":\"mission_event\"") != std::string::npos, "stream missing mission_event type");
     require(received.find("\"type\":\"world_snapshot\"") != std::string::npos, "stream missing world_snapshot type");
     require(received.find("\"seq\":1") != std::string::npos, "stream missing seq 1");
     require(received.find("\"seq\":2") != std::string::npos, "stream missing seq 2");
     require(received.find("\"seq\":3") != std::string::npos, "stream missing seq 3");
-    require(received.find("ghost_person_001") != std::string::npos, "stream missing ghost detection track");
+    require(received.find("\"seq\":4") != std::string::npos, "stream missing seq 4");
+    require(received.find("ghost_person_001") != std::string::npos, "stream missing ghost/selected track");
+    require(received.find("target_selected") != std::string::npos, "stream missing target_selected mission event");
     require(received.find("track_a") != std::string::npos, "stream missing first world track");
     require(received.find("track_b") != std::string::npos, "stream missing second world track");
     require(received.find("map_stream_test") != std::string::npos, "stream missing map frame");
 
     const auto stats = server.stats();
-    require(stats.published_seq == 3, "server published_seq should be 3");
+    require(stats.published_seq == 4, "server published_seq should be 4");
     require(stats.accepted_clients >= 1, "server should accept at least one client");
 }
 
