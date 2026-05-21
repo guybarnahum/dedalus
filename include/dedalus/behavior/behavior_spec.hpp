@@ -90,6 +90,7 @@ struct BehaviorSpec {
     double max_vertical_speed_mps{1.0};
     double position_tolerance_m{1.0};
     double lost_target_timeout_s{5.0};
+    double yaw_offset_rad{0.0};
 
     double radius_m{0.0};
     double altitude_offset_m{0.0};
