@@ -18,6 +18,7 @@ add_library(dedalus_core
     runtime/core_stack_runner.cpp
     runtime/pipeline_profiler.cpp
     runtime/provider_registry.cpp
+    runtime/world_snapshot_stream_server.cpp
     simulation/airsim_providers.cpp
     simulation/bridge_transport.cpp
     simulation/ghost_scenario.cpp
