@@ -45,6 +45,15 @@ public:
     std::vector<dedalus::VelocityCommand> commands;
 };
 
+class RecordingMissionEventSubscriber final : public dedalus::MissionEventSubscriber {
+public:
+    void on_mission_event(const dedalus::MissionEvent& event) override {
+        events.push_back(event.json);
+    }
+
+    std::vector<std::string> events;
+};
+
 bool file_contains(const std::filesystem::path& path, const std::string& needle) {
     std::ifstream input{path};
     if (!input) {
@@ -53,6 +62,15 @@ bool file_contains(const std::filesystem::path& path, const std::string& needle)
     std::ostringstream buffer;
     buffer << input.rdbuf();
     return buffer.str().find(needle) != std::string::npos;
+}
+
+bool any_event_contains(const std::vector<std::string>& events, const std::string& needle) {
+    for (const auto& event : events) {
+        if (event.find(needle) != std::string::npos) {
+            return true;
+        }
+    }
+    return false;
 }
 
 }  // namespace
@@ -95,6 +113,9 @@ int main() {
     auto* controller_ptr = controller.get();
     auto sink = std::make_unique<RecordingSink>();
     auto* sink_ptr = sink.get();
+    auto mission_event_publisher = std::make_shared<dedalus::MissionEventPublisher>();
+    auto mission_event_subscriber = std::make_shared<RecordingMissionEventSubscriber>();
+    mission_event_publisher->subscribe(mission_event_subscriber);
     const auto event_log_path = std::filesystem::temp_directory_path() / "dedalus_mission_runtime_events_test.jsonl";
     const auto lifecycle_log_path = std::filesystem::temp_directory_path() / "dedalus_mission_runtime_lifecycle_test.jsonl";
     std::filesystem::remove(event_log_path);
@@ -108,7 +129,8 @@ int main() {
                 .event_log_path = event_log_path.string()},
             latest_snapshot,
             std::move(controller),
-            std::move(sink)};
+            std::move(sink),
+            mission_event_publisher};
 
         if (!runtime.tick_once()) {
             std::cerr << "MissionRuntime did not tick with available snapshot\n";
@@ -152,6 +174,18 @@ int main() {
     }
     if (!file_contains(event_log_path, "\"event\":\"runtime_stop\"")) {
         std::cerr << "MissionRuntime event log missing runtime_stop\n";
+        return 1;
+    }
+    if (!any_event_contains(mission_event_subscriber->events, "\"event\":\"command_dispatch\"")) {
+        std::cerr << "MissionRuntime publisher missing command_dispatch\n";
+        return 1;
+    }
+    if (!any_event_contains(mission_event_subscriber->events, "\"event\":\"command_result\"")) {
+        std::cerr << "MissionRuntime publisher missing command_result\n";
+        return 1;
+    }
+    if (!any_event_contains(mission_event_subscriber->events, "\"event\":\"runtime_stop\"")) {
+        std::cerr << "MissionRuntime publisher missing runtime_stop\n";
         return 1;
     }
 
