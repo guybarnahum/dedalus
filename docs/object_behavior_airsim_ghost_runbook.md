@@ -1,6 +1,6 @@
 # Object Behavior AirSim Ghost Runbook
 
-This runbook validates object-conditioned behavior against live AirSim frames while using a deterministic ghost-detection scenario as the object source.
+This runbook validates object-conditioned behavior against live AirSim frames while using ghost detections as the object source.
 
 Canonical runtime diagrams live in:
 
@@ -8,13 +8,35 @@ Canonical runtime diagrams live in:
 docs/runtime_dataflow.md
 ```
 
-As of 2.26D.6, `simulation/airsim-world-overlay.py` is a stream-only subscriber/renderer. It does not evaluate ghost scenarios locally and does not read `snapshot_manifest.txt` in normal operation.
+As of 2.26D.7, `simulation/airsim-world-overlay.py` is a stream-only subscriber/renderer. It does not evaluate ghost scenarios locally, does not discover AirSim scene objects, and does not read `snapshot_manifest.txt` in normal operation.
+
+2.26E direction:
+
+```text
+Bind ghost detections to existing visible AirSim scene objects.
+Do not import custom meshes yet.
+Do not make the overlay own ghost generation or object discovery.
+```
 
 ---
 
-## 1. Scenario and trajectory inputs
+## 1. Ghost target source modes
 
-The ghost detection scenario describes objects, not motion internals:
+Dedalus ghost targets are simulation/debug inputs that enter at the same semantic boundary as real 3D detections:
+
+```text
+Ghost target source
+  -> GhostDetectionsFrame
+  -> Observation3D list
+  -> PerceptionPipelineOutput.observations
+  -> InMemoryWorldModel
+  -> WorldSnapshot.agents
+  -> TargetSelector / behavior
+```
+
+### 1.1 Implemented: trajectory_scenario
+
+The current implemented ghost source is a deterministic JSON scenario:
 
 ```text
 simulation/ghost_detections/person_pair_crossing.json
@@ -37,11 +59,64 @@ Current people trajectories are intentionally dynamic:
 cross -> wait -> cross back -> wait -> repeat
 ```
 
+### 1.2 Planned 2.26E: airsim_scene_objects
+
+The planned 2.26E source binds a ghost detection to an existing visible AirSim object:
+
+```text
+AirSim scene object name
+  -> simGetObjectPose(object_name)
+  -> GhostDetectionState at that pose
+  -> GhostDetectionsFrame + Observation3D list
+```
+
+Initial implementation should support explicit object selection only:
+
+```yaml
+ghost_targets_enabled: true
+ghost_targets_source: airsim_objects
+
+ghost_targets_airsim:
+  objects:
+    - source_track_id: ghost_person_001
+      airsim_object_name: BRPlayer_01_96
+      class: person
+      confidence: 0.82
+      size_m: [0.6, 0.6, 1.8]
+```
+
+Later convenience modes may add `all` and seeded `random`, but deterministic explicit binding comes first.
+
+Useful discovery commands:
+
+```bash
+python3 simulation/airsim-list-objects.py \
+  --match-class person \
+  --sort distance \
+  --format table
+```
+
+```bash
+python3 simulation/airsim-list-objects.py \
+  --match-class animal \
+  --sort distance \
+  --format table
+```
+
+```bash
+python3 simulation/airsim-list-objects.py \
+  --only-matched \
+  --output out/airsim_scene_objects.json
+```
+
 Coordinate contract:
 
 ```text
-initial_position_local_m:
+trajectory_scenario initial_position_local_m:
   map-local / AirSim-local NED coordinates, not ego-relative.
+
+airsim_scene_objects simGetObjectPose position:
+  AirSim-local NED coordinates from the simulator.
 
 GhostDetectionState.position_local_m:
   same map-local / AirSim-local NED frame.
@@ -96,7 +171,7 @@ bridge_command: python3 simulation/airsim-stream-frames-binary.py --include-ego 
 
 ### 2.2 Ghost simulation / perception injection path
 
-Mission-loop ghost injection is configured with:
+Current trajectory scenario config:
 
 ```yaml
 ghost_targets_enabled: true
@@ -107,9 +182,9 @@ Runtime path:
 
 ```text
 CoreStackRunner
-  -> first valid frame establishes ghost_scenario_start
+  -> first valid frame establishes ghost source start/reference state
   -> GhostTargetProvider::frame_at(timestamp, map_frame, scenario_start)
-       evaluates GhostScenario exactly once for that frame time
+       evaluates the configured ghost source exactly once for that frame time
        returns GhostDetectionsFrame for runtime-event subscribers
        returns matching Observation3D objects
   -> append Observation3D objects to PerceptionPipelineOutput.observations
@@ -131,6 +206,12 @@ AirSim frame arrives
 
 That delay is expected. PLAN markers can appear as soon as `ghost_detections` events arrive; AG markers appear after world-model ingestion and snapshot publication.
 
+For future AirSim existing-object binding:
+
+```text
+PLAN / AG / SEL should appear over the real visible AirSim object whose pose drives the ghost detection.
+```
+
 ### 2.3 Runtime publish / subscribe path
 
 Current in-process and external consumers receive typed events through publisher boundaries:
@@ -143,6 +224,10 @@ WorldSnapshotPublisher.publish(snapshot)
   -> LatestWorldSnapshotSubscriber
   -> ArtifactSnapshotWriter
   -> RuntimeEventStreamServer
+
+MissionEventPublisher.publish(event)
+  -> RuntimeEventStreamServer
+  -> mission_events.jsonl
 ```
 
 `LatestWorldSnapshotSubscriber` is the in-process behavior handoff:
@@ -166,7 +251,7 @@ WorldSnapshotPublisher
 `RuntimeEventStreamServer` is an optional live TCP JSONL stream for external tools/customers:
 
 ```text
-GhostDetectionsPublisher + WorldSnapshotPublisher
+GhostDetectionsPublisher + WorldSnapshotPublisher + MissionEventPublisher
   -> RuntimeEventStreamServer
   -> tcp://127.0.0.1:<port>
 ```
@@ -185,6 +270,10 @@ The stream emits records shaped like:
 
 ```json
 {"type":"world_snapshot","seq":2,"timestamp_ns":123,"active_map_frame_id":"map_airsim_mission_0001","snapshot":{}}
+```
+
+```json
+{"type":"mission_event","seq":3,"timestamp_ns":124,"mission_event":{"event":"target_selected","source_track_id":"ghost_person_001"}}
 ```
 
 Sequence numbers are stream-local and shared across event types. Consumers should dispatch by `type` and use `seq` to detect gaps.
@@ -208,9 +297,11 @@ RuntimeEventStreamServer
   -> simulation/airsim-world-overlay.py
        caches latest ghost_detections
        caches latest world_snapshot
+       caches latest target_selected mission_event
        renders PLAN / PLAN* from ghost_detections
        renders AG from world_snapshot.agents
        renders EGO from world_snapshot.ego
+       renders SEL by matching selected target against world_snapshot.agents
   -> AirSim simPlotPoints / simPlotStrings
 ```
 
@@ -233,6 +324,7 @@ It must not:
 
 ```text
 - evaluate GhostScenario locally
+- discover/list AirSim objects for ghost binding
 - poll snapshot_manifest.txt in normal mode
 - read mission_events.jsonl for normal SEL state
 - own source modes such as combined/world_snapshot/artifact_snapshot
@@ -254,7 +346,7 @@ EGO:
   ego pose from world_snapshot event.
 
 SEL:
-  not live yet. Future slice should stream mission events or selected-target state.
+  selected target from mission_event target_selected, rendered by matching source_track_id or agent_id to the latest world_snapshot agent.
 ```
 
 ### 2.5 Mission / behavior runtime path
@@ -390,6 +482,16 @@ Expected stream event types:
 ```text
 ghost_detections
 world_snapshot
+mission_event
+```
+
+Expected live overlay markers:
+
+```text
+PLAN / PLAN*
+AG
+EGO
+SEL
 ```
 
 Expected mission events:
@@ -419,7 +521,45 @@ The behavior should not switch to `ghost_person_002` merely because it has highe
 
 ---
 
-## 4. Validate the run artifacts
+## 4. AirSim existing-object discovery for 2.26E
+
+Use the listing tool while AirSim is running:
+
+```bash
+python3 simulation/airsim-list-objects.py \
+  --match-class person \
+  --sort distance \
+  --format table
+```
+
+```bash
+python3 simulation/airsim-list-objects.py \
+  --match-class animal \
+  --sort distance \
+  --format table
+```
+
+```bash
+python3 simulation/airsim-list-objects.py \
+  --only-matched \
+  --output out/airsim_scene_objects.json
+```
+
+Pick explicit object names first, such as `BRPlayer_*`, and bind them deterministically in config. Do not start with random/all selection modes.
+
+Planned first existing-object validation:
+
+```text
+Select one visible AirSim object by name.
+Bind it to ghost_person_001 or ghost_car_001.
+Publish ghost_detections from its AirSim pose.
+Inject the same pose into perception/world-model.
+Verify PLAN / AG / SEL align over the visible object.
+```
+
+---
+
+## 5. Validate the run artifacts
 
 ```bash
 python3 simulation/validate-object-behavior-airsim-ghost.py \
@@ -444,7 +584,7 @@ sidecars include ghost_person_001
 
 ---
 
-## 5. Export MP4 review artifact
+## 6. Export MP4 review artifact
 
 ```bash
 python3 scripts/export-ppm-sequence-to-mp4.py \
@@ -456,7 +596,7 @@ The MP4 is a human review artifact. Mission events and snapshots remain the vali
 
 ---
 
-## 6. Test commands
+## 7. Test commands
 
 Targeted pub/sub and runtime stream regression:
 
@@ -478,9 +618,9 @@ ctest --test-dir build-staging --output-on-failure
 
 ---
 
-## 7. What this proves
+## 8. What this proves
 
-This run proves:
+The current trajectory-scenario run proves:
 
 ```text
 Live AirSim frames can drive the normal CoreStackRunner path.
@@ -489,29 +629,38 @@ GhostScenario can evaluate static and dynamic ghost detections deterministically
 CoreStackRunner publishes GhostDetectionsFrame from the same evaluation injected into perception.
 Mission-loop ghost injection enters PerceptionPipelineOutput.observations and then WorldSnapshot.agents.
 WorldSnapshots are published through a reusable typed pub/sub boundary.
+Mission events are published through the runtime event stream and written to mission_events.jsonl.
 Behavior consumes WorldSnapshot through LatestWorldSnapshotSubscriber.
 Artifacts are written by ArtifactSnapshotWriter as evidence/debug outputs.
 A live runtime event TCP JSONL stream can be enabled for external customers/tools.
-AirSim overlay consumes live runtime events and renders PLAN / PLAN* / AG / EGO without artifact polling.
+AirSim overlay consumes live runtime events and renders PLAN / PLAN* / AG / EGO / SEL without artifact polling.
 TargetSelector can select the requested lower-confidence ghost target by source_track_id.
 ObjectBehaviorMissionController can trigger behavior events from WorldSnapshot state.
 Follow behavior can emit bounded non-zero velocity.
 Mission lifecycle still reaches GoHome / Land / Disarm / Complete.
 ```
 
+The planned 2.26E existing-object run should additionally prove:
+
+```text
+Existing visible AirSim objects can drive GhostDetectionsFrame positions.
+The same object pose feeds perception/world-model and overlay visualization.
+PLAN / AG / SEL align over a real visible object in the AirSim environment.
+```
+
 ---
 
-## 8. What this does not prove yet
+## 9. What this does not prove yet
 
 This does not yet prove:
 
 ```text
-SEL marker consuming a live mission-event stream or selected-target state.
+implemented AirSim existing-object ghost binding
 circle / approach / sequence motion
 real camera detector quality
 real 3D perception quality
 obstacle avoidance
-AirSim mesh/proxy actors for people/cars
+custom AirSim mesh/proxy actors for people/cars
 viewport overlay as validation truth
 ```
 
@@ -519,7 +668,7 @@ Those are subsequent slices.
 
 ---
 
-## 9. Engineering cleanup rule
+## 10. Engineering cleanup rule
 
 For future work on this path:
 
@@ -536,7 +685,6 @@ Specific to this runbook:
 Do not use artifact files as runtime IPC when the live stream or in-process subscriber boundary is the right abstraction.
 Do not reintroduce direct snapshot file writing into dedalus_mission_loop; keep it behind ArtifactSnapshotWriter.
 Do not bypass WorldSnapshotPublisher for behavior-facing snapshot delivery.
-Do not make simulation/airsim-world-overlay.py evaluate GhostScenario or poll artifacts in normal mode.
+Do not make simulation/airsim-world-overlay.py evaluate GhostScenario, discover AirSim objects, or poll artifacts in normal mode.
 Keep generic event machinery generic: EventPublisher<T> / EventSubscriber<T>.
-Keep domain consumers readable: WorldSnapshotSubscriber::on_snapshot(...), GhostDetectionsSubscriber::on_ghost_detections(...), not generic on_event(...) in domain code.
-```
+Keep domain consumers readable: WorldSnapshotSubscriber::on_snapshot(...), GhostDetectionsSubscriber::on_ghost_detections(...), MissionEventSubscriber::on_mission_event(...), not generic on_event(...) in domain code.
