@@ -1,6 +1,8 @@
 #include "dedalus/runtime/world_snapshot_stream_server.hpp"
 
+#include <algorithm>
 #include <cerrno>
+#include <chrono>
 #include <cstring>
 #include <stdexcept>
 #include <string>
