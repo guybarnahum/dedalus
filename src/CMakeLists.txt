@@ -28,6 +28,8 @@ add_library(dedalus_core
     world_model/rough_flight_map_builder.cpp
     world_model/tactical_obstacle_mapper.cpp
     world_model/world_snapshot.cpp
+    world_model/world_snapshot_publisher.cpp
+    world_model/world_snapshot_subscribers.cpp
 )
 
 target_include_directories(dedalus_core
