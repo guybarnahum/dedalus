@@ -11,8 +11,27 @@
 
 #include "dedalus/behavior/latest_world_snapshot.hpp"
 #include "dedalus/behavior/mission_controller.hpp"
+#include "dedalus/runtime/pubsub.hpp"
 
 namespace dedalus {
+
+struct MissionEvent {
+    TimePoint timestamp;
+    std::string json;
+};
+
+class MissionEventSubscriber : public EventSubscriber<MissionEvent> {
+public:
+    ~MissionEventSubscriber() override = default;
+
+    void on_event(const MissionEvent& event) final {
+        on_mission_event(event);
+    }
+
+    virtual void on_mission_event(const MissionEvent& event) = 0;
+};
+
+using MissionEventPublisher = EventPublisher<MissionEvent>;
 
 struct MissionRuntimeConfig {
     double tick_hz{10.0};
@@ -26,7 +45,8 @@ public:
         MissionRuntimeConfig config,
         std::shared_ptr<LatestWorldSnapshot> snapshots,
         std::unique_ptr<MissionController> controller,
-        std::unique_ptr<FlightCommandSink> sink);
+        std::unique_ptr<FlightCommandSink> sink,
+        std::shared_ptr<MissionEventPublisher> mission_event_publisher = nullptr);
     ~MissionRuntime();
 
     MissionRuntime(const MissionRuntime&) = delete;
@@ -54,6 +74,7 @@ private:
     std::shared_ptr<LatestWorldSnapshot> snapshots_;
     std::unique_ptr<MissionController> controller_;
     std::unique_ptr<FlightCommandSink> sink_;
+    std::shared_ptr<MissionEventPublisher> mission_event_publisher_;
     std::atomic<bool> running_{false};
     std::atomic<bool> finish_requested_{false};
     std::atomic<bool> terminal_settled_{false};
