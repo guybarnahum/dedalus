@@ -39,6 +39,11 @@ int main() {
         return 1;
     }
 
+    if (config.ghost_targets_source != "trajectory_scenario") {
+        std::cerr << "core_stack_ci should default ghost_targets_source to trajectory_scenario\n";
+        return 1;
+    }
+
     if (config.fallback_map_frame_id.value != "map_local_0001") {
         std::cerr << "core_stack_ci config did not parse expected fallback map frame\n";
         return 1;
@@ -57,6 +62,10 @@ int main() {
     const auto ghost_config = dedalus::load_core_stack_config("config/core_stack_ghost_targets_ci.yaml");
     if (!ghost_config.ghost_targets_enabled) {
         std::cerr << "ghost target config did not enable ghost targets\n";
+        return 1;
+    }
+    if (ghost_config.ghost_targets_source != "trajectory_scenario") {
+        std::cerr << "ghost target config should use trajectory_scenario source\n";
         return 1;
     }
     if (ghost_config.ghost_targets_scenario != "person_pair_crossing") {
@@ -104,13 +113,36 @@ int main() {
         std::cerr << "object behavior config should use disabled sink for synthetic skeleton validation\n";
         return 1;
     }
-    if (!object_behavior_config.ghost_targets_enabled || object_behavior_config.ghost_targets_scenario != "person_pair_crossing") {
-        std::cerr << "object behavior config should enable ghost target scenario\n";
+    if (!object_behavior_config.ghost_targets_enabled ||
+        object_behavior_config.ghost_targets_source != "trajectory_scenario" ||
+        object_behavior_config.ghost_targets_scenario != "person_pair_crossing") {
+        std::cerr << "object behavior config should enable ghost target trajectory scenario\n";
         return 1;
     }
     if (object_behavior_config.mission_options.get_or("behavior_spec_path", "") !=
         "config/behaviors/follow_specific_track.yaml") {
         std::cerr << "object behavior config did not use canonical config/behaviors spec path\n";
+        return 1;
+    }
+
+    const auto airsim_object_config = dedalus::load_core_stack_config(
+        "config/core_stack_object_behavior_airsim_existing_object_example.yaml");
+    if (!airsim_object_config.ghost_targets_enabled ||
+        airsim_object_config.ghost_targets_source != "airsim_objects") {
+        std::cerr << "AirSim existing-object config did not enable airsim_objects ghost source\n";
+        return 1;
+    }
+    if (airsim_object_config.ghost_targets_airsim_objects.size() != 1U) {
+        std::cerr << "AirSim existing-object config did not parse exactly one object binding\n";
+        return 1;
+    }
+    const auto& binding = airsim_object_config.ghost_targets_airsim_objects.front();
+    if (binding.source_track_id.value != "ghost_person_001" ||
+        binding.airsim_object_name != "BRPlayer_01_96" ||
+        binding.class_label != "person" ||
+        !near(binding.confidence, 0.82) ||
+        !near(binding.size_m.x, 0.6) || !near(binding.size_m.y, 0.6) || !near(binding.size_m.z, 1.8)) {
+        std::cerr << "AirSim existing-object binding fields did not parse as expected\n";
         return 1;
     }
 
@@ -145,6 +177,17 @@ int main() {
     }
     if (!saw_ghost_person_001 || !saw_ghost_person_002) {
         std::cerr << "ghost config-composed snapshot missing expected ghost agents\n";
+        return 1;
+    }
+
+    bool saw_expected_provider_error = false;
+    try {
+        (void)registry.create(airsim_object_config);
+    } catch (const std::exception& ex) {
+        saw_expected_provider_error = std::string{ex.what()}.find("scheduled for 2.26E.3") != std::string::npos;
+    }
+    if (!saw_expected_provider_error) {
+        std::cerr << "AirSim existing-object provider should fail clearly until 2.26E.3 implementation\n";
         return 1;
     }
 
