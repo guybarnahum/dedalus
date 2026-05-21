@@ -89,7 +89,7 @@ def mavlink_get_local_position(mav, timeout_s: float = 2.0):
     return msg
 
 
-def mavlink_send_velocity_local_ned(mav, vx: float, vy: float, vz: float) -> None:
+def mavlink_send_velocity_local_ned(mav, vx: float, vy: float, vz: float, yaw: float | None = None) -> None:
     type_mask = (
         mavutil.mavlink.POSITION_TARGET_TYPEMASK_X_IGNORE
         | mavutil.mavlink.POSITION_TARGET_TYPEMASK_Y_IGNORE
@@ -97,9 +97,10 @@ def mavlink_send_velocity_local_ned(mav, vx: float, vy: float, vz: float) -> Non
         | mavutil.mavlink.POSITION_TARGET_TYPEMASK_AX_IGNORE
         | mavutil.mavlink.POSITION_TARGET_TYPEMASK_AY_IGNORE
         | mavutil.mavlink.POSITION_TARGET_TYPEMASK_AZ_IGNORE
-        | mavutil.mavlink.POSITION_TARGET_TYPEMASK_YAW_IGNORE
         | mavutil.mavlink.POSITION_TARGET_TYPEMASK_YAW_RATE_IGNORE
     )
+    if yaw is None:
+        type_mask |= mavutil.mavlink.POSITION_TARGET_TYPEMASK_YAW_IGNORE
 
     mav.mav.set_position_target_local_ned_send(
         int(time.time() * 1e3) & 0xFFFFFFFF,
@@ -116,7 +117,7 @@ def mavlink_send_velocity_local_ned(mav, vx: float, vy: float, vz: float) -> Non
         0,
         0,
         0,
-        0,
+        0.0 if yaw is None else yaw,
         0,
     )
 
@@ -304,8 +305,9 @@ class Px4CommandBridge:
             vx = float(request.get("vx", 0.0))
             vy = float(request.get("vy", 0.0))
             vz = float(request.get("vz", 0.0))
-            mavlink_send_velocity_local_ned(self.ensure_mavlink(), vx, vy, vz)
-            return {
+            yaw = None if "yaw" not in request else float(request["yaw"])
+            mavlink_send_velocity_local_ned(self.ensure_mavlink(), vx, vy, vz, yaw)
+            response = {
                 "ok": True,
                 "command": command,
                 "status": "mavlink velocity",
@@ -313,6 +315,9 @@ class Px4CommandBridge:
                 "vy": vy,
                 "vz": vz,
             }
+            if yaw is not None:
+                response["yaw"] = yaw
+            return response
         if command == "land":
             px4_shell("commander land", self.args.px4_tmux_target)
             time.sleep(self.args.land_settle_s)
