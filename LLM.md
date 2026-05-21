@@ -20,7 +20,7 @@ Milestone 2.25 — ObjectBehaviorMissionController skeleton and first object-con
 Status: implemented through object behavior lifecycle and bounded follow behavior baseline.
 
 Milestone 2.26 — AirSim ghost behavior validation and live runtime-event plumbing.
-Status: implemented through 2.26D.6 baseline.
+Status: implemented through 2.26D.7 baseline.
 ```
 
 Current 2.26D state:
@@ -51,6 +51,10 @@ Runtime publish path:
        -> LatestWorldSnapshotSubscriber     behavior / MissionRuntime
        -> ArtifactSnapshotWriter            durable evidence/debug snapshots
        -> RuntimeEventStreamServer          optional TCP JSONL stream, event type world_snapshot
+  MissionRuntime
+    -> MissionEventPublisher
+       -> mission_events.jsonl              durable evidence/debug event log
+       -> RuntimeEventStreamServer          optional TCP JSONL stream, event type mission_event
 
 Reusable event service:
   include/dedalus/runtime/pubsub.hpp
@@ -67,17 +71,22 @@ Ghost detections domain adapter:
     GhostDetectionsPublisher = EventPublisher<GhostDetectionsFrame>
     GhostDetectionsSubscriber keeps on_ghost_detections(...) while adapting to generic on_event(...)
 
+Mission events domain adapter:
+  include/dedalus/behavior/mission_runtime.hpp
+    MissionEventPublisher = EventPublisher<MissionEvent>
+    MissionEventSubscriber keeps on_mission_event(...) while adapting to generic on_event(...)
+
 Live runtime event stream:
   dedalus_mission_loop --world-snapshot-stream-port 47770
   emits JSONL records on one TCP stream:
     {"type":"ghost_detections","seq":N,"timestamp_ns":...,"map_frame_id":"...","ghost_detections":{...}}
     {"type":"world_snapshot","seq":N,"timestamp_ns":...,"active_map_frame_id":"...","snapshot":{...}}
+    {"type":"mission_event","seq":N,"timestamp_ns":...,"mission_event":{...}}
 
 AirSim overlay:
   simulation/airsim-world-overlay.py is now a stream-only subscriber/renderer.
   It no longer evaluates ghost scenarios locally and no longer reads snapshot_manifest.txt.
-  It renders PLAN / PLAN* from ghost_detections and AG / EGO from world_snapshot.
-  SEL remains future work until mission events or selected-target state are live-streamed.
+  It renders PLAN / PLAN* from ghost_detections, AG / EGO from world_snapshot, and SEL from mission_event target_selected matched against the latest world_snapshot agent.
 
 Artifact files remain evidence/debug outputs, not IPC.
 ```
@@ -85,9 +94,6 @@ Artifact files remain evidence/debug outputs, not IPC.
 Next milestone slice:
 
 ```text
-2.26D.7:
-  add live mission-event stream or selected-target state so SEL markers are also live instead of mission_events.jsonl-polled.
-
 2.26D.8:
   prune naming drift around world_snapshot_stream_server file/test names if desired, or keep compatibility if churn outweighs value.
 
@@ -133,6 +139,7 @@ Recent cleanup examples that should guide future work:
 WorldSnapshotPublisher was generalized into EventPublisher<T> / EventSubscriber<T>.
 WorldSnapshotSubscriber preserves domain-specific on_snapshot(...) while adapting to generic on_event(...).
 GhostDetectionsSubscriber preserves domain-specific on_ghost_detections(...) while adapting to generic on_event(...).
+MissionEventSubscriber preserves domain-specific on_mission_event(...) while adapting to generic on_event(...).
 Inline snapshot file writing was removed from dedalus_mission_loop and moved to ArtifactSnapshotWriter.
 LatestWorldSnapshot is now fed through LatestWorldSnapshotSubscriber, not a special CoreStackRunner constructor path.
 The obsolete world_snapshot_publisher.cpp implementation was deleted after moving to header-only typed pub/sub.
@@ -242,6 +249,7 @@ AirSim live frame + ego sidecar
        -> optional RuntimeEventStreamServer
   -> LatestWorldSnapshot
   -> MissionRuntime async loop
+       -> MissionEventPublisher
   -> TrajectoryMissionController today / ObjectBehaviorMissionController for object behavior
   -> Px4BridgeCommandSink
   -> persistent simulation/px4-command-bridge.py
@@ -322,7 +330,7 @@ Do not reintroduce the hand-written native C++ MAVLink encoder as the default li
 
 ## 3. Runtime Event Publish / Subscribe Boundary
 
-WorldSnapshot and ghost detections are now published as typed runtime events.
+WorldSnapshot, ghost detections, and mission events are now published as typed runtime events.
 
 ```text
 CoreStackRunner::run_once()
@@ -331,6 +339,10 @@ CoreStackRunner::run_once()
        -> append frame.observations to PerceptionPipelineOutput
   -> world_model.snapshot()
        -> WorldSnapshotPublisher.publish(snapshot)
+
+MissionRuntime::write_event(...)
+  -> MissionEventPublisher.publish(event)
+  -> mission_events.jsonl
 ```
 
 Current subscribers:
@@ -345,14 +357,14 @@ ArtifactSnapshotWriter:
 
 RuntimeEventStreamServer:
   optional TCP JSONL live stream for external tools/customers.
-  subscribes to both GhostDetectionsPublisher and WorldSnapshotPublisher.
+  subscribes to GhostDetectionsPublisher, WorldSnapshotPublisher, and MissionEventPublisher.
   enabled by --world-snapshot-stream-port.
 ```
 
 Design rule:
 
 ```text
-The world model and ghost provider should not know who consumes their events.
+The world model, ghost provider, and mission runtime should not know who consumes their events.
 Consumers should subscribe to typed state/events and own their side effects.
 ```
 
@@ -405,6 +417,7 @@ PerceptionPipelineOutput is evidence.
 WorldSnapshot is autonomy state.
 Behavior consumes WorldSnapshot, not perception internals.
 GhostDetectionsFrame is a simulation/debug runtime event emitted from the same evaluation that injects Observation3D into perception.
+MissionEvent is the live event form of the same event JSON also written to mission_events.jsonl.
 ```
 
 Example:
@@ -581,8 +594,7 @@ Future validation should later prove:
 
 ```text
 selected target identity remains stable across crossing/waiting/crossing-back motion
-PLAN/AG/EGO markers update from live runtime event stream in AirSim overlay
-SEL marker updates from live mission-event stream or selected-target state
+PLAN/AG/EGO/SEL markers update from live runtime event stream in AirSim overlay
 circle / approach / sequence behavior math emits correct bounded velocity
 obstacle avoidance remains outside M3 unless explicitly started post-M3
 ```
@@ -605,6 +617,7 @@ config/mission_campaigns/synthetic_ci.json
 config/mission_campaigns/airsim_live_smoke.json
 docs/mission_scenario_runner.md
 docs/object_behavior_airsim_ghost_runbook.md
+docs/runtime_dataflow.md
 ```
 
 Campaign Ctrl-C semantics:
@@ -658,6 +671,7 @@ Second Ctrl-C:
 Read next when relevant:
 
 ```text
+docs/runtime_dataflow.md                     canonical source->publisher->server->subscriber->sink diagrams
 docs/object_behavior_airsim_ghost_runbook.md current AirSim ghost behavior + live stream runbook
 docs/object_conditioned_behavior_plan.md     detailed M3 behavior + identity plan
 docs/world_model_reprojection_validation_plan.md reprojection and world-model evidence plan
