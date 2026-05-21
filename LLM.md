@@ -20,7 +20,7 @@ Milestone 2.25 — ObjectBehaviorMissionController skeleton and first object-con
 Status: implemented through object behavior lifecycle and bounded follow behavior baseline.
 
 Milestone 2.26 — AirSim ghost behavior validation and live runtime-event plumbing.
-Status: implemented through 2.26E.3 AirSim existing-object ghost source baseline.
+Status: implemented through 2.26E.4 live-validation config/runbook baseline.
 ```
 
 Current 2.26D/E state:
@@ -42,8 +42,15 @@ Ghost people now move cross -> wait -> cross back -> wait.
   ghost_targets_airsim.objects.<N>.confidence
   ghost_targets_airsim.objects.<N>.size_m
 
-Example config:
+Canonical live run config:
+  config/core_stack_object_behavior_airsim_existing_object.yaml
+    -> binds ghost_person_001 to BRPlayer_01_96 by default
+
+Example/template config:
   config/core_stack_object_behavior_airsim_existing_object_example.yaml
+
+Focused runbook:
+  docs/airsim_existing_object_ghost_runbook.md
 
 AirSim object pose bridge:
   simulation/airsim-object-poses.py
@@ -123,10 +130,12 @@ Artifact files remain evidence/debug outputs, not IPC.
 Next milestone slice:
 
 ```text
-2.26E.4:
-  perform live AirSim validation with an explicit discovered object name.
-  Update config/core_stack_object_behavior_airsim_existing_object_example.yaml or create a run-specific config with a visible BRPlayer_* or static object.
-  Validate PLAN / AG / SEL align over the visible object.
+Run 2.26E.4 live validation on the AirSim machine:
+  1. git pull && build && run focused tests.
+  2. Confirm BRPlayer_01_96 exists with simulation/airsim-object-poses.py.
+  3. Run dedalus_mission_loop with config/core_stack_object_behavior_airsim_existing_object.yaml and --world-snapshot-stream-port 47770.
+  4. Run simulation/airsim-world-overlay.py with --debug-json.
+  5. Verify PLAN / AG / SEL align over the visible object.
 
 2.27:
   circle an existing visible static object after explicit AirSim object binding works.
@@ -219,46 +228,6 @@ Scenario/campaign validation:
 ctest --test-dir build-staging --output-on-failure -R 'mission_(scenario|campaign|abort)_'
 ```
 
-Live mission validation, when AirSim/PX4 is already running:
-
-```bash
-RUNS=3 simulation/repeat-mission-smoke.sh
-
-python3 simulation/run-mission-campaign.py \
-  --campaign-file config/mission_campaigns/airsim_live_smoke.json \
-  --campaign-id live_<N> \
-  --output-root out/mission_campaigns \
-  --progress \
-  --overwrite
-```
-
-Live runtime event stream smoke:
-
-```bash
-./build-staging/apps/dedalus_mission_loop \
-  --config config/core_stack_object_behavior_airsim_ghost.yaml \
-  --output-dir out/object_behavior_airsim_ghost \
-  --max-frames 900 \
-  --shutdown-max-frames 400 \
-  --world-snapshot-stream-port 47770 \
-  --progress
-
-nc 127.0.0.1 47770 | head -5
-```
-
-Live AirSim overlay smoke:
-
-```bash
-python3 simulation/airsim-world-overlay.py \
-  --stream-port 47770 \
-  --follow \
-  --rate-hz 5 \
-  --duration-s 180 \
-  --clear \
-  --label \
-  --debug
-```
-
 Existing AirSim object discovery:
 
 ```bash
@@ -273,6 +242,32 @@ Existing AirSim object pose bridge smoke:
 ```bash
 python3 simulation/airsim-object-poses.py \
   --object BRPlayer_01_96
+```
+
+Live existing-object validation:
+
+```bash
+rm -rf out/object_behavior_airsim_existing_object out/object_behavior_airsim_existing_object_annotation
+
+./build-staging/apps/dedalus_mission_loop \
+  --config config/core_stack_object_behavior_airsim_existing_object.yaml \
+  --output-dir out/object_behavior_airsim_existing_object \
+  --max-frames 900 \
+  --shutdown-max-frames 400 \
+  --world-snapshot-stream-port 47770 \
+  --progress
+```
+
+```bash
+python3 simulation/airsim-world-overlay.py \
+  --stream-port 47770 \
+  --follow \
+  --rate-hz 5 \
+  --duration-s 180 \
+  --clear \
+  --label \
+  --debug \
+  --debug-json out/object_behavior_airsim_existing_object/overlay_debug_latest.json
 ```
 
 ---
@@ -506,7 +501,7 @@ simulation/trajectories/ghost_person_001_crossing.json
 simulation/trajectories/ghost_person_002_crossing.json
 ```
 
-Planned AirSim existing-object ghost bindings should be referenced from core-stack config, not embedded in the overlay.
+AirSim existing-object ghost bindings are referenced from core-stack config, not embedded in the overlay.
 
 Rule:
 
@@ -525,6 +520,7 @@ AirSim existing-object binding:
 
 Core-stack config that references behavior:
   config/core_stack_object_behavior_airsim_ghost.yaml
+  config/core_stack_object_behavior_airsim_existing_object.yaml
 ```
 
 ---
@@ -677,9 +673,11 @@ simulation/airsim-object-poses.py
 config/core_stack_synthetic_mission_ci.yaml
 config/core_stack_synthetic_mission_abort_ci.yaml
 config/core_stack_object_behavior_airsim_ghost.yaml
+config/core_stack_object_behavior_airsim_existing_object.yaml
 config/core_stack_object_behavior_airsim_existing_object_example.yaml
 config/mission_campaigns/synthetic_ci.json
 config/mission_campaigns/airsim_live_smoke.json
+docs/airsim_existing_object_ghost_runbook.md
 docs/mission_scenario_runner.md
 docs/object_behavior_airsim_ghost_runbook.md
 docs/runtime_dataflow.md
@@ -736,8 +734,9 @@ Second Ctrl-C:
 Read next when relevant:
 
 ```text
+docs/airsim_existing_object_ghost_runbook.md focused 2.26E.4 existing-object validation
 docs/runtime_dataflow.md                     canonical source->publisher->server->subscriber->sink diagrams
-docs/object_behavior_airsim_ghost_runbook.md current AirSim ghost behavior + live stream runbook
+docs/object_behavior_airsim_ghost_runbook.md AirSim ghost behavior + live stream runbook
 docs/object_conditioned_behavior_plan.md     detailed M3 behavior + identity plan
 docs/world_model_reprojection_validation_plan.md reprojection and world-model evidence plan
 docs/mission_scenario_runner.md             scenario/campaign harness
