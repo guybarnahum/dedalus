@@ -10,9 +10,14 @@ Examples:
   python3 simulation/airsim-list-objects.py
 
   python3 simulation/airsim-list-objects.py \
-    --name-regex '.*(Car|Vehicle|Person|Human|Pedestrian).*' \
+    --name-regex '.*(Car|Vehicle|Person|Human|Pedestrian|BRPlayer).*' \
     --class-pattern car='(?i)(car|vehicle)' \
-    --class-pattern person='(?i)(person|human|pedestrian)' \
+    --class-pattern person='(?i)(person|human|pedestrian|brplayer)' \
+    --only-matched \
+    --format table
+
+  python3 simulation/airsim-list-objects.py \
+    --match-class person \
     --format table
 
   python3 simulation/airsim-list-objects.py \
@@ -39,7 +44,8 @@ except ImportError as exc:
 
 DEFAULT_CLASS_PATTERNS = {
     "car": r"(?i)(car|vehicle|truck|suv|sedan|van)",
-    "person": r"(?i)(person|human|pedestrian|character|mannequin)",
+    "person": r"(?i)(person|human|pedestrian|character|mannequin|brplayer)",
+    "animal": r"(?i)(animal|animalaicontroller)",
 }
 
 
@@ -59,17 +65,24 @@ def parse_args() -> argparse.Namespace:
         action="append",
         default=[],
         metavar="CLASS=REGEX",
-        help="Class matcher. May be repeated, e.g. --class-pattern car='(?i)car|vehicle'.",
+        help="Class matcher. May be repeated, e.g. --class-pattern car='(?i)car|vehicle'. This labels matches; add --only-matched or --match-class to filter.",
     )
     parser.add_argument(
         "--no-default-class-patterns",
         action="store_true",
-        help="Disable built-in car/person name matchers.",
+        help="Disable built-in car/person/animal name matchers.",
     )
     parser.add_argument(
         "--only-matched",
         action="store_true",
         help="Only print objects matching at least one class pattern.",
+    )
+    parser.add_argument(
+        "--match-class",
+        action="append",
+        default=[],
+        metavar="CLASS",
+        help="Only print objects matched as this class. May be repeated. Implies --only-matched.",
     )
     parser.add_argument("--limit", type=int, default=0, help="Maximum number of objects to print; 0 means unlimited.")
     parser.add_argument("--format", choices=["json", "table", "names"], default="json")
@@ -143,6 +156,7 @@ def match_classes(name: str, patterns: list[ClassPattern]) -> list[str]:
 
 def list_objects(args: argparse.Namespace) -> dict[str, Any]:
     class_patterns = compile_class_patterns(args)
+    requested_classes = {str(class_name).strip() for class_name in args.match_class if str(class_name).strip()}
     client = airsim.MultirotorClient(ip=args.host, port=args.rpc_port)
     client.confirmConnection()
 
@@ -150,7 +164,9 @@ def list_objects(args: argparse.Namespace) -> dict[str, Any]:
     rows: list[dict[str, Any]] = []
     for name in names:
         matched_classes = match_classes(name, class_patterns)
-        if args.only_matched and not matched_classes:
+        if requested_classes and requested_classes.isdisjoint(set(matched_classes)):
+            continue
+        if (args.only_matched or requested_classes) and not matched_classes:
             continue
         try:
             pose = client.simGetObjectPose(name)
@@ -198,6 +214,7 @@ def list_objects(args: argparse.Namespace) -> dict[str, Any]:
         "host": args.host,
         "rpc_port": args.rpc_port,
         "name_regex": args.name_regex,
+        "requested_classes": sorted(requested_classes),
         "count": len(rows),
         "class_counts": class_counts,
         "unmatched_count": unmatched,
