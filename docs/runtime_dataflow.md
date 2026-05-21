@@ -59,6 +59,7 @@ World state
 Publishers
   GhostDetectionsPublisher.publish(GhostDetectionsFrame)
   WorldSnapshotPublisher.publish(WorldSnapshot)
+  MissionEventPublisher.publish(MissionEvent)
 
 In-process subscribers
   LatestWorldSnapshotSubscriber
@@ -74,9 +75,14 @@ Evidence subscribers
     -> snapshot_XXXX.json
     -> snapshot_manifest.txt
 
+Mission event artifact path
+  MissionRuntime.write_event(...)
+    -> MissionEventPublisher
+    -> mission_events.jsonl
+
 External live subscribers
   RuntimeEventStreamServer
-    subscribes to GhostDetectionsPublisher and WorldSnapshotPublisher
+    subscribes to GhostDetectionsPublisher, WorldSnapshotPublisher, and MissionEventPublisher
     emits TCP JSONL runtime events
     -> simulation/airsim-world-overlay.py
     -> external/debug/customer tools
@@ -101,6 +107,8 @@ External live subscribers
                  |                                         +--> LatestWorldSnapshotSubscriber
                  |                                         |      -> LatestWorldSnapshot
                  |                                         |      -> MissionRuntime
+                 |                                         |            -> MissionEventPublisher
+                 |                                         |            -> mission_events.jsonl
                  |                                         |      -> behavior controller
                  |                                         |      -> FlightCommandSink
                  |                                         |
@@ -113,6 +121,11 @@ External live subscribers
                           +-----------------------------+
                           |  RuntimeEventStreamServer   |
                           |  TCP JSONL event stream     |
+                          +-----------------------------+
+                                      ^
+                                      |
+                          +-----------------------------+
+                          |    MissionEventPublisher    |
                           +-----------------------------+
                                       |
                                       v
@@ -127,6 +140,7 @@ Important boundary:
 ```text
 GhostDetectionsPublisher is for simulation/debug visibility.
 WorldSnapshotPublisher is the behavior-facing autonomy state boundary.
+MissionEventPublisher exposes behavior/mission transitions and selected-target state.
 Behavior does not consume GhostDetectionsFrame directly.
 ```
 
@@ -156,6 +170,10 @@ Current JSONL record types:
 {"type":"world_snapshot","seq":2,"timestamp_ns":123,"active_map_frame_id":"map_airsim_mission_0001","snapshot":{}}
 ```
 
+```json
+{"type":"mission_event","seq":3,"timestamp_ns":124,"mission_event":{"event":"target_selected","tick":42,"state":"ExecuteMission","source_track_id":"ghost_person_001","agent_id":"agent_ghost_person_001"}}
+```
+
 Sequence numbers are stream-local and shared across event types. A client should use `type` to dispatch records and `seq` to detect gaps.
 
 ---
@@ -170,9 +188,11 @@ RuntimeEventStreamServer
   -> simulation/airsim-world-overlay.py
        cache latest ghost_detections
        cache latest world_snapshot
+       cache latest target_selected mission_event
        render PLAN / PLAN* markers from ghost_detections
        render AG markers from world_snapshot.agents
        render EGO marker from world_snapshot.ego
+       render SEL marker by matching target_selected source_track_id / agent_id to world_snapshot.agents
   -> AirSim simPlotPoints / simPlotStrings
 ```
 
@@ -198,7 +218,7 @@ The overlay must not:
 - decide between source modes such as combined/world_snapshot/artifact_snapshot
 ```
 
-The overlay simply renders whichever event types arrive. Visibility controls should be simple renderer flags, such as `--hide-planned`, `--hide-world`, or `--hide-ego`.
+The overlay simply renders whichever event types arrive. Visibility controls should be simple renderer flags, such as `--hide-planned`, `--hide-world`, `--hide-ego`, or `--hide-selected`.
 
 ---
 
@@ -211,12 +231,18 @@ WorldSnapshotPublisher
   -> MissionRuntime async loop
   -> ObjectBehaviorMissionController
        -> TargetSelector reads WorldSnapshot.agents
+       -> emits mission events such as target_selected / behavior_start / behavior_complete
        -> behavior math emits bounded velocity intent
   -> Px4BridgeCommandSink
   -> simulation/px4-command-bridge.py
        PX4 shell: arm / takeoff / land / disarm
        pymavlink: OFFBOARD velocity setpoints
   -> PX4 / AirSim
+
+MissionRuntime
+  -> MissionEventPublisher
+  -> RuntimeEventStreamServer
+  -> mission_event JSONL records
 ```
 
 Flight sinks receive bounded kinematic intent only. They must not own target selection, world-model reasoning, obstacle avoidance, or mission semantics.
@@ -232,6 +258,7 @@ WorldSnapshotPublisher
   -> out/.../snapshot_manifest.txt
 
 MissionRuntime
+  -> MissionEventPublisher
   -> mission_events.jsonl
 
 FrameAnnotator
@@ -245,22 +272,21 @@ Artifacts are still important for evidence, regression tests, and human debuggin
 
 ---
 
-## 7. Planned next event type
-
-SEL markers should come from live mission state, not files. The next clean slice should publish either:
+## 7. Current live overlay markers
 
 ```text
-MissionEventPublisher
-  -> RuntimeEventStreamServer
-  -> event type mission_event
+PLAN:
+  dynamic planned/evaluated ghost detection from ghost_detections event.
+
+PLAN*:
+  static planned/evaluated ghost detection from ghost_detections event.
+
+AG:
+  world-model agent from world_snapshot event.
+
+EGO:
+  ego pose from world_snapshot event.
+
+SEL:
+  selected target from mission_event target_selected, rendered by matching source_track_id or agent_id to the latest world_snapshot agent.
 ```
-
-or a narrower selected-target state stream:
-
-```text
-SelectedTargetPublisher
-  -> RuntimeEventStreamServer
-  -> event type selected_target
-```
-
-Until then, the overlay renders PLAN / PLAN* / AG / EGO, but not live SEL.
