@@ -25,6 +25,7 @@ struct TrajectorySegment {
     double speed_mps{0.0};
     double radius_m{1.0};
     double scale_m{1.0};
+    double yaw_offset_rad{0.0};
     std::string direction{"ccw"};
     std::vector<TrajectoryKeyframe> keyframes;
 };
