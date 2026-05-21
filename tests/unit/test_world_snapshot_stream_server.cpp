@@ -101,9 +101,26 @@ dedalus::WorldSnapshot make_snapshot(std::int64_t timestamp_ns, const std::strin
     return snapshot;
 }
 
-void streams_jsonl_snapshots_to_client() {
-    dedalus::WorldSnapshotStreamServer server{
-        dedalus::WorldSnapshotStreamServerConfig{.bind_host = "127.0.0.1", .port = 0}};
+dedalus::GhostDetectionsFrame make_ghost_frame() {
+    dedalus::GhostDetectionsFrame frame;
+    frame.timestamp = dedalus::TimePoint{500};
+    frame.map_frame_id = dedalus::MapFrameId{"map_stream_test"};
+    frame.scenario_elapsed_s = 1.25;
+
+    dedalus::GhostDetectionState detection;
+    detection.source_track_id = dedalus::TrackId{"ghost_person_001"};
+    detection.class_label = dedalus::ClassLabel::Person;
+    detection.confidence = 0.82;
+    detection.position_local_m = dedalus::Vec3{12.0, -4.0, 0.0};
+    detection.velocity_local_mps = dedalus::Vec3{0.3, 0.0, 0.0};
+    detection.size_m = dedalus::Vec3{0.6, 0.6, 1.8};
+    frame.detections.push_back(detection);
+    return frame;
+}
+
+void streams_jsonl_runtime_events_to_client() {
+    dedalus::RuntimeEventStreamServer server{
+        dedalus::RuntimeEventStreamServerConfig{.bind_host = "127.0.0.1", .port = 0}};
     server.start();
     const auto port = server.port();
     require(port > 0, "ephemeral port should be assigned");
@@ -111,22 +128,26 @@ void streams_jsonl_snapshots_to_client() {
     const int fd = connect_to(port);
     std::this_thread::sleep_for(std::chrono::milliseconds{80});
 
+    server.on_ghost_detections(make_ghost_frame());
     server.on_snapshot(make_snapshot(1000, "track_a"));
     server.on_snapshot(make_snapshot(2000, "track_b"));
 
-    const auto received = read_until_lines(fd, 2);
+    const auto received = read_until_lines(fd, 3);
     close_fd(fd);
     server.stop();
 
+    require(received.find("\"type\":\"ghost_detections\"") != std::string::npos, "stream missing ghost_detections type");
     require(received.find("\"type\":\"world_snapshot\"") != std::string::npos, "stream missing world_snapshot type");
     require(received.find("\"seq\":1") != std::string::npos, "stream missing seq 1");
     require(received.find("\"seq\":2") != std::string::npos, "stream missing seq 2");
-    require(received.find("track_a") != std::string::npos, "stream missing first track");
-    require(received.find("track_b") != std::string::npos, "stream missing second track");
+    require(received.find("\"seq\":3") != std::string::npos, "stream missing seq 3");
+    require(received.find("ghost_person_001") != std::string::npos, "stream missing ghost detection track");
+    require(received.find("track_a") != std::string::npos, "stream missing first world track");
+    require(received.find("track_b") != std::string::npos, "stream missing second world track");
     require(received.find("map_stream_test") != std::string::npos, "stream missing map frame");
 
     const auto stats = server.stats();
-    require(stats.published_seq == 2, "server published_seq should be 2");
+    require(stats.published_seq == 3, "server published_seq should be 3");
     require(stats.accepted_clients >= 1, "server should accept at least one client");
 }
 
@@ -134,7 +155,7 @@ void streams_jsonl_snapshots_to_client() {
 
 int main() {
     try {
-        streams_jsonl_snapshots_to_client();
+        streams_jsonl_runtime_events_to_client();
     } catch (const std::exception& exc) {
         std::cerr << "test_world_snapshot_stream_server failed: " << exc.what() << '\n';
         return 1;
