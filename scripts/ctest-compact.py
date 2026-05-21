@@ -14,8 +14,8 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import subprocess
-import sys
 import time
 from pathlib import Path
 
@@ -55,7 +55,8 @@ def dotted_prefix(index: int, total: int, test: dict) -> str:
 
 def run_one(args: argparse.Namespace, test: dict) -> tuple[int, str, float]:
     name = str(test.get("name", ""))
-    command = ctest_base_command(args) + ["-R", f"^{name}$"]
+    exact_name_regex = f"^{re.escape(name)}$"
+    command = ctest_base_command(args) + ["-R", exact_name_regex]
     if args.output_on_failure:
         command.append("--output-on-failure")
 
