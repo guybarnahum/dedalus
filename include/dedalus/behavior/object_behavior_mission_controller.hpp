@@ -15,6 +15,7 @@ struct ObjectBehaviorMissionConfig {
     double safe_height_m{8.0};
     double takeoff_velocity_mps{1.0};
     double go_home_velocity_mps{1.0};
+    double yaw_offset_rad{0.0};
     double arm_retry_interval_s{1.0};
     double arm_timeout_s{10.0};
     double arm_dispatch_fallback_s{0.0};
@@ -35,7 +36,10 @@ public:
     MissionTickOutput tick(const MissionTickInput& input) override;
 
 private:
-    [[nodiscard]] VelocityCommand command_from_velocity(TimePoint timestamp, Vec3 velocity_local_mps) const;
+    [[nodiscard]] VelocityCommand command_from_velocity(
+        TimePoint timestamp,
+        Vec3 velocity_local_mps,
+        double yaw_offset_rad = 0.0) const;
     [[nodiscard]] VelocityCommand command_with_kind(TimePoint timestamp, FlightCommandKind kind) const;
     [[nodiscard]] std::string target_event(const TargetSelection& selection) const;
     [[nodiscard]] std::string behavior_event(const std::string& event, const std::string& reason) const;
