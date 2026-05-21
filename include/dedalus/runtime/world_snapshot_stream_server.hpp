@@ -7,6 +7,7 @@
 #include <thread>
 #include <vector>
 
+#include "dedalus/behavior/mission_runtime.hpp"
 #include "dedalus/perception/ghost_targets.hpp"
 #include "dedalus/world_model/world_snapshot_publisher.hpp"
 
@@ -25,7 +26,7 @@ struct RuntimeEventStreamServerStats {
     std::uint64_t dropped_clients{0};
 };
 
-class RuntimeEventStreamServer final : public WorldSnapshotSubscriber, public GhostDetectionsSubscriber {
+class RuntimeEventStreamServer final : public WorldSnapshotSubscriber, public GhostDetectionsSubscriber, public MissionEventSubscriber {
 public:
     explicit RuntimeEventStreamServer(RuntimeEventStreamServerConfig config);
     ~RuntimeEventStreamServer() override;
@@ -39,6 +40,7 @@ public:
     void stop();
     void on_snapshot(const WorldSnapshot& snapshot) override;
     void on_ghost_detections(const GhostDetectionsFrame& frame) override;
+    void on_mission_event(const MissionEvent& event) override;
 
     [[nodiscard]] std::uint16_t port() const;
     [[nodiscard]] RuntimeEventStreamServerStats stats() const;
