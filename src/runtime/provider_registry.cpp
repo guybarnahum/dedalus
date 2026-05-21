@@ -40,8 +40,15 @@ std::string ghost_scenario_path_from(const CoreStackProviderConfig& config) {
 }
 
 std::unique_ptr<GhostTargetProvider> make_ghost_target_provider(const CoreStackProviderConfig& config) {
-    return std::make_unique<GhostTargetProvider>(
-        GhostScenario::load_from_file(ghost_scenario_path_from(config)));
+    if (config.ghost_targets_source == "trajectory_scenario") {
+        return std::make_unique<GhostTargetProvider>(
+            GhostScenario::load_from_file(ghost_scenario_path_from(config)));
+    }
+    if (config.ghost_targets_source == "airsim_objects") {
+        throw std::invalid_argument(
+            "ghost_targets_source=airsim_objects parsed successfully but provider implementation is scheduled for 2.26E.3");
+    }
+    throw std::invalid_argument("unknown ghost_targets_source: " + config.ghost_targets_source);
 }
 
 }  // namespace
