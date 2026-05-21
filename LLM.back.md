@@ -629,3 +629,63 @@ Synthetic / AirSim frame
 ```
 
 Do not validate target selection by hardcoding `selected_target` directly from config as the main path. That bypasses the world-model and TargetSelector plumbing that real camera detections must use.
+
+---
+
+## H16. Milestone 2.26 Runtime Event Stream History
+
+2.26D moved runtime visualization and external subscribers away from artifact-file polling.
+
+The important design correction was:
+
+```text
+simulation/airsim-world-overlay.py should be a subscriber/renderer only.
+It should not evaluate GhostScenario locally.
+It should not poll snapshot_manifest.txt in normal mode.
+It should not own source modes such as combined/world_snapshot/artifact_snapshot.
+```
+
+The runtime path became:
+
+```text
+CoreStackRunner
+  -> GhostTargetProvider::frame_at(...)
+       evaluates GhostScenario once at frame time
+       publishes GhostDetectionsFrame for runtime-event subscribers
+       injects the same Observation3D objects into PerceptionPipelineOutput
+  -> InMemoryWorldModel
+  -> WorldSnapshotPublisher
+```
+
+The publisher topology became:
+
+```text
+GhostDetectionsPublisher
+  -> RuntimeEventStreamServer
+
+WorldSnapshotPublisher
+  -> LatestWorldSnapshotSubscriber
+  -> ArtifactSnapshotWriter
+  -> RuntimeEventStreamServer
+```
+
+The runtime event stream emits both:
+
+```text
+ghost_detections
+world_snapshot
+```
+
+on the same TCP JSONL stream. This lets the AirSim overlay render PLAN / PLAN* from `ghost_detections` and AG / EGO from `world_snapshot` without any file dependency.
+
+Important process note:
+
+```text
+Generalizing the snapshot-only stream server into a multi-event RuntimeEventStreamServer was an architectural/runtime design choice. Future similarly meaningful design choices should pause for a concise plan and approval before implementation, unless the design was already explicitly agreed or is trivial.
+```
+
+Canonical current diagrams are in:
+
+```text
+docs/runtime_dataflow.md
+```
