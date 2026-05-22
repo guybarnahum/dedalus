@@ -1,0 +1,29 @@
+mission:
+  name: circle_existing_object_person_demo
+
+target:
+  selector:
+    class: person
+    track_id: ghost_person_001
+    confidence_min: 0.55
+    policy: persistent_track
+    reacquire_timeout_s: 5.0
+
+behavior:
+  type: circle
+  radius_m: 10.0
+  altitude_offset_m: 4.0
+  angular_speed_deg_s: 10.0
+  direction: clockwise
+  max_speed_mps: 3.0
+  max_vertical_speed_mps: 1.0
+  position_tolerance_m: 1.5
+  lost_target_timeout_s: 5.0
+
+completion:
+  after_s: 60
+  then: go_home_land
+
+fallback:
+  on_target_lost: search_then_go_home
+  search_s: 10.0
