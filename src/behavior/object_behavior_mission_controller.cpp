@@ -10,12 +10,23 @@
 namespace dedalus {
 namespace {
 
+constexpr double kPi = 3.14159265358979323846;
 constexpr double kMinArrivedDistanceM = 0.5;
 constexpr double kLandHeightM = 0.25;
 constexpr double kTakeoffVelocityAssistHeightM = 0.5;
 constexpr double kHeadingEpsilonMps = 0.05;
 constexpr double kSafeHeightCorrectionGain = 0.5;
 constexpr double kMinSafeHeightClimbMps = 0.35;
+constexpr double kMinObservationAngleDeg = 5.0;
+constexpr double kMaxObservationAngleDeg = 85.0;
+
+struct FollowGeometry {
+    Vec3 desired_position;
+    double dh_m{0.0};
+    double required_r_m{0.0};
+    double actual_r_m{0.0};
+    double elevation_deg{0.0};
+};
 
 std::string json_escape(const std::string& value) {
     std::string escaped;
@@ -63,6 +74,14 @@ bool last_result_matches_success(
     return result.has_value() && result->kind == kind && result->success;
 }
 
+double deg_to_rad(double deg) {
+    return deg * kPi / 180.0;
+}
+
+double rad_to_deg(double rad) {
+    return rad * 180.0 / kPi;
+}
+
 double norm_xy(const Vec3& value) {
     return std::sqrt(value.x * value.x + value.y * value.y);
 }
@@ -76,6 +95,19 @@ double clamp_abs(double value, double limit) {
         return 0.0;
     }
     return std::clamp(value, -limit, limit);
+}
+
+bool parse_bool(const std::string& value, bool fallback) {
+    if (value.empty()) {
+        return fallback;
+    }
+    if (value == "true" || value == "1" || value == "yes" || value == "on") {
+        return true;
+    }
+    if (value == "false" || value == "0" || value == "no" || value == "off") {
+        return false;
+    }
+    throw std::invalid_argument("invalid boolean value: " + value);
 }
 
 ObjectBehaviorAltitudePolicy parse_altitude_policy(const std::string& value) {
@@ -148,48 +180,130 @@ Vec3 apply_altitude_policy(
     return velocity;
 }
 
-Vec3 desired_follow_position(const EgoState& ego, const TargetSelection& selection, const BehaviorSpec& behavior) {
+Vec3 target_frame_follow_offset(const EgoState& ego, const TargetSelection& selection, const BehaviorSpec& behavior) {
     const auto& offset = behavior.relative_offset_m;
-    Vec3 desired = selection.position_local;
+    Vec3 delta{0.0, 0.0, 0.0};
     const double target_speed_xy = norm_xy(selection.velocity_local);
     if (behavior.target_frame == ReferenceFrame::TargetHeadingFrame && target_speed_xy > kHeadingEpsilonMps) {
         const double forward_x = selection.velocity_local.x / target_speed_xy;
         const double forward_y = selection.velocity_local.y / target_speed_xy;
         const double right_x = -forward_y;
         const double right_y = forward_x;
-        desired.x += forward_x * offset.x + right_x * offset.y;
-        desired.y += forward_y * offset.x + right_y * offset.y;
+        delta.x = forward_x * offset.x + right_x * offset.y;
+        delta.y = forward_y * offset.x + right_y * offset.y;
     } else if (behavior.target_frame == ReferenceFrame::DroneHeadingFrame) {
         const double yaw = ego.local_T_body.rotation_rpy.z;
         const double forward_x = std::cos(yaw);
         const double forward_y = std::sin(yaw);
         const double right_x = -forward_y;
         const double right_y = forward_x;
-        desired.x += forward_x * offset.x + right_x * offset.y;
-        desired.y += forward_y * offset.x + right_y * offset.y;
+        delta.x = forward_x * offset.x + right_x * offset.y;
+        delta.y = forward_y * offset.x + right_y * offset.y;
     } else {
-        desired.x += offset.x;
-        desired.y += offset.y;
+        delta.x = offset.x;
+        delta.y = offset.y;
     }
-    desired.z -= offset.z;
-    return desired;
+    delta.z = -offset.z;
+    return delta;
 }
 
-Vec3 bounded_follow_velocity(const EgoState& ego, const TargetSelection& selection, const BehaviorSpec& behavior) {
-    const Vec3 desired = desired_follow_position(ego, selection, behavior);
+Vec3 desired_follow_position(const EgoState& ego, const TargetSelection& selection, const BehaviorSpec& behavior) {
+    const Vec3 offset = target_frame_follow_offset(ego, selection, behavior);
+    return Vec3{
+        selection.position_local.x + offset.x,
+        selection.position_local.y + offset.y,
+        selection.position_local.z + offset.z};
+}
+
+FollowGeometry follow_observation_geometry(
+    const EgoState& ego,
+    const TargetSelection& selection,
+    const BehaviorSpec& behavior,
+    const ObjectBehaviorMissionConfig& config) {
+    FollowGeometry geometry;
+    const Vec3 base_desired = desired_follow_position(ego, selection, behavior);
+    geometry.desired_position = base_desired;
+
+    const Vec3 target_to_ego{
+        ego.local_T_body.position.x - selection.position_local.x,
+        ego.local_T_body.position.y - selection.position_local.y,
+        0.0};
+    geometry.actual_r_m = norm_xy(target_to_ego);
+    geometry.dh_m = std::abs(ego.local_T_body.position.z - selection.position_local.z);
+
+    const double angle_deg = std::clamp(
+        config.follow_max_elevation_angle_deg,
+        kMinObservationAngleDeg,
+        kMaxObservationAngleDeg);
+    const double min_by_angle = geometry.dh_m / std::tan(deg_to_rad(angle_deg));
+    geometry.required_r_m = std::max(config.follow_min_standoff_m, min_by_angle);
+    geometry.elevation_deg = rad_to_deg(std::atan2(geometry.dh_m, std::max(geometry.actual_r_m, 1e-6)));
+
+    if (!config.follow_observation_geometry_enabled || geometry.required_r_m <= 0.0) {
+        return geometry;
+    }
+
+    Vec3 direction{0.0, 0.0, 0.0};
+    const double target_speed_xy = norm_xy(selection.velocity_local);
+    if (target_speed_xy > kHeadingEpsilonMps) {
+        // Prefer trailing the target motion when there is a meaningful target velocity.
+        direction.x = -selection.velocity_local.x / target_speed_xy;
+        direction.y = -selection.velocity_local.y / target_speed_xy;
+    } else if (geometry.actual_r_m > kHeadingEpsilonMps) {
+        // Static target: push outward from target through current ego position.
+        direction.x = target_to_ego.x / geometry.actual_r_m;
+        direction.y = target_to_ego.y / geometry.actual_r_m;
+    } else {
+        // Degenerate case: use the configured follow offset direction, or a deterministic fallback.
+        const Vec3 offset = target_frame_follow_offset(ego, selection, behavior);
+        const double offset_norm = norm_xy(offset);
+        if (offset_norm > kHeadingEpsilonMps) {
+            direction.x = offset.x / offset_norm;
+            direction.y = offset.y / offset_norm;
+        } else {
+            direction.x = -1.0;
+            direction.y = 0.0;
+        }
+    }
+
+    geometry.desired_position.x = selection.position_local.x + direction.x * geometry.required_r_m;
+    geometry.desired_position.y = selection.position_local.y + direction.y * geometry.required_r_m;
+    // Keep the existing behavior altitude expression; altitude policy can still clamp descent.
+    geometry.desired_position.z = base_desired.z;
+    return geometry;
+}
+
+Vec3 bounded_follow_velocity(
+    const EgoState& ego,
+    const TargetSelection& selection,
+    const BehaviorSpec& behavior,
+    const ObjectBehaviorMissionConfig& config,
+    FollowGeometry* geometry_out = nullptr) {
+    const FollowGeometry geometry = follow_observation_geometry(ego, selection, behavior, config);
+    if (geometry_out != nullptr) {
+        *geometry_out = geometry;
+    }
     const Vec3 error{
-        desired.x - ego.local_T_body.position.x,
-        desired.y - ego.local_T_body.position.y,
-        desired.z - ego.local_T_body.position.z};
+        geometry.desired_position.x - ego.local_T_body.position.x,
+        geometry.desired_position.y - ego.local_T_body.position.y,
+        geometry.desired_position.z - ego.local_T_body.position.z};
     if (norm3(error) <= behavior.position_tolerance_m) {
         return Vec3{0.0, 0.0, 0.0};
     }
     return clamp_velocity(error, behavior.max_speed_mps, behavior.max_vertical_speed_mps);
 }
 
-Vec3 behavior_velocity(const EgoState& ego, const TargetSelection& selection, const BehaviorSpec& behavior) {
+Vec3 behavior_velocity(
+    const EgoState& ego,
+    const TargetSelection& selection,
+    const BehaviorSpec& behavior,
+    const ObjectBehaviorMissionConfig& config,
+    FollowGeometry* geometry_out = nullptr) {
     if (behavior.type == BehaviorType::Follow) {
-        return bounded_follow_velocity(ego, selection, behavior);
+        return bounded_follow_velocity(ego, selection, behavior, config, geometry_out);
+    }
+    if (geometry_out != nullptr) {
+        geometry_out->desired_position = ego.local_T_body.position;
     }
     return Vec3{0.0, 0.0, 0.0};
 }
@@ -238,6 +352,15 @@ ObjectBehaviorMissionConfig load_object_behavior_mission_config(const MissionOpt
     config.altitude_policy = parse_altitude_policy(options.get_or(
         "object_behavior_altitude_policy",
         "target_relative"));
+    config.follow_observation_geometry_enabled = parse_bool(
+        options.get_or("object_behavior_follow_observation_geometry_enabled", "false"),
+        false);
+    config.follow_min_standoff_m = std::stod(options.get_or(
+        "object_behavior_follow_min_standoff_m",
+        "8.0"));
+    config.follow_max_elevation_angle_deg = std::stod(options.get_or(
+        "object_behavior_follow_max_elevation_angle_deg",
+        "35.0"));
     const auto completion_after_override = options.get_or("object_behavior_completion_after_s", "");
     if (!completion_after_override.empty()) {
         config.behavior_spec.completion.after_s = std::stod(completion_after_override);
@@ -315,7 +438,11 @@ std::string ObjectBehaviorMissionController::behavior_event(
     return fields;
 }
 
-std::string behavior_tick_event(const BehaviorMissionSpec& spec, const TargetSelection& selection, const Vec3& velocity) {
+std::string behavior_tick_event(
+    const BehaviorMissionSpec& spec,
+    const TargetSelection& selection,
+    const Vec3& velocity,
+    const FollowGeometry& geometry) {
     return "\"event\":\"behavior_tick_sample\""
         ",\"behavior\":" + q(to_string(spec.behavior.type)) +
         ",\"mission\":" + q(spec.mission_name) +
@@ -323,7 +450,11 @@ std::string behavior_tick_event(const BehaviorMissionSpec& spec, const TargetSel
         ",\"source_track_id\":" + q(selection.source_track_id.value) +
         ",\"vx\":" + std::to_string(velocity.x) +
         ",\"vy\":" + std::to_string(velocity.y) +
-        ",\"vz\":" + std::to_string(velocity.z);
+        ",\"vz\":" + std::to_string(velocity.z) +
+        ",\"follow_dh_m\":" + std::to_string(geometry.dh_m) +
+        ",\"follow_required_r_m\":" + std::to_string(geometry.required_r_m) +
+        ",\"follow_actual_r_m\":" + std::to_string(geometry.actual_r_m) +
+        ",\"follow_elevation_deg\":" + std::to_string(geometry.elevation_deg);
 }
 
 bool ObjectBehaviorMissionController::completion_elapsed(TimePoint now) const {
@@ -463,7 +594,13 @@ MissionTickOutput ObjectBehaviorMissionController::tick(const MissionTickInput& 
                     state_start_ = input.now;
                     output.status = input.finish_requested ? "object_behavior_finish_requested" : "object_behavior_complete";
                 } else {
-                    const Vec3 raw_velocity = behavior_velocity(ego, selection, config_.behavior_spec.behavior);
+                    FollowGeometry geometry;
+                    const Vec3 raw_velocity = behavior_velocity(
+                        ego,
+                        selection,
+                        config_.behavior_spec.behavior,
+                        config_,
+                        &geometry);
                     const Vec3 velocity = apply_altitude_policy(
                         raw_velocity,
                         config_,
@@ -475,7 +612,7 @@ MissionTickOutput ObjectBehaviorMissionController::tick(const MissionTickInput& 
                         config_.yaw_offset_rad + config_.behavior_spec.behavior.yaw_offset_rad);
                     if (config_.behavior_spec.behavior.type == BehaviorType::Follow && !behavior_tick_sample_emitted_) {
                         behavior_tick_sample_emitted_ = true;
-                        output.events.push_back(behavior_tick_event(config_.behavior_spec, selection, velocity));
+                        output.events.push_back(behavior_tick_event(config_.behavior_spec, selection, velocity, geometry));
                     }
                     output.status = config_.behavior_spec.behavior.type == BehaviorType::Follow ? "object_behavior_follow" : "object_behavior_hold";
                 }
