@@ -415,6 +415,9 @@ ObjectBehaviorMissionConfig load_object_behavior_mission_config(const MissionOpt
         options.get_or("object_behavior_yaw_hold_last_when_unstable", "true"),
         true);
     config.debug_every_n_ticks = std::stoi(options.get_or("object_behavior_debug_every_n_ticks", "0"));
+    config.debug_level = std::stoi(options.get_or(
+        "object_behavior_debug_level",
+        "1"));
     config.altitude_policy = parse_altitude_policy(options.get_or(
         "object_behavior_altitude_policy",
         "target_relative"));

@@ -27,5 +27,5 @@ For architecture-sensitive or runtime-sensitive design choices, prepare a concis
 Current 2.26E.11 note:
 
 ```text
-The header/config surface for follow arrival control was added directly through the connector. The controller implementation should be applied as a manual patch because the connector blocked the large source-file update.
+The header/config surface for follow arrival control was added directly through the connector, and the controller implementation was applied by manual patch in commit ad84ee0.
 ```
