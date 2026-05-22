@@ -52,7 +52,7 @@ std::string display_primary_for_state(MissionLifecycleState state) {
         case MissionLifecycleState::Takeoff:
             return "Takeoff";
         case MissionLifecycleState::ExecuteMission:
-            return "Execute";
+            return "Mission";
         case MissionLifecycleState::GoHome:
             return "GoHome";
         case MissionLifecycleState::Land:
@@ -78,7 +78,7 @@ std::string display_primary_for_command(FlightCommandKind command) {
         case FlightCommandKind::Disarm:
             return "Disarm";
         case FlightCommandKind::Velocity:
-            return "Execute";
+            return "Mission";
         default:
             return "Unknown";
     }
@@ -109,6 +109,18 @@ std::string compact_display_detail(const std::string& status) {
     }
     if (status.find("complete") != std::string::npos) {
         return "done";
+    }
+    if (status.find("object_behavior_arriving") != std::string::npos) {
+        return "arriving";
+    }
+    if (status.find("object_behavior_following") != std::string::npos) {
+        return "following";
+    }
+    if (status.find("object_behavior_positioned") != std::string::npos) {
+        return "positioned";
+    }
+    if (status.find("object_behavior_circling") != std::string::npos) {
+        return "circling";
     }
     if (status == "ok") {
         return "ok";
@@ -268,7 +280,9 @@ bool MissionRuntime::tick_once() {
             ",\"vy\":" + std::to_string(command.velocity_local_mps.y) +
             ",\"vz\":" + std::to_string(command.velocity_local_mps.z) +
             ",\"yaw_rate\":" + std::to_string(command.yaw_rate_radps) +
-            display_fields(display_primary_for_command(command.kind), "send"));
+            display_fields(
+                display_primary_for_command(command.kind),
+                command.kind == FlightCommandKind::Velocity ? compact_display_detail(output.status) : "send"));
         if (config_.verbosity >= 2) {
             const auto& v = output.command->velocity_local_mps;
             std::cerr << "dedalus_mission: send_command kind=" << to_string(output.command->kind)
@@ -309,8 +323,11 @@ bool MissionRuntime::tick_once() {
             ",\"command\":" + q(to_string(last_command_result_->kind)) +
             ",\"success\":" + (last_command_result_->success ? std::string{"true"} : std::string{"false"}) +
             ",\"status\":" + q(last_command_result_->status) +
-            display_fields(last_command_result_->success ? display_primary_for_command(last_command_result_->kind) : "Failed",
-                           last_command_result_->success ? "ok" : display_primary_for_command(last_command_result_->kind)));
+            display_fields(
+                last_command_result_->success ? display_primary_for_command(last_command_result_->kind) : "Failed",
+                last_command_result_->success
+                    ? (last_command_result_->kind == FlightCommandKind::Velocity ? compact_display_detail(output.status) : "ok")
+                    : display_primary_for_command(last_command_result_->kind)));
         if (config_.verbosity >= 2) {
             std::cerr << "dedalus_mission: command_result kind=" << to_string(last_command_result_->kind)
                       << " success=" << (last_command_result_->success ? "true" : "false")

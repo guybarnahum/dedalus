@@ -458,7 +458,7 @@ def format_osd_line(stats: dict[str, Any]) -> str:
     vz = fixed_osd_value(stats.get("vz_mps"), "+7.1f", "    n/a")
     vxy = fixed_osd_value(stats.get("vxy_mps"), "6.1f", "   n/a")
     hdg = fixed_osd_value(stats.get("heading_deg"), "7.1f", "    n/a")
-    return f"h={h}m  vz={vz}m/s  vxy={vxy}m/s  hdg={hdg}deg"
+    return f"h={h} m  vz={vz} m/s  vxy={vxy} m/s  hdg={hdg} deg"
 
 
 def short_text(value: Any, width: int) -> str:
@@ -471,7 +471,7 @@ def short_text(value: Any, width: int) -> str:
 STATE_DISPLAY = {
     "Prepare": ("Arm", "arming"),
     "Takeoff": ("Takeoff", "climbing"),
-    "ExecuteMission": ("Execute", "-"),
+    "ExecuteMission": ("Mission", "-"),
     "GoHome": ("GoHome", "returning"),
     "Land": ("Land", "landing"),
     "Complete": ("Settled", "done"),
@@ -484,7 +484,7 @@ COMMAND_DISPLAY = {
     "Takeoff": ("Takeoff", "send"),
     "Land": ("Land", "send"),
     "Disarm": ("Disarm", "send"),
-    "Velocity": ("Execute", "move"),
+    "Velocity": ("Mission", "-"),
 }
 
 
@@ -549,7 +549,8 @@ def format_osd_state_line(stats: dict[str, Any], mission_event: dict[str, Any] |
             if fallback is not None:
                 primary, detail = fallback
         if primary is not None:
-            return f"{short_text(primary, 8)} {short_text(detail or '', 12)}"
+            # Leading space keeps AirSim from visually gluing the value to DEDALUS-STATE.
+            return f" {short_text(primary, 8)} {short_text(detail or '', 12)}"
 
     vz = stats.get("vz_mps")
     vxy = stats.get("vxy_mps")

@@ -505,6 +505,42 @@ std::string ObjectBehaviorMissionController::target_event(const TargetSelection&
         ",\"reason\":" + q(selection.reason);
 }
 
+std::string behavior_display_fields(const std::string& detail) {
+    return ",\"display_state\":\"Mission\",\"display_detail\":" + q(detail);
+}
+
+std::string behavior_detail_for_event(const std::string& event) {
+    if (event == "behavior_complete") {
+        return "done";
+    }
+    return "arriving";
+}
+
+std::string behavior_detail_for_tick(const BehaviorSpec& behavior, const FollowGeometry& geometry) {
+    switch (behavior.type) {
+        case BehaviorType::Follow:
+            if (geometry.arrival_mode == "hold") {
+                return geometry.target_speed_xy_mps > kHeadingEpsilonMps ? "following" : "positioned";
+            }
+            if (geometry.arrival_mode == "slow" || geometry.arrival_mode == "cruise") {
+                return "arriving";
+            }
+            return "following";
+        case BehaviorType::Circle:
+            return "circling";
+        case BehaviorType::Hold:
+            return "positioned";
+        case BehaviorType::Approach:
+            return "arriving";
+        default:
+            return "active";
+    }
+}
+
+std::string object_behavior_status(const BehaviorSpec& behavior, const FollowGeometry& geometry) {
+    return "object_behavior_" + behavior_detail_for_tick(behavior, geometry);
+}
+
 std::string ObjectBehaviorMissionController::behavior_event(
     const std::string& event,
     const std::string& reason) const {
@@ -512,6 +548,7 @@ std::string ObjectBehaviorMissionController::behavior_event(
         ",\"behavior\":" + q(to_string(config_.behavior_spec.behavior.type)) +
         ",\"mission\":" + q(config_.behavior_spec.mission_name) +
         ",\"reason\":" + q(reason);
+    fields += behavior_display_fields(behavior_detail_for_event(event));
     if (previous_selection_.has_value()) {
         fields += ",\"agent_id\":" + q(previous_selection_->agent_id.value) +
             ",\"source_track_id\":" + q(previous_selection_->source_track_id.value) +
@@ -543,7 +580,8 @@ std::string behavior_tick_event(
         ",\"follow_dh_m\":" + std::to_string(geometry.dh_m) +
         ",\"follow_required_r_m\":" + std::to_string(geometry.required_r_m) +
         ",\"follow_actual_r_m\":" + std::to_string(geometry.actual_r_m) +
-        ",\"follow_elevation_deg\":" + std::to_string(geometry.elevation_deg);
+        ",\"follow_elevation_deg\":" + std::to_string(geometry.elevation_deg) +
+        behavior_display_fields(behavior_detail_for_tick(spec.behavior, geometry));
 }
 
 std::string behavior_debug_event(
@@ -781,7 +819,7 @@ MissionTickOutput ObjectBehaviorMissionController::tick(const MissionTickInput& 
                             geometry,
                             config_.yaw_min_speed_mps));
                     }
-                    output.status = config_.behavior_spec.behavior.type == BehaviorType::Follow ? "object_behavior_follow" : "object_behavior_hold";
+                    output.status = object_behavior_status(config_.behavior_spec.behavior, geometry);
                 }
             } else if (input.finish_requested) {
                 state_ = MissionLifecycleState::GoHome;
