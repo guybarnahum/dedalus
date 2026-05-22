@@ -468,6 +468,26 @@ def short_text(value: Any, width: int) -> str:
     return f"{text:<{width}}"
 
 
+STATE_DISPLAY = {
+    "Prepare": ("Arm", "arming"),
+    "Takeoff": ("Takeoff", "climbing"),
+    "ExecuteMission": ("Execute", "-"),
+    "GoHome": ("GoHome", "returning"),
+    "Land": ("Land", "landing"),
+    "Complete": ("Settled", "done"),
+    "Abort": ("Failed", "abort"),
+}
+
+
+COMMAND_DISPLAY = {
+    "Arm": ("Arm", "send"),
+    "Takeoff": ("Takeoff", "send"),
+    "Land": ("Land", "send"),
+    "Disarm": ("Disarm", "send"),
+    "Velocity": ("Execute", "move"),
+}
+
+
 def compact_status(value: Any) -> str:
     text = "" if value is None else str(value)
     lowered = text.lower()
@@ -499,26 +519,24 @@ def fallback_display_state(mission_event: dict[str, Any] | None) -> tuple[str, s
     if event == "runtime_stop":
         settled = mission_event.get("terminal_settled")
         return ("Settled", "done") if settled is True else ("Failed", "stopped")
+
     if event == "command_exception":
         return "Failed", str(command or "command")
+
     if event == "command_result" and mission_event.get("success") is False:
         return "Failed", str(command or "command")
-    if command in {"Arm", "Takeoff", "Land", "Disarm"}:
-        return str(command), "ok" if event == "command_result" and mission_event.get("success") is True else "send"
-    if state == "Prepare":
-        return "Arm", compact_status(status)
-    if state == "Takeoff":
-        return "Takeoff", compact_status(status)
-    if state == "ExecuteMission":
-        return "Execute", compact_status(status)
-    if state == "GoHome":
-        return "GoHome", compact_status(status)
-    if state == "Land":
-        return "Land", compact_status(status)
-    if state == "Complete":
-        return "Settled", compact_status(status)
-    if state == "Abort":
-        return "Failed", compact_status(status)
+
+    if command in COMMAND_DISPLAY:
+        primary, detail = COMMAND_DISPLAY[command]
+        if event == "command_result" and mission_event.get("success") is True:
+            return primary, "ok"
+        return primary, detail
+
+    if state in STATE_DISPLAY:
+        primary, default_detail = STATE_DISPLAY[state]
+        detail = compact_status(status)
+        return primary, detail if detail != "-" else default_detail
+
     return "Unknown", compact_status(status)
 
 
