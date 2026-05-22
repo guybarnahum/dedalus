@@ -168,7 +168,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--osd-arrow-scale", type=float, default=1.5, help="XY velocity arrow length in meters at 1 m/s.")
     parser.add_argument("--osd-arrow-min-speed-mps", type=float, default=0.1)
     parser.add_argument("--osd-arrow-z-lift-m", type=float, default=0.75)
-    parser.add_argument("--osd-arrow-duration-s", type=float, default=1.25)
+    parser.add_argument("--osd-arrow-duration-s", type=float, default=0.18)
     parser.add_argument("--osd-arrow-thickness", type=float, default=3.0)
     parser.add_argument("--wait-for-airsim-s", type=float, default=0.0, help="0 means wait until Ctrl-C.")
     parser.add_argument("--wait-for-stream-s", type=float, default=0.0, help="0 means wait until Ctrl-C.")
@@ -219,7 +219,11 @@ def distance_xy(a: Any, b: Any) -> float:
 
 
 def marker_duration(args: argparse.Namespace) -> float:
-    return 0.0 if args.persistent else max(0.35, 1.1 / max(args.rate_hz, 0.1))
+    if args.persistent:
+        return 0.0
+    # Dynamic AirSim plot markers cannot be updated/deleted by handle, so keep
+    # them short-lived to avoid accumulation. Some blinking is expected.
+    return max(0.12, 0.85 / max(args.rate_hz, 0.1))
 
 
 def planned_agents_from_event(event: dict[str, Any] | None) -> list[dict[str, Any]]:
