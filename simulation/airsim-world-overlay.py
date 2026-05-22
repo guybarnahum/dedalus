@@ -162,13 +162,16 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--osd", action="store_true", help="Show live flight stats in the AirSim viewport HUD.")
     parser.add_argument("--osd-rate-hz", type=float, default=2.0)
     parser.add_argument("--osd-name", default="DEDALUS")
+    parser.add_argument("--osd-state-name", default="DEDALUS-STATE")
     parser.add_argument("--osd-severity", type=int, default=0)
     parser.add_argument("--osd-arrow", action=argparse.BooleanOptionalAction, default=True)
-    parser.add_argument("--osd-arrow-scale", type=float, default=4.0, help="XY velocity arrow length in meters at 1 m/s.")
+    parser.add_argument("--osd-arrow-scale", type=float, default=1.5, help="XY velocity arrow length in meters at 1 m/s.")
     parser.add_argument("--osd-arrow-min-speed-mps", type=float, default=0.1)
-    parser.add_argument("--osd-arrow-z-lift-m", type=float, default=1.25)
-    parser.add_argument("--osd-arrow-duration-s", type=float, default=0.75)
-    parser.add_argument("--osd-arrow-thickness", type=float, default=7.0)
+    parser.add_argument("--osd-arrow-z-lift-m", type=float, default=0.75)
+    parser.add_argument("--osd-arrow-duration-s", type=float, default=1.25)
+    parser.add_argument("--osd-arrow-thickness", type=float, default=3.0)
+    parser.add_argument("--osd-arrow-head-length-m", type=float, default=0.7)
+    parser.add_argument("--osd-arrow-head-angle-deg", type=float, default=30.0)
     parser.add_argument("--wait-for-airsim-s", type=float, default=0.0, help="0 means wait until Ctrl-C.")
     parser.add_argument("--wait-for-stream-s", type=float, default=0.0, help="0 means wait until Ctrl-C.")
     parser.add_argument("--hide-planned", action="store_true")
@@ -215,6 +218,10 @@ def distance_xy(a: Any, b: Any) -> float:
         return math.hypot(float(a[0]) - float(b[0]), float(a[1]) - float(b[1]))
     except Exception:
         return float("inf")
+
+
+def marker_duration(args: argparse.Namespace) -> float:
+    return 0.0 if args.persistent else max(1.0, 2.5 / max(args.rate_hz, 0.1))
 
 
 def planned_agents_from_event(event: dict[str, Any] | None) -> list[dict[str, Any]]:
@@ -319,7 +326,7 @@ def connect_airsim(args: argparse.Namespace) -> Any | None:
 
 
 def draw_agents(client: Any, agents: list[dict[str, Any]], args: argparse.Namespace, static_once: bool = False) -> None:
-    duration = 0.0 if args.persistent else max(0.5, 1.5 / max(args.rate_hz, 0.1))
+    duration = marker_duration(args)
     if args.dry_run:
         for agent in agents:
             print(f"  {label_for(agent)} pos={agent.get('position_local')} vel={agent.get('velocity_local')}")
@@ -344,7 +351,7 @@ def draw_agents(client: Any, agents: list[dict[str, Any]], args: argparse.Namesp
 def draw_reference_markers(client: Any, snapshot: dict[str, Any] | None, args: argparse.Namespace) -> None:
     if client is None:
         return
-    duration = 0.0 if args.persistent else max(0.5, 1.5 / max(args.rate_hz, 0.1))
+    duration = marker_duration(args)
     if args.debug and not args.hide_origin:
         origin = airsim.Vector3r(0.0, 0.0, -0.25)
         client.simPlotPoints([origin], color_rgba=ORIGIN_COLOR, size=16.0, duration=duration, is_persistent=args.persistent)
@@ -420,17 +427,51 @@ def ego_motion_stats(snapshot: dict[str, Any] | None, state: dict[str, Any]) -> 
     return stats
 
 
+def fixed_osd_value(value: Any, fmt: str, blank: str) -> str:
+    if value is None:
+        return blank
+    try:
+        return format(float(value), fmt)
+    except (TypeError, ValueError):
+        return blank
+
+
 def format_osd_line(stats: dict[str, Any]) -> str:
-    height = stats.get("height_m")
-    height_text = f"h={float(height):5.1f}m" if height is not None else "h=  n/a"
+    h = fixed_osd_value(stats.get("height_m"), "5.1f", "  n/a")
+    vz = fixed_osd_value(stats.get("vz_mps"), "+4.1f", " n/a")
+    vxy = fixed_osd_value(stats.get("vxy_mps"), "4.1f", " n/a")
+    hdg = fixed_osd_value(stats.get("heading_deg"), "6.1f", "   n/a")
+    return f"h={h}m  vz={vz}m/s  vxy={vxy}m/s  hdg={hdg}°"
+
+
+def format_osd_state_line(stats: dict[str, Any]) -> str:
     vz = stats.get("vz_mps")
     vxy = stats.get("vxy_mps")
-    heading = stats.get("heading_deg")
     if vz is None or vxy is None:
-        return f"{height_text}  velocity=waiting"
-    vertical_label = "desc" if float(vz) > 0.05 else ("climb" if float(vz) < -0.05 else "level")
-    heading_text = f"hdg={float(heading):6.1f}deg" if heading is not None else "hdg=   n/a"
-    return f"{height_text}  vz={float(vz):+5.2f}m/s {vertical_label:<5}  vxy={float(vxy):5.2f}m/s  {heading_text}"
+        return "state=waiting-for-motion-sample"
+    vertical = "desc" if float(vz) > 0.05 else ("climb" if float(vz) < -0.05 else "level")
+    motion = "moving" if float(vxy) > 0.1 else "hover"
+    return f"state={vertical:<5} xy={motion:<6}"
+
+
+def plot_line_segments(client: Any, points: list[Any], args: argparse.Namespace, duration: float) -> None:
+    try:
+        client.simPlotLineList(
+            points,
+            color_rgba=EGO_VELOCITY_COLOR,
+            thickness=args.osd_arrow_thickness,
+            duration=duration,
+            is_persistent=False,
+        )
+    except AttributeError:
+        for index in range(0, len(points), 2):
+            client.simPlotLineStrip(
+                points[index : index + 2],
+                color_rgba=EGO_VELOCITY_COLOR,
+                thickness=args.osd_arrow_thickness,
+                duration=duration,
+                is_persistent=False,
+            )
 
 
 def draw_ego_velocity_arrow(client: Any, stats: dict[str, Any], args: argparse.Namespace) -> None:
@@ -444,29 +485,29 @@ def draw_ego_velocity_arrow(client: Any, stats: dict[str, Any], args: argparse.N
     if float(vxy_mps) < args.osd_arrow_min_speed_mps:
         return
 
-    start = airsim.Vector3r(position[0], position[1], position[2] - args.osd_arrow_z_lift_m)
+    z = position[2] - args.osd_arrow_z_lift_m
+    start = airsim.Vector3r(position[0], position[1], z)
     end = airsim.Vector3r(
         position[0] + velocity[0] * args.osd_arrow_scale,
         position[1] + velocity[1] * args.osd_arrow_scale,
-        position[2] - args.osd_arrow_z_lift_m,
+        z,
     )
     duration = max(0.1, args.osd_arrow_duration_s)
-    try:
-        client.simPlotLineStrip(
-            [start, end],
-            color_rgba=EGO_VELOCITY_COLOR,
-            thickness=args.osd_arrow_thickness,
-            duration=duration,
-            is_persistent=False,
-        )
-    except AttributeError:
-        client.simPlotLineList(
-            [start, end],
-            color_rgba=EGO_VELOCITY_COLOR,
-            thickness=args.osd_arrow_thickness,
-            duration=duration,
-            is_persistent=False,
-        )
+
+    heading = math.atan2(velocity[1], velocity[0])
+    head_len = max(0.0, args.osd_arrow_head_length_m)
+    head_angle = math.radians(max(0.0, args.osd_arrow_head_angle_deg))
+    left = airsim.Vector3r(
+        end.x_val - head_len * math.cos(heading - head_angle),
+        end.y_val - head_len * math.sin(heading - head_angle),
+        z,
+    )
+    right = airsim.Vector3r(
+        end.x_val - head_len * math.cos(heading + head_angle),
+        end.y_val - head_len * math.sin(heading + head_angle),
+        z,
+    )
+    plot_line_segments(client, [start, end, end, left, end, right], args, duration)
 
 
 def maybe_draw_osd(client: Any, snapshot: dict[str, Any] | None, args: argparse.Namespace, state: dict[str, Any]) -> None:
@@ -477,6 +518,7 @@ def maybe_draw_osd(client: Any, snapshot: dict[str, Any] | None, args: argparse.
         return
     if args.dry_run:
         print(f"OSD {args.osd_name}: {format_osd_line(stats)}")
+        print(f"OSD {args.osd_state_name}: {format_osd_state_line(stats)}")
         return
     if client is None:
         return
@@ -487,6 +529,7 @@ def maybe_draw_osd(client: Any, snapshot: dict[str, Any] | None, args: argparse.
     if now - last_osd_s >= period_s:
         state["last_osd_s"] = now
         client.simPrintLogMessage(args.osd_name, format_osd_line(stats), severity=args.osd_severity)
+        client.simPrintLogMessage(args.osd_state_name, format_osd_state_line(stats), severity=args.osd_severity)
 
     draw_ego_velocity_arrow(client, stats, args)
 
@@ -607,10 +650,6 @@ def main() -> int:
                 raise TimeoutError("timed out waiting for runtime events")
             time.sleep(1.0 / args.rate_hz)
             continue
-
-        if args.clear and client is not None:
-            client.simFlushPersistentMarkers()
-            static_drawn = False
 
         planned_agents = [] if args.hide_planned else planned_agents_from_event(stream.latest_ghost_detections)
         selected_target = None if args.hide_selected else stream.latest_selected_target
