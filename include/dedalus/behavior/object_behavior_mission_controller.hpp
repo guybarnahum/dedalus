@@ -24,10 +24,14 @@ struct ObjectBehaviorMissionConfig {
     double yaw_min_speed_mps{0.35};
     bool yaw_hold_last_when_unstable{true};
     int debug_every_n_ticks{0};
+    int debug_level{1};
     ObjectBehaviorAltitudePolicy altitude_policy{ObjectBehaviorAltitudePolicy::TargetRelative};
     bool follow_observation_geometry_enabled{false};
     double follow_min_standoff_m{8.0};
     double follow_max_elevation_angle_deg{35.0};
+    double follow_arrival_slow_radius_m{8.0};
+    double follow_arrival_hold_radius_m{2.0};
+    double follow_arrival_kp{0.35};
     double arm_retry_interval_s{1.0};
     double arm_timeout_s{10.0};
     double arm_dispatch_fallback_s{0.0};
