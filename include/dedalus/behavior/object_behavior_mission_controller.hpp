@@ -87,10 +87,6 @@ private:
     std::optional<TargetSelection> previous_selection_;
     mutable bool last_stable_yaw_valid_{false};
     mutable double last_stable_yaw_rad_{0.0};
-    bool follow_observation_bearing_valid_{false};
-    double follow_observation_bearing_x_{-1.0};
-    double follow_observation_bearing_y_{0.0};
-    std::string follow_observation_bearing_track_id_;
     int execute_tick_count_{0};
 };
 
