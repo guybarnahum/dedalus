@@ -278,7 +278,11 @@ void circle_static_target_points_to_three_oclock_entry() {
             dedalus::Vec3{0.0, 0.0, 0.0}));
     require(behavior.command.has_value(), "circle arriving should emit velocity");
     require(behavior.command->velocity_local_mps.x > 9.0, "circle entry should command toward +X 3 o'clock entry");
-    require(behavior.command->velocity_local_mps.y < 0.0, "clockwise orbit insertion should include negative-Y tangent");
+    require_near(
+        behavior.command->velocity_local_mps.y,
+        0.0,
+        1.0e-6,
+        "far circle entry should ramp tangent to zero until orbit insertion");
     require(behavior.status == "object_behavior_arriving", "far entry should report arriving");
     require(behavior.events.back().find("\"display_detail\":\"arriving\"") != std::string::npos, "arriving tick should publish display detail");
     require(behavior.events.back().find("\"circle_phase\":\"arriving\"") != std::string::npos, "arriving tick should publish circle phase");
