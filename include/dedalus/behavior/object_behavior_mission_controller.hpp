@@ -21,6 +21,9 @@ struct ObjectBehaviorMissionConfig {
     double takeoff_velocity_mps{1.0};
     double go_home_velocity_mps{1.0};
     double yaw_offset_rad{0.0};
+    double yaw_min_speed_mps{0.35};
+    bool yaw_hold_last_when_unstable{true};
+    int debug_every_n_ticks{0};
     ObjectBehaviorAltitudePolicy altitude_policy{ObjectBehaviorAltitudePolicy::TargetRelative};
     bool follow_observation_geometry_enabled{false};
     double follow_min_standoff_m{8.0};
@@ -82,6 +85,9 @@ private:
     bool aborting_{false};
     std::string abort_reason_;
     std::optional<TargetSelection> previous_selection_;
+    mutable bool last_stable_yaw_valid_{false};
+    mutable double last_stable_yaw_rad_{0.0};
+    int execute_tick_count_{0};
 };
 
 }  // namespace dedalus
