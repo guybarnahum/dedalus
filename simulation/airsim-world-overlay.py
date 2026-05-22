@@ -34,6 +34,7 @@ STATIC_GHOST_COLOR = [0.4, 0.8, 1.0, 0.55]
 STALE_COLOR = [0.5, 0.5, 0.5, 1.0]
 ORIGIN_COLOR = [1.0, 1.0, 1.0, 1.0]
 EGO_COLOR = [1.0, 0.0, 1.0, 1.0]
+EGO_VELOCITY_COLOR = [1.0, 0.2, 1.0, 1.0]
 
 
 class RuntimeEventStreamClient:
@@ -158,6 +159,16 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--debug", action="store_true")
     parser.add_argument("--debug-every-s", type=float, default=1.0)
     parser.add_argument("--debug-json", default=None)
+    parser.add_argument("--osd", action="store_true", help="Show live flight stats in the AirSim viewport HUD.")
+    parser.add_argument("--osd-rate-hz", type=float, default=2.0)
+    parser.add_argument("--osd-name", default="DEDALUS")
+    parser.add_argument("--osd-severity", type=int, default=0)
+    parser.add_argument("--osd-arrow", action=argparse.BooleanOptionalAction, default=True)
+    parser.add_argument("--osd-arrow-scale", type=float, default=4.0, help="XY velocity arrow length in meters at 1 m/s.")
+    parser.add_argument("--osd-arrow-min-speed-mps", type=float, default=0.1)
+    parser.add_argument("--osd-arrow-z-lift-m", type=float, default=1.25)
+    parser.add_argument("--osd-arrow-duration-s", type=float, default=0.75)
+    parser.add_argument("--osd-arrow-thickness", type=float, default=7.0)
     parser.add_argument("--wait-for-airsim-s", type=float, default=0.0, help="0 means wait until Ctrl-C.")
     parser.add_argument("--wait-for-stream-s", type=float, default=0.0, help="0 means wait until Ctrl-C.")
     parser.add_argument("--hide-planned", action="store_true")
@@ -349,6 +360,137 @@ def draw_reference_markers(client: Any, snapshot: dict[str, Any] | None, args: a
         client.simPlotStrings(["EGO"], [airsim.Vector3r(ego_point.x_val, ego_point.y_val, ego_point.z_val - 0.8)], scale=1.0, color_rgba=EGO_COLOR, duration=duration)
 
 
+def snapshot_time_s(snapshot: dict[str, Any] | None) -> float | None:
+    if snapshot is None:
+        return None
+    timestamp_ns = snapshot.get("timestamp_ns")
+    if isinstance(timestamp_ns, int):
+        return timestamp_ns / 1_000_000_000.0
+    try:
+        return float(timestamp_ns) / 1_000_000_000.0
+    except (TypeError, ValueError):
+        return None
+
+
+def ego_motion_stats(snapshot: dict[str, Any] | None, state: dict[str, Any]) -> dict[str, Any] | None:
+    if snapshot is None:
+        return None
+    ego = snapshot.get("ego", {})
+    if not isinstance(ego, dict):
+        return None
+    position = vec3(ego.get("position_local"))
+    if position is None:
+        return None
+
+    timestamp_s = snapshot_time_s(snapshot)
+    if timestamp_s is None:
+        timestamp_s = time.monotonic()
+
+    previous_position = state.get("last_ego_position")
+    previous_timestamp_s = state.get("last_ego_timestamp_s")
+    state["last_ego_position"] = position
+    state["last_ego_timestamp_s"] = timestamp_s
+
+    stats: dict[str, Any] = {
+        "position": position,
+        "height_m": ego.get("height_m"),
+        "velocity": None,
+        "vxy_mps": None,
+        "vz_mps": None,
+        "heading_deg": None,
+    }
+
+    if previous_position is None or previous_timestamp_s is None:
+        return stats
+    dt = timestamp_s - float(previous_timestamp_s)
+    if dt <= 1.0e-6:
+        return stats
+
+    velocity = [(position[index] - previous_position[index]) / dt for index in range(3)]
+    vxy_mps = math.hypot(velocity[0], velocity[1])
+    heading_deg = math.degrees(math.atan2(velocity[1], velocity[0])) if vxy_mps > 1.0e-6 else None
+    stats.update(
+        {
+            "velocity": velocity,
+            "vxy_mps": vxy_mps,
+            "vz_mps": velocity[2],
+            "heading_deg": heading_deg,
+        }
+    )
+    return stats
+
+
+def format_osd_line(stats: dict[str, Any]) -> str:
+    height = stats.get("height_m")
+    height_text = f"h={float(height):5.1f}m" if height is not None else "h=  n/a"
+    vz = stats.get("vz_mps")
+    vxy = stats.get("vxy_mps")
+    heading = stats.get("heading_deg")
+    if vz is None or vxy is None:
+        return f"{height_text}  velocity=waiting"
+    vertical_label = "desc" if float(vz) > 0.05 else ("climb" if float(vz) < -0.05 else "level")
+    heading_text = f"hdg={float(heading):6.1f}deg" if heading is not None else "hdg=   n/a"
+    return f"{height_text}  vz={float(vz):+5.2f}m/s {vertical_label:<5}  vxy={float(vxy):5.2f}m/s  {heading_text}"
+
+
+def draw_ego_velocity_arrow(client: Any, stats: dict[str, Any], args: argparse.Namespace) -> None:
+    if client is None or not args.osd_arrow:
+        return
+    velocity = stats.get("velocity")
+    position = stats.get("position")
+    vxy_mps = stats.get("vxy_mps")
+    if velocity is None or position is None or vxy_mps is None:
+        return
+    if float(vxy_mps) < args.osd_arrow_min_speed_mps:
+        return
+
+    start = airsim.Vector3r(position[0], position[1], position[2] - args.osd_arrow_z_lift_m)
+    end = airsim.Vector3r(
+        position[0] + velocity[0] * args.osd_arrow_scale,
+        position[1] + velocity[1] * args.osd_arrow_scale,
+        position[2] - args.osd_arrow_z_lift_m,
+    )
+    duration = max(0.1, args.osd_arrow_duration_s)
+    try:
+        client.simPlotLineStrip(
+            [start, end],
+            color_rgba=EGO_VELOCITY_COLOR,
+            thickness=args.osd_arrow_thickness,
+            duration=duration,
+            is_persistent=False,
+        )
+    except AttributeError:
+        client.simPlotLineList(
+            [start, end],
+            color_rgba=EGO_VELOCITY_COLOR,
+            thickness=args.osd_arrow_thickness,
+            duration=duration,
+            is_persistent=False,
+        )
+
+
+def maybe_draw_osd(client: Any, snapshot: dict[str, Any] | None, args: argparse.Namespace, state: dict[str, Any]) -> None:
+    if not args.osd:
+        return
+    stats = ego_motion_stats(snapshot, state)
+    if stats is None:
+        return
+    if args.dry_run:
+        print(f"OSD {args.osd_name}: {format_osd_line(stats)}")
+        return
+    if client is None:
+        return
+
+    now = time.time()
+    last_osd_s = float(state.get("last_osd_s", 0.0))
+    period_s = 1.0 / max(args.osd_rate_hz, 0.1)
+    if now - last_osd_s >= period_s:
+        state["last_osd_s"] = now
+        client.simPrintLogMessage(args.osd_name, format_osd_line(stats), severity=args.osd_severity)
+
+    draw_ego_velocity_arrow(client, stats, args)
+
+
 def build_debug_report(
     ghost_event: dict[str, Any] | None,
     ghost_seq: int | None,
@@ -453,6 +595,7 @@ def main() -> int:
     waiting_reported = False
     static_drawn = False
     debug_state = {"last_debug_print_s": 0.0}
+    osd_state: dict[str, Any] = {"last_osd_s": 0.0}
 
     while True:
         stream.poll()
@@ -481,6 +624,7 @@ def main() -> int:
         draw_agents(client, dynamic_planned, args)
         draw_agents(client, world_agents, args)
         draw_reference_markers(client, stream.latest_world_snapshot, args)
+        maybe_draw_osd(client, stream.latest_world_snapshot, args, osd_state)
 
         report = build_debug_report(
             stream.latest_ghost_detections,
