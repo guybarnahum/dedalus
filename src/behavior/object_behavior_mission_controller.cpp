@@ -860,26 +860,18 @@ bool ObjectBehaviorMissionController::update_circle_orbit_progress(
     }
 
     if (!circling) {
-        circle_orbit_started_ = false;
-        circle_last_angle_valid_ = false;
+        circle_orbit_tracking_ = false;
         return false;
     }
 
-    if (!circle_orbit_started_) {
-        circle_orbit_started_ = true;
-        circle_last_angle_valid_ = true;
-        circle_last_angle_rad_ = orbit_angle_rad;
+    if (!circle_orbit_tracking_) {
+        circle_orbit_tracking_ = true;
+        circle_previous_angle_rad_ = orbit_angle_rad;
         circle_completed_orbits_ = 0.0;
         return false;
     }
 
-    if (!circle_last_angle_valid_) {
-        circle_last_angle_valid_ = true;
-        circle_last_angle_rad_ = orbit_angle_rad;
-        return false;
-    }
-
-    double delta = orbit_angle_rad - circle_last_angle_rad_;
+    double delta = orbit_angle_rad - circle_previous_angle_rad_;
     while (delta > kPi) {
         delta -= 2.0 * kPi;
     }
@@ -892,7 +884,7 @@ bool ObjectBehaviorMissionController::update_circle_orbit_progress(
         circle_completed_orbits_ += directed_delta / (2.0 * kPi);
     }
 
-    circle_last_angle_rad_ = orbit_angle_rad;
+    circle_previous_angle_rad_ = orbit_angle_rad;
     return circle_completed_orbits_ >= behavior.orbit_count;
 }
 
