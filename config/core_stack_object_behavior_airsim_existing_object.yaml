@@ -48,6 +48,9 @@ flight_command_sink: px4_bridge
 
 mission_options.behavior_spec_path: config/behaviors/follow_specific_track.yaml
 mission_options.object_behavior_hold_velocity_mps: 0.0
+# Direction-of-travel yaw/camera offset. 0.0 looks forward along velocity.
+# Use about 1.5708 for a 90-degree side look, useful for circle/orbit style tests.
+mission_options.object_behavior_yaw_offset_rad: 0.0
 # Long enough for the drone to visibly close distance to the selected AirSim object
 # before GoHome/Land starts. Keep frame budgets high enough when running this config.
 mission_options.object_behavior_completion_after_s: 45.0
