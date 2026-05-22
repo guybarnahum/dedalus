@@ -8,6 +8,14 @@ Repository:
 guybarnahum/dedalus
 ```
 
+Current validated reference point for this handoff:
+
+```text
+Commit inspected: c1ba05ea554daf759e8f2a328bcd836e5449c119
+Commit title: chore(mission): richer display_state/detail for execute-phase events
+GitHub status checks: none attached; local build/test validation is still required.
+```
+
 Active milestone state:
 
 ```text
@@ -19,30 +27,51 @@ Status: implemented through 2.24G.9 baseline.
 Milestone 2.25 — ObjectBehaviorMissionController skeleton and first object-conditioned behavior runtime.
 Status: implemented through object behavior lifecycle and bounded follow behavior baseline.
 
-Milestone 2.26 — AirSim ghost behavior validation and live runtime-event plumbing.
-Status: implemented through 2.26E.4 live-validation config/runbook baseline.
+Milestone 2.26 — AirSim ghost behavior validation, live runtime-event plumbing, AirSim existing-object binding, follow arrival control, and live overlay/OSD.
+Status: implemented through 2.26E.13 design/code shape at commit c1ba05e. Needs local build/test and AirSim visual validation.
 ```
 
-Current 2.26D/E state:
+## Current 2.26D/E State
 
 ```text
-Ghost simulation, implemented trajectory source:
-  simulation/ghost_detections/person_pair_crossing.json
-    -> references simulation/trajectories/*.json
-    -> loaded by GhostScenario
-    -> evaluated by VelocityTrajectory-backed motion
+Runtime-event pipeline is the canonical IPC boundary.
+Artifact files remain durable evidence/debug outputs, not runtime IPC.
 
-Ghost people now move cross -> wait -> cross back -> wait.
+Core publish path:
+  CoreStackRunner
+    -> GhostTargetProvider::frame_at(...), when enabled
+       -> GhostDetectionsPublisher
+       -> PerceptionPipelineOutput.observations
+    -> InMemoryWorldModel
+    -> WorldSnapshotPublisher
+       -> LatestWorldSnapshotSubscriber
+       -> ArtifactSnapshotWriter
+       -> RuntimeEventStreamServer, optional TCP JSONL
 
-2.26E AirSim existing-object config/source, implemented:
-  ghost_targets_source: airsim_objects
-  ghost_targets_airsim.objects.<N>.source_track_id
-  ghost_targets_airsim.objects.<N>.airsim_object_name
-  ghost_targets_airsim.objects.<N>.class
-  ghost_targets_airsim.objects.<N>.confidence
-  ghost_targets_airsim.objects.<N>.size_m
+  MissionRuntime
+    -> MissionEventPublisher
+       -> mission_events.jsonl
+       -> RuntimeEventStreamServer, optional TCP JSONL
 
-Canonical live run config:
+Live runtime event stream:
+  dedalus_mission_loop --world-snapshot-stream-port 47770
+  emits JSONL records on one TCP stream:
+    {"type":"ghost_detections","seq":N,...}
+    {"type":"world_snapshot","seq":N,...}
+    {"type":"mission_event","seq":N,...}
+
+AirSim overlay:
+  simulation/airsim-world-overlay.py is a stream-only subscriber/renderer.
+  It renders PLAN / PLAN* from ghost_detections.
+  It renders AG / EGO from world_snapshot.
+  It renders SEL from mission_event target_selected matched against the latest world_snapshot agent.
+  It does not evaluate GhostScenario, discover AirSim objects, or poll snapshot artifacts in normal mode.
+```
+
+AirSim existing-object ghost binding:
+
+```text
+Canonical live config:
   config/core_stack_object_behavior_airsim_existing_object.yaml
     -> binds ghost_person_001 to BRPlayer_01_96 by default
 
@@ -52,229 +81,77 @@ Example/template config:
 Focused runbook:
   docs/airsim_existing_object_ghost_runbook.md
 
-AirSim object pose bridge:
-  simulation/airsim-object-poses.py
-    -> calls AirSim simGetObjectPose(object_name)
-    -> returns compact JSON object poses
-    -> stdout is machine JSON, stderr is diagnostics
+Discovery / pose tools:
+  python3 simulation/airsim-list-objects.py --match-class person --sort distance --format table
+  python3 simulation/airsim-object-poses.py --object BRPlayer_01_96
 
-AirSim object source runtime path:
+Runtime source path:
   GhostTargetProvider(AirSimGhostObjectSourceConfig)
     -> calls simulation/airsim-object-poses.py through BridgeTransport
     -> converts selected AirSim object poses to GhostDetectionState
     -> emits GhostDetectionsFrame + Observation3D list
-
-Do not start with random/all selection modes. Add those only after deterministic explicit binding works.
-
-Useful discovery tool:
-  python3 simulation/airsim-list-objects.py --match-class person --sort distance --format table
-  python3 simulation/airsim-list-objects.py --only-matched --output out/airsim_scene_objects.json
-
-Mission-loop ghost injection and publication:
-  CoreStackRunner
-    -> GhostTargetProvider::frame_at(...)
-       -> one configured ghost source evaluation at frame time
-       -> GhostDetectionsFrame event for live stream/debug subscribers
-       -> Observation3D list injected into PerceptionPipelineOutput.observations
-    -> InMemoryWorldModel
-    -> WorldSnapshot.agents
-
-Runtime publish path:
-  CoreStackRunner
-    -> GhostDetectionsPublisher
-       -> RuntimeEventStreamServer          optional TCP JSONL stream, event type ghost_detections
-    -> WorldSnapshotPublisher
-       -> LatestWorldSnapshotSubscriber     behavior / MissionRuntime
-       -> ArtifactSnapshotWriter            durable evidence/debug snapshots
-       -> RuntimeEventStreamServer          optional TCP JSONL stream, event type world_snapshot
-  MissionRuntime
-    -> MissionEventPublisher
-       -> mission_events.jsonl              durable evidence/debug event log
-       -> RuntimeEventStreamServer          optional TCP JSONL stream, event type mission_event
-
-Reusable event service:
-  include/dedalus/runtime/pubsub.hpp
-    EventPublisher<T>
-    EventSubscriber<T>
-
-WorldSnapshot domain adapter:
-  include/dedalus/world_model/world_snapshot_publisher.hpp
-    WorldSnapshotPublisher = EventPublisher<WorldSnapshot>
-    WorldSnapshotSubscriber keeps on_snapshot(...) while adapting to generic on_event(...)
-
-Ghost detections domain adapter:
-  include/dedalus/perception/ghost_targets.hpp
-    GhostDetectionsPublisher = EventPublisher<GhostDetectionsFrame>
-    GhostDetectionsSubscriber keeps on_ghost_detections(...) while adapting to generic on_event(...)
-
-Mission events domain adapter:
-  include/dedalus/behavior/mission_runtime.hpp
-    MissionEventPublisher = EventPublisher<MissionEvent>
-    MissionEventSubscriber keeps on_mission_event(...) while adapting to generic on_event(...)
-
-Live runtime event stream:
-  dedalus_mission_loop --world-snapshot-stream-port 47770
-  emits JSONL records on one TCP stream:
-    {"type":"ghost_detections","seq":N,"timestamp_ns":...,"map_frame_id":"...","ghost_detections":{...}}
-    {"type":"world_snapshot","seq":N,"timestamp_ns":...,"active_map_frame_id":"...","snapshot":{...}}
-    {"type":"mission_event","seq":N,"timestamp_ns":...,"mission_event":{...}}
-
-AirSim overlay:
-  simulation/airsim-world-overlay.py is now a stream-only subscriber/renderer.
-  It no longer evaluates ghost scenarios locally, does not discover AirSim objects, and no longer reads snapshot_manifest.txt.
-  It renders PLAN / PLAN* from ghost_detections, AG / EGO from world_snapshot, and SEL from mission_event target_selected matched against the latest world_snapshot agent.
-
-Artifact files remain evidence/debug outputs, not IPC.
 ```
 
-Next milestone slice:
+Object behavior / follow control:
 
 ```text
-Run 2.26E.4 live validation on the AirSim machine:
-  1. git pull && build && run focused tests.
-  2. Confirm BRPlayer_01_96 exists with simulation/airsim-object-poses.py.
-  3. Run dedalus_mission_loop with config/core_stack_object_behavior_airsim_existing_object.yaml and --world-snapshot-stream-port 47770.
-  4. Run simulation/airsim-world-overlay.py with --debug-json.
-  5. Verify PLAN / AG / SEL align over the visible object.
+ObjectBehaviorMissionController consumes WorldSnapshot agents through TargetSelector.
+Follow behavior now uses stable observation geometry, not ego-relative bearing drift.
+Follow arrival velocity is target-relative:
+  command_velocity = target_velocity + closing_velocity
+Static targets naturally converge to zero relative velocity.
+Moving targets converge toward matched target velocity.
 
-2.27:
-  circle an existing visible static object after explicit AirSim object binding works.
+Debug events include:
+  arrival_mode
+  desired_error_xy_m
+  closing_speed_mps
+  target_speed_xy_mps
+  relative_speed_xy_mps
+  follow geometry fields
 ```
 
----
-
-## 0. Engineering Hygiene Policy
-
-Use this policy for every implementation pass, especially after refactors.
+Live overlay / OSD:
 
 ```text
-Review the implementation and look for legacy pre-refactor leftovers to clean up.
-Always strive for state-of-the-art clean code, carefully balancing code structure, runtime efficiency, and complexity.
-Do not carry legacy code through shims or other inelegant solutions due to momentum.
-When appropriate, suggest and perform refactors that avoid drift, duplication, and bloat.
-Keep code streamlined: one clear ownership boundary, one canonical path, and explicit compatibility only when it has a current user and a removal plan.
+The overlay provides:
+  DEDALUS        fixed-width numeric flight line: height, vz, vxy, heading
+  DEDALUS-STATE mission/operator state line
+  EGO marker
+  optional EGO XY velocity arrow
+
+Dynamic AirSim markers/arrows should use short durations because AirSim Python plot APIs do not provide per-marker update/delete handles. Some blinking is acceptable to avoid marker accumulation.
 ```
 
-Design / implementation planning rule:
+Display-state ownership boundary at c1ba05e:
 
 ```text
-When a design choice is non-trivial and/or has architectural or runtime importance, prepare a concise plan for approval before implementation.
-If the design choice is already agreed upon or trivial from architecture, complexity, and runtime perspectives, proceed directly with implementation.
+MissionRuntime owns lifecycle / command display:
+  Arm, Takeoff, Mission, GoHome, Land, Disarm, Settled, Failed
+
+ObjectBehaviorMissionController owns behavior detail:
+  arriving, following, positioned, circling, done
+
+Overlay should render display_state + display_detail and should not infer behavior semantics.
+Fallback tables in overlay are compatibility only for old event streams.
 ```
 
-Refactor expectations:
+Expected OSD examples:
 
 ```text
-Prefer deleting stale call paths over adding compatibility shims.
-Prefer typed adapters at domain boundaries over leaking generic names everywhere.
-Prefer evidence/debug artifacts as outputs, not as runtime IPC.
-Prefer small reusable services when the same mechanism will be used by WorldSnapshot, mission events, telemetry, detections, or health streams.
-Prefer synchronous in-process subscribers for control-critical handoff unless a stage explicitly requires async transport.
-For async/external subscribers, expose sequence numbers and dropped-client/frame stats.
+DEDALUS-STATE  Arm      arming
+DEDALUS-STATE  Takeoff  climbing
+DEDALUS-STATE  Mission  arriving
+DEDALUS-STATE  Mission  following
+DEDALUS-STATE  Mission  positioned
+DEDALUS-STATE  GoHome   returning
+DEDALUS-STATE  Land     landing
+DEDALUS-STATE  Disarm   ok
+DEDALUS-STATE  Settled  done
+DEDALUS-STATE  Failed   Velocity
 ```
 
-Recent cleanup examples that should guide future work:
-
-```text
-WorldSnapshotPublisher was generalized into EventPublisher<T> / EventSubscriber<T>.
-WorldSnapshotSubscriber preserves domain-specific on_snapshot(...) while adapting to generic on_event(...).
-GhostDetectionsSubscriber preserves domain-specific on_ghost_detections(...) while adapting to generic on_event(...).
-MissionEventSubscriber preserves domain-specific on_mission_event(...) while adapting to generic on_event(...).
-Inline snapshot file writing was removed from dedalus_mission_loop and moved to ArtifactSnapshotWriter.
-LatestWorldSnapshot is now fed through LatestWorldSnapshotSubscriber, not a special CoreStackRunner constructor path.
-The obsolete world_snapshot_publisher.cpp implementation was deleted after moving to header-only typed pub/sub.
-AirSim overlay no longer evaluates GhostScenario or polls artifacts in normal mode; it subscribes to runtime events.
-Tests were updated to use the actual WorldSnapshot AgentState type instead of stale AgentTrack assumptions.
-```
-
-Patch policy:
-
-```text
-Default: apply changes directly to main.
-Do not create branches or PRs unless explicitly requested.
-Do not leave completed work sitting on a feature branch.
-Prefer GitHub connector file updates directly on main when available.
-If connector patching fails, is ambiguous, is blocked, or would require a risky broad rewrite, stop using the connector for that code change.
-Generate an exact manual patch and ask the user to apply it locally.
-Do not keep retrying increasingly complex connector paths after a connector failure.
-```
-
-Validation after code patches:
-
-```bash
-cmake --build build-staging -j$(nproc)
-ctest --test-dir build-staging --output-on-failure
-```
-
-Focused 2.26D/E pub/sub and runtime stream validation:
-
-```bash
-ctest --test-dir build-staging --output-on-failure -R 'pubsub|world_snapshot_publisher|world_snapshot_stream_server|mission_runtime'
-```
-
-Focused object behavior validation:
-
-```bash
-ctest --test-dir build-staging --output-on-failure -R 'object_behavior_mission_controller|object_behavior_mission_smoke|core_stack_config_loader|behavior_spec|target_selector'
-```
-
-Focused ghost / reprojection / world evidence validation:
-
-```bash
-ctest --test-dir build-staging --output-on-failure -R 'ghost_scenario|ghost_scenario_eval_cli|perception_world_model_flow|world_to_image_projector|world_reprojection_artifacts'
-```
-
-Scenario/campaign validation:
-
-```bash
-ctest --test-dir build-staging --output-on-failure -R 'mission_(scenario|campaign|abort)_'
-```
-
-Existing AirSim object discovery:
-
-```bash
-python3 simulation/airsim-list-objects.py \
-  --match-class person \
-  --sort distance \
-  --format table
-```
-
-Existing AirSim object pose bridge smoke:
-
-```bash
-python3 simulation/airsim-object-poses.py \
-  --object BRPlayer_01_96
-```
-
-Live existing-object validation:
-
-```bash
-rm -rf out/object_behavior_airsim_existing_object out/object_behavior_airsim_existing_object_annotation
-
-./build-staging/apps/dedalus_mission_loop \
-  --config config/core_stack_object_behavior_airsim_existing_object.yaml \
-  --output-dir out/object_behavior_airsim_existing_object \
-  --max-frames 900 \
-  --shutdown-max-frames 400 \
-  --world-snapshot-stream-port 47770 \
-  --progress
-```
-
-```bash
-python3 simulation/airsim-world-overlay.py \
-  --stream-port 47770 \
-  --follow \
-  --rate-hz 5 \
-  --duration-s 180 \
-  --clear \
-  --label \
-  --debug \
-  --debug-json out/object_behavior_airsim_existing_object/overlay_debug_latest.json
-```
-
----
-
-## 1. Current Architecture
+## Current Architecture
 
 Current live mission pipeline:
 
@@ -294,7 +171,7 @@ AirSim live frame + ego sidecar
   -> LatestWorldSnapshot
   -> MissionRuntime async loop
        -> MissionEventPublisher
-  -> TrajectoryMissionController today / ObjectBehaviorMissionController for object behavior
+  -> ObjectBehaviorMissionController for object behavior
   -> Px4BridgeCommandSink
   -> persistent simulation/px4-command-bridge.py
        - PX4 shell: arm, takeoff, land, disarm
@@ -318,391 +195,153 @@ AirSim live frame + ego sidecar
   -> PX4 / AirSim
 ```
 
-Main current app:
+## Engineering Hygiene Policy
 
 ```text
-apps/dedalus_mission_loop.cpp
+Review the implementation and look for legacy pre-refactor leftovers to clean up.
+Always strive for state-of-the-art clean code, carefully balancing code structure, runtime efficiency, and complexity.
+Do not carry legacy code through shims or other inelegant solutions due to momentum.
+When appropriate, suggest and perform refactors that avoid drift, duplication, and bloat.
+Keep code streamlined: one clear ownership boundary, one canonical path, and explicit compatibility only when it has a current user and a removal plan.
 ```
 
-The old name `dedalus_replay_mission` is obsolete. Do not use it.
-
----
-
-## 2. Proven Control Path
-
-The working control split deliberately mirrors `simulation/test-flight.py`.
+Design / implementation planning rule:
 
 ```text
-Prepare:
-  deterministic AirSim/PX4 session prep
-  confirm AirSim connection, GPS validity, API control, and MAVLink reachability
-
-Arm:
-  PX4 shell: commander arm
-
-Takeoff:
-  PX4 shell: commander takeoff
-  bridge waits for takeoff settle
-
-First velocity / climb:
-  lazy pymavlink connection after shell takeoff
-  prime OFFBOARD velocity stream
-  set PX4 OFFBOARD mode
-  climb to safe height using LOCAL_POSITION_NED feedback
-
-Trajectory / behavior velocity:
-  pymavlink SET_POSITION_TARGET_LOCAL_NED velocity setpoints
-
-Landing:
-  PX4 shell: commander land
-  wait for ego telemetry / landed height
-
-Complete:
-  PX4 shell: commander disarm
+When a design choice is non-trivial and/or has architectural or runtime importance, prepare a concise plan for approval before implementation.
+If the design choice is already agreed upon or trivial from architecture, complexity, and runtime perspectives, proceed directly with implementation.
 ```
 
-Core rule:
+Patch policy:
 
 ```text
-Synchronous command dispatch success is not vehicle-state truth.
-Mission transitions into flight execution must be driven by world-model telemetry.
+Default: apply changes directly to main.
+Do not create branches or PRs unless explicitly requested.
+Do not leave completed work sitting on a feature branch.
+Prefer GitHub connector file updates directly on main when available.
+If connector patching fails, is ambiguous, is blocked, or would require a risky broad rewrite, stop using the connector for that code change.
+Generate an exact manual patch and ask the user to apply it locally.
+Do not keep retrying increasingly complex connector paths after a connector failure.
 ```
 
-Do not reintroduce the hand-written native C++ MAVLink encoder as the default live path. `src/behavior/px4_mavlink_command_sink.cpp` may remain as experimental/deprecated code, but the live mission should use `flight_command_sink: px4_bridge`.
+## Validation Commands
 
----
+General validation after code patches:
 
-## 3. Runtime Event Publish / Subscribe Boundary
+```bash
+cmake --build build-staging -j$(nproc)
+ctest --test-dir build-staging --output-on-failure
+```
 
-WorldSnapshot, ghost detections, and mission events are now published as typed runtime events.
+Focused 2.26D/E pub/sub and runtime stream validation:
+
+```bash
+ctest --test-dir build-staging --output-on-failure -R 'pubsub|world_snapshot_publisher|world_snapshot_stream_server|mission_runtime'
+```
+
+Focused object behavior validation:
+
+```bash
+ctest --test-dir build-staging --output-on-failure -R 'object_behavior_mission_controller|object_behavior_mission_smoke|core_stack_config_loader|behavior_spec|target_selector'
+```
+
+Focused overlay syntax validation:
+
+```bash
+python3 -m py_compile simulation/airsim-world-overlay.py
+```
+
+Existing AirSim object pose bridge smoke:
+
+```bash
+python3 simulation/airsim-object-poses.py \
+  --object BRPlayer_01_96
+```
+
+Live existing-object validation:
+
+```bash
+rm -rf out/object_behavior_airsim_existing_object out/object_behavior_airsim_existing_object_annotation
+
+./build-staging/apps/dedalus_mission_loop \
+  --config config/core_stack_object_behavior_airsim_existing_object.yaml \
+  --output-dir out/object_behavior_airsim_existing_object \
+  --max-frames 2400 \
+  --shutdown-max-frames 1800 \
+  --world-snapshot-stream-port 47770 \
+  --safe-height 40 \
+  --behavior-duration-s 90 \
+  --progress
+```
+
+Overlay validation:
+
+```bash
+python3 simulation/airsim-world-overlay.py \
+  --stream-port 47770 \
+  --follow \
+  --rate-hz 5 \
+  --duration-s 180 \
+  --clear \
+  --label \
+  --osd \
+  --debug \
+  --debug-json out/object_behavior_airsim_existing_object/overlay_debug_latest.json
+```
+
+Inspect behavior display events:
+
+```bash
+grep '"display_state"' out/object_behavior_airsim_existing_object/mission_events.jsonl | tail -40
+```
+
+Expected display-state event flow:
 
 ```text
-CoreStackRunner::run_once()
-  -> GhostTargetProvider::frame_at(...), when enabled
-       -> GhostDetectionsPublisher.publish(frame)
-       -> append frame.observations to PerceptionPipelineOutput
-  -> world_model.snapshot()
-       -> WorldSnapshotPublisher.publish(snapshot)
-
-MissionRuntime::write_event(...)
-  -> MissionEventPublisher.publish(event)
-  -> mission_events.jsonl
+Arm / arming or ok
+Takeoff / climbing
+Mission / arriving
+Mission / following or positioned
+GoHome / returning
+Land / landing
+Disarm / ok
+Settled / done
 ```
 
-Current subscribers:
+## Immediate Next Tasks
 
 ```text
-LatestWorldSnapshotSubscriber:
-  in-process behavior handoff.
+1. On AirSim machine, build/test c1ba05e or later:
+     python3 -m py_compile simulation/airsim-world-overlay.py
+     cmake --build build-staging -j$(nproc)
+     ctest --test-dir build-staging --output-on-failure -R 'mission_runtime|object_behavior_mission_controller|object_behavior_mission_smoke|core_stack_config_loader|behavior_spec|target_selector'
 
-ArtifactSnapshotWriter:
-  writes snapshot_XXXX.json and snapshot_manifest.txt.
-  artifacts are durable evidence/debug outputs, not runtime IPC.
+2. Run live existing-object validation with overlay OSD:
+     - confirm PLAN / AG / SEL align over BRPlayer_01_96
+     - confirm no disruptive marker/arrow accumulation
+     - confirm DEDALUS numeric line remains stable
+     - confirm DEDALUS-STATE uses display_state/display_detail from mission events
 
-RuntimeEventStreamServer:
-  optional TCP JSONL live stream for external tools/customers.
-  subscribes to GhostDetectionsPublisher, WorldSnapshotPublisher, and MissionEventPublisher.
-  enabled by --world-snapshot-stream-port.
+3. Confirm follow behavior:
+     - no spin when near/above the selected object
+     - arrival_mode transitions cruise/slow/hold as expected
+     - relative_speed_xy_mps trends toward zero near arrival
+
+4. If validation passes, record 2.26E as complete and start 2.27A.
 ```
 
-Design rule:
+## 2.27A Proposed Next Slice
 
 ```text
-The world model, ghost provider, and mission runtime should not know who consumes their events.
-Consumers should subscribe to typed state/events and own their side effects.
+Implement circle behavior with velocity-matched orbit insertion:
+  - approach a 3 o'clock orbit entry point
+  - blend into tangential velocity before capture
+  - maintain orbit using target_velocity + tangent_velocity + radial correction
+  - emit behavior display details: arriving -> circling
+  - keep overlay renderer-only
 ```
 
-Do not add direct file-writing, AirSim overlay behavior, or stream-specific behavior back into `CoreStackRunner` or `InMemoryWorldModel`.
-
----
-
-## 4. Object Identity and Evidence Model
-
-Do not collapse detections, tracks, agents, and identities. They answer different questions.
-
-```text
-detection_id  ->  track_id  ->  agent_id  ->  identity_id
-single frame      tracker       world model    recognized identity
-```
-
-Definitions:
-
-```text
-detection_id:
-  A single detector observation in one frame.
-
-track_id:
-  Tracker-owned frame-to-frame continuity for one moving blob/object.
-  Usually local to one tracker session.
-
-source_track_id:
-  The tracker ID preserved inside AgentState as provenance.
-  It answers: which tracker track produced this world-model agent?
-
-agent_id:
-  World-model-owned object handle.
-  Behavior and planning should select agents, not raw detections.
-  Today it may be derived from source_track_id; later it can represent a fused object from multiple sensors/tracks.
-
-identity_id:
-  Identity-resolver-owned recognized real-world identity.
-  Later this may be a known person, vehicle plate, drone serial, or cross-mission identity.
-
-latest_view_evidence:
-  World-model-owned camera-scoped evidence on AgentState.
-  Camera-derived agents carry source_frame_id, source_detection_id, source_bbox_px, and source_center_px.
-  Ghost/scripted agents normally omit latest_view_evidence because they have no source camera detection.
-```
-
-Current implementation rule:
-
-```text
-PerceptionPipelineOutput is evidence.
-WorldSnapshot is autonomy state.
-Behavior consumes WorldSnapshot, not perception internals.
-GhostDetectionsFrame is a simulation/debug runtime event emitted from the same evaluation that injects Observation3D into perception.
-MissionEvent is the live event form of the same event JSON also written to mission_events.jsonl.
-```
-
-Example:
-
-```text
-track_id:        ghost_person_001
-agent_id:        agent_ghost_person_001
-identity_id:     identity_ghost_person_001
-source_track_id: ghost_person_001
-```
-
-Why this matters:
-
-```text
-Target selection must be able to focus on one specific object in a group. It must not switch to another person/car merely because another detection has higher confidence.
-```
-
----
-
-## 5. Behavior Config Location
-
-Behavior specs are global autonomy/runtime configuration, not simulation assets.
-
-Canonical behavior spec location:
-
-```text
-config/behaviors/follow_person.yaml
-config/behaviors/follow_specific_track.yaml
-config/behaviors/circle_car.yaml
-config/behaviors/approach_target.yaml
-config/behaviors/sequence_approach_circle.yaml
-```
-
-Simulation-only target scenarios live under simulation, currently:
-
-```text
-simulation/ghost_detections/person_pair_crossing.json
-simulation/trajectories/ghost_person_001_crossing.json
-simulation/trajectories/ghost_person_002_crossing.json
-```
-
-AirSim existing-object ghost bindings are referenced from core-stack config, not embedded in the overlay.
-
-Rule:
-
-```text
-Behavior spec:
-  config/behaviors/*.yaml
-
-Ghost/scripted target scenario:
-  simulation/ghost_detections/*.json
-
-Trajectory referenced by ghost scenario:
-  simulation/trajectories/*.json
-
-AirSim existing-object binding:
-  config/core_stack_*.yaml ghost_targets_airsim.objects[]
-
-Core-stack config that references behavior:
-  config/core_stack_object_behavior_airsim_ghost.yaml
-  config/core_stack_object_behavior_airsim_existing_object.yaml
-```
-
----
-
-## 6. Ghost / Scripted Target Validation
-
-Before real camera detections are reliable, use ghost targets that enter at the same semantic boundary as real detections.
-
-Good validation path:
-
-```text
-Synthetic / AirSim frame
-  -> GhostTargetProvider::frame_at(...)
-      -> GhostDetectionsFrame live event for visualization/debug
-      -> Observation3D objects appended to PerceptionPipelineOutput.observations
-  -> InMemoryWorldModel
-  -> WorldSnapshot.agents with stable source_track_id
-  -> WorldSnapshotPublisher
-  -> TargetSelector
-  -> ObjectBehaviorMissionController
-```
-
-Bad shortcut:
-
-```text
-config says selected_target = ghost_person_001
-```
-
-That bypasses the perception/world-model/selector chain and should not be the main validation path.
-
-Meaningful trajectory scenario:
-
-```text
-Two person targets exist:
-  ghost_person_001 confidence 0.82
-  ghost_person_002 confidence 0.91
-
-Behavior spec requests ghost_person_001 with policy=persistent_track.
-Expected result:
-  TargetSelector keeps ghost_person_001 and does not switch to ghost_person_002 merely because confidence is higher.
-```
-
-Meaningful AirSim existing-object scenario:
-
-```text
-An existing visible AirSim object, such as BRPlayer_*, is bound to ghost_person_001.
-GhostDetectionsFrame uses the object's AirSim pose.
-WorldSnapshot.agents contains ghost_person_001 at that pose.
-Overlay PLAN / AG / SEL markers align over the visible object.
-```
-
----
-
-## 7. Behavior Language v1
-
-The behavior language is small and declarative:
-
-```text
-Target selector
-Behavior type
-Reference frame
-Desired relative geometry
-Constraints
-Completion condition
-Fallback behavior
-```
-
-Initial behavior types:
-
-```text
-hold
-search
-follow
-approach
-circle
-go_home
-land
-go_home_land
-sequence
-```
-
-Sample specs live in:
-
-```text
-config/behaviors/follow_person.yaml
-config/behaviors/follow_specific_track.yaml
-config/behaviors/circle_car.yaml
-config/behaviors/approach_target.yaml
-config/behaviors/sequence_approach_circle.yaml
-```
-
-Parser files:
-
-```text
-include/dedalus/behavior/behavior_spec.hpp
-src/behavior/behavior_spec.cpp
-tests/unit/test_behavior_spec.cpp
-```
-
----
-
-## 8. Mission Events and Validation Expectations
-
-Expected object behavior events include both world-model and tracker handles when available:
-
-```json
-{"event":"target_selected","class":"person","agent_id":"agent_ghost_person_001","source_track_id":"ghost_person_001","identity_id":"identity_ghost_person_001","confidence":0.82}
-{"event":"behavior_start","behavior":"follow","agent_id":"agent_ghost_person_001","source_track_id":"ghost_person_001"}
-{"event":"behavior_tick_sample","behavior":"follow","source_track_id":"ghost_person_001"}
-{"event":"behavior_complete","behavior":"follow","reason":"duration_elapsed"}
-```
-
-Current validation proves:
-
-```text
-final_state == Complete
-terminal_settled == true
-Arm / Takeoff / Land / Disarm commands dispatched and succeed
-safe height reached before behavior execution
-target_selected selects ghost_person_001
-behavior_start / behavior_tick_sample / behavior_complete are emitted
-follow emits bounded non-zero velocity during ExecuteMission
-GoHome / Land / Complete reached
-WorldSnapshot publisher/subscriber and runtime-event stream unit tests pass
-```
-
-Future validation should later prove:
-
-```text
-selected target identity remains stable across crossing/waiting/crossing-back motion
-PLAN/AG/EGO/SEL markers update from live runtime event stream in AirSim overlay
-explicitly bound existing AirSim objects can drive ghost detections and align with PLAN/AG/SEL markers
-circle / approach / sequence behavior math emits correct bounded velocity
-obstacle avoidance remains outside M3 unless explicitly started post-M3
-```
-
----
-
-## 9. Scenario / Campaign Harness
-
-Key files:
-
-```text
-simulation/run-mission-scenario.py
-simulation/run-mission-campaign.py
-simulation/validate-mission-artifacts.py
-simulation/validate-object-behavior-airsim-ghost.py
-simulation/airsim-list-objects.py
-simulation/airsim-object-poses.py
-config/core_stack_synthetic_mission_ci.yaml
-config/core_stack_synthetic_mission_abort_ci.yaml
-config/core_stack_object_behavior_airsim_ghost.yaml
-config/core_stack_object_behavior_airsim_existing_object.yaml
-config/core_stack_object_behavior_airsim_existing_object_example.yaml
-config/mission_campaigns/synthetic_ci.json
-config/mission_campaigns/airsim_live_smoke.json
-docs/airsim_existing_object_ghost_runbook.md
-docs/mission_scenario_runner.md
-docs/object_behavior_airsim_ghost_runbook.md
-docs/runtime_dataflow.md
-```
-
-Campaign Ctrl-C semantics:
-
-```text
-First Ctrl-C:
-  active mission receives graceful interrupt
-  active mission should GoHome -> Land -> Disarm
-  campaign stops after active scenario finishes
-  no next repeat starts
-  campaign_summary status=interrupted
-  process exits 130
-
-Second Ctrl-C:
-  force-terminates active child process
-```
-
----
-
-## 10. Known Traps
+## Known Traps
 
 ```text
 - Do not use dedalus_replay_mission. Use dedalus_mission_loop.
@@ -711,33 +350,30 @@ Second Ctrl-C:
 - Do not collapse flight_control.arm_state and ego.armed.
 - Do not move to ExecuteMission until Takeoff is confirmed by ego height.
 - Do not stop at raw Complete state; wait for terminal_settled / Complete status=complete.
-- Do not treat Abort as stop immediately when recovery is possible.
 - Do not make the native C++ MAVLink sink the default live path; use px4_bridge.
 - Do not rewrite the working pymavlink control path in C++ while stabilizing behavior.
 - Do not let telemetry sidecar and command bridge bind the same MAVLink endpoint.
 - Do not let human diagnostics contaminate binary bridge stdout; binary frame bridge stdout is protocol bytes only.
-- Do not make mission_campaign_runner CTest execute repeated real missions.
 - Do not put obstacle avoidance inside the flight sink.
-- Do not let route memory override fresh tactical sensing.
 - Do not let Milestone 3 balloon into full obstacle avoidance; M3 is object-conditioned behavior. Avoidance starts post-M3.
 - Do not collapse track_id/source_track_id/agent_id/identity_id into one field.
 - Do not select targets only by confidence when a stable track/agent target is specified.
+- Do not bypass WorldSnapshot/TargetSelector by hardcoding selected_target in config for main validation.
 - Do not keep global behavior specs under simulation/behaviors; use config/behaviors.
 - Do not use artifact files as runtime IPC when a live stream or in-process subscriber is the right boundary.
 - Do not make simulation/airsim-world-overlay.py evaluate GhostScenario, discover AirSim objects, or poll snapshot artifacts in normal mode; it should subscribe and render.
+- Do not put behavior semantics in overlay logic. Mission/behavior events should publish display_state/display_detail; overlay should render them.
 - Do not add shims to preserve stale pre-refactor APIs unless there is a current user and an explicit removal plan.
 - Do not create branches or PRs unless explicitly requested.
 ```
 
----
-
-## 11. Pointers
+## Pointers
 
 Read next when relevant:
 
 ```text
-docs/airsim_existing_object_ghost_runbook.md focused 2.26E.4 existing-object validation
-docs/runtime_dataflow.md                     canonical source->publisher->server->subscriber->sink diagrams
+docs/airsim_existing_object_ghost_runbook.md focused existing-object validation
+docs/runtime_dataflow.md                     source->publisher->server->subscriber->sink diagrams
 docs/object_behavior_airsim_ghost_runbook.md AirSim ghost behavior + live stream runbook
 docs/object_conditioned_behavior_plan.md     detailed M3 behavior + identity plan
 docs/world_model_reprojection_validation_plan.md reprojection and world-model evidence plan
