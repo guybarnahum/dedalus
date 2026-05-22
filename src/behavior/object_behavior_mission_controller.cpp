@@ -14,6 +14,9 @@ constexpr double kMinArrivedDistanceM = 0.5;
 constexpr double kLandHeightM = 0.25;
 constexpr double kTakeoffVelocityAssistHeightM = 0.5;
 constexpr double kHeadingEpsilonMps = 0.05;
+constexpr double kSafeHeightHoldBandM = 1.0;
+constexpr double kSafeHeightCorrectionGain = 0.5;
+constexpr double kMinSafeHeightClimbMps = 0.35;
 
 std::string json_escape(const std::string& value) {
     std::string escaped;
@@ -94,6 +97,29 @@ Vec3 clamp_velocity(const Vec3& desired, double max_horizontal_mps, double max_v
         velocity.y *= scale;
     }
     velocity.z = clamp_abs(velocity.z, max_vertical_mps);
+    return velocity;
+}
+
+Vec3 enforce_safe_height_floor(
+    Vec3 velocity,
+    double height_m,
+    double safe_height_m,
+    double max_vertical_speed_mps) {
+    if (safe_height_m <= 0.0 || max_vertical_speed_mps <= 0.0) {
+        return velocity;
+    }
+
+    // LOCAL_NED convention: negative vz climbs, positive vz descends. During ExecuteMission/GoHome,
+    // behavior-relative altitude must not command descent into roofs or terrain below the mission floor.
+    if (height_m < safe_height_m) {
+        const double climb = std::clamp(
+            (safe_height_m - height_m) * kSafeHeightCorrectionGain,
+            kMinSafeHeightClimbMps,
+            max_vertical_speed_mps);
+        velocity.z = std::min(velocity.z, -climb);
+    } else if (height_m <= safe_height_m + kSafeHeightHoldBandM && velocity.z > 0.0) {
+        velocity.z = 0.0;
+    }
     return velocity;
 }
 
@@ -409,7 +435,12 @@ MissionTickOutput ObjectBehaviorMissionController::tick(const MissionTickInput& 
                     state_start_ = input.now;
                     output.status = input.finish_requested ? "object_behavior_finish_requested" : "object_behavior_complete";
                 } else {
-                    const Vec3 velocity = behavior_velocity(ego, selection, config_.behavior_spec.behavior);
+                    const Vec3 raw_velocity = behavior_velocity(ego, selection, config_.behavior_spec.behavior);
+                    const Vec3 velocity = enforce_safe_height_floor(
+                        raw_velocity,
+                        height_m,
+                        config_.safe_height_m,
+                        config_.behavior_spec.behavior.max_vertical_speed_mps);
                     output.command = command_from_velocity(
                         input.now,
                         velocity,
@@ -431,8 +462,13 @@ MissionTickOutput ObjectBehaviorMissionController::tick(const MissionTickInput& 
             break;
         }
         case MissionLifecycleState::GoHome: {
-            const Vec3 velocity = go_home_velocity(ego);
-            if (norm_xy(velocity) <= 0.0) {
+            const Vec3 raw_velocity = go_home_velocity(ego);
+            const Vec3 velocity = enforce_safe_height_floor(
+                raw_velocity,
+                height_m,
+                config_.safe_height_m,
+                config_.behavior_spec.behavior.max_vertical_speed_mps);
+            if (norm_xy(velocity) <= 0.0 && height_m >= config_.safe_height_m) {
                 state_ = MissionLifecycleState::Land;
                 state_start_ = input.now;
                 output.status = aborting_ ? "abort_recovery_home_reached" : "home_reached";
