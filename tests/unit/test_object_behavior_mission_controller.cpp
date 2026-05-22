@@ -114,8 +114,13 @@ void lifecycle_gates_before_behavior_and_emits_events() {
     require(behavior.state == dedalus::MissionLifecycleState::ExecuteMission, "behavior tick should remain ExecuteMission");
     require(behavior.command.has_value(), "behavior tick should emit follow velocity command");
     require(behavior.command->kind == dedalus::FlightCommandKind::Velocity, "follow command should be velocity");
-    require_near(behavior.command->velocity_local_mps.x, std::sqrt(2.0), 1.0e-6, "follow vx should be vector-clamped by max_speed");
-    require_near(behavior.command->velocity_local_mps.y, -std::sqrt(2.0), 1.0e-6, "follow vy should be vector-clamped by max_speed");
+    // New arrival controller: velocity = clamp(target_velocity + closing_velocity, max_speed).
+    // error=(4,-4), error_xy=4*sqrt(2), slow-zone kp=0.35 -> closing_speed=1.4*sqrt(2).
+    // closing=(1.4,-1.4), pre_clamp=(0.2+1.4,-1.4)=(1.6,-1.4), norm=sqrt(4.52)>2 -> scaled to max_speed.
+    const double expected_vx = 3.2 / std::sqrt(4.52);
+    const double expected_vy = -2.8 / std::sqrt(4.52);
+    require_near(behavior.command->velocity_local_mps.x, expected_vx, 1.0e-6, "follow vx should be vector-clamped by max_speed");
+    require_near(behavior.command->velocity_local_mps.y, expected_vy, 1.0e-6, "follow vy should be vector-clamped by max_speed");
     require_near(behavior.command->velocity_local_mps.z, -1.0, 1.0e-9, "follow vz should be bounded by max_vertical_speed");
     require(behavior.events.size() == 3U, "behavior tick should emit target_selected, behavior_start, behavior_tick_sample");
     require(behavior.events[0].find("\"event\":\"target_selected\"") != std::string::npos, "missing target_selected event");

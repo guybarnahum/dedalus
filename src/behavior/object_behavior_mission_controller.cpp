@@ -22,6 +22,8 @@ constexpr double kMaxObservationAngleDeg = 85.0;
 
 struct FollowGeometry {
     Vec3 desired_position;
+    Vec3 closing_velocity;
+    Vec3 target_velocity;
     double dh_m{0.0};
     double required_r_m{0.0};
     double actual_r_m{0.0};
@@ -29,6 +31,11 @@ struct FollowGeometry {
     double bearing_x{0.0};
     double bearing_y{0.0};
     std::string bearing_source{"disabled"};
+    double desired_error_xy_m{0.0};
+    double closing_speed_mps{0.0};
+    double target_speed_xy_mps{0.0};
+    double relative_speed_xy_mps{0.0};
+    std::string arrival_mode{"none"};
 };
 
 std::string json_escape(const std::string& value) {
@@ -100,6 +107,16 @@ double clamp_abs(double value, double limit) {
     return std::clamp(value, -limit, limit);
 }
 
+Vec3 clamp_xy_norm(Vec3 velocity, double max_horizontal_mps) {
+    const double horizontal = norm_xy(velocity);
+    if (horizontal > max_horizontal_mps && max_horizontal_mps > 0.0) {
+        const double scale = max_horizontal_mps / horizontal;
+        velocity.x *= scale;
+        velocity.y *= scale;
+    }
+    return velocity;
+}
+
 bool parse_bool(const std::string& value, bool fallback) {
     if (value.empty()) {
         return fallback;
@@ -133,13 +150,7 @@ Vec3 velocity_toward_xy(const Vec3& from, const Vec3& to, double speed_mps) {
 }
 
 Vec3 clamp_velocity(const Vec3& desired, double max_horizontal_mps, double max_vertical_mps) {
-    Vec3 velocity = desired;
-    const double horizontal = norm_xy(velocity);
-    if (horizontal > max_horizontal_mps && max_horizontal_mps > 0.0) {
-        const double scale = max_horizontal_mps / horizontal;
-        velocity.x *= scale;
-        velocity.y *= scale;
-    }
+    Vec3 velocity = clamp_xy_norm(desired, max_horizontal_mps);
     velocity.z = clamp_abs(velocity.z, max_vertical_mps);
     return velocity;
 }
@@ -254,6 +265,8 @@ FollowGeometry follow_observation_geometry(
     FollowGeometry geometry;
     const Vec3 base_desired = desired_follow_position(ego, selection, behavior);
     geometry.desired_position = base_desired;
+    geometry.target_velocity = selection.velocity_local;
+    geometry.target_speed_xy_mps = norm_xy(selection.velocity_local);
 
     const Vec3 target_to_ego{
         ego.local_T_body.position.x - selection.position_local.x,
@@ -282,24 +295,51 @@ FollowGeometry follow_observation_geometry(
     return geometry;
 }
 
-Vec3 bounded_follow_velocity(
+Vec3 follow_arrival_velocity(
     const EgoState& ego,
     const TargetSelection& selection,
     const BehaviorSpec& behavior,
     const ObjectBehaviorMissionConfig& config,
-    FollowGeometry* geometry_out = nullptr) {
-    const FollowGeometry geometry = follow_observation_geometry(ego, selection, behavior, config);
-    if (geometry_out != nullptr) {
-        *geometry_out = geometry;
-    }
+    FollowGeometry& geometry) {
     const Vec3 error{
         geometry.desired_position.x - ego.local_T_body.position.x,
         geometry.desired_position.y - ego.local_T_body.position.y,
         geometry.desired_position.z - ego.local_T_body.position.z};
-    if (norm3(error) <= behavior.position_tolerance_m) {
-        return Vec3{0.0, 0.0, 0.0};
+    geometry.desired_error_xy_m = norm_xy(error);
+    geometry.target_velocity = selection.velocity_local;
+    geometry.target_speed_xy_mps = norm_xy(selection.velocity_local);
+
+    double closing_speed = 0.0;
+    if (geometry.desired_error_xy_m <= config.follow_arrival_hold_radius_m) {
+        geometry.arrival_mode = "hold";
+        closing_speed = 0.0;
+    } else if (geometry.desired_error_xy_m <= config.follow_arrival_slow_radius_m) {
+        geometry.arrival_mode = "slow";
+        closing_speed = std::min(
+            behavior.max_speed_mps,
+            std::max(0.0, config.follow_arrival_kp * geometry.desired_error_xy_m));
+    } else {
+        geometry.arrival_mode = "cruise";
+        closing_speed = behavior.max_speed_mps;
     }
-    return clamp_velocity(error, behavior.max_speed_mps, behavior.max_vertical_speed_mps);
+
+    if (closing_speed > 0.0 && geometry.desired_error_xy_m > 1e-6) {
+        geometry.closing_velocity.x = error.x / geometry.desired_error_xy_m * closing_speed;
+        geometry.closing_velocity.y = error.y / geometry.desired_error_xy_m * closing_speed;
+    }
+    geometry.closing_speed_mps = norm_xy(geometry.closing_velocity);
+
+    Vec3 velocity{
+        selection.velocity_local.x + geometry.closing_velocity.x,
+        selection.velocity_local.y + geometry.closing_velocity.y,
+        error.z,
+    };
+    velocity = clamp_velocity(velocity, behavior.max_speed_mps, behavior.max_vertical_speed_mps);
+    geometry.relative_speed_xy_mps = norm_xy(Vec3{
+        velocity.x - selection.velocity_local.x,
+        velocity.y - selection.velocity_local.y,
+        0.0});
+    return velocity;
 }
 
 Vec3 behavior_velocity(
@@ -309,7 +349,12 @@ Vec3 behavior_velocity(
     const ObjectBehaviorMissionConfig& config,
     FollowGeometry* geometry_out = nullptr) {
     if (behavior.type == BehaviorType::Follow) {
-        return bounded_follow_velocity(ego, selection, behavior, config, geometry_out);
+        FollowGeometry geometry = follow_observation_geometry(ego, selection, behavior, config);
+        const Vec3 velocity = follow_arrival_velocity(ego, selection, behavior, config, geometry);
+        if (geometry_out != nullptr) {
+            *geometry_out = geometry;
+        }
+        return velocity;
     }
     if (geometry_out != nullptr) {
         geometry_out->desired_position = ego.local_T_body.position;
@@ -380,6 +425,15 @@ ObjectBehaviorMissionConfig load_object_behavior_mission_config(const MissionOpt
     config.follow_max_elevation_angle_deg = std::stod(options.get_or(
         "object_behavior_follow_max_elevation_angle_deg",
         "35.0"));
+    config.follow_arrival_slow_radius_m = std::stod(options.get_or(
+        "object_behavior_follow_arrival_slow_radius_m",
+        "8.0"));
+    config.follow_arrival_hold_radius_m = std::stod(options.get_or(
+        "object_behavior_follow_arrival_hold_radius_m",
+        "2.0"));
+    config.follow_arrival_kp = std::stod(options.get_or(
+        "object_behavior_follow_arrival_kp",
+        "0.35"));
     const auto completion_after_override = options.get_or("object_behavior_completion_after_s", "");
     if (!completion_after_override.empty()) {
         config.behavior_spec.completion.after_s = std::stod(completion_after_override);
@@ -476,6 +530,10 @@ std::string behavior_tick_event(
         ",\"vx\":" + std::to_string(velocity.x) +
         ",\"vy\":" + std::to_string(velocity.y) +
         ",\"vz\":" + std::to_string(velocity.z) +
+        ",\"arrival_mode\":" + q(geometry.arrival_mode) +
+        ",\"desired_error_xy_m\":" + std::to_string(geometry.desired_error_xy_m) +
+        ",\"target_speed_xy_mps\":" + std::to_string(geometry.target_speed_xy_mps) +
+        ",\"relative_speed_xy_mps\":" + std::to_string(geometry.relative_speed_xy_mps) +
         ",\"follow_bearing_source\":" + q(geometry.bearing_source) +
         ",\"follow_bearing_x\":" + std::to_string(geometry.bearing_x) +
         ",\"follow_bearing_y\":" + std::to_string(geometry.bearing_y) +
@@ -487,6 +545,7 @@ std::string behavior_tick_event(
 
 std::string behavior_debug_event(
     int execute_tick,
+    int debug_level,
     const EgoState& ego,
     const TargetSelection& selection,
     const Vec3& raw_velocity,
@@ -496,41 +555,55 @@ std::string behavior_debug_event(
     double yaw_min_speed_mps) {
     const double velocity_xy = norm_xy(final_velocity);
     const double yaw_deg = command.yaw_valid ? rad_to_deg(command.yaw_rad) : 0.0;
-    const double yaw_delta_deg = command.yaw_valid ? rad_to_deg(command.yaw_rad - ego.local_T_body.rotation_rpy.z) : 0.0;
-    return "\"event\":\"behavior_debug\""
+    std::string event = "\"event\":\"behavior_debug\""
+        ",\"debug_level\":" + std::to_string(debug_level) +
         ",\"execute_tick\":" + std::to_string(execute_tick) +
-        ",\"agent_id\":" + q(selection.agent_id.value) +
         ",\"source_track_id\":" + q(selection.source_track_id.value) +
-        ",\"ego_x\":" + std::to_string(ego.local_T_body.position.x) +
-        ",\"ego_y\":" + std::to_string(ego.local_T_body.position.y) +
-        ",\"ego_z\":" + std::to_string(ego.local_T_body.position.z) +
-        ",\"ego_yaw_rad\":" + std::to_string(ego.local_T_body.rotation_rpy.z) +
-        ",\"ego_height_m\":" + std::to_string(ego.height_m) +
-        ",\"sel_x\":" + std::to_string(selection.position_local.x) +
-        ",\"sel_y\":" + std::to_string(selection.position_local.y) +
-        ",\"sel_z\":" + std::to_string(selection.position_local.z) +
-        ",\"desired_x\":" + std::to_string(geometry.desired_position.x) +
-        ",\"desired_y\":" + std::to_string(geometry.desired_position.y) +
-        ",\"desired_z\":" + std::to_string(geometry.desired_position.z) +
-        ",\"raw_vx\":" + std::to_string(raw_velocity.x) +
-        ",\"raw_vy\":" + std::to_string(raw_velocity.y) +
-        ",\"raw_vz\":" + std::to_string(raw_velocity.z) +
-        ",\"vx\":" + std::to_string(final_velocity.x) +
-        ",\"vy\":" + std::to_string(final_velocity.y) +
-        ",\"vz\":" + std::to_string(final_velocity.z) +
+        ",\"arrival_mode\":" + q(geometry.arrival_mode) +
+        ",\"desired_error_xy_m\":" + std::to_string(geometry.desired_error_xy_m) +
+        ",\"target_speed_xy_mps\":" + std::to_string(geometry.target_speed_xy_mps) +
+        ",\"closing_speed_mps\":" + std::to_string(geometry.closing_speed_mps) +
+        ",\"relative_speed_xy_mps\":" + std::to_string(geometry.relative_speed_xy_mps) +
         ",\"velocity_xy_mps\":" + std::to_string(velocity_xy) +
         ",\"yaw_valid\":" + std::string(command.yaw_valid ? "true" : "false") +
         ",\"yaw_source\":" + q(yaw_source_for(command, yaw_min_speed_mps)) +
-        ",\"yaw_rad\":" + std::to_string(command.yaw_valid ? command.yaw_rad : 0.0) +
         ",\"yaw_deg\":" + std::to_string(yaw_deg) +
-        ",\"yaw_delta_from_ego_deg\":" + std::to_string(yaw_delta_deg) +
         ",\"follow_bearing_source\":" + q(geometry.bearing_source) +
-        ",\"follow_bearing_x\":" + std::to_string(geometry.bearing_x) +
-        ",\"follow_bearing_y\":" + std::to_string(geometry.bearing_y) +
-        ",\"follow_dh_m\":" + std::to_string(geometry.dh_m) +
         ",\"follow_required_r_m\":" + std::to_string(geometry.required_r_m) +
-        ",\"follow_actual_r_m\":" + std::to_string(geometry.actual_r_m) +
-        ",\"follow_elevation_deg\":" + std::to_string(geometry.elevation_deg);
+        ",\"follow_actual_r_m\":" + std::to_string(geometry.actual_r_m);
+
+    if (debug_level >= 2) {
+        const double yaw_delta_deg = command.yaw_valid ? rad_to_deg(command.yaw_rad - ego.local_T_body.rotation_rpy.z) : 0.0;
+        event += ",\"agent_id\":" + q(selection.agent_id.value) +
+            ",\"ego_x\":" + std::to_string(ego.local_T_body.position.x) +
+            ",\"ego_y\":" + std::to_string(ego.local_T_body.position.y) +
+            ",\"ego_z\":" + std::to_string(ego.local_T_body.position.z) +
+            ",\"ego_yaw_rad\":" + std::to_string(ego.local_T_body.rotation_rpy.z) +
+            ",\"ego_height_m\":" + std::to_string(ego.height_m) +
+            ",\"sel_x\":" + std::to_string(selection.position_local.x) +
+            ",\"sel_y\":" + std::to_string(selection.position_local.y) +
+            ",\"sel_z\":" + std::to_string(selection.position_local.z) +
+            ",\"desired_x\":" + std::to_string(geometry.desired_position.x) +
+            ",\"desired_y\":" + std::to_string(geometry.desired_position.y) +
+            ",\"desired_z\":" + std::to_string(geometry.desired_position.z) +
+            ",\"target_vx\":" + std::to_string(geometry.target_velocity.x) +
+            ",\"target_vy\":" + std::to_string(geometry.target_velocity.y) +
+            ",\"closing_vx\":" + std::to_string(geometry.closing_velocity.x) +
+            ",\"closing_vy\":" + std::to_string(geometry.closing_velocity.y) +
+            ",\"raw_vx\":" + std::to_string(raw_velocity.x) +
+            ",\"raw_vy\":" + std::to_string(raw_velocity.y) +
+            ",\"raw_vz\":" + std::to_string(raw_velocity.z) +
+            ",\"vx\":" + std::to_string(final_velocity.x) +
+            ",\"vy\":" + std::to_string(final_velocity.y) +
+            ",\"vz\":" + std::to_string(final_velocity.z) +
+            ",\"yaw_rad\":" + std::to_string(command.yaw_valid ? command.yaw_rad : 0.0) +
+            ",\"yaw_delta_from_ego_deg\":" + std::to_string(yaw_delta_deg) +
+            ",\"follow_bearing_x\":" + std::to_string(geometry.bearing_x) +
+            ",\"follow_bearing_y\":" + std::to_string(geometry.bearing_y) +
+            ",\"follow_dh_m\":" + std::to_string(geometry.dh_m) +
+            ",\"follow_elevation_deg\":" + std::to_string(geometry.elevation_deg);
+    }
+    return event;
 }
 
 bool ObjectBehaviorMissionController::completion_elapsed(TimePoint now) const {
@@ -696,6 +769,7 @@ MissionTickOutput ObjectBehaviorMissionController::tick(const MissionTickInput& 
                     if (config_.debug_every_n_ticks > 0 && execute_tick_count_ % config_.debug_every_n_ticks == 0) {
                         output.events.push_back(behavior_debug_event(
                             execute_tick_count_,
+                            config_.debug_level,
                             ego,
                             selection,
                             raw_velocity,

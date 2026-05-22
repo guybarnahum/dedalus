@@ -194,7 +194,9 @@ Default: apply changes directly to main.
 Do not create branches or PRs unless explicitly requested.
 Do not leave completed work sitting on a feature branch.
 Prefer GitHub connector file updates directly on main when available.
-If connector patching fails or is ambiguous, provide an exact manual patch.
+If connector patching fails, is ambiguous, is blocked, or would require a risky broad rewrite, stop using the connector for that code change.
+Generate an exact manual patch and ask the user to apply it locally.
+Do not keep retrying increasingly complex connector paths after a connector failure.
 ```
 
 Validation after code patches:
@@ -742,6 +744,7 @@ docs/world_model_reprojection_validation_plan.md reprojection and world-model ev
 docs/mission_scenario_runner.md             scenario/campaign harness
 docs/mission_pipeline_current_state.md       mission loop architecture
 docs/core_stack_current_state.md             broader core-stack status
+docs/llm_connector_patch_policy.md          connector/manual patch safety policy
 WHITEPAPER.md                                architectural rationale
 HANDOFF.md                                   handoff prompt template
 LLM.back.md                                  historical context only
