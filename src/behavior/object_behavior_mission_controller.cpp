@@ -853,32 +853,49 @@ void ObjectBehaviorMissionController::begin_abort_recovery(
 
 bool ObjectBehaviorMissionController::update_circle_orbit_progress(
     const BehaviorSpec& behavior,
-    const FollowGeometry& geometry) {
-    if (behavior.type != BehaviorType::Circle || behavior.orbit_count <= 0.0 || geometry.circle_phase != "circling") {
-        circle_orbit_tracking_ = false;
-        return false;
-    }
-    if (!circle_orbit_tracking_) {
-        circle_orbit_tracking_ = true;
-        circle_previous_angle_rad_ = geometry.orbit_angle_rad;
+    bool circling,
+    double orbit_angle_rad) {
+    if (behavior.type != BehaviorType::Circle || behavior.orbit_count <= 0.0) {
         return false;
     }
 
-    double delta = geometry.orbit_angle_rad - circle_previous_angle_rad_;
+    if (!circling) {
+        circle_orbit_started_ = false;
+        circle_last_angle_valid_ = false;
+        return false;
+    }
+
+    if (!circle_orbit_started_) {
+        circle_orbit_started_ = true;
+        circle_last_angle_valid_ = true;
+        circle_last_angle_rad_ = orbit_angle_rad;
+        circle_completed_orbits_ = 0.0;
+        return false;
+    }
+
+    if (!circle_last_angle_valid_) {
+        circle_last_angle_valid_ = true;
+        circle_last_angle_rad_ = orbit_angle_rad;
+        return false;
+    }
+
+    double delta = orbit_angle_rad - circle_last_angle_rad_;
     while (delta > kPi) {
         delta -= 2.0 * kPi;
     }
     while (delta < -kPi) {
         delta += 2.0 * kPi;
     }
-    circle_previous_angle_rad_ = geometry.orbit_angle_rad;
 
-    const double progress_delta = circle_direction_sign(behavior.direction) * delta;
-    if (progress_delta > 0.0) {
-        circle_completed_orbits_ += progress_delta / (2.0 * kPi);
+    const double directed_delta = circle_direction_sign(behavior.direction) * delta;
+    if (directed_delta > 0.0) {
+        circle_completed_orbits_ += directed_delta / (2.0 * kPi);
     }
+
+    circle_last_angle_rad_ = orbit_angle_rad;
     return circle_completed_orbits_ >= behavior.orbit_count;
 }
+
 
 void ObjectBehaviorMissionController::reset_behavior_run(TimePoint now) {
     behavior_start_ = now;
@@ -995,7 +1012,7 @@ MissionTickOutput ObjectBehaviorMissionController::tick(const MissionTickInput& 
                         config_.behavior_spec.behavior,
                         config_,
                         &geometry);
-                    orbit_count_complete = update_circle_orbit_progress(config_.behavior_spec.behavior, geometry);
+                    orbit_count_complete = update_circle_orbit_progress(config_.behavior_spec.behavior, geometry.circle_phase == "circling", geometry.orbit_angle_rad);
                     geometry.circle_completed_orbits = circle_completed_orbits_;
                     geometry.orbit_count_target = config_.behavior_spec.behavior.orbit_count;
                 }

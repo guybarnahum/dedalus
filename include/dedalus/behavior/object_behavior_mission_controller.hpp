@@ -62,7 +62,7 @@ private:
     [[nodiscard]] bool completion_elapsed(TimePoint now) const;
     [[nodiscard]] Vec3 go_home_velocity(const EgoState& ego) const;
     void begin_abort_recovery(TimePoint now, double height_m, const std::string& reason);
-    bool update_circle_orbit_progress(const BehaviorSpec& behavior, const struct FollowGeometry& geometry);
+    bool update_circle_orbit_progress(const BehaviorSpec& behavior, bool circling, double orbit_angle_rad);
     void reset_behavior_run(TimePoint now);
 
     ObjectBehaviorMissionConfig config_;
