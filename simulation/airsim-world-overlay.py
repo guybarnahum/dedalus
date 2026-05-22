@@ -51,6 +51,7 @@ class RuntimeEventStreamClient:
         self.latest_world_snapshot: dict[str, Any] | None = None
         self.latest_world_seq: int | None = None
         self.latest_selected_target: dict[str, Any] | None = None
+        self.latest_mission_event: dict[str, Any] | None = None
         self.latest_mission_seq: int | None = None
         self.last_message_s: float | None = None
 
@@ -134,9 +135,10 @@ class RuntimeEventStreamClient:
         elif message_type == "mission_event":
             event = message.get("mission_event")
             if isinstance(event, dict):
+                self.latest_mission_event = event
+                self.latest_mission_seq = seq_value
                 if event.get("event") == "target_selected":
                     self.latest_selected_target = event
-                self.latest_mission_seq = seq_value
                 self.last_message_s = now
 
 
@@ -459,7 +461,53 @@ def format_osd_line(stats: dict[str, Any]) -> str:
     return f"h={h}m  vz={vz}m/s  vxy={vxy}m/s  hdg={hdg}deg"
 
 
-def format_osd_state_line(stats: dict[str, Any]) -> str:
+def fixed_text(value: Any, width: int) -> str:
+    text = "-" if value is None else str(value)
+    if len(text) > width:
+        return text[: max(0, width - 1)] + "~"
+    return f"{text:<{width}}"
+
+
+def format_mission_state_line(mission_event: dict[str, Any] | None) -> str | None:
+    if not isinstance(mission_event, dict):
+        return None
+
+    event = mission_event.get("event")
+    state = (
+        mission_event.get("state")
+        or mission_event.get("to")
+        or mission_event.get("from")
+    )
+    command = mission_event.get("command")
+    status = mission_event.get("status")
+
+    if event == "state_transition":
+        state = mission_event.get("to") or state
+    elif event == "runtime_stop":
+        status = "settled" if mission_event.get("terminal_settled") is True else "stopped"
+    elif event == "command_result":
+        ok = mission_event.get("success")
+        if ok is True:
+            status = status or "ok"
+        elif ok is False:
+            status = status or "failed"
+
+    if event is None and state is None and command is None and status is None:
+        return None
+
+    return (
+        f"mission={fixed_text(state, 10)}  "
+        f"event={fixed_text(event, 18)}  "
+        f"cmd={fixed_text(command, 8)}  "
+        f"status={fixed_text(status, 28)}"
+    )
+
+
+def format_osd_state_line(stats: dict[str, Any], mission_event: dict[str, Any] | None) -> str:
+    mission_line = format_mission_state_line(mission_event)
+    if mission_line is not None:
+        return mission_line
+
     vz = stats.get("vz_mps")
     vxy = stats.get("vxy_mps")
     if vz is None or vxy is None:
@@ -531,7 +579,12 @@ def draw_ego_velocity_arrow(client: Any, stats: dict[str, Any], args: argparse.N
     plot_line_segments(client, points, args, duration)
 
 
-def maybe_draw_osd(client: Any, snapshot: dict[str, Any] | None, args: argparse.Namespace, state: dict[str, Any]) -> None:
+def maybe_draw_osd(
+    client: Any,
+    snapshot: dict[str, Any] | None,
+    mission_event: dict[str, Any] | None,
+    args: argparse.Namespace,
+    state: dict[str, Any]) -> None:
     if not args.osd:
         return
     stats = ego_motion_stats(snapshot, state)
@@ -539,7 +592,7 @@ def maybe_draw_osd(client: Any, snapshot: dict[str, Any] | None, args: argparse.
         return
     if args.dry_run:
         print(f"OSD {args.osd_name}: {format_osd_line(stats)}")
-        print(f"OSD {args.osd_state_name}: {format_osd_state_line(stats)}")
+        print(f"OSD {args.osd_state_name}: {format_osd_state_line(stats, mission_event)}")
         return
     if client is None:
         return
@@ -550,7 +603,7 @@ def maybe_draw_osd(client: Any, snapshot: dict[str, Any] | None, args: argparse.
     if now - last_osd_s >= period_s:
         state["last_osd_s"] = now
         client.simPrintLogMessage(args.osd_name, format_osd_line(stats), severity=args.osd_severity)
-        client.simPrintLogMessage(args.osd_state_name, format_osd_state_line(stats), severity=args.osd_severity)
+        client.simPrintLogMessage(args.osd_state_name, format_osd_state_line(stats, mission_event), severity=args.osd_severity)
 
     draw_ego_velocity_arrow(client, stats, args)
 
@@ -684,7 +737,7 @@ def main() -> int:
         draw_agents(client, dynamic_planned, args)
         draw_agents(client, world_agents, args)
         draw_reference_markers(client, stream.latest_world_snapshot, args)
-        maybe_draw_osd(client, stream.latest_world_snapshot, args, osd_state)
+        maybe_draw_osd(client, stream.latest_world_snapshot, stream.latest_mission_event, args, osd_state)
 
         report = build_debug_report(
             stream.latest_ghost_detections,
