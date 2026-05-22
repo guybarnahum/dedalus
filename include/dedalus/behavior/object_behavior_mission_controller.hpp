@@ -22,6 +22,9 @@ struct ObjectBehaviorMissionConfig {
     double go_home_velocity_mps{1.0};
     double yaw_offset_rad{0.0};
     ObjectBehaviorAltitudePolicy altitude_policy{ObjectBehaviorAltitudePolicy::TargetRelative};
+    bool follow_observation_geometry_enabled{false};
+    double follow_min_standoff_m{8.0};
+    double follow_max_elevation_angle_deg{35.0};
     double arm_retry_interval_s{1.0};
     double arm_timeout_s{10.0};
     double arm_dispatch_fallback_s{0.0};
