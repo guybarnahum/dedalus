@@ -461,52 +461,77 @@ def format_osd_line(stats: dict[str, Any]) -> str:
     return f"h={h}m  vz={vz}m/s  vxy={vxy}m/s  hdg={hdg}deg"
 
 
-def fixed_text(value: Any, width: int) -> str:
-    text = "-" if value is None else str(value)
+def short_text(value: Any, width: int) -> str:
+    text = "Unknown" if value is None else str(value)
     if len(text) > width:
         return text[: max(0, width - 1)] + "~"
     return f"{text:<{width}}"
 
 
-def format_mission_state_line(mission_event: dict[str, Any] | None) -> str | None:
+def compact_status(value: Any) -> str:
+    text = "" if value is None else str(value)
+    lowered = text.lower()
+    if not text:
+        return "-"
+    if any(token in lowered for token in ("fail", "error", "exception", "timeout", "abort")):
+        return "failed"
+    if "arm" in lowered:
+        return "arming"
+    if "takeoff" in lowered or "climb" in lowered:
+        return "climbing"
+    if "land" in lowered:
+        return "landing"
+    if "home" in lowered:
+        return "returning"
+    if "complete" in lowered:
+        return "done"
+    return text
+
+
+def fallback_display_state(mission_event: dict[str, Any] | None) -> tuple[str, str] | None:
     if not isinstance(mission_event, dict):
         return None
-
     event = mission_event.get("event")
-    state = (
-        mission_event.get("state")
-        or mission_event.get("to")
-        or mission_event.get("from")
-    )
+    state = mission_event.get("state") or mission_event.get("to") or mission_event.get("from")
     command = mission_event.get("command")
     status = mission_event.get("status")
 
-    if event == "state_transition":
-        state = mission_event.get("to") or state
-    elif event == "runtime_stop":
-        status = "settled" if mission_event.get("terminal_settled") is True else "stopped"
-    elif event == "command_result":
-        ok = mission_event.get("success")
-        if ok is True:
-            status = status or "ok"
-        elif ok is False:
-            status = status or "failed"
-
-    if event is None and state is None and command is None and status is None:
-        return None
-
-    return (
-        f"mission={fixed_text(state, 10)}  "
-        f"event={fixed_text(event, 18)}  "
-        f"cmd={fixed_text(command, 8)}  "
-        f"status={fixed_text(status, 28)}"
-    )
+    if event == "runtime_stop":
+        settled = mission_event.get("terminal_settled")
+        return ("Settled", "done") if settled is True else ("Failed", "stopped")
+    if event == "command_exception":
+        return "Failed", str(command or "command")
+    if event == "command_result" and mission_event.get("success") is False:
+        return "Failed", str(command or "command")
+    if command in {"Arm", "Takeoff", "Land", "Disarm"}:
+        return str(command), "ok" if event == "command_result" and mission_event.get("success") is True else "send"
+    if state == "Prepare":
+        return "Arm", compact_status(status)
+    if state == "Takeoff":
+        return "Takeoff", compact_status(status)
+    if state == "ExecuteMission":
+        return "Execute", compact_status(status)
+    if state == "GoHome":
+        return "GoHome", compact_status(status)
+    if state == "Land":
+        return "Land", compact_status(status)
+    if state == "Complete":
+        return "Settled", compact_status(status)
+    if state == "Abort":
+        return "Failed", compact_status(status)
+    return "Unknown", compact_status(status)
 
 
 def format_osd_state_line(stats: dict[str, Any], mission_event: dict[str, Any] | None) -> str:
-    mission_line = format_mission_state_line(mission_event)
-    if mission_line is not None:
-        return mission_line
+    if isinstance(mission_event, dict):
+        primary = mission_event.get("display_state")
+        detail = mission_event.get("display_detail")
+        if primary is None:
+            fallback = fallback_display_state(mission_event)
+            if fallback is not None:
+                primary, detail = fallback
+        if primary is not None:
+            return f"{short_text(primary, 8)} {short_text(detail or '', 12)}"
 
     vz = stats.get("vz_mps")
     vxy = stats.get("vxy_mps")

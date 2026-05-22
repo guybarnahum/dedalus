@@ -45,6 +45,81 @@ bool output_is_terminal_settled(const MissionTickOutput& output) {
            (output.state == MissionLifecycleState::Abort && output.status == "abort");
 }
 
+std::string display_primary_for_state(MissionLifecycleState state) {
+    switch (state) {
+        case MissionLifecycleState::Prepare:
+            return "Arm";
+        case MissionLifecycleState::Takeoff:
+            return "Takeoff";
+        case MissionLifecycleState::ExecuteMission:
+            return "Execute";
+        case MissionLifecycleState::GoHome:
+            return "GoHome";
+        case MissionLifecycleState::Land:
+            return "Land";
+        case MissionLifecycleState::Complete:
+            return "Settled";
+        case MissionLifecycleState::Abort:
+            return "Failed";
+        case MissionLifecycleState::Idle:
+        default:
+            return "Unknown";
+    }
+}
+
+std::string display_primary_for_command(FlightCommandKind command) {
+    switch (command) {
+        case FlightCommandKind::Arm:
+            return "Arm";
+        case FlightCommandKind::Takeoff:
+            return "Takeoff";
+        case FlightCommandKind::Land:
+            return "Land";
+        case FlightCommandKind::Disarm:
+            return "Disarm";
+        case FlightCommandKind::Velocity:
+            return "Execute";
+        default:
+            return "Unknown";
+    }
+}
+
+std::string compact_display_detail(const std::string& status) {
+    if (status.empty()) {
+        return "-";
+    }
+    if (status.find("failed") != std::string::npos ||
+        status.find("error") != std::string::npos ||
+        status.find("exception") != std::string::npos ||
+        status.find("timeout") != std::string::npos ||
+        status.find("abort") != std::string::npos) {
+        return "failed";
+    }
+    if (status.find("arm") != std::string::npos) {
+        return "arming";
+    }
+    if (status.find("takeoff") != std::string::npos || status.find("climb") != std::string::npos) {
+        return "climbing";
+    }
+    if (status.find("land") != std::string::npos) {
+        return "landing";
+    }
+    if (status.find("home") != std::string::npos) {
+        return "returning";
+    }
+    if (status.find("complete") != std::string::npos) {
+        return "done";
+    }
+    if (status == "ok") {
+        return "ok";
+    }
+    return status.size() > 12 ? status.substr(0, 11) + "~" : status;
+}
+
+std::string display_fields(const std::string& primary, const std::string& detail) {
+    return ",\"display_state\":" + q(primary) + ",\"display_detail\":" + q(detail);
+}
+
 }  // namespace
 
 MissionRuntime::MissionRuntime(
@@ -87,7 +162,8 @@ void MissionRuntime::start() {
     if (!running_.compare_exchange_strong(expected, true)) {
         return;
     }
-    write_event("\"event\":\"runtime_start\",\"tick_hz\":" + std::to_string(config_.tick_hz));
+    write_event("\"event\":\"runtime_start\",\"tick_hz\":" + std::to_string(config_.tick_hz) +
+                display_fields("Unknown", "start"));
     if (config_.verbosity >= 1) {
         std::cerr << "dedalus_mission: starting async loop @ " << config_.tick_hz << " Hz\n";
     }
@@ -103,7 +179,8 @@ void MissionRuntime::stop() {
         write_event(
             "\"event\":\"runtime_stop\",\"tick_count\":" + std::to_string(tick_count_) +
             ",\"state\":" + q(to_string(last_state_)) +
-            ",\"terminal_settled\":" + (terminal_settled_.load() ? std::string{"true"} : std::string{"false"}));
+            ",\"terminal_settled\":" + (terminal_settled_.load() ? std::string{"true"} : std::string{"false"}) +
+            display_fields(terminal_settled_.load() ? "Settled" : "Failed", terminal_settled_.load() ? "done" : "stopped"));
     }
     if (config_.verbosity >= 1) {
         std::cerr << "dedalus_mission: stopped after " << tick_count_ << " tick(s)\n";
@@ -114,7 +191,8 @@ void MissionRuntime::request_finish() {
     finish_requested_.store(true);
     write_event(
         "\"event\":\"finish_requested\",\"tick\":" + std::to_string(tick_count_) +
-        ",\"state\":" + q(to_string(last_state_)));
+        ",\"state\":" + q(to_string(last_state_)) +
+        display_fields(display_primary_for_state(last_state_), "finish"));
     if (config_.verbosity >= 1) {
         std::cerr << "dedalus_mission: finish requested\n";
     }
@@ -156,7 +234,8 @@ bool MissionRuntime::tick_once() {
             ",\"status\":" + q(output.status) +
             ",\"timestamp_ns\":" + std::to_string(input.now.timestamp_ns) +
             ",\"ego_height_m\":" + std::to_string(input.snapshot.ego.height_m) +
-            ",\"finish_requested\":" + (input.finish_requested ? std::string{"true"} : std::string{"false"}));
+            ",\"finish_requested\":" + (input.finish_requested ? std::string{"true"} : std::string{"false"}) +
+            display_fields(display_primary_for_state(output.state), compact_display_detail(output.status)));
     }
     for (const auto& event_fields : output.events) {
         write_event("\"tick\":" + std::to_string(tick_count_) + ",\"state\":" + q(to_string(output.state)) + "," + event_fields);
@@ -188,7 +267,8 @@ bool MissionRuntime::tick_once() {
             ",\"vx\":" + std::to_string(command.velocity_local_mps.x) +
             ",\"vy\":" + std::to_string(command.velocity_local_mps.y) +
             ",\"vz\":" + std::to_string(command.velocity_local_mps.z) +
-            ",\"yaw_rate\":" + std::to_string(command.yaw_rate_radps));
+            ",\"yaw_rate\":" + std::to_string(command.yaw_rate_radps) +
+            display_fields(display_primary_for_command(command.kind), "send"));
         if (config_.verbosity >= 2) {
             const auto& v = output.command->velocity_local_mps;
             std::cerr << "dedalus_mission: send_command kind=" << to_string(output.command->kind)
@@ -218,7 +298,8 @@ bool MissionRuntime::tick_once() {
                 "\"event\":\"command_exception\",\"tick\":" + std::to_string(tick_count_) +
                 ",\"state\":" + q(to_string(output.state)) +
                 ",\"command\":" + q(to_string(output.command->kind)) +
-                ",\"error\":" + q(ex.what()));
+                ",\"error\":" + q(ex.what()) +
+                display_fields("Failed", display_primary_for_command(output.command->kind)));
             std::cerr << "dedalus_mission: command_exception kind=" << to_string(output.command->kind)
                       << " status=" << ex.what() << "\n";
         }
@@ -227,7 +308,9 @@ bool MissionRuntime::tick_once() {
             ",\"state\":" + q(to_string(output.state)) +
             ",\"command\":" + q(to_string(last_command_result_->kind)) +
             ",\"success\":" + (last_command_result_->success ? std::string{"true"} : std::string{"false"}) +
-            ",\"status\":" + q(last_command_result_->status));
+            ",\"status\":" + q(last_command_result_->status) +
+            display_fields(last_command_result_->success ? display_primary_for_command(last_command_result_->kind) : "Failed",
+                           last_command_result_->success ? "ok" : display_primary_for_command(last_command_result_->kind)));
         if (config_.verbosity >= 2) {
             std::cerr << "dedalus_mission: command_result kind=" << to_string(last_command_result_->kind)
                       << " success=" << (last_command_result_->success ? "true" : "false")
