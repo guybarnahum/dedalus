@@ -170,8 +170,6 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--osd-arrow-z-lift-m", type=float, default=0.75)
     parser.add_argument("--osd-arrow-duration-s", type=float, default=1.25)
     parser.add_argument("--osd-arrow-thickness", type=float, default=3.0)
-    parser.add_argument("--osd-arrow-head-length-m", type=float, default=0.7)
-    parser.add_argument("--osd-arrow-head-angle-deg", type=float, default=30.0)
     parser.add_argument("--wait-for-airsim-s", type=float, default=0.0, help="0 means wait until Ctrl-C.")
     parser.add_argument("--wait-for-stream-s", type=float, default=0.0, help="0 means wait until Ctrl-C.")
     parser.add_argument("--hide-planned", action="store_true")
@@ -221,7 +219,7 @@ def distance_xy(a: Any, b: Any) -> float:
 
 
 def marker_duration(args: argparse.Namespace) -> float:
-    return 0.0 if args.persistent else max(1.0, 2.5 / max(args.rate_hz, 0.1))
+    return 0.0 if args.persistent else max(0.35, 1.1 / max(args.rate_hz, 0.1))
 
 
 def planned_agents_from_event(event: dict[str, Any] | None) -> list[dict[str, Any]]:
@@ -395,8 +393,14 @@ def ego_motion_stats(snapshot: dict[str, Any] | None, state: dict[str, Any]) -> 
 
     previous_position = state.get("last_ego_position")
     previous_timestamp_s = state.get("last_ego_timestamp_s")
-    state["last_ego_position"] = position
-    state["last_ego_timestamp_s"] = timestamp_s
+
+    # The overlay may render several times for the same world_snapshot. Do not
+    # treat a repeated timestamp as a new motion sample; return the last valid
+    # stats instead. Otherwise dt=0 produces alternating real values / n/a.
+    if previous_timestamp_s is not None and timestamp_s <= float(previous_timestamp_s):
+        cached = state.get("last_ego_motion_stats")
+        if isinstance(cached, dict):
+            return cached
 
     stats: dict[str, Any] = {
         "position": position,
@@ -408,10 +412,14 @@ def ego_motion_stats(snapshot: dict[str, Any] | None, state: dict[str, Any]) -> 
     }
 
     if previous_position is None or previous_timestamp_s is None:
+        state["last_ego_position"] = position
+        state["last_ego_timestamp_s"] = timestamp_s
+        state["last_ego_motion_stats"] = stats
         return stats
     dt = timestamp_s - float(previous_timestamp_s)
     if dt <= 1.0e-6:
-        return stats
+        cached = state.get("last_ego_motion_stats")
+        return cached if isinstance(cached, dict) else stats
 
     velocity = [(position[index] - previous_position[index]) / dt for index in range(3)]
     vxy_mps = math.hypot(velocity[0], velocity[1])
@@ -424,6 +432,9 @@ def ego_motion_stats(snapshot: dict[str, Any] | None, state: dict[str, Any]) -> 
             "heading_deg": heading_deg,
         }
     )
+    state["last_ego_position"] = position
+    state["last_ego_timestamp_s"] = timestamp_s
+    state["last_ego_motion_stats"] = stats
     return stats
 
 
@@ -437,11 +448,11 @@ def fixed_osd_value(value: Any, fmt: str, blank: str) -> str:
 
 
 def format_osd_line(stats: dict[str, Any]) -> str:
-    h = fixed_osd_value(stats.get("height_m"), "5.1f", "  n/a")
-    vz = fixed_osd_value(stats.get("vz_mps"), "+4.1f", " n/a")
-    vxy = fixed_osd_value(stats.get("vxy_mps"), "4.1f", " n/a")
-    hdg = fixed_osd_value(stats.get("heading_deg"), "6.1f", "   n/a")
-    return f"h={h}m  vz={vz}m/s  vxy={vxy}m/s  hdg={hdg}°"
+    h = fixed_osd_value(stats.get("height_m"), "7.1f", "    n/a")
+    vz = fixed_osd_value(stats.get("vz_mps"), "+7.1f", "    n/a")
+    vxy = fixed_osd_value(stats.get("vxy_mps"), "6.1f", "   n/a")
+    hdg = fixed_osd_value(stats.get("heading_deg"), "7.1f", "    n/a")
+    return f"h={h}m  vz={vz}m/s  vxy={vxy}m/s  hdg={hdg}deg"
 
 
 def format_osd_state_line(stats: dict[str, Any]) -> str:
@@ -494,20 +505,26 @@ def draw_ego_velocity_arrow(client: Any, stats: dict[str, Any], args: argparse.N
     )
     duration = max(0.1, args.osd_arrow_duration_s)
 
-    heading = math.atan2(velocity[1], velocity[0])
-    head_len = max(0.0, args.osd_arrow_head_length_m)
-    head_angle = math.radians(max(0.0, args.osd_arrow_head_angle_deg))
-    left = airsim.Vector3r(
-        end.x_val - head_len * math.cos(heading - head_angle),
-        end.y_val - head_len * math.sin(heading - head_angle),
-        z,
-    )
-    right = airsim.Vector3r(
-        end.x_val - head_len * math.cos(heading + head_angle),
-        end.y_val - head_len * math.sin(heading + head_angle),
-        z,
-    )
-    plot_line_segments(client, [start, end, end, left, end, right], args, duration)
+    points = [start, end]
+    # Small fixed arrowhead. Keep it internal: this is visual polish, not behavior config.
+    # Suppress the head at low speeds so short arrows do not look like a noisy triangle.
+    if float(vxy_mps) >= 0.5:
+        heading = math.atan2(velocity[1], velocity[0])
+        head_len = 0.25
+        head_angle = math.radians(25.0)
+        left = airsim.Vector3r(
+            end.x_val - head_len * math.cos(heading - head_angle),
+            end.y_val - head_len * math.sin(heading - head_angle),
+            z,
+        )
+        right = airsim.Vector3r(
+            end.x_val - head_len * math.cos(heading + head_angle),
+            end.y_val - head_len * math.sin(heading + head_angle),
+            z,
+        )
+        points.extend([end, left, end, right])
+
+    plot_line_segments(client, points, args, duration)
 
 
 def maybe_draw_osd(client: Any, snapshot: dict[str, Any] | None, args: argparse.Namespace, state: dict[str, Any]) -> None:
