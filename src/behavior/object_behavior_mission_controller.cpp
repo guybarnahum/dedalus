@@ -14,7 +14,6 @@ constexpr double kMinArrivedDistanceM = 0.5;
 constexpr double kLandHeightM = 0.25;
 constexpr double kTakeoffVelocityAssistHeightM = 0.5;
 constexpr double kHeadingEpsilonMps = 0.05;
-constexpr double kSafeHeightHoldBandM = 1.0;
 constexpr double kSafeHeightCorrectionGain = 0.5;
 constexpr double kMinSafeHeightClimbMps = 0.35;
 
@@ -79,6 +78,16 @@ double clamp_abs(double value, double limit) {
     return std::clamp(value, -limit, limit);
 }
 
+ObjectBehaviorAltitudePolicy parse_altitude_policy(const std::string& value) {
+    if (value.empty() || value == "target_relative") {
+        return ObjectBehaviorAltitudePolicy::TargetRelative;
+    }
+    if (value == "safe_height_floor") {
+        return ObjectBehaviorAltitudePolicy::SafeHeightFloor;
+    }
+    throw std::invalid_argument("unknown object_behavior_altitude_policy: " + value);
+}
+
 Vec3 velocity_toward_xy(const Vec3& from, const Vec3& to, double speed_mps) {
     const Vec3 delta{to.x - from.x, to.y - from.y, 0.0};
     const double distance = norm_xy(delta);
@@ -109,16 +118,32 @@ Vec3 enforce_safe_height_floor(
         return velocity;
     }
 
-    // LOCAL_NED convention: negative vz climbs, positive vz descends. During ExecuteMission/GoHome,
-    // behavior-relative altitude must not command descent into roofs or terrain below the mission floor.
+    // LOCAL_NED convention: negative vz climbs, positive vz descends. In safe-height-floor mode,
+    // object-relative altitude is not allowed to pull the vehicle down toward a person/car that may be
+    // below a roof or inside geometry. Descents are reserved for the explicit Land state.
     if (height_m < safe_height_m) {
         const double climb = std::clamp(
             (safe_height_m - height_m) * kSafeHeightCorrectionGain,
             kMinSafeHeightClimbMps,
             max_vertical_speed_mps);
         velocity.z = std::min(velocity.z, -climb);
-    } else if (height_m <= safe_height_m + kSafeHeightHoldBandM && velocity.z > 0.0) {
+    } else if (velocity.z > 0.0) {
         velocity.z = 0.0;
+    }
+    return velocity;
+}
+
+Vec3 apply_altitude_policy(
+    Vec3 velocity,
+    const ObjectBehaviorMissionConfig& config,
+    const BehaviorSpec& behavior,
+    double height_m) {
+    if (config.altitude_policy == ObjectBehaviorAltitudePolicy::SafeHeightFloor) {
+        return enforce_safe_height_floor(
+            velocity,
+            height_m,
+            config.safe_height_m,
+            behavior.max_vertical_speed_mps);
     }
     return velocity;
 }
@@ -210,6 +235,9 @@ ObjectBehaviorMissionConfig load_object_behavior_mission_config(const MissionOpt
     config.yaw_offset_rad = std::stod(options.get_or(
         "object_behavior_yaw_offset_rad",
         options.get_or("flight_yaw_offset_rad", "0.0")));
+    config.altitude_policy = parse_altitude_policy(options.get_or(
+        "object_behavior_altitude_policy",
+        "target_relative"));
     const auto completion_after_override = options.get_or("object_behavior_completion_after_s", "");
     if (!completion_after_override.empty()) {
         config.behavior_spec.completion.after_s = std::stod(completion_after_override);
@@ -436,11 +464,11 @@ MissionTickOutput ObjectBehaviorMissionController::tick(const MissionTickInput& 
                     output.status = input.finish_requested ? "object_behavior_finish_requested" : "object_behavior_complete";
                 } else {
                     const Vec3 raw_velocity = behavior_velocity(ego, selection, config_.behavior_spec.behavior);
-                    const Vec3 velocity = enforce_safe_height_floor(
+                    const Vec3 velocity = apply_altitude_policy(
                         raw_velocity,
-                        height_m,
-                        config_.safe_height_m,
-                        config_.behavior_spec.behavior.max_vertical_speed_mps);
+                        config_,
+                        config_.behavior_spec.behavior,
+                        height_m);
                     output.command = command_from_velocity(
                         input.now,
                         velocity,
@@ -463,12 +491,13 @@ MissionTickOutput ObjectBehaviorMissionController::tick(const MissionTickInput& 
         }
         case MissionLifecycleState::GoHome: {
             const Vec3 raw_velocity = go_home_velocity(ego);
-            const Vec3 velocity = enforce_safe_height_floor(
+            const Vec3 velocity = apply_altitude_policy(
                 raw_velocity,
-                height_m,
-                config_.safe_height_m,
-                config_.behavior_spec.behavior.max_vertical_speed_mps);
-            if (norm_xy(velocity) <= 0.0 && height_m >= config_.safe_height_m) {
+                config_,
+                config_.behavior_spec.behavior,
+                height_m);
+            if (norm_xy(velocity) <= 0.0 &&
+                (config_.altitude_policy != ObjectBehaviorAltitudePolicy::SafeHeightFloor || height_m >= config_.safe_height_m)) {
                 state_ = MissionLifecycleState::Land;
                 state_start_ = input.now;
                 output.status = aborting_ ? "abort_recovery_home_reached" : "home_reached";
