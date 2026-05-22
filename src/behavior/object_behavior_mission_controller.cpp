@@ -19,6 +19,9 @@ constexpr double kSafeHeightCorrectionGain = 0.5;
 constexpr double kMinSafeHeightClimbMps = 0.35;
 constexpr double kMinObservationAngleDeg = 5.0;
 constexpr double kMaxObservationAngleDeg = 85.0;
+constexpr double kCircleDefaultEntryToleranceM = 1.0;
+constexpr double kCircleRadialCorrectionGain = 0.6;
+constexpr double kCircleMaxRadialCorrectionMps = 2.0;
 
 struct FollowGeometry {
     Vec3 desired_position;
@@ -36,6 +39,17 @@ struct FollowGeometry {
     double target_speed_xy_mps{0.0};
     double relative_speed_xy_mps{0.0};
     std::string arrival_mode{"none"};
+    std::string circle_phase{"none"};
+    double orbit_radius_m{0.0};
+    double actual_radius_m{0.0};
+    double radius_error_m{0.0};
+    double radial_correction_mps{0.0};
+    double tangent_velocity_mps{0.0};
+    double desired_velocity_mps{0.0};
+    Vec3 radial_unit{1.0, 0.0, 0.0};
+    Vec3 tangent_velocity;
+    Vec3 radial_correction_velocity;
+    Vec3 desired_velocity;
 };
 
 std::string json_escape(const std::string& value) {
@@ -94,10 +108,6 @@ double rad_to_deg(double rad) {
 
 double norm_xy(const Vec3& value) {
     return std::sqrt(value.x * value.x + value.y * value.y);
-}
-
-double norm3(const Vec3& value) {
-    return std::sqrt(value.x * value.x + value.y * value.y + value.z * value.z);
 }
 
 double clamp_abs(double value, double limit) {
@@ -342,6 +352,118 @@ Vec3 follow_arrival_velocity(
     return velocity;
 }
 
+double circle_direction_sign(CircleDirection direction) {
+    return direction == CircleDirection::Clockwise ? -1.0 : 1.0;
+}
+
+Vec3 circle_tangent_velocity(const Vec3& radial_unit, const BehaviorSpec& behavior) {
+    const double tangent_speed = behavior.radius_m * deg_to_rad(behavior.angular_speed_deg_s);
+    const double sign = circle_direction_sign(behavior.direction);
+    return Vec3{
+        sign * -radial_unit.y * tangent_speed,
+        sign * radial_unit.x * tangent_speed,
+        0.0};
+}
+
+FollowGeometry circle_geometry(
+    const EgoState& ego,
+    const TargetSelection& selection,
+    const BehaviorSpec& behavior,
+    const ObjectBehaviorMissionConfig& config) {
+    FollowGeometry geometry;
+    geometry.orbit_radius_m = behavior.radius_m;
+    geometry.target_velocity = selection.velocity_local;
+    geometry.target_speed_xy_mps = norm_xy(selection.velocity_local);
+
+    const Vec3 entry_axis{1.0, 0.0, 0.0};
+    geometry.desired_position = Vec3{
+        selection.position_local.x + behavior.radius_m * entry_axis.x,
+        selection.position_local.y + behavior.radius_m * entry_axis.y,
+        selection.position_local.z - behavior.altitude_offset_m};
+
+    const Vec3 target_to_ego{
+        ego.local_T_body.position.x - selection.position_local.x,
+        ego.local_T_body.position.y - selection.position_local.y,
+        0.0};
+    geometry.actual_radius_m = norm_xy(target_to_ego);
+    geometry.actual_r_m = geometry.actual_radius_m;
+    geometry.required_r_m = behavior.radius_m;
+    geometry.radius_error_m = geometry.actual_radius_m - behavior.radius_m;
+
+    if (geometry.actual_radius_m > 1e-6) {
+        geometry.radial_unit = Vec3{
+            target_to_ego.x / geometry.actual_radius_m,
+            target_to_ego.y / geometry.actual_radius_m,
+            0.0};
+    } else {
+        geometry.radial_unit = entry_axis;
+    }
+
+    const Vec3 entry_error{
+        geometry.desired_position.x - ego.local_T_body.position.x,
+        geometry.desired_position.y - ego.local_T_body.position.y,
+        geometry.desired_position.z - ego.local_T_body.position.z};
+    geometry.desired_error_xy_m = norm_xy(entry_error);
+    const double entry_tolerance_m = std::max(
+        kCircleDefaultEntryToleranceM,
+        behavior.position_tolerance_m);
+    const bool on_entry = geometry.desired_error_xy_m <= entry_tolerance_m;
+    geometry.circle_phase = on_entry ? "circling" : "arriving";
+    geometry.arrival_mode = geometry.circle_phase;
+
+    if (!on_entry) {
+        const Vec3 entry_tangent = circle_tangent_velocity(entry_axis, behavior);
+        double closing_speed = 0.0;
+        if (geometry.desired_error_xy_m <= config.follow_arrival_hold_radius_m) {
+            closing_speed = std::max(0.0, config.follow_arrival_kp * geometry.desired_error_xy_m);
+        } else if (geometry.desired_error_xy_m <= config.follow_arrival_slow_radius_m) {
+            closing_speed = std::min(
+                behavior.max_speed_mps,
+                std::max(0.0, config.follow_arrival_kp * geometry.desired_error_xy_m));
+        } else {
+            closing_speed = behavior.max_speed_mps;
+        }
+        if (closing_speed > 0.0 && geometry.desired_error_xy_m > 1e-6) {
+            geometry.closing_velocity.x = entry_error.x / geometry.desired_error_xy_m * closing_speed;
+            geometry.closing_velocity.y = entry_error.y / geometry.desired_error_xy_m * closing_speed;
+        }
+        geometry.closing_speed_mps = norm_xy(geometry.closing_velocity);
+        geometry.tangent_velocity = entry_tangent;
+        geometry.tangent_velocity_mps = norm_xy(entry_tangent);
+        geometry.desired_velocity = Vec3{
+            selection.velocity_local.x + entry_tangent.x + geometry.closing_velocity.x,
+            selection.velocity_local.y + entry_tangent.y + geometry.closing_velocity.y,
+            entry_error.z};
+    } else {
+        geometry.tangent_velocity = circle_tangent_velocity(geometry.radial_unit, behavior);
+        geometry.tangent_velocity_mps = norm_xy(geometry.tangent_velocity);
+        geometry.radial_correction_mps = std::clamp(
+            -geometry.radius_error_m * kCircleRadialCorrectionGain,
+            -kCircleMaxRadialCorrectionMps,
+            kCircleMaxRadialCorrectionMps);
+        geometry.radial_correction_velocity = Vec3{
+            geometry.radial_unit.x * geometry.radial_correction_mps,
+            geometry.radial_unit.y * geometry.radial_correction_mps,
+            0.0};
+        const double altitude_error = geometry.desired_position.z - ego.local_T_body.position.z;
+        geometry.desired_velocity = Vec3{
+            selection.velocity_local.x + geometry.tangent_velocity.x + geometry.radial_correction_velocity.x,
+            selection.velocity_local.y + geometry.tangent_velocity.y + geometry.radial_correction_velocity.y,
+            altitude_error};
+    }
+
+    const Vec3 velocity = clamp_velocity(
+        geometry.desired_velocity,
+        behavior.max_speed_mps,
+        behavior.max_vertical_speed_mps);
+    geometry.desired_velocity_mps = norm_xy(geometry.desired_velocity);
+    geometry.relative_speed_xy_mps = norm_xy(Vec3{
+        velocity.x - selection.velocity_local.x,
+        velocity.y - selection.velocity_local.y,
+        0.0});
+    return geometry;
+}
+
 Vec3 behavior_velocity(
     const EgoState& ego,
     const TargetSelection& selection,
@@ -351,6 +473,14 @@ Vec3 behavior_velocity(
     if (behavior.type == BehaviorType::Follow) {
         FollowGeometry geometry = follow_observation_geometry(ego, selection, behavior, config);
         const Vec3 velocity = follow_arrival_velocity(ego, selection, behavior, config, geometry);
+        if (geometry_out != nullptr) {
+            *geometry_out = geometry;
+        }
+        return velocity;
+    }
+    if (behavior.type == BehaviorType::Circle) {
+        FollowGeometry geometry = circle_geometry(ego, selection, behavior, config);
+        const Vec3 velocity = clamp_velocity(geometry.desired_velocity, behavior.max_speed_mps, behavior.max_vertical_speed_mps);
         if (geometry_out != nullptr) {
             *geometry_out = geometry;
         }
@@ -527,7 +657,7 @@ std::string behavior_detail_for_tick(const BehaviorSpec& behavior, const FollowG
             }
             return "following";
         case BehaviorType::Circle:
-            return "circling";
+            return geometry.circle_phase == "circling" ? "circling" : "arriving";
         case BehaviorType::Hold:
             return "positioned";
         case BehaviorType::Approach:
@@ -581,6 +711,14 @@ std::string behavior_tick_event(
         ",\"follow_required_r_m\":" + std::to_string(geometry.required_r_m) +
         ",\"follow_actual_r_m\":" + std::to_string(geometry.actual_r_m) +
         ",\"follow_elevation_deg\":" + std::to_string(geometry.elevation_deg) +
+        ",\"circle_phase\":" + q(geometry.circle_phase) +
+        ",\"orbit_radius_m\":" + std::to_string(geometry.orbit_radius_m) +
+        ",\"actual_radius_m\":" + std::to_string(geometry.actual_radius_m) +
+        ",\"radius_error_m\":" + std::to_string(geometry.radius_error_m) +
+        ",\"radial_correction_mps\":" + std::to_string(geometry.radial_correction_mps) +
+        ",\"tangent_velocity_mps\":" + std::to_string(geometry.tangent_velocity_mps) +
+        ",\"target_velocity_mps\":" + std::to_string(norm_xy(geometry.target_velocity)) +
+        ",\"desired_velocity_mps\":" + std::to_string(geometry.desired_velocity_mps) +
         behavior_display_fields(behavior_detail_for_tick(spec.behavior, geometry));
 }
 
@@ -611,7 +749,15 @@ std::string behavior_debug_event(
         ",\"yaw_deg\":" + std::to_string(yaw_deg) +
         ",\"follow_bearing_source\":" + q(geometry.bearing_source) +
         ",\"follow_required_r_m\":" + std::to_string(geometry.required_r_m) +
-        ",\"follow_actual_r_m\":" + std::to_string(geometry.actual_r_m);
+        ",\"follow_actual_r_m\":" + std::to_string(geometry.actual_r_m) +
+        ",\"circle_phase\":" + q(geometry.circle_phase) +
+        ",\"orbit_radius_m\":" + std::to_string(geometry.orbit_radius_m) +
+        ",\"actual_radius_m\":" + std::to_string(geometry.actual_radius_m) +
+        ",\"radius_error_m\":" + std::to_string(geometry.radius_error_m) +
+        ",\"radial_correction_mps\":" + std::to_string(geometry.radial_correction_mps) +
+        ",\"tangent_velocity_mps\":" + std::to_string(geometry.tangent_velocity_mps) +
+        ",\"target_velocity_mps\":" + std::to_string(norm_xy(geometry.target_velocity)) +
+        ",\"desired_velocity_mps\":" + std::to_string(geometry.desired_velocity_mps);
 
     if (debug_level >= 2) {
         const double yaw_delta_deg = command.yaw_valid ? rad_to_deg(command.yaw_rad - ego.local_T_body.rotation_rpy.z) : 0.0;
@@ -632,6 +778,12 @@ std::string behavior_debug_event(
             ",\"closing_vx\":" + std::to_string(geometry.closing_velocity.x) +
             ",\"closing_vy\":" + std::to_string(geometry.closing_velocity.y) +
             ",\"raw_vx\":" + std::to_string(raw_velocity.x) +
+            ",\"desired_vx\":" + std::to_string(geometry.desired_velocity.x) +
+            ",\"desired_vy\":" + std::to_string(geometry.desired_velocity.y) +
+            ",\"tangent_vx\":" + std::to_string(geometry.tangent_velocity.x) +
+            ",\"tangent_vy\":" + std::to_string(geometry.tangent_velocity.y) +
+            ",\"radial_correction_vx\":" + std::to_string(geometry.radial_correction_velocity.x) +
+            ",\"radial_correction_vy\":" + std::to_string(geometry.radial_correction_velocity.y) +
             ",\"raw_vy\":" + std::to_string(raw_velocity.y) +
             ",\"raw_vz\":" + std::to_string(raw_velocity.z) +
             ",\"vx\":" + std::to_string(final_velocity.x) +
@@ -683,6 +835,7 @@ void ObjectBehaviorMissionController::reset_behavior_run(TimePoint now) {
     behavior_complete_emitted_ = false;
     behavior_tick_sample_emitted_ = false;
     execute_tick_count_ = 0;
+    last_behavior_display_detail_.clear();
     previous_selection_.reset();
 }
 
@@ -803,8 +956,11 @@ MissionTickOutput ObjectBehaviorMissionController::tick(const MissionTickInput& 
                         input.now,
                         velocity,
                         config_.yaw_offset_rad + config_.behavior_spec.behavior.yaw_offset_rad);
-                    if (config_.behavior_spec.behavior.type == BehaviorType::Follow && !behavior_tick_sample_emitted_) {
+                    const std::string behavior_detail =
+                        behavior_detail_for_tick(config_.behavior_spec.behavior, geometry);
+                    if (!behavior_tick_sample_emitted_ || behavior_detail != last_behavior_display_detail_) {
                         behavior_tick_sample_emitted_ = true;
+                        last_behavior_display_detail_ = behavior_detail;
                         output.events.push_back(behavior_tick_event(config_.behavior_spec, selection, velocity, geometry));
                     }
                     if (config_.debug_every_n_ticks > 0 && execute_tick_count_ % config_.debug_every_n_ticks == 0) {

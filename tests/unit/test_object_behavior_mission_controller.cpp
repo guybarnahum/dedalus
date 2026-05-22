@@ -23,7 +23,8 @@ dedalus::AgentState make_agent(
     std::string track_id,
     dedalus::ClassLabel class_label,
     float confidence,
-    dedalus::Vec3 position) {
+    dedalus::Vec3 position,
+    dedalus::Vec3 velocity = dedalus::Vec3{0.2, 0.0, 0.0}) {
     dedalus::AgentState agent;
     agent.source_track_id = dedalus::TrackId{track_id};
     agent.agent_id = dedalus::AgentId{"agent_" + track_id};
@@ -31,7 +32,7 @@ dedalus::AgentState make_agent(
     agent.class_label = class_label;
     agent.confidence = confidence;
     agent.position_local = position;
-    agent.velocity_local = dedalus::Vec3{0.2, 0.0, 0.0};
+    agent.velocity_local = velocity;
     agent.map_frame_id = dedalus::MapFrameId{"map_local_0001"};
     agent.lifecycle = dedalus::AgentLifecycle::Active;
     agent.last_seen = dedalus::TimePoint{0};
@@ -82,6 +83,61 @@ dedalus::ObjectBehaviorMissionConfig make_config() {
     config.arm_timeout_s = 5.0;
     config.disarm_timeout_s = 5.0;
     return config;
+}
+
+dedalus::ObjectBehaviorMissionConfig make_circle_config() {
+    auto config = make_config();
+    config.behavior_spec.target.class_label = "car";
+    config.behavior_spec.target.track_id = "ghost_car_001";
+    config.behavior_spec.behavior.type = dedalus::BehaviorType::Circle;
+    config.behavior_spec.behavior.radius_m = 10.0;
+    config.behavior_spec.behavior.altitude_offset_m = 2.0;
+    config.behavior_spec.behavior.angular_speed_deg_s = 10.0;
+    config.behavior_spec.behavior.direction = dedalus::CircleDirection::Clockwise;
+    config.behavior_spec.behavior.max_speed_mps = 20.0;
+    config.behavior_spec.behavior.max_vertical_speed_mps = 5.0;
+    config.behavior_spec.behavior.position_tolerance_m = 1.0;
+    config.behavior_spec.completion.after_s = 30.0;
+    return config;
+}
+
+dedalus::WorldSnapshot make_circle_snapshot(
+    std::int64_t timestamp_ns,
+    dedalus::Vec3 ego_position,
+    dedalus::Vec3 target_position,
+    dedalus::Vec3 target_velocity = dedalus::Vec3{0.0, 0.0, 0.0}) {
+    auto snapshot = make_snapshot(timestamp_ns, -ego_position.z, true);
+    snapshot.ego.local_T_body.position = ego_position;
+    snapshot.ego.height_m = -ego_position.z;
+    snapshot.agents.clear();
+    snapshot.agents.push_back(make_agent(
+        "ghost_car_001",
+        dedalus::ClassLabel::Car,
+        0.91F,
+        target_position,
+        target_velocity));
+    return snapshot;
+}
+
+dedalus::MissionTickOutput first_execute_tick(
+    dedalus::ObjectBehaviorMissionController& controller,
+    dedalus::WorldSnapshot snapshot) {
+    dedalus::MissionTickInput input;
+    input.now = dedalus::TimePoint{0};
+    input.snapshot = make_circle_snapshot(0, dedalus::Vec3{0.0, 0.0, 0.0}, dedalus::Vec3{0.0, 0.0, 0.0});
+    input.snapshot.ego.armed = false;
+    (void)controller.tick(input);
+    input.now = dedalus::TimePoint{100000000};
+    input.snapshot.ego.armed = true;
+    (void)controller.tick(input);
+    input.now = dedalus::TimePoint{200000000};
+    input.snapshot.ego.local_T_body.position.z = -2.0;
+    input.snapshot.ego.height_m = 2.0;
+    (void)controller.tick(input);
+    input.now = dedalus::TimePoint{300000000};
+    input.snapshot = snapshot;
+    input.snapshot.timestamp = input.now;
+    return controller.tick(input);
 }
 
 void lifecycle_gates_before_behavior_and_emits_events() {
@@ -211,6 +267,127 @@ void finish_requested_completes_behavior() {
     require(finish.events[0].find("finish_requested") != std::string::npos, "finish event should explain reason");
 }
 
+void circle_static_target_points_to_three_oclock_entry() {
+    auto config = make_circle_config();
+    dedalus::ObjectBehaviorMissionController controller{config};
+    const auto behavior = first_execute_tick(
+        controller,
+        make_circle_snapshot(
+            300000000,
+            dedalus::Vec3{-10.0, 0.0, -2.0},
+            dedalus::Vec3{0.0, 0.0, 0.0}));
+    require(behavior.command.has_value(), "circle arriving should emit velocity");
+    require(behavior.command->velocity_local_mps.x > 9.0, "circle entry should command toward +X 3 o'clock entry");
+    require(behavior.command->velocity_local_mps.y < 0.0, "clockwise orbit insertion should include negative-Y tangent");
+    require(behavior.status == "object_behavior_arriving", "far entry should report arriving");
+    require(behavior.events.back().find("\"display_detail\":\"arriving\"") != std::string::npos, "arriving tick should publish display detail");
+    require(behavior.events.back().find("\"circle_phase\":\"arriving\"") != std::string::npos, "arriving tick should publish circle phase");
+}
+
+void circle_moving_target_command_includes_target_velocity() {
+    auto config = make_circle_config();
+    dedalus::ObjectBehaviorMissionController controller{config};
+    const auto behavior = first_execute_tick(
+        controller,
+        make_circle_snapshot(
+            300000000,
+            dedalus::Vec3{10.0, 0.0, -2.0},
+            dedalus::Vec3{0.0, 0.0, 0.0},
+            dedalus::Vec3{1.0, 0.0, 0.0}));
+    require(behavior.command.has_value(), "circle moving target should emit velocity");
+    require_near(behavior.command->velocity_local_mps.x, 1.0, 1.0e-6, "circling vx should include target velocity");
+    require_near(behavior.command->velocity_local_mps.y, -10.0 * 10.0 * 3.14159265358979323846 / 180.0, 1.0e-6, "circling vy should include clockwise tangent velocity");
+    require(behavior.status == "object_behavior_circling", "at entry should report circling");
+}
+
+void circle_tangent_velocity_has_correct_direction() {
+    auto clockwise = make_circle_config();
+    dedalus::ObjectBehaviorMissionController clockwise_controller{clockwise};
+    const auto clockwise_tick = first_execute_tick(
+        clockwise_controller,
+        make_circle_snapshot(
+            300000000,
+            dedalus::Vec3{10.0, 0.0, -2.0},
+            dedalus::Vec3{0.0, 0.0, 0.0}));
+    require(clockwise_tick.command->velocity_local_mps.y < 0.0, "clockwise tangent at 3 o'clock should be negative Y");
+
+    auto counter = make_circle_config();
+    counter.behavior_spec.behavior.direction = dedalus::CircleDirection::CounterClockwise;
+    dedalus::ObjectBehaviorMissionController counter_controller{counter};
+    const auto counter_tick = first_execute_tick(
+        counter_controller,
+        make_circle_snapshot(
+            300000000,
+            dedalus::Vec3{10.0, 0.0, -2.0},
+            dedalus::Vec3{0.0, 0.0, 0.0}));
+    require(counter_tick.command->velocity_local_mps.y > 0.0, "counter-clockwise tangent at 3 o'clock should be positive Y");
+}
+
+void circle_radial_correction_pushes_inward_and_outward() {
+    auto config = make_circle_config();
+    config.behavior_spec.behavior.position_tolerance_m = 5.0;
+
+    dedalus::ObjectBehaviorMissionController inside_controller{config};
+    const auto inside = first_execute_tick(
+        inside_controller,
+        make_circle_snapshot(
+            300000000,
+            dedalus::Vec3{8.0, 0.0, -2.0},
+            dedalus::Vec3{0.0, 0.0, 0.0}));
+    require(inside.command->velocity_local_mps.x > 0.0, "inside orbit should push outward");
+    require(inside.events.back().find("\"radius_error_m\":-2.000000") != std::string::npos, "inside tick should expose negative radius error");
+
+    dedalus::ObjectBehaviorMissionController outside_controller{config};
+    const auto outside = first_execute_tick(
+        outside_controller,
+        make_circle_snapshot(
+            300000000,
+            dedalus::Vec3{12.0, 0.0, -2.0},
+            dedalus::Vec3{0.0, 0.0, 0.0}));
+    require(outside.command->velocity_local_mps.x < 0.0, "outside orbit should push inward");
+    require(outside.events.back().find("\"radius_error_m\":2.000000") != std::string::npos, "outside tick should expose positive radius error");
+}
+
+void circle_command_speed_is_clamped() {
+    auto config = make_circle_config();
+    config.behavior_spec.behavior.max_speed_mps = 1.0;
+    dedalus::ObjectBehaviorMissionController controller{config};
+    const auto behavior = first_execute_tick(
+        controller,
+        make_circle_snapshot(
+            300000000,
+            dedalus::Vec3{-100.0, 0.0, -2.0},
+            dedalus::Vec3{0.0, 0.0, 0.0}));
+    require(behavior.command.has_value(), "clamped circle tick should emit velocity");
+    const double speed_xy = std::sqrt(
+        behavior.command->velocity_local_mps.x * behavior.command->velocity_local_mps.x +
+        behavior.command->velocity_local_mps.y * behavior.command->velocity_local_mps.y);
+    require(speed_xy <= 1.0 + 1.0e-9, "circle command should clamp horizontal speed");
+}
+
+void circle_display_detail_transitions_arriving_to_circling() {
+    auto config = make_circle_config();
+    dedalus::ObjectBehaviorMissionController controller{config};
+    (void)first_execute_tick(
+        controller,
+        make_circle_snapshot(
+            300000000,
+            dedalus::Vec3{-10.0, 0.0, -2.0},
+            dedalus::Vec3{0.0, 0.0, 0.0}));
+
+    dedalus::MissionTickInput input;
+    input.now = dedalus::TimePoint{400000000};
+    input.snapshot = make_circle_snapshot(
+        400000000,
+        dedalus::Vec3{10.0, 0.0, -2.0},
+        dedalus::Vec3{0.0, 0.0, 0.0});
+    const auto circling = controller.tick(input);
+    require(circling.status == "object_behavior_circling", "entry point should transition to circling");
+    require(!circling.events.empty(), "circle phase transition should emit a display event");
+    require(circling.events.back().find("\"display_detail\":\"circling\"") != std::string::npos, "circling tick should publish display detail");
+    require(circling.events.back().find("\"circle_phase\":\"circling\"") != std::string::npos, "circling tick should publish circle phase");
+}
+
 }  // namespace
 
 int main() {
@@ -218,6 +395,12 @@ int main() {
         lifecycle_gates_before_behavior_and_emits_events();
         landing_and_disarm_reach_complete_status();
         finish_requested_completes_behavior();
+        circle_static_target_points_to_three_oclock_entry();
+        circle_moving_target_command_includes_target_velocity();
+        circle_tangent_velocity_has_correct_direction();
+        circle_radial_correction_pushes_inward_and_outward();
+        circle_command_speed_is_clamped();
+        circle_display_detail_transitions_arriving_to_circling();
     } catch (const std::exception& exc) {
         std::cerr << "test_object_behavior_mission_controller failed: " << exc.what() << '\n';
         return 1;

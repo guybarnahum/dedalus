@@ -88,6 +88,7 @@ private:
     bool disarm_command_sent_{false};
     bool aborting_{false};
     std::string abort_reason_;
+    std::string last_behavior_display_detail_;
     std::optional<TargetSelection> previous_selection_;
     mutable bool last_stable_yaw_valid_{false};
     mutable double last_stable_yaw_rad_{0.0};
