@@ -60,6 +60,12 @@ mission_options.object_behavior_follow_max_elevation_angle_deg: 35.0
 # Direction-of-travel yaw/camera offset. 0.0 looks forward along velocity.
 # Use about 1.5708 for a 90-degree side look, useful for circle/orbit style tests.
 mission_options.object_behavior_yaw_offset_rad: 0.0
+# Stable yaw policy: update yaw only when horizontal velocity is meaningful;
+# otherwise hold the last stable yaw to avoid spin when close to the desired point.
+mission_options.object_behavior_yaw_min_speed_mps: 0.35
+mission_options.object_behavior_yaw_hold_last_when_unstable: true
+# Emit behavior_debug into mission_events.jsonl every N ExecuteMission ticks.
+mission_options.object_behavior_debug_every_n_ticks: 10
 # Long enough for the drone to visibly close distance to the selected AirSim object
 # before GoHome/Land starts. Keep frame budgets high enough when running this config.
 mission_options.object_behavior_completion_after_s: 45.0
