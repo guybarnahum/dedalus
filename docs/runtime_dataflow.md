@@ -94,7 +94,7 @@ External live subscribers
 
 Ghost targets are simulation/debug inputs that deliberately enter at the same semantic boundary as real 3D detections: `Observation3D` appended to `PerceptionPipelineOutput.observations`.
 
-Current implemented source mode:
+Current implemented source modes:
 
 ```text
 trajectory_scenario:
@@ -102,14 +102,11 @@ trajectory_scenario:
     -> references simulation/trajectories/*.json
     -> GhostScenario evaluates static and dynamic detections at frame time
     -> GhostDetectionsFrame + Observation3D list
-```
 
-Planned 2.26E source mode:
-
-```text
-airsim_scene_objects:
-  existing AirSim scene object name
-    -> simGetObjectPose(object_name)
+airsim_objects:
+  explicit existing AirSim scene object name
+    -> simulation/airsim-object-poses.py
+    -> AirSim simGetObjectPose(object_name)
     -> GhostDetectionState at that AirSim pose
     -> GhostDetectionsFrame + Observation3D list
 ```
@@ -134,19 +131,17 @@ Observation3D list
 
 The overlay must not discover scene objects or generate ghosts. Existing-object binding belongs in the mission-loop/provider side so visualization and behavior share one source of truth.
 
-Initial 2.26E implementation should support explicit object selection only:
+The implemented 2.26E AirSim object mode supports explicit object selection:
 
 ```yaml
 ghost_targets_enabled: true
 ghost_targets_source: airsim_objects
 
-ghost_targets_airsim:
-  objects:
-    - source_track_id: ghost_person_001
-      airsim_object_name: BRPlayer_01_96
-      class: person
-      confidence: 0.82
-      size_m: [0.6, 0.6, 1.8]
+ghost_targets_airsim.objects.0.source_track_id: ghost_person_001
+ghost_targets_airsim.objects.0.airsim_object_name: BRPlayer_01_96
+ghost_targets_airsim.objects.0.class: person
+ghost_targets_airsim.objects.0.confidence: 0.82
+ghost_targets_airsim.objects.0.size_m: [0.6, 0.6, 1.8]
 ```
 
 Later convenience modes may add `all` and seeded `random`, but they should not precede deterministic explicit binding.
@@ -215,8 +210,8 @@ The optional runtime event stream is enabled by:
 
 ```bash
 ./build-staging/apps/dedalus_mission_loop \
-  --config config/core_stack_object_behavior_airsim_ghost.yaml \
-  --output-dir out/object_behavior_airsim_ghost \
+  --config config/core_stack_object_behavior_airsim_existing_object.yaml \
+  --output-dir out/object_behavior_airsim_existing_object \
   --world-snapshot-stream-port 47770 \
   --progress
 ```
@@ -234,7 +229,7 @@ Current JSONL record types:
 ```
 
 ```json
-{"type":"mission_event","seq":3,"timestamp_ns":124,"mission_event":{"event":"target_selected","tick":42,"state":"ExecuteMission","source_track_id":"ghost_person_001","agent_id":"agent_ghost_person_001"}}
+{"type":"mission_event","seq":3,"timestamp_ns":124,"mission_event":{"event":"target_selected","tick":42,"state":"ExecuteMission","display_state":"Mission","display_detail":"arriving","source_track_id":"ghost_person_001","agent_id":"agent_ghost_person_001"}}
 ```
 
 Sequence numbers are stream-local and shared across event types. A client should use `type` to dispatch records and `seq` to detect gaps.
@@ -252,11 +247,14 @@ RuntimeEventStreamServer
        cache latest ghost_detections
        cache latest world_snapshot
        cache latest target_selected mission_event
+       cache latest mission_event for OSD state
        render PLAN / PLAN* markers from ghost_detections
        render AG markers from world_snapshot.agents
        render EGO marker from world_snapshot.ego
        render SEL marker by matching target_selected source_track_id / agent_id to world_snapshot.agents
-  -> AirSim simPlotPoints / simPlotStrings
+       render DEDALUS numeric OSD from world_snapshot ego motion
+       render DEDALUS-STATE from mission_event display_state/display_detail
+  -> AirSim simPlotPoints / simPlotStrings / simPrintLogMessage
 ```
 
 Run:
@@ -269,6 +267,7 @@ python3 simulation/airsim-world-overlay.py \
   --duration-s 180 \
   --clear \
   --label \
+  --osd \
   --debug
 ```
 
@@ -279,6 +278,7 @@ The overlay must not:
 - discover/list AirSim objects for ghost binding
 - poll snapshot_manifest.txt in normal mode
 - read mission_events.jsonl for normal SEL state
+- infer behavior semantics such as following/circling/positioned; mission/behavior events must publish display_state/display_detail
 - decide between source modes such as combined/world_snapshot/artifact_snapshot
 ```
 
@@ -295,7 +295,8 @@ WorldSnapshotPublisher
   -> MissionRuntime async loop
   -> ObjectBehaviorMissionController
        -> TargetSelector reads WorldSnapshot.agents
-       -> emits mission events such as target_selected / behavior_start / behavior_complete
+       -> emits mission events such as target_selected / behavior_start / behavior_complete / behavior_tick_sample
+       -> emits behavior display details such as arriving / following / positioned / circling / done
        -> behavior math emits bounded velocity intent
   -> Px4BridgeCommandSink
   -> simulation/px4-command-bridge.py
@@ -355,4 +356,4 @@ SEL:
   selected target from mission_event target_selected, rendered by matching source_track_id or agent_id to the latest world_snapshot agent.
 ```
 
-For future AirSim existing-object binding, PLAN / AG / SEL should appear over the real visible AirSim object whose pose drives the ghost detection.
+For AirSim existing-object binding, PLAN / AG / SEL should appear over the real visible AirSim object whose pose drives the ghost detection.
