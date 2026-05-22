@@ -57,6 +57,11 @@ mission_options.object_behavior_altitude_policy: safe_height_floor
 mission_options.object_behavior_follow_observation_geometry_enabled: true
 mission_options.object_behavior_follow_min_standoff_m: 10.0
 mission_options.object_behavior_follow_max_elevation_angle_deg: 35.0
+# Follow arrival is relative-motion control: command velocity should approach the
+# selected object's velocity plus a closing component. Static objects converge to 0.
+mission_options.object_behavior_follow_arrival_slow_radius_m: 10.0
+mission_options.object_behavior_follow_arrival_hold_radius_m: 3.0
+mission_options.object_behavior_follow_arrival_kp: 0.30
 # Direction-of-travel yaw/camera offset. 0.0 looks forward along velocity.
 # Use about 1.5708 for a 90-degree side look, useful for circle/orbit style tests.
 mission_options.object_behavior_yaw_offset_rad: 0.0
@@ -65,7 +70,9 @@ mission_options.object_behavior_yaw_offset_rad: 0.0
 mission_options.object_behavior_yaw_min_speed_mps: 0.35
 mission_options.object_behavior_yaw_hold_last_when_unstable: true
 # Emit behavior_debug into mission_events.jsonl every N ExecuteMission ticks.
+# debug_level=1 is compact; debug_level=2 includes full geometry/velocity fields.
 mission_options.object_behavior_debug_every_n_ticks: 10
+mission_options.object_behavior_debug_level: 2
 # Long enough for the drone to visibly close distance to the selected AirSim object
 # before GoHome/Land starts. Keep frame budgets high enough when running this config.
 mission_options.object_behavior_completion_after_s: 45.0
