@@ -11,14 +11,16 @@ To generate a current handoff, read `LLM.md` and the current repo state, then fi
 ## How to Generate a Handoff
 
 1. Read `LLM.md` first. Treat it as the active operating brief.
-2. Read `docs/mission_scenario_runner.md` for the current scenario/campaign harness workflow.
-3. Read `docs/object_conditioned_behavior_plan.md` before M3 behavior work.
-4. Read `docs/world_model_reprojection_validation_plan.md` before reprojection, annotation, or world-model evidence work.
-5. Read `WHITEPAPER.md` when architectural rationale is needed.
-6. Read `LLM.back.md` only for historical context when needed.
-7. Run `git log --oneline -1` to get the current commit SHA.
-8. Substitute all `<PLACEHOLDER>` values below with current state.
-9. Emit the filled-in prompt as plain text — no surrounding explanation.
+2. Read `docs/runtime_dataflow.md` for the current source -> publisher -> server -> subscriber -> sink architecture.
+3. Read `docs/airsim_existing_object_ghost_runbook.md` before AirSim existing-object validation.
+4. Read `docs/mission_scenario_runner.md` for the scenario/campaign harness workflow.
+5. Read `docs/object_conditioned_behavior_plan.md` before M3 / 2.27 behavior work.
+6. Read `docs/world_model_reprojection_validation_plan.md` before reprojection, annotation, or world-model evidence work.
+7. Read `WHITEPAPER.md` when architectural rationale is needed.
+8. Read `LLM.back.md` only for historical context when needed; `LLM.md` is authoritative.
+9. Run `git log --oneline -1` to get the current commit SHA.
+10. Substitute all `<PLACEHOLDER>` values below with current state.
+11. Emit the filled-in prompt as plain text — no surrounding explanation.
 
 ---
 
@@ -37,6 +39,8 @@ First read:
   LLM.md
 
 Then read:
+  docs/runtime_dataflow.md
+  docs/airsim_existing_object_ghost_runbook.md
   docs/mission_scenario_runner.md
   docs/object_conditioned_behavior_plan.md
   docs/world_model_reprojection_validation_plan.md
@@ -48,16 +52,16 @@ Active milestone:
   <ACTIVE_MILESTONE_AND_STAGE>
 
 Current architecture:
-  <DATA_FLOW_DIAGRAM — copy from LLM.md §1 or update if pipeline changed>
+  <DATA_FLOW_DIAGRAM — copy from LLM.md Current Architecture or update if pipeline changed>
 
 Current observed behavior:
   <MOST_RECENT_NOTABLE_LOGS_OR_RUNTIME_OUTPUT>
 
 Current diagnosis:
-  <WHAT_IS LIKELY MISSING OR BROKEN>
+  <WHAT_IS_VERIFIED, WHAT_IS_STILL_UNVALIDATED, AND WHAT_IS_LIKELY MISSING OR BROKEN>
 
 Immediate tasks:
-  <NUMBERED_TASK_LIST — copy from LLM.md recommended next stage or update to reflect current state>
+  <NUMBERED_TASK_LIST — copy from LLM.md Immediate Next Tasks or update to reflect current state>
 
 Do not:
   <DO_NOT_LIST — copy from LLM.md Known Traps and add any session-specific traps>
@@ -65,7 +69,9 @@ Do not:
 Patch policy:
   Apply changes directly to main.
   Do not create branches or PRs unless explicitly requested.
-  If GitHub connector patching fails or is ambiguous, provide an exact manual patch.
+  If GitHub connector patching fails, is ambiguous, is blocked, or would require a risky broad rewrite, stop using the connector for that code change.
+  Generate an exact manual patch and ask the user to apply it locally.
+  Do not keep retrying increasingly complex connector paths after a connector failure.
 
 Validation:
   Always give build/test commands after code patches:
@@ -73,24 +79,37 @@ Validation:
     cmake --build build-staging -j$(nproc)
     ctest --test-dir build-staging --output-on-failure
 
-  For reprojection/world-evidence changes, also include:
+  For current 2.26D/E runtime stream and object behavior changes, also include:
 
-    ctest --test-dir build-staging --output-on-failure -R 'world_to_image_projector|world_reprojection_artifacts'
+    python3 -m py_compile simulation/airsim-world-overlay.py
 
-  For scenario/campaign harness changes, also include:
+    ctest --test-dir build-staging --output-on-failure -R \
+      'mission_runtime|object_behavior_mission_controller|object_behavior_mission_smoke|core_stack_config_loader|behavior_spec|target_selector|world_snapshot_stream_server'
 
-    ctest --test-dir build-staging --output-on-failure -R 'mission_(scenario|campaign|abort)_'
+  For live AirSim existing-object validation, include:
 
-  For live mission changes, also include one of:
+    python3 simulation/airsim-object-poses.py --object BRPlayer_01_96
 
-    RUNS=3 simulation/repeat-mission-smoke.sh
+    ./build-staging/apps/dedalus_mission_loop \
+      --config config/core_stack_object_behavior_airsim_existing_object.yaml \
+      --output-dir out/object_behavior_airsim_existing_object \
+      --max-frames 2400 \
+      --shutdown-max-frames 1800 \
+      --world-snapshot-stream-port 47770 \
+      --safe-height 40 \
+      --behavior-duration-s 90 \
+      --progress
 
-    python3 simulation/run-mission-campaign.py \
-      --campaign-file config/mission_campaigns/airsim_live_smoke.json \
-      --campaign-id live_<N> \
-      --output-root out/mission_campaigns \
-      --progress \
-      --overwrite
+    python3 simulation/airsim-world-overlay.py \
+      --stream-port 47770 \
+      --follow \
+      --rate-hz 5 \
+      --duration-s 180 \
+      --clear \
+      --label \
+      --osd \
+      --debug \
+      --debug-json out/object_behavior_airsim_existing_object/overlay_debug_latest.json
 
 Expected success:
   <SPECIFIC_LOG_STATE_OR_TEST_RESULT_THAT SIGNALS TASK COMPLETE>
@@ -100,7 +119,7 @@ Expected success:
 
 ## Reference — Current Strategic Handoff Shape
 
-This reference is valid after the 2.25 prep cleanup. When generating a new handoff, update the commit SHA and any current runtime observations.
+This reference reflects the 2.26E state after commit `c1ba05e` and the LLM docs refresh. When generating a new handoff, update the commit SHA and any current runtime observations.
 
 ```text
 You are continuing work on the Dedalus repo.
@@ -115,6 +134,8 @@ First read:
   LLM.md
 
 Then read:
+  docs/runtime_dataflow.md
+  docs/airsim_existing_object_ghost_runbook.md
   docs/mission_scenario_runner.md
   docs/object_conditioned_behavior_plan.md
   docs/world_model_reprojection_validation_plan.md
@@ -123,90 +144,78 @@ Historical context, only if needed:
   LLM.back.md
 
 Active milestone:
-  Milestone 2.25 — ObjectBehaviorMissionController skeleton
+  Milestone 2.26E — AirSim existing-object object behavior, follow arrival control, and live overlay / OSD validation.
 
 Current architecture:
   AirSim live frame + ego sidecar
     -> AirSimFrameSource
     -> FrameHintEgoProvider
     -> CoreStackRunner
+         -> optional GhostTargetProvider::frame_at(...)
+              -> GhostDetectionsPublisher
+              -> PerceptionPipelineOutput.observations
     -> InMemoryWorldModel
+    -> WorldSnapshotPublisher
+         -> LatestWorldSnapshotSubscriber
+         -> ArtifactSnapshotWriter
+         -> optional RuntimeEventStreamServer
     -> LatestWorldSnapshot
     -> MissionRuntime async loop
-    -> TrajectoryMissionController today / ObjectBehaviorMissionController next
+         -> MissionEventPublisher
+    -> ObjectBehaviorMissionController
     -> Px4BridgeCommandSink
-    -> simulation/px4-command-bridge.py
+    -> persistent simulation/px4-command-bridge.py
     -> PX4 / AirSim
 
-  Milestone 3 target architecture:
-    AirSim live frame + ego sidecar
-      -> AirSimFrameSource
-      -> detector / tracker / projector, or ghost/scripted target provider for pre-camera validation
-      -> WorldSnapshot agents with agent_id, source_track_id, identity_id, class, confidence, local position, velocity, latest_view_evidence when camera-derived
-      -> TargetSelector
-      -> BehaviorRuntime / ObjectBehaviorMissionController
-      -> desired velocity vector
-      -> Px4BridgeCommandSink
-      -> PX4 / AirSim
+  RuntimeEventStreamServer emits one TCP JSONL stream:
+    ghost_detections
+    world_snapshot
+    mission_event
+
+  simulation/airsim-world-overlay.py is a stream-only subscriber/renderer.
+  It renders PLAN / PLAN* from ghost_detections, AG / EGO from world_snapshot, SEL from mission_event target_selected, and OSD from mission_event display_state/display_detail.
 
 Current observed behavior:
-  Milestones 2.20, 2.21, 2.22, and 2.23 are implemented / validated.
-
-  Milestone 2.24 is implemented through 2.24G.9 baseline:
-    - track-addressable WorldSnapshot agents
-    - TargetSelectorSpec track_id / agent_id support
-    - TargetSelector policies and tests
-    - ghost/scripted targets for pre-camera validation
-    - WorldSnapshot-to-camera reprojection projector
-    - projected AG markers in annotation artifacts
-    - frame_XXXXXX.world_overlay.json sidecars
-    - camera-derived 2D provenance carried into AgentState.latest_view_evidence
-    - reprojection residual metadata for camera-derived agents
-    - world_reprojection_artifacts synthetic test validates PPM marker, sidecar metadata, residuals, and snapshot latest_view_evidence
-
-  Behavior specs are now canonical runtime/autonomy config under:
-    config/behaviors/
-      follow_person.yaml
-      follow_specific_track.yaml
-      circle_car.yaml
-      approach_target.yaml
-      sequence_approach_circle.yaml
-
-  Simulation-only target fixtures remain under:
-    simulation/ghost_targets/person_pair_crossing.yaml
+  2.26D runtime-event plumbing is implemented.
+  2.26E AirSim existing-object binding is implemented for explicit object names.
+  config/core_stack_object_behavior_airsim_existing_object.yaml binds ghost_person_001 to BRPlayer_01_96 by default.
+  Follow behavior uses target-relative observation geometry and target_velocity + closing_velocity arrival control.
+  MissionRuntime emits lifecycle/command display_state/display_detail.
+  ObjectBehaviorMissionController emits behavior display_detail such as arriving, following, positioned, circling, and done.
+  Overlay OSD renders DEDALUS and DEDALUS-STATE lines and includes an optional EGO XY velocity arrow.
+  GitHub status checks may be absent; local build/test and AirSim validation are required.
 
 Current diagnosis:
-  The drone can fly and validate reliable preconfigured missions and scenario/campaign artifacts. Behavior specs parse, TargetSelector works, ghost targets and world-model reprojection validation work. The next gap to M3 is wiring ObjectBehaviorMissionController into the mission path so behavior can consume WorldSnapshot + behavior specs and emit target/behavior events safely.
-
-Important architectural rules:
-  PerceptionPipelineOutput is evidence.
-  WorldSnapshot is autonomy state.
-  Behavior consumes WorldSnapshot, not perception internals.
-
-  Behavior specs are global autonomy/runtime configuration, not simulation assets.
-  Use config/behaviors/*.yaml for behavior specs.
-  Use simulation/ghost_targets/*.yaml only for simulation/synthetic target fixtures.
+  Source structure matches the current design. Remaining risk is live validation quality: marker accumulation/blinking, OSD display stability, and AirSim mission behavior around the visible bound object. Behavior semantics should remain in mission/behavior events, not in the overlay.
 
 Immediate tasks:
-  1. Build/test current head:
+  1. Pull current head and run focused validation:
 
+       python3 -m py_compile simulation/airsim-world-overlay.py
        cmake --build build-staging -j$(nproc)
-       ctest --test-dir build-staging --output-on-failure
+       ctest --test-dir build-staging --output-on-failure -R 'mission_runtime|object_behavior_mission_controller|object_behavior_mission_smoke|core_stack_config_loader|behavior_spec|target_selector|world_snapshot_stream_server'
 
-  2. Start Milestone 2.25A/B:
-       - add ObjectBehaviorMissionController skeleton
-       - add config path for mission_controller: object_behavior
-       - load behavior spec from config/behaviors/follow_specific_track.yaml
-       - consume LatestWorldSnapshot / WorldSnapshot agents
-       - run TargetSelector during ExecuteMission
-       - emit target_selected, behavior_start, behavior_complete events
-       - emit safe zero/hold velocity only; no follow/circle motion math yet
-       - complete normally through GoHome -> Land -> Disarm
+  2. Run live AirSim existing-object validation:
+       - confirm BRPlayer_01_96 exists with simulation/airsim-object-poses.py
+       - run dedalus_mission_loop with --world-snapshot-stream-port 47770
+       - run simulation/airsim-world-overlay.py with --osd and --debug-json
+       - verify PLAN / AG / SEL align over the visible object
+       - verify DEDALUS-STATE shows Mission / arriving -> following or positioned, then GoHome / returning, Land / landing, Disarm / ok, Settled / done
 
-  3. Add tests:
-       - unit test ObjectBehaviorMissionController target selection and no-op/hold command behavior
-       - synthetic scenario using ghost_person_001 validates stable selected lower-confidence target
-       - mission_events prove target_selected, behavior_start, behavior_complete
+  3. Confirm follow behavior:
+       - no spin near/above SEL
+       - arrival_mode transitions cruise/slow/hold as expected
+       - relative_speed_xy_mps trends toward zero near arrival
+
+  4. If validation passes, record 2.26E complete and start 2.27A.
+
+  5. 2.27A proposed next slice:
+       - implement circle behavior with velocity-matched orbit insertion
+       - approach a 3 o'clock orbit entry point
+       - blend into tangential velocity before capture
+       - maintain orbit using target_velocity + tangent_velocity + radial correction
+       - emit behavior display details: arriving -> circling
+       - keep overlay renderer-only
 
 Do not:
   - Do not use dedalus_replay_mission. Use dedalus_mission_loop.
@@ -215,25 +224,28 @@ Do not:
   - Do not collapse flight_control.arm_state and ego.armed.
   - Do not move to ExecuteMission until Takeoff is confirmed by ego height.
   - Do not stop at raw Complete state; wait for terminal_settled / Complete status=complete.
-  - Do not treat Abort as stop immediately when recovery is possible.
   - Do not make the native C++ MAVLink sink the default live path; use px4_bridge.
   - Do not rewrite the working pymavlink control path in C++ while stabilizing behavior.
   - Do not let telemetry sidecar and command bridge bind the same MAVLink endpoint.
   - Do not let human diagnostics contaminate binary bridge stdout; binary frame bridge stdout is protocol bytes only.
-  - Do not make mission_campaign_runner CTest execute repeated real missions.
   - Do not put obstacle avoidance inside the flight sink.
-  - Do not let route memory override fresh tactical sensing.
   - Do not let Milestone 3 balloon into full obstacle avoidance; M3 is object-conditioned behavior. Avoidance starts post-M3.
-  - Do not collapse detection_id/track_id/source_track_id/agent_id/identity_id/latest_view_evidence.
+  - Do not collapse track_id/source_track_id/agent_id/identity_id into one field.
   - Do not select targets only by confidence when a stable track/agent target is specified.
   - Do not bypass WorldSnapshot/TargetSelector by hardcoding selected_target in config for main validation.
   - Do not keep global behavior specs under simulation/behaviors; use config/behaviors.
+  - Do not use artifact files as runtime IPC when a live stream or in-process subscriber is the right boundary.
+  - Do not make simulation/airsim-world-overlay.py evaluate GhostScenario, discover AirSim objects, or poll snapshot artifacts in normal mode; it should subscribe and render.
+  - Do not put behavior semantics in overlay logic. Mission/behavior events should publish display_state/display_detail; overlay should render them.
+  - Do not add shims to preserve stale pre-refactor APIs unless there is a current user and an explicit removal plan.
   - Do not create branches or PRs unless explicitly requested.
 
 Patch policy:
   Apply changes directly to main.
   Do not create branches or PRs unless explicitly requested.
-  If GitHub connector patching fails or is ambiguous, provide an exact manual patch.
+  If GitHub connector patching fails, is ambiguous, is blocked, or would require a risky broad rewrite, stop using the connector for that code change.
+  Generate an exact manual patch and ask the user to apply it locally.
+  Do not keep retrying increasingly complex connector paths after a connector failure.
 
 Validation:
   Always give build/test commands after code patches:
@@ -241,30 +253,17 @@ Validation:
     cmake --build build-staging -j$(nproc)
     ctest --test-dir build-staging --output-on-failure
 
-  For current behavior/reprojection work:
+  Focused 2.26E:
 
-    ctest --test-dir build-staging --output-on-failure -R 'behavior_spec|target_selector|world_to_image_projector|world_reprojection_artifacts'
+    python3 -m py_compile simulation/airsim-world-overlay.py
 
-  For scenario/campaign harness changes:
-
-    ctest --test-dir build-staging --output-on-failure -R 'mission_(scenario|campaign|abort)_'
-
-  For live mission changes:
-
-    RUNS=3 simulation/repeat-mission-smoke.sh
-
-    python3 simulation/run-mission-campaign.py \
-      --campaign-file config/mission_campaigns/airsim_live_smoke.json \
-      --campaign-id live_<N> \
-      --output-root out/mission_campaigns \
-      --progress \
-      --overwrite
+    ctest --test-dir build-staging --output-on-failure -R \
+      'mission_runtime|object_behavior_mission_controller|object_behavior_mission_smoke|core_stack_config_loader|behavior_spec|target_selector|world_snapshot_stream_server'
 
 Expected success:
-  For 2.25 skeleton:
-    ObjectBehaviorMissionController consumes WorldSnapshot agents through TargetSelector.
-    target_selected includes agent_id and source_track_id.
-    behavior_start and behavior_complete are emitted.
-    selected ghost_person_001 remains stable despite ghost_person_002 having higher confidence.
-    Mission still reaches GoHome -> Land -> Complete/status=complete.
+  Build and focused tests pass.
+  mission_events.jsonl contains display_state/display_detail.
+  Overlay shows stable DEDALUS and DEDALUS-STATE lines.
+  PLAN / AG / SEL align over the explicitly bound AirSim object.
+  Follow behavior reaches GoHome -> Land -> Disarm -> Settled without failures.
 ```
