@@ -9,6 +9,11 @@
 
 namespace dedalus {
 
+enum class ObjectBehaviorAltitudePolicy {
+    TargetRelative,
+    SafeHeightFloor,
+};
+
 struct ObjectBehaviorMissionConfig {
     BehaviorMissionSpec behavior_spec;
     double hold_velocity_mps{0.0};
@@ -16,6 +21,7 @@ struct ObjectBehaviorMissionConfig {
     double takeoff_velocity_mps{1.0};
     double go_home_velocity_mps{1.0};
     double yaw_offset_rad{0.0};
+    ObjectBehaviorAltitudePolicy altitude_policy{ObjectBehaviorAltitudePolicy::TargetRelative};
     double arm_retry_interval_s{1.0};
     double arm_timeout_s{10.0};
     double arm_dispatch_fallback_s{0.0};
