@@ -336,6 +336,13 @@ std::string class_label_event_string(ClassLabel label) {
     }
 }
 
+std::string yaw_source_for(const VelocityCommand& command) {
+    if (!command.yaw_valid) {
+        return "disabled";
+    }
+    return norm_xy(command.velocity_local_mps) > 0.0 ? "travel_direction" : "hold_last";
+}
+
 }  // namespace
 
 ObjectBehaviorMissionConfig load_object_behavior_mission_config(const MissionOptions& options) {
@@ -349,6 +356,15 @@ ObjectBehaviorMissionConfig load_object_behavior_mission_config(const MissionOpt
     config.yaw_offset_rad = std::stod(options.get_or(
         "object_behavior_yaw_offset_rad",
         options.get_or("flight_yaw_offset_rad", "0.0")));
+    config.yaw_min_speed_mps = std::stod(options.get_or(
+        "object_behavior_yaw_min_speed_mps",
+        "0.35"));
+    config.yaw_hold_last_when_unstable = parse_bool(
+        options.get_or("object_behavior_yaw_hold_last_when_unstable", "true"),
+        true);
+    config.debug_every_n_ticks = std::stoi(options.get_or(
+        "object_behavior_debug_every_n_ticks",
+        "0"));
     config.altitude_policy = parse_altitude_policy(options.get_or(
         "object_behavior_altitude_policy",
         "target_relative"));
@@ -394,10 +410,16 @@ VelocityCommand ObjectBehaviorMissionController::command_from_velocity(
     command.yaw_rate_radps = 0.0;
     command.yaw_rate_valid = true;
     command.yaw_valid = false;
+
     const double horizontal = norm_xy(velocity_local_mps);
-    if (horizontal > kHeadingEpsilonMps) {
+    if (horizontal >= config_.yaw_min_speed_mps) {
         command.yaw_valid = true;
         command.yaw_rad = std::atan2(velocity_local_mps.y, velocity_local_mps.x) + yaw_offset_rad;
+        last_stable_yaw_valid_ = true;
+        last_stable_yaw_rad_ = command.yaw_rad;
+    } else if (config_.yaw_hold_last_when_unstable && last_stable_yaw_valid_) {
+        command.yaw_valid = true;
+        command.yaw_rad = last_stable_yaw_rad_;
     }
     return command;
 }
@@ -457,6 +479,50 @@ std::string behavior_tick_event(
         ",\"follow_elevation_deg\":" + std::to_string(geometry.elevation_deg);
 }
 
+std::string behavior_debug_event(
+    int execute_tick,
+    const EgoState& ego,
+    const TargetSelection& selection,
+    const Vec3& raw_velocity,
+    const Vec3& final_velocity,
+    const VelocityCommand& command,
+    const FollowGeometry& geometry) {
+    const double velocity_xy = norm_xy(final_velocity);
+    const double yaw_deg = command.yaw_valid ? rad_to_deg(command.yaw_rad) : 0.0;
+    const double yaw_delta_deg = command.yaw_valid ? rad_to_deg(command.yaw_rad - ego.local_T_body.rotation_rpy.z) : 0.0;
+    return "\"event\":\"behavior_debug\""
+        ",\"execute_tick\":" + std::to_string(execute_tick) +
+        ",\"agent_id\":" + q(selection.agent_id.value) +
+        ",\"source_track_id\":" + q(selection.source_track_id.value) +
+        ",\"ego_x\":" + std::to_string(ego.local_T_body.position.x) +
+        ",\"ego_y\":" + std::to_string(ego.local_T_body.position.y) +
+        ",\"ego_z\":" + std::to_string(ego.local_T_body.position.z) +
+        ",\"ego_yaw_rad\":" + std::to_string(ego.local_T_body.rotation_rpy.z) +
+        ",\"ego_height_m\":" + std::to_string(ego.height_m) +
+        ",\"sel_x\":" + std::to_string(selection.position_local.x) +
+        ",\"sel_y\":" + std::to_string(selection.position_local.y) +
+        ",\"sel_z\":" + std::to_string(selection.position_local.z) +
+        ",\"desired_x\":" + std::to_string(geometry.desired_position.x) +
+        ",\"desired_y\":" + std::to_string(geometry.desired_position.y) +
+        ",\"desired_z\":" + std::to_string(geometry.desired_position.z) +
+        ",\"raw_vx\":" + std::to_string(raw_velocity.x) +
+        ",\"raw_vy\":" + std::to_string(raw_velocity.y) +
+        ",\"raw_vz\":" + std::to_string(raw_velocity.z) +
+        ",\"vx\":" + std::to_string(final_velocity.x) +
+        ",\"vy\":" + std::to_string(final_velocity.y) +
+        ",\"vz\":" + std::to_string(final_velocity.z) +
+        ",\"velocity_xy_mps\":" + std::to_string(velocity_xy) +
+        ",\"yaw_valid\":" + std::string(command.yaw_valid ? "true" : "false") +
+        ",\"yaw_source\":" + q(yaw_source_for(command)) +
+        ",\"yaw_rad\":" + std::to_string(command.yaw_valid ? command.yaw_rad : 0.0) +
+        ",\"yaw_deg\":" + std::to_string(yaw_deg) +
+        ",\"yaw_delta_from_ego_deg\":" + std::to_string(yaw_delta_deg) +
+        ",\"follow_dh_m\":" + std::to_string(geometry.dh_m) +
+        ",\"follow_required_r_m\":" + std::to_string(geometry.required_r_m) +
+        ",\"follow_actual_r_m\":" + std::to_string(geometry.actual_r_m) +
+        ",\"follow_elevation_deg\":" + std::to_string(geometry.elevation_deg);
+}
+
 bool ObjectBehaviorMissionController::completion_elapsed(TimePoint now) const {
     const double after_s = config_.behavior_spec.completion.after_s;
     if (after_s <= 0.0) {
@@ -491,6 +557,8 @@ void ObjectBehaviorMissionController::reset_behavior_run(TimePoint now) {
     target_selected_emitted_ = false;
     behavior_start_emitted_ = false;
     behavior_complete_emitted_ = false;
+    behavior_tick_sample_emitted_ = false;
+    execute_tick_count_ = 0;
     previous_selection_.reset();
 }
 
@@ -571,6 +639,7 @@ MissionTickOutput ObjectBehaviorMissionController::tick(const MissionTickInput& 
             }
             break;
         case MissionLifecycleState::ExecuteMission: {
+            ++execute_tick_count_;
             auto selection = selector_.select(input.snapshot, config_.behavior_spec.target, previous_selection_);
             if (selection.selected) {
                 previous_selection_ = selection;
@@ -613,6 +682,16 @@ MissionTickOutput ObjectBehaviorMissionController::tick(const MissionTickInput& 
                     if (config_.behavior_spec.behavior.type == BehaviorType::Follow && !behavior_tick_sample_emitted_) {
                         behavior_tick_sample_emitted_ = true;
                         output.events.push_back(behavior_tick_event(config_.behavior_spec, selection, velocity, geometry));
+                    }
+                    if (config_.debug_every_n_ticks > 0 && execute_tick_count_ % config_.debug_every_n_ticks == 0) {
+                        output.events.push_back(behavior_debug_event(
+                            execute_tick_count_,
+                            ego,
+                            selection,
+                            raw_velocity,
+                            velocity,
+                            *output.command,
+                            geometry));
                     }
                     output.status = config_.behavior_spec.behavior.type == BehaviorType::Follow ? "object_behavior_follow" : "object_behavior_hold";
                 }
