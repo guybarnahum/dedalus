@@ -13,6 +13,7 @@ namespace {
 constexpr double kMinArrivedDistanceM = 0.5;
 constexpr double kLandHeightM = 0.25;
 constexpr double kTakeoffVelocityAssistHeightM = 0.5;
+constexpr double kHeadingEpsilonMps = 0.05;
 
 std::string strip_json_string(std::string value) {
     value.erase(std::remove(value.begin(), value.end(), '"'), value.end());
@@ -55,6 +56,7 @@ TrajectoryMissionConfig load_trajectory_mission_config(const MissionOptions& opt
     config.takeoff_velocity_mps = std::stod(options.get_or("flight_takeoff_velocity_mps", "1.0"));
     config.go_home_velocity_mps = std::stod(options.get_or("flight_go_home_velocity_mps", "1.0"));
     config.land_velocity_mps = std::stod(options.get_or("flight_land_velocity_mps", "0.5"));
+    config.yaw_offset_rad = std::stod(options.get_or("flight_yaw_offset_rad", "0.0"));
     config.arm_retry_interval_s = std::stod(options.get_or("flight_arm_retry_interval_s", "1.0"));
     config.arm_timeout_s = std::stod(options.get_or("flight_arm_timeout_s", "10.0"));
     config.arm_dispatch_fallback_s = std::stod(options.get_or("flight_arm_dispatch_fallback_s", "0.0"));
@@ -84,7 +86,8 @@ TrajectoryMissionController::TrajectoryMissionController(TrajectoryMissionConfig
 
 VelocityCommand TrajectoryMissionController::command_from_velocity(
     TimePoint timestamp,
-    Vec3 velocity_local_mps) const {
+    Vec3 velocity_local_mps,
+    double yaw_offset_rad) const {
     VelocityCommand command;
     command.kind = FlightCommandKind::Velocity;
     command.timestamp = timestamp;
@@ -92,6 +95,10 @@ VelocityCommand TrajectoryMissionController::command_from_velocity(
     command.yaw_rate_radps = 0.0;
     command.yaw_rate_valid = true;
     command.yaw_valid = false;
+    if (norm_xy(velocity_local_mps) > kHeadingEpsilonMps) {
+        command.yaw_valid = true;
+        command.yaw_rad = std::atan2(velocity_local_mps.y, velocity_local_mps.x) + yaw_offset_rad;
+    }
     return command;
 }
 
@@ -108,7 +115,11 @@ VelocityCommand TrajectoryMissionController::command_with_kind(
 }
 
 VelocityCommand TrajectoryMissionController::trajectory_command(TimePoint timestamp) const {
-    return command_from_velocity(timestamp, config_.trajectory.velocity_at(segment_index_, segment_elapsed_s_));
+    const auto& segment = config_.trajectory.segment(segment_index_);
+    return command_from_velocity(
+        timestamp,
+        config_.trajectory.velocity_at(segment_index_, segment_elapsed_s_),
+        config_.yaw_offset_rad + segment.yaw_offset_rad);
 }
 
 bool TrajectoryMissionController::trajectory_complete() const {
@@ -243,7 +254,7 @@ MissionTickOutput TrajectoryMissionController::tick(const MissionTickInput& inpu
                 state_start_ = input.now;
                 output.status = aborting_ ? "abort_recovery_home_reached" : "home_reached";
             } else {
-                output.command = command_from_velocity(input.now, velocity);
+                output.command = command_from_velocity(input.now, velocity, config_.yaw_offset_rad);
                 output.status = aborting_ ? "abort_recovery_go_home" : "go_home";
             }
             break;
