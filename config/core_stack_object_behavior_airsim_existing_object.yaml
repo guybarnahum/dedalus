@@ -51,6 +51,12 @@ mission_options.object_behavior_hold_velocity_mps: 0.0
 # For existing AirSim scene objects, target z can be inside/under geometry.
 # Keep ExecuteMission / GoHome at or above flight_safe_height_m; only Land may descend.
 mission_options.object_behavior_altitude_policy: safe_height_floor
+# Follow is observation geometry, not point chasing. Required XY range is:
+#   max(min_standoff_m, abs(delta_height_m) / tan(max_elevation_angle_deg))
+# This prevents the drone from hovering directly above SEL and spinning on an unstable bearing.
+mission_options.object_behavior_follow_observation_geometry_enabled: true
+mission_options.object_behavior_follow_min_standoff_m: 10.0
+mission_options.object_behavior_follow_max_elevation_angle_deg: 35.0
 # Direction-of-travel yaw/camera offset. 0.0 looks forward along velocity.
 # Use about 1.5708 for a 90-degree side look, useful for circle/orbit style tests.
 mission_options.object_behavior_yaw_offset_rad: 0.0
