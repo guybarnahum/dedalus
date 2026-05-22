@@ -47,6 +47,10 @@ struct FollowGeometry {
     double tangent_velocity_mps{0.0};
     double desired_velocity_mps{0.0};
     Vec3 radial_unit{1.0, 0.0, 0.0};
+    double orbit_angle_rad{0.0};
+    double orbit_count_target{0.0};
+    double circle_completed_orbits{0.0};
+    double tangent_blend{0.0};
     Vec3 tangent_velocity;
     Vec3 radial_correction_velocity;
     Vec3 desired_velocity;
@@ -374,6 +378,7 @@ FollowGeometry circle_geometry(
     geometry.orbit_radius_m = behavior.radius_m;
     geometry.target_velocity = selection.velocity_local;
     geometry.target_speed_xy_mps = norm_xy(selection.velocity_local);
+    geometry.orbit_count_target = behavior.orbit_count;
 
     const Vec3 entry_axis{1.0, 0.0, 0.0};
     geometry.desired_position = Vec3{
@@ -398,6 +403,7 @@ FollowGeometry circle_geometry(
     } else {
         geometry.radial_unit = entry_axis;
     }
+    geometry.orbit_angle_rad = std::atan2(geometry.radial_unit.y, geometry.radial_unit.x);
 
     const Vec3 entry_error{
         geometry.desired_position.x - ego.local_T_body.position.x,
@@ -429,12 +435,21 @@ FollowGeometry circle_geometry(
         }
         geometry.closing_speed_mps = norm_xy(geometry.closing_velocity);
         geometry.tangent_velocity = entry_tangent;
+        geometry.tangent_blend = std::clamp(
+            1.0 - geometry.desired_error_xy_m / std::max(config.follow_arrival_slow_radius_m, 1e-6),
+            0.0,
+            1.0);
+        geometry.tangent_velocity = Vec3{
+            entry_tangent.x * geometry.tangent_blend,
+            entry_tangent.y * geometry.tangent_blend,
+            0.0};
         geometry.tangent_velocity_mps = norm_xy(entry_tangent);
         geometry.desired_velocity = Vec3{
-            selection.velocity_local.x + entry_tangent.x + geometry.closing_velocity.x,
-            selection.velocity_local.y + entry_tangent.y + geometry.closing_velocity.y,
+            selection.velocity_local.x + geometry.tangent_velocity.x + geometry.closing_velocity.x,
+            selection.velocity_local.y + geometry.tangent_velocity.y + geometry.closing_velocity.y,
             entry_error.z};
     } else {
+        geometry.tangent_blend = 1.0;
         geometry.tangent_velocity = circle_tangent_velocity(geometry.radial_unit, behavior);
         geometry.tangent_velocity_mps = norm_xy(geometry.tangent_velocity);
         geometry.radial_correction_mps = std::clamp(
@@ -719,6 +734,10 @@ std::string behavior_tick_event(
         ",\"tangent_velocity_mps\":" + std::to_string(geometry.tangent_velocity_mps) +
         ",\"target_velocity_mps\":" + std::to_string(norm_xy(geometry.target_velocity)) +
         ",\"desired_velocity_mps\":" + std::to_string(geometry.desired_velocity_mps) +
+        ",\"tangent_blend\":" + std::to_string(geometry.tangent_blend) +
+        ",\"orbit_count_target\":" + std::to_string(geometry.orbit_count_target) +
+        ",\"circle_completed_orbits\":" + std::to_string(geometry.circle_completed_orbits) +
+        ",\"orbit_angle_rad\":" + std::to_string(geometry.orbit_angle_rad) +
         behavior_display_fields(behavior_detail_for_tick(spec.behavior, geometry));
 }
 
@@ -757,7 +776,11 @@ std::string behavior_debug_event(
         ",\"radial_correction_mps\":" + std::to_string(geometry.radial_correction_mps) +
         ",\"tangent_velocity_mps\":" + std::to_string(geometry.tangent_velocity_mps) +
         ",\"target_velocity_mps\":" + std::to_string(norm_xy(geometry.target_velocity)) +
-        ",\"desired_velocity_mps\":" + std::to_string(geometry.desired_velocity_mps);
+        ",\"desired_velocity_mps\":" + std::to_string(geometry.desired_velocity_mps) +
+        ",\"tangent_blend\":" + std::to_string(geometry.tangent_blend) +
+        ",\"orbit_count_target\":" + std::to_string(geometry.orbit_count_target) +
+        ",\"circle_completed_orbits\":" + std::to_string(geometry.circle_completed_orbits) +
+        ",\"orbit_angle_rad\":" + std::to_string(geometry.orbit_angle_rad);
 
     if (debug_level >= 2) {
         const double yaw_delta_deg = command.yaw_valid ? rad_to_deg(command.yaw_rad - ego.local_T_body.rotation_rpy.z) : 0.0;
@@ -828,6 +851,35 @@ void ObjectBehaviorMissionController::begin_abort_recovery(
     }
 }
 
+bool ObjectBehaviorMissionController::update_circle_orbit_progress(
+    const BehaviorSpec& behavior,
+    const FollowGeometry& geometry) {
+    if (behavior.type != BehaviorType::Circle || behavior.orbit_count <= 0.0 || geometry.circle_phase != "circling") {
+        circle_orbit_tracking_ = false;
+        return false;
+    }
+    if (!circle_orbit_tracking_) {
+        circle_orbit_tracking_ = true;
+        circle_previous_angle_rad_ = geometry.orbit_angle_rad;
+        return false;
+    }
+
+    double delta = geometry.orbit_angle_rad - circle_previous_angle_rad_;
+    while (delta > kPi) {
+        delta -= 2.0 * kPi;
+    }
+    while (delta < -kPi) {
+        delta += 2.0 * kPi;
+    }
+    circle_previous_angle_rad_ = geometry.orbit_angle_rad;
+
+    const double progress_delta = circle_direction_sign(behavior.direction) * delta;
+    if (progress_delta > 0.0) {
+        circle_completed_orbits_ += progress_delta / (2.0 * kPi);
+    }
+    return circle_completed_orbits_ >= behavior.orbit_count;
+}
+
 void ObjectBehaviorMissionController::reset_behavior_run(TimePoint now) {
     behavior_start_ = now;
     target_selected_emitted_ = false;
@@ -837,6 +889,9 @@ void ObjectBehaviorMissionController::reset_behavior_run(TimePoint now) {
     execute_tick_count_ = 0;
     last_behavior_display_detail_.clear();
     previous_selection_.reset();
+    circle_orbit_tracking_ = false;
+    circle_previous_angle_rad_ = 0.0;
+    circle_completed_orbits_ = 0.0;
 }
 
 MissionTickOutput ObjectBehaviorMissionController::tick(const MissionTickInput& input) {
@@ -929,24 +984,32 @@ MissionTickOutput ObjectBehaviorMissionController::tick(const MissionTickInput& 
                     behavior_start_ = input.now;
                     output.events.push_back(behavior_event("behavior_start", "target_selected"));
                 }
-                if (input.finish_requested || completion_elapsed(input.now)) {
-                    if (!behavior_complete_emitted_) {
-                        behavior_complete_emitted_ = true;
-                        output.events.push_back(behavior_event(
-                            "behavior_complete",
-                            input.finish_requested ? "finish_requested" : "duration_elapsed"));
-                    }
-                    state_ = MissionLifecycleState::GoHome;
-                    state_start_ = input.now;
-                    output.status = input.finish_requested ? "object_behavior_finish_requested" : "object_behavior_complete";
-                } else {
-                    FollowGeometry geometry;
-                    const Vec3 raw_velocity = behavior_velocity(
+                const bool duration_complete = completion_elapsed(input.now);
+                bool orbit_count_complete = false;
+                FollowGeometry geometry;
+                Vec3 raw_velocity{0.0, 0.0, 0.0};
+                if (!input.finish_requested && !duration_complete) {
+                    raw_velocity = behavior_velocity(
                         ego,
                         selection,
                         config_.behavior_spec.behavior,
                         config_,
                         &geometry);
+                    orbit_count_complete = update_circle_orbit_progress(config_.behavior_spec.behavior, geometry);
+                    geometry.circle_completed_orbits = circle_completed_orbits_;
+                    geometry.orbit_count_target = config_.behavior_spec.behavior.orbit_count;
+                }
+                if (input.finish_requested || duration_complete || orbit_count_complete) {
+                    if (!behavior_complete_emitted_) {
+                        behavior_complete_emitted_ = true;
+                        output.events.push_back(behavior_event(
+                            "behavior_complete",
+                            input.finish_requested ? "finish_requested" : (orbit_count_complete ? "orbit_count_elapsed" : "duration_elapsed")));
+                    }
+                    state_ = MissionLifecycleState::GoHome;
+                    state_start_ = input.now;
+                    output.status = input.finish_requested ? "object_behavior_finish_requested" : "object_behavior_complete";
+                } else {
                     const Vec3 velocity = apply_altitude_policy(
                         raw_velocity,
                         config_,

@@ -539,6 +539,10 @@ BehaviorSpec parse_behavior(const ConfigNode& node, const std::string& context) 
     spec.altitude_offset_m = optional_double(node, "altitude_offset_m", spec.altitude_offset_m);
     spec.angular_speed_deg_s = optional_double(node, "angular_speed_deg_s", spec.angular_speed_deg_s);
     spec.direction = parse_circle_direction(optional_string(node, "direction", to_string(spec.direction)));
+    spec.orbit_count = optional_double(node, "orbit_count", spec.orbit_count);
+    if (spec.orbit_count <= 0.0) {
+        spec.orbit_count = optional_double(node, "orbits", spec.orbit_count);
+    }
     spec.stop_distance_m = optional_double(node, "stop_distance_m", spec.stop_distance_m);
     spec.duration_s = optional_double(node, "duration_s", spec.duration_s);
 
@@ -562,6 +566,9 @@ BehaviorSpec parse_behavior(const ConfigNode& node, const std::string& context) 
     }
     if (spec.lost_target_timeout_s < 0.0) {
         throw std::runtime_error(context + ".lost_target_timeout_s must be non-negative");
+    }
+    if (spec.orbit_count < 0.0) {
+        throw std::runtime_error(context + ".orbit_count must be non-negative");
     }
 
     switch (spec.type) {

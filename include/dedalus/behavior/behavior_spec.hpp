@@ -96,6 +96,7 @@ struct BehaviorSpec {
     double altitude_offset_m{0.0};
     double angular_speed_deg_s{0.0};
     CircleDirection direction{CircleDirection::Clockwise};
+    double orbit_count{0.0};
 
     double stop_distance_m{0.0};
     double duration_s{0.0};

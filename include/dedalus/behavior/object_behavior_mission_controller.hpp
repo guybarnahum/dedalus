@@ -62,6 +62,7 @@ private:
     [[nodiscard]] bool completion_elapsed(TimePoint now) const;
     [[nodiscard]] Vec3 go_home_velocity(const EgoState& ego) const;
     void begin_abort_recovery(TimePoint now, double height_m, const std::string& reason);
+    bool update_circle_orbit_progress(const BehaviorSpec& behavior, const struct FollowGeometry& geometry);
     void reset_behavior_run(TimePoint now);
 
     ObjectBehaviorMissionConfig config_;
@@ -89,6 +90,9 @@ private:
     bool aborting_{false};
     std::string abort_reason_;
     std::string last_behavior_display_detail_;
+    bool circle_orbit_tracking_{false};
+    double circle_previous_angle_rad_{0.0};
+    double circle_completed_orbits_{0.0};
     std::optional<TargetSelection> previous_selection_;
     mutable bool last_stable_yaw_valid_{false};
     mutable double last_stable_yaw_rad_{0.0};
