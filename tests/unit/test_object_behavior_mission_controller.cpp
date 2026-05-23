@@ -267,20 +267,20 @@ void finish_requested_completes_behavior() {
     require(finish.events[0].find("finish_requested") != std::string::npos, "finish event should explain reason");
 }
 
-void circle_static_target_points_to_three_oclock_entry() {
+void circle_static_target_uses_continuous_orbit_capture() {
     auto config = make_circle_config();
     dedalus::ObjectBehaviorMissionController controller{config};
     const auto behavior = first_execute_tick(
         controller,
         make_circle_snapshot(
             300000000,
-            dedalus::Vec3{-10.0, 0.0, -2.0},
+            dedalus::Vec3{-17.0, 0.0, -2.0},
             dedalus::Vec3{0.0, 0.0, 0.0}));
     require(behavior.command.has_value(), "circle arriving should emit velocity");
-    require(behavior.command->velocity_local_mps.x > 9.0, "circle entry should command toward +X 3 o'clock entry");
-    require(
-        behavior.command->velocity_local_mps.y < 0.0,
-        "clockwise orbit insertion should include negative-Y tangent");
+    require(behavior.command->velocity_local_mps.x > 0.0, "outside-left circle capture should push outward/right toward orbit radius");
+    require(behavior.command->velocity_local_mps.y > 0.0, "outside-left clockwise circle capture should include current-angle tangent");
+    require(behavior.events.back().find("\"radial_correction_mps\":-2.000000") != std::string::npos,
+            "outside orbit capture should expose inward radial correction");
     require(behavior.status == "object_behavior_arriving", "far entry should report arriving");
     require(behavior.events.back().find("\"display_detail\":\"arriving\"") != std::string::npos, "arriving tick should publish display detail");
     require(behavior.events.back().find("\"circle_phase\":\"arriving\"") != std::string::npos, "arriving tick should publish circle phase");
@@ -397,7 +397,7 @@ int main() {
         lifecycle_gates_before_behavior_and_emits_events();
         landing_and_disarm_reach_complete_status();
         finish_requested_completes_behavior();
-        circle_static_target_points_to_three_oclock_entry();
+        circle_static_target_uses_continuous_orbit_capture();
         circle_moving_target_command_includes_target_velocity();
         circle_tangent_velocity_has_correct_direction();
         circle_radial_correction_pushes_inward_and_outward();
