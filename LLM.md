@@ -13,8 +13,9 @@ Current handoff state:
 ```text
 2.26E is complete and live-validated by the operator.
 2.27A is complete and live-validated by the operator.
+2.27B is complete and locally validated by build/tests plus the circle trajectory validator.
 
-Active next work: 2.27B — circle/orbit validation hardening.
+Active next work: 2.28 — approach behavior and optional approach -> circle sequence validation.
 
 GitHub status checks may be absent; continue to run local build/tests after code changes.
 ```
@@ -29,7 +30,8 @@ Milestone 2.24: TargetSelector, ghost validation, reprojection validation, world
 Milestone 2.25: ObjectBehaviorMissionController skeleton and bounded follow baseline. Implemented.
 Milestone 2.26: AirSim ghost behavior validation, live runtime-event stream, AirSim existing-object binding, follow arrival control, and live overlay / OSD. Complete after 2.26E validation.
 Milestone 2.27A: robust circle behavior with continuous orbit-capture control law and orbit-count completion. Complete after 3-orbit AirSim validation.
-Milestone 2.27B: validation hardening for circle/orbit behavior. Active next slice.
+Milestone 2.27B: validation hardening for circle/orbit behavior. Complete after validator CLI, validator test, runbook update, 34/34 CTest, and live trajectory validator pass.
+Milestone 2.28: approach behavior and approach -> circle sequence validation. Active next slice.
 ```
 
 ---
@@ -83,7 +85,7 @@ Overlay is a subscriber/renderer only.
 
 ---
 
-## 3. Completed Capabilities Through 2.27A
+## 3. Completed Capabilities Through 2.27B
 
 AirSim existing-object binding:
 
@@ -146,13 +148,46 @@ For known static AirSim existing-object bindings, object_behavior_zero_target_ve
 3-orbit AirSim existing-object circle run succeeded.
 behavior_complete reason=orbit_count_elapsed.
 Mission transitioned to GoHome after orbit-count completion.
-Earlier 1-orbit trajectory summary:
-  circling samples: 44
+```
+
+2.27B validation result:
+
+```text
+Focused tests passed:
+  behavior_spec
+  core_stack_config_loader
+  object_behavior_mission_controller
+  circle_trajectory_validator
+
+Full CTest passed:
+  34/34 tests passed
+
+Circle trajectory validator passed on the 3-orbit AirSim run:
+  events: 3636
+  circle samples: 144
+  circling samples: 131
+  post-latch samples: 131
   orbit radius target: 10.0
-  actual radius min/avg/max: 9.63 / 10.27 / 12.42
-  radius error min/avg/max: -0.37 / 0.27 / 2.42
-  completed orbits first/last: 0.000 -> 0.978
-  orbit_mode_latched: true
+  orbit mode latched observed: true
+  actual radius min/avg/max: 9.703 / 10.246 / 12.434
+  radius error min/avg/max: -0.297 / 0.246 / 2.434
+  avg abs radius error: 0.256
+  completed orbits first/last: 0.000 -> 2.982
+  behavior_complete reason: orbit_count_elapsed
+  runtime_stop terminal_settled: true
+  state path: Idle -> Prepare -> Takeoff -> ExecuteMission -> GoHome -> Land -> Complete
+```
+
+Circle validator:
+
+```text
+simulation/validate-circle-trajectory.py
+  -> parses mission_events.jsonl
+  -> checks target_selected, circling samples, orbit_mode_latched, orbit count, radius stats,
+     behavior_complete reason, terminal_settled, and GoHome -> Land -> Complete lifecycle evidence
+
+tests/integration/test_circle_trajectory_validator.py
+  -> deterministic synthetic fixture test for pass/fail validator behavior
 ```
 
 Overlay / OSD:
@@ -195,77 +230,120 @@ Settled / done
 
 ---
 
-## 4. Active Next Work: 2.27B Circle Validation Hardening
+## 4. Active Next Work: 2.28 Approach Behavior / Approach -> Circle Sequence
 
 Goal:
 
 ```text
-Turn the manually inspected circle/orbit validation into repeatable artifact-driven checks.
+Add approach behavior as the next object-conditioned control law and validate a simple approach -> circle -> go_home_land sequence.
 ```
 
 Motivation:
 
 ```text
-2.27A proved the circle behavior works live. 2.27B should prevent regressions by making orbit quality, orbit-count completion, and mission lifecycle completion machine-checkable from mission_events.jsonl and runtime artifacts.
+Follow maintains a relative offset.
+Circle maintains a target-relative orbit.
+Approach should move toward a selected target until a standoff condition is satisfied, then hold/complete without colliding with the target.
+
+Approach is the natural bridge to sequence behavior because useful object-conditioned missions often look like:
+  select target -> approach to standoff -> circle/inspect -> go home and land
 ```
 
-Proposed 2.27B deliverables:
+Proposed approach semantics:
 
 ```text
-1. Add a reusable circle trajectory validator script, likely under simulation/ or tools/.
-2. Parse mission_events.jsonl behavior_debug / behavior_tick_sample records.
-3. Report orbit metrics:
-   - circling sample count
-   - orbit_mode_latched observed
-   - completed orbit count first/last
-   - target orbit radius
-   - actual radius min/avg/max
-   - radius error min/avg/max and average absolute error
-   - tangent velocity range
-   - radial correction range
-   - behavior_complete reason
-   - final mission lifecycle state / terminal_settled if available
-4. Add threshold-based pass/fail flags:
-   - has target_selected
-   - has Mission / circling
-   - has orbit_mode_latched=true
-   - completed_orbits >= requested_orbits - epsilon when orbit_count is configured
-   - behavior_complete reason == orbit_count_elapsed for orbit-count runs
-   - average absolute radius error below tolerance
-   - max steady-state radius error below tolerance after initial capture window
-   - GoHome -> Land -> Disarm -> Settled completed without failures
-5. Add a synthetic or integration test fixture using existing mission_events samples where practical.
-6. Add runbook snippets for 1-orbit smoke and 3-orbit validation.
-7. Keep validation artifact-driven; do not move behavior semantics into overlay.
+Approach consumes the same TargetSelector output as follow/circle.
+It should produce bounded kinematic intent only.
+It must not implement obstacle avoidance.
+
+Command law, first implementation:
+  radial vector = ego position relative to selected target
+  actual_distance = norm_xy(target_to_ego)
+  desired_standoff = stop_distance_m or behavior.radius_m-style configured standoff
+  distance_error = actual_distance - desired_standoff
+
+If outside standoff:
+  move inward toward the target along the radial direction, with target_velocity added when appropriate.
+
+If at/inside standoff:
+  stop closing and hold/track target velocity tangentially/locally as needed.
+
+Vertical behavior:
+  use altitude_offset_m and existing safe-height policy.
+  keep horizontal approach law separate from altitude correction.
 ```
 
-Candidate validator command:
+Required robust-control principle:
 
-```bash
-python3 simulation/validate-circle-trajectory.py \
-  --events out/object_behavior_airsim_existing_object_circle/mission_events.jsonl \
-  --min-orbits 3.0 \
-  --radius 10.0 \
-  --avg-radius-error-max 1.0 \
-  --max-radius-error-after-latch 3.0 \
-  --expect-complete-reason orbit_count_elapsed
+```text
+Like circle, approach should tolerate imperfect initial position, velocity, attitude, estimator noise, and overshoot.
+It should not require hitting a single waypoint.
+It should continuously recompute distance/standoff error and recover if the drone overshoots too close or drifts too far.
 ```
 
-Non-goals for 2.27B:
+Suggested 2.28 implementation phases:
+
+```text
+1. Inspect current BehaviorSpec approach fields and config/behaviors/approach_target.yaml.
+2. Define exact approach fields to support now:
+   - stop_distance_m or equivalent standoff distance
+   - altitude_offset_m
+   - max_speed_mps
+   - max_vertical_speed_mps
+   - position_tolerance_m
+   - lost_target_timeout_s if already parsed
+3. Add ApproachGeometry / approach_velocity helpers near the follow/circle helpers.
+4. Add behavior_tick_sample / behavior_debug fields for approach:
+   - approach_phase
+   - standoff_distance_m
+   - actual_distance_m
+   - distance_error_m
+   - closing_velocity_mps
+   - target_velocity_mps
+   - desired_velocity_mps
+5. Add unit tests:
+   - far target command points toward target
+   - moving target command includes target_velocity when appropriate
+   - inside standoff does not continue closing into target
+   - overshoot recovers outward or holds safely
+   - speed is clamped
+   - display_detail transitions arriving -> positioned / approached
+6. Validate synthetic/unit tests first.
+7. Add an approach existing-object config if needed.
+8. Validate live AirSim existing-object approach path.
+9. Add or extend a sequence config:
+   approach -> circle -> go_home_land
+   Keep sequence minimal; do not balloon into a general mission planner.
+```
+
+Expected display details for 2.28:
+
+```text
+Mission / arriving       while closing to standoff
+Mission / positioned     when standoff is captured / held
+Mission / circling       if sequence advances into circle
+```
+
+Suggested 2.28 success criteria:
+
+```text
+Build passes.
+Full CTest passes.
+Approach unit tests pass.
+Approach debug events expose standoff geometry.
+Live existing-object approach reaches standoff without collision-like closing behavior.
+Optional approach -> circle sequence reaches circle, completes orbit_count_elapsed, then GoHome -> Land -> Disarm -> Settled.
+```
+
+Non-goals for 2.28:
 
 ```text
 No obstacle avoidance.
-No new behavior type.
-No PX4/MAVLink rewrite.
-No overlay-side semantic inference.
-No planner insertion yet.
-No full navigation-grade orbit controller beyond validation hardening.
-```
-
-Likely next after 2.27B:
-
-```text
-2.27C or 2.28: approach behavior or sequence behavior, e.g. approach -> circle -> go_home_land.
+No moving-actor full validation unless trivial from current ghost path.
+No native C++ MAVLink rewrite.
+No overlay-side behavior inference.
+No general mission planner.
+No multi-target assignment.
 ```
 
 ---
@@ -285,7 +363,7 @@ Focused current behavior/runtime validation:
 python3 -m py_compile simulation/airsim-world-overlay.py
 
 ctest --test-dir build-staging --output-on-failure -R \
-  'mission_runtime|object_behavior_mission_controller|object_behavior_mission_smoke|core_stack_config_loader|behavior_spec|target_selector|world_snapshot_stream_server'
+  'mission_runtime|object_behavior_mission_controller|object_behavior_mission_smoke|core_stack_config_loader|behavior_spec|target_selector|world_snapshot_stream_server|circle_trajectory_validator'
 ```
 
 AirSim existing-object follow validation:
@@ -318,6 +396,20 @@ AirSim existing-object circle validation:
   --progress
 ```
 
+Circle trajectory validator:
+
+```bash
+python3 simulation/validate-circle-trajectory.py \
+  --events out/object_behavior_airsim_existing_object_circle/mission_events.jsonl \
+  --min-orbits 3.0 \
+  --radius 10.0 \
+  --avg-radius-error-max 1.0 \
+  --max-radius-error-after-latch 3.0 \
+  --expect-complete-reason orbit_count_elapsed \
+  --require-terminal-settled \
+  --require-lifecycle
+```
+
 Overlay subscriber for live operator review:
 
 ```bash
@@ -331,14 +423,6 @@ python3 simulation/airsim-world-overlay.py \
   --osd \
   --debug \
   --debug-json out/object_behavior_airsim_existing_object_circle/overlay_debug_latest.json
-```
-
-Inspect circle events:
-
-```bash
-grep '"display_detail":"circling"' out/object_behavior_airsim_existing_object_circle/mission_events.jsonl | head
-grep '"orbit_mode_latched":true' out/object_behavior_airsim_existing_object_circle/mission_events.jsonl | head
-grep '"behavior_complete"' out/object_behavior_airsim_existing_object_circle/mission_events.jsonl
 ```
 
 ---
@@ -397,6 +481,7 @@ Do not keep retrying increasingly complex connector paths after a connector fail
 - Do not put behavior semantics in overlay logic. Mission/behavior events should publish display_state/display_detail; overlay should render them.
 - Do not implement circle as a yaw-only, latch-only, or fixed-waypoint visual hack.
 - Do not require exact 3 o'clock orbit insertion; circle must tolerate imperfect initial position, velocity, attitude, and overshoot.
+- Do not let approach fly directly into the target; standoff capture and overshoot recovery are required.
 - Do not add shims to preserve stale pre-refactor APIs unless there is a current user and an explicit removal plan.
 - Do not create branches or PRs unless explicitly requested.
 ```
