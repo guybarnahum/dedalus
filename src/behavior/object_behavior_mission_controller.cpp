@@ -435,10 +435,7 @@ FollowGeometry circle_geometry(
         }
         geometry.closing_speed_mps = norm_xy(geometry.closing_velocity);
         geometry.tangent_velocity = entry_tangent;
-        geometry.tangent_blend = std::clamp(
-            1.0 - geometry.desired_error_xy_m / std::max(config.follow_arrival_slow_radius_m, 1e-6),
-            0.0,
-            1.0);
+        geometry.tangent_blend = 1.0;
         geometry.tangent_velocity = Vec3{
             entry_tangent.x * geometry.tangent_blend,
             entry_tangent.y * geometry.tangent_blend,
