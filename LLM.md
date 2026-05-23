@@ -12,7 +12,9 @@ Current handoff state:
 
 ```text
 2.26E is complete and live-validated by the operator.
-The next active work is 2.27A: circle behavior with velocity-matched orbit insertion.
+2.27A is complete and live-validated by the operator.
+
+Active next work: 2.27B — circle/orbit validation hardening.
 
 GitHub status checks may be absent; continue to run local build/tests after code changes.
 ```
@@ -26,7 +28,8 @@ Milestones 2.20-2.23: implemented / validated.
 Milestone 2.24: TargetSelector, ghost validation, reprojection validation, world-model evidence plumbing. Implemented through 2.24G.9 baseline.
 Milestone 2.25: ObjectBehaviorMissionController skeleton and bounded follow baseline. Implemented.
 Milestone 2.26: AirSim ghost behavior validation, live runtime-event stream, AirSim existing-object binding, follow arrival control, and live overlay / OSD. Complete after 2.26E validation.
-Milestone 2.27: Expand object-conditioned behaviors beyond follow. Active next slice: 2.27A circle behavior.
+Milestone 2.27A: robust circle behavior with continuous orbit-capture control law and orbit-count completion. Complete after 3-orbit AirSim validation.
+Milestone 2.27B: validation hardening for circle/orbit behavior. Active next slice.
 ```
 
 ---
@@ -80,13 +83,19 @@ Overlay is a subscriber/renderer only.
 
 ---
 
-## 3. 2.26E Completed Capabilities
+## 3. Completed Capabilities Through 2.27A
 
 AirSim existing-object binding:
 
 ```text
 config/core_stack_object_behavior_airsim_existing_object.yaml
   -> binds ghost_person_001 to BRPlayer_01_96 by default
+
+config/core_stack_object_behavior_airsim_existing_object_circle.yml
+  -> circle validation config using explicit existing-object binding
+
+config/behaviors/circle_existing_object_person.yaml
+  -> circle behavior spec for the validated existing-object path
 
 simulation/airsim-object-poses.py
   -> calls AirSim simGetObjectPose(object_name)
@@ -107,6 +116,43 @@ Follow arrival command is:
 Static targets converge to zero relative velocity.
 Moving targets converge toward matched target velocity.
 Follow no longer relies on latching yaw to hide target-location drift.
+```
+
+Circle behavior:
+
+```text
+Circle is implemented as a continuous orbit-capture control law, not follow-with-sideways-offset and not a brittle waypoint script.
+
+Command law:
+  desired_velocity =
+      target_velocity
+    + tangent_velocity_at_current_radial_angle
+    + radial_correction_velocity
+    + altitude_correction_velocity
+
+Behavior is robust to imperfect insertion geometry:
+  - starts outside radius -> radial correction inward while tangential motion is active
+  - starts inside radius -> radial correction outward while tangential motion is active
+  - starts near radius but at arbitrary bearing -> enters orbit from current radial angle
+  - overshoots -> radial correction recovers on subsequent ticks
+  - once orbit mode is reached -> orbit_mode_latched remains true until completion/reset
+
+For known static AirSim existing-object bindings, object_behavior_zero_target_velocity may be enabled so the controller does not velocity-match synthetic/static-object velocity noise. This zeroes target_velocity only; tangent velocity remains active.
+```
+
+2.27A live validation result:
+
+```text
+3-orbit AirSim existing-object circle run succeeded.
+behavior_complete reason=orbit_count_elapsed.
+Mission transitioned to GoHome after orbit-count completion.
+Earlier 1-orbit trajectory summary:
+  circling samples: 44
+  orbit radius target: 10.0
+  actual radius min/avg/max: 9.63 / 10.27 / 12.42
+  radius error min/avg/max: -0.37 / 0.27 / 2.42
+  completed orbits first/last: 0.000 -> 0.978
+  orbit_mode_latched: true
 ```
 
 Overlay / OSD:
@@ -140,7 +186,7 @@ Expected validated OSD flow:
 Arm / arming or ok
 Takeoff / climbing
 Mission / arriving
-Mission / following or positioned
+Mission / following, positioned, or circling
 GoHome / returning
 Land / landing
 Disarm / ok
@@ -149,70 +195,77 @@ Settled / done
 
 ---
 
-## 4. Active Next Work: 2.27A Circle Behavior
+## 4. Active Next Work: 2.27B Circle Validation Hardening
 
 Goal:
 
 ```text
-Add a real circle behavior that approaches a stable orbit entry point, velocity-matches into orbit, then maintains a smooth target-relative circular path.
+Turn the manually inspected circle/orbit validation into repeatable artifact-driven checks.
 ```
 
-Design intent:
+Motivation:
 
 ```text
-Circle is not follow-with-sideways-offset.
-Circle should have an explicit orbit geometry and entry strategy.
-The drone should approach the 3 o'clock point of the orbit, match the desired tangential velocity there, and then transition smoothly into circling.
-The controller should be target-relative and work for static and moving targets.
+2.27A proved the circle behavior works live. 2.27B should prevent regressions by making orbit quality, orbit-count completion, and mission lifecycle completion machine-checkable from mission_events.jsonl and runtime artifacts.
 ```
 
-Proposed circle controller phases:
+Proposed 2.27B deliverables:
 
 ```text
-arriving:
-  compute orbit entry point, initially the 3 o'clock point in target-relative XY space
-  desired position = target_position + orbit_radius * entry_axis
-  desired velocity = target_velocity + desired_tangent_velocity_at_entry
-  use arrival controller to reduce position error while matching desired velocity
-
-circling:
-  desired radial distance = configured orbit radius
-  desired velocity = target_velocity + tangent_velocity + radial_correction
-  tangent_velocity magnitude = configured orbit speed
-  radial_correction pulls inward/outward to maintain radius
-  yaw/camera heading uses trajectory camera offset semantics, not ad hoc yaw hacks
-
-complete:
-  duration / mission finish condition moves to GoHome -> Land -> Disarm -> Settled
+1. Add a reusable circle trajectory validator script, likely under simulation/ or tools/.
+2. Parse mission_events.jsonl behavior_debug / behavior_tick_sample records.
+3. Report orbit metrics:
+   - circling sample count
+   - orbit_mode_latched observed
+   - completed orbit count first/last
+   - target orbit radius
+   - actual radius min/avg/max
+   - radius error min/avg/max and average absolute error
+   - tangent velocity range
+   - radial correction range
+   - behavior_complete reason
+   - final mission lifecycle state / terminal_settled if available
+4. Add threshold-based pass/fail flags:
+   - has target_selected
+   - has Mission / circling
+   - has orbit_mode_latched=true
+   - completed_orbits >= requested_orbits - epsilon when orbit_count is configured
+   - behavior_complete reason == orbit_count_elapsed for orbit-count runs
+   - average absolute radius error below tolerance
+   - max steady-state radius error below tolerance after initial capture window
+   - GoHome -> Land -> Disarm -> Settled completed without failures
+5. Add a synthetic or integration test fixture using existing mission_events samples where practical.
+6. Add runbook snippets for 1-orbit smoke and 3-orbit validation.
+7. Keep validation artifact-driven; do not move behavior semantics into overlay.
 ```
 
-Suggested implementation order:
+Candidate validator command:
 
-```text
-1. Inspect existing BehaviorSpec circle fields and config/behaviors/circle_car.yaml.
-2. Review current FollowGeometry and arrival controller for reusable target-relative helpers.
-3. Add CircleGeometry / CircleCommand computation with clear math helpers.
-4. Add unit tests for static target orbit entry, moving target target_velocity addition, radial correction sign, speed clamping, and display_detail arriving -> circling.
-5. Wire behavior_tick_sample debug fields for circle: phase, radius error, radial correction, tangent velocity, desired velocity, actual radius.
-6. Validate in synthetic/unit tests first.
-7. Validate in AirSim using the existing object binding and overlay OSD.
+```bash
+python3 simulation/validate-circle-trajectory.py \
+  --events out/object_behavior_airsim_existing_object_circle/mission_events.jsonl \
+  --min-orbits 3.0 \
+  --radius 10.0 \
+  --avg-radius-error-max 1.0 \
+  --max-radius-error-after-latch 3.0 \
+  --expect-complete-reason orbit_count_elapsed
 ```
 
-Expected display details for 2.27A:
-
-```text
-Mission / arriving
-Mission / circling
-```
-
-Non-goals for 2.27A:
+Non-goals for 2.27B:
 
 ```text
 No obstacle avoidance.
-No mesh/person asset insertion work.
-No overlay-side behavior inference.
-No direct GhostDetectionsFrame consumption by behavior.
-No file-IPC reintroduction.
+No new behavior type.
+No PX4/MAVLink rewrite.
+No overlay-side semantic inference.
+No planner insertion yet.
+No full navigation-grade orbit controller beyond validation hardening.
+```
+
+Likely next after 2.27B:
+
+```text
+2.27C or 2.28: approach behavior or sequence behavior, e.g. approach -> circle -> go_home_land.
 ```
 
 ---
@@ -235,7 +288,7 @@ ctest --test-dir build-staging --output-on-failure -R \
   'mission_runtime|object_behavior_mission_controller|object_behavior_mission_smoke|core_stack_config_loader|behavior_spec|target_selector|world_snapshot_stream_server'
 ```
 
-AirSim existing-object validation:
+AirSim existing-object follow validation:
 
 ```bash
 python3 simulation/airsim-object-poses.py --object BRPlayer_01_96
@@ -249,23 +302,43 @@ python3 simulation/airsim-object-poses.py --object BRPlayer_01_96
   --safe-height 40 \
   --behavior-duration-s 90 \
   --progress
+```
 
+AirSim existing-object circle validation:
+
+```bash
+./build-staging/apps/dedalus_mission_loop \
+  --config config/core_stack_object_behavior_airsim_existing_object_circle.yml \
+  --output-dir out/object_behavior_airsim_existing_object_circle \
+  --max-frames 5400 \
+  --shutdown-max-frames 1800 \
+  --world-snapshot-stream-port 47770 \
+  --safe-height 40 \
+  --behavior-duration-s 360 \
+  --progress
+```
+
+Overlay subscriber for live operator review:
+
+```bash
 python3 simulation/airsim-world-overlay.py \
   --stream-port 47770 \
   --follow \
   --rate-hz 5 \
-  --duration-s 180 \
+  --duration-s 240 \
   --clear \
   --label \
   --osd \
   --debug \
-  --debug-json out/object_behavior_airsim_existing_object/overlay_debug_latest.json
+  --debug-json out/object_behavior_airsim_existing_object_circle/overlay_debug_latest.json
 ```
 
-Inspect display-state events:
+Inspect circle events:
 
 ```bash
-grep '"display_state"' out/object_behavior_airsim_existing_object/mission_events.jsonl | tail -40
+grep '"display_detail":"circling"' out/object_behavior_airsim_existing_object_circle/mission_events.jsonl | head
+grep '"orbit_mode_latched":true' out/object_behavior_airsim_existing_object_circle/mission_events.jsonl | head
+grep '"behavior_complete"' out/object_behavior_airsim_existing_object_circle/mission_events.jsonl
 ```
 
 ---
@@ -322,6 +395,8 @@ Do not keep retrying increasingly complex connector paths after a connector fail
 - Do not use artifact files as runtime IPC when a live stream or in-process subscriber is the right boundary.
 - Do not make simulation/airsim-world-overlay.py evaluate GhostScenario, discover AirSim objects, or poll snapshot artifacts in normal mode; it should subscribe and render.
 - Do not put behavior semantics in overlay logic. Mission/behavior events should publish display_state/display_detail; overlay should render them.
+- Do not implement circle as a yaw-only, latch-only, or fixed-waypoint visual hack.
+- Do not require exact 3 o'clock orbit insertion; circle must tolerate imperfect initial position, velocity, attitude, and overshoot.
 - Do not add shims to preserve stale pre-refactor APIs unless there is a current user and an explicit removal plan.
 - Do not create branches or PRs unless explicitly requested.
 ```
@@ -332,6 +407,7 @@ Do not keep retrying increasingly complex connector paths after a connector fail
 
 ```text
 docs/runtime_dataflow.md                     source->publisher->server->subscriber->sink diagrams
+docs/flight_behavior_control_laws.md        robust behavior control-law principle, especially circle/orbit
 docs/airsim_existing_object_ghost_runbook.md AirSim existing-object validation
 docs/object_behavior_airsim_ghost_runbook.md AirSim ghost behavior + live stream runbook
 docs/object_conditioned_behavior_plan.md     detailed M3 behavior + identity plan
