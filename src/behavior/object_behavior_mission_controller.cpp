@@ -566,6 +566,9 @@ ObjectBehaviorMissionConfig load_object_behavior_mission_config(const MissionOpt
     config.follow_observation_geometry_enabled = parse_bool(
         options.get_or("object_behavior_follow_observation_geometry_enabled", "false"),
         false);
+    config.zero_target_velocity = parse_bool(
+        options.get_or("object_behavior_zero_target_velocity", "false"),
+        false);
     config.follow_min_standoff_m = std::stod(options.get_or("object_behavior_follow_min_standoff_m", "8.0"));
     config.follow_max_elevation_angle_deg = std::stod(options.get_or(
         "object_behavior_follow_max_elevation_angle_deg",
@@ -992,12 +995,17 @@ MissionTickOutput ObjectBehaviorMissionController::tick(const MissionTickInput& 
                 }
                 const bool duration_complete = completion_elapsed(input.now);
                 bool orbit_count_complete = false;
+                TargetSelection control_selection = selection;
+                if (config_.zero_target_velocity) {
+                    control_selection.velocity_local = Vec3{0.0, 0.0, 0.0};
+                }
+
                 FollowGeometry geometry;
                 Vec3 raw_velocity{0.0, 0.0, 0.0};
                 if (!input.finish_requested && !duration_complete) {
                     raw_velocity = behavior_velocity(
                         ego,
-                        selection,
+                        control_selection,
                         config_.behavior_spec.behavior,
                         config_,
                         &geometry);
@@ -1030,14 +1038,14 @@ MissionTickOutput ObjectBehaviorMissionController::tick(const MissionTickInput& 
                     if (!behavior_tick_sample_emitted_ || behavior_detail != last_behavior_display_detail_) {
                         behavior_tick_sample_emitted_ = true;
                         last_behavior_display_detail_ = behavior_detail;
-                        output.events.push_back(behavior_tick_event(config_.behavior_spec, selection, velocity, geometry));
+                        output.events.push_back(behavior_tick_event(config_.behavior_spec, control_selection, velocity, geometry));
                     }
                     if (config_.debug_every_n_ticks > 0 && execute_tick_count_ % config_.debug_every_n_ticks == 0) {
                         output.events.push_back(behavior_debug_event(
                             execute_tick_count_,
                             config_.debug_level,
                             ego,
-                            selection,
+                            control_selection,
                             raw_velocity,
                             velocity,
                             *output.command,

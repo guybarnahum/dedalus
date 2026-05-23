@@ -44,6 +44,7 @@ flight_command_sink: px4_bridge
 mission_options.behavior_spec_path: config/behaviors/circle_existing_object_person.yaml
 mission_options.object_behavior_hold_velocity_mps: 0.0
 mission_options.object_behavior_altitude_policy: safe_height_floor
+mission_options.object_behavior_zero_target_velocity: true
 
 # Circle owns the orbit geometry; follow observation geometry stays disabled.
 mission_options.object_behavior_follow_observation_geometry_enabled: false

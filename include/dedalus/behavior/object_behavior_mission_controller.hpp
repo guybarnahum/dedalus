@@ -27,6 +27,7 @@ struct ObjectBehaviorMissionConfig {
     int debug_level{1};
     ObjectBehaviorAltitudePolicy altitude_policy{ObjectBehaviorAltitudePolicy::TargetRelative};
     bool follow_observation_geometry_enabled{false};
+    bool zero_target_velocity{false};
     double follow_min_standoff_m{8.0};
     double follow_max_elevation_angle_deg{35.0};
     double follow_arrival_slow_radius_m{8.0};
