@@ -51,6 +51,7 @@ struct FollowGeometry {
     double orbit_count_target{0.0};
     double circle_completed_orbits{0.0};
     double tangent_blend{0.0};
+    bool orbit_mode_latched{false};
     Vec3 tangent_velocity;
     Vec3 radial_correction_velocity;
     Vec3 desired_velocity;
@@ -373,7 +374,8 @@ FollowGeometry circle_geometry(
     const EgoState& ego,
     const TargetSelection& selection,
     const BehaviorSpec& behavior,
-    const ObjectBehaviorMissionConfig& config) {
+    const ObjectBehaviorMissionConfig& config,
+    bool orbit_mode_latched = false) {
     FollowGeometry geometry;
     geometry.orbit_radius_m = behavior.radius_m;
     geometry.target_velocity = selection.velocity_local;
@@ -381,15 +383,12 @@ FollowGeometry circle_geometry(
     geometry.orbit_count_target = behavior.orbit_count;
 
     const Vec3 entry_axis{1.0, 0.0, 0.0};
-    geometry.desired_position = Vec3{
-        selection.position_local.x + behavior.radius_m * entry_axis.x,
-        selection.position_local.y + behavior.radius_m * entry_axis.y,
-        selection.position_local.z - behavior.altitude_offset_m};
 
     const Vec3 target_to_ego{
         ego.local_T_body.position.x - selection.position_local.x,
         ego.local_T_body.position.y - selection.position_local.y,
         0.0};
+
     geometry.actual_radius_m = norm_xy(target_to_ego);
     geometry.actual_r_m = geometry.actual_radius_m;
     geometry.required_r_m = behavior.radius_m;
@@ -401,74 +400,82 @@ FollowGeometry circle_geometry(
             target_to_ego.y / geometry.actual_radius_m,
             0.0};
     } else {
+        // Degenerate case: directly over target. Pick a deterministic radial
+        // direction so tangent/radial control can immediately separate.
         geometry.radial_unit = entry_axis;
     }
+
     geometry.orbit_angle_rad = std::atan2(geometry.radial_unit.y, geometry.radial_unit.x);
 
-    const Vec3 entry_error{
+    // Nominal desired point for debug/operator display. This is no longer a
+    // hard waypoint target; orbit capture is radius/tangent based.
+    geometry.desired_position = Vec3{
+        selection.position_local.x + behavior.radius_m * geometry.radial_unit.x,
+        selection.position_local.y + behavior.radius_m * geometry.radial_unit.y,
+        selection.position_local.z - behavior.altitude_offset_m};
+
+    const Vec3 desired_error{
         geometry.desired_position.x - ego.local_T_body.position.x,
         geometry.desired_position.y - ego.local_T_body.position.y,
         geometry.desired_position.z - ego.local_T_body.position.z};
-    geometry.desired_error_xy_m = norm_xy(entry_error);
+    geometry.desired_error_xy_m = norm_xy(desired_error);
+
     const double entry_tolerance_m = std::max(
         kCircleDefaultEntryToleranceM,
         behavior.position_tolerance_m);
-    const bool on_entry = geometry.desired_error_xy_m <= entry_tolerance_m;
+
+    // Forgiving orbit insertion:
+    // - Do not require threading one exact 3 o'clock entry coordinate.
+    // - If radius is close enough, enter orbit mode from the current radial
+    //   angle.
+    // - Once latched, stay in orbit mode so small live-control deviations do
+    //   not drop the controller back into insertion.
+    const double radius_capture_tolerance_m = std::max(
+        entry_tolerance_m,
+        std::min(3.0, std::max(1.0, behavior.radius_m * 0.25)));
+    const bool radius_captured = std::abs(geometry.radius_error_m) <= radius_capture_tolerance_m;
+    const bool on_entry = orbit_mode_latched || radius_captured;
+
+    geometry.orbit_mode_latched = orbit_mode_latched || on_entry;
     geometry.circle_phase = on_entry ? "circling" : "arriving";
     geometry.arrival_mode = geometry.circle_phase;
 
-    if (!on_entry) {
-        const Vec3 entry_tangent = circle_tangent_velocity(entry_axis, behavior);
-        double closing_speed = 0.0;
-        if (geometry.desired_error_xy_m <= config.follow_arrival_hold_radius_m) {
-            closing_speed = std::max(0.0, config.follow_arrival_kp * geometry.desired_error_xy_m);
-        } else if (geometry.desired_error_xy_m <= config.follow_arrival_slow_radius_m) {
-            closing_speed = std::min(
-                behavior.max_speed_mps,
-                std::max(0.0, config.follow_arrival_kp * geometry.desired_error_xy_m));
-        } else {
-            closing_speed = behavior.max_speed_mps;
-        }
-        if (closing_speed > 0.0 && geometry.desired_error_xy_m > 1e-6) {
-            geometry.closing_velocity.x = entry_error.x / geometry.desired_error_xy_m * closing_speed;
-            geometry.closing_velocity.y = entry_error.y / geometry.desired_error_xy_m * closing_speed;
-        }
-        geometry.closing_speed_mps = norm_xy(geometry.closing_velocity);
-        geometry.tangent_velocity = entry_tangent;
-        geometry.tangent_blend = 1.0;
-        geometry.tangent_velocity = Vec3{
-            entry_tangent.x * geometry.tangent_blend,
-            entry_tangent.y * geometry.tangent_blend,
-            0.0};
-        geometry.tangent_velocity_mps = norm_xy(entry_tangent);
-        geometry.desired_velocity = Vec3{
-            selection.velocity_local.x + geometry.tangent_velocity.x + geometry.closing_velocity.x,
-            selection.velocity_local.y + geometry.tangent_velocity.y + geometry.closing_velocity.y,
-            entry_error.z};
-    } else {
-        geometry.tangent_blend = 1.0;
-        geometry.tangent_velocity = circle_tangent_velocity(geometry.radial_unit, behavior);
-        geometry.tangent_velocity_mps = norm_xy(geometry.tangent_velocity);
-        geometry.radial_correction_mps = std::clamp(
-            -geometry.radius_error_m * kCircleRadialCorrectionGain,
-            -kCircleMaxRadialCorrectionMps,
-            kCircleMaxRadialCorrectionMps);
-        geometry.radial_correction_velocity = Vec3{
-            geometry.radial_unit.x * geometry.radial_correction_mps,
-            geometry.radial_unit.y * geometry.radial_correction_mps,
-            0.0};
-        const double altitude_error = geometry.desired_position.z - ego.local_T_body.position.z;
-        geometry.desired_velocity = Vec3{
-            selection.velocity_local.x + geometry.tangent_velocity.x + geometry.radial_correction_velocity.x,
-            selection.velocity_local.y + geometry.tangent_velocity.y + geometry.radial_correction_velocity.y,
-            altitude_error};
-    }
+    // Continuous orbit-capture controller:
+    //
+    //   target velocity
+    // + tangent velocity at the current radial angle
+    // + radial correction toward requested radius
+    // + altitude correction
+    //
+    // This is intentionally used in both arriving and circling. The phase only
+    // affects display/orbit counting; the command law remains continuous and
+    // recoverable from bad initial radius, overshoot, or imperfect bearing.
+    geometry.tangent_blend = 1.0;
+    geometry.tangent_velocity = circle_tangent_velocity(geometry.radial_unit, behavior);
+    geometry.tangent_velocity_mps = norm_xy(geometry.tangent_velocity);
+
+    geometry.radial_correction_mps = std::clamp(
+        -geometry.radius_error_m * kCircleRadialCorrectionGain,
+        -kCircleMaxRadialCorrectionMps,
+        kCircleMaxRadialCorrectionMps);
+    geometry.radial_correction_velocity = Vec3{
+        geometry.radial_unit.x * geometry.radial_correction_mps,
+        geometry.radial_unit.y * geometry.radial_correction_mps,
+        0.0};
+
+    const double altitude_error = geometry.desired_position.z - ego.local_T_body.position.z;
+    geometry.desired_velocity = Vec3{
+        selection.velocity_local.x + geometry.tangent_velocity.x + geometry.radial_correction_velocity.x,
+        selection.velocity_local.y + geometry.tangent_velocity.y + geometry.radial_correction_velocity.y,
+        altitude_error};
 
     const Vec3 velocity = clamp_velocity(
         geometry.desired_velocity,
         behavior.max_speed_mps,
         behavior.max_vertical_speed_mps);
     geometry.desired_velocity_mps = norm_xy(geometry.desired_velocity);
+    geometry.closing_velocity = geometry.radial_correction_velocity;
+    geometry.closing_speed_mps = std::abs(geometry.radial_correction_mps);
     geometry.relative_speed_xy_mps = norm_xy(Vec3{
         velocity.x - selection.velocity_local.x,
         velocity.y - selection.velocity_local.y,
@@ -491,7 +498,7 @@ Vec3 behavior_velocity(
         return velocity;
     }
     if (behavior.type == BehaviorType::Circle) {
-        FollowGeometry geometry = circle_geometry(ego, selection, behavior, config);
+        FollowGeometry geometry = circle_geometry(ego, selection, behavior, config, false);
         const Vec3 velocity = clamp_velocity(geometry.desired_velocity, behavior.max_speed_mps, behavior.max_vertical_speed_mps);
         if (geometry_out != nullptr) {
             *geometry_out = geometry;
@@ -738,6 +745,7 @@ std::string behavior_tick_event(
         ",\"orbit_count_target\":" + std::to_string(geometry.orbit_count_target) +
         ",\"circle_completed_orbits\":" + std::to_string(geometry.circle_completed_orbits) +
         ",\"orbit_angle_rad\":" + std::to_string(geometry.orbit_angle_rad) +
+        ",\"orbit_mode_latched\":" + std::string(geometry.orbit_mode_latched ? "true" : "false") +
         behavior_display_fields(behavior_detail_for_tick(spec.behavior, geometry));
 }
 
@@ -780,7 +788,8 @@ std::string behavior_debug_event(
         ",\"tangent_blend\":" + std::to_string(geometry.tangent_blend) +
         ",\"orbit_count_target\":" + std::to_string(geometry.orbit_count_target) +
         ",\"circle_completed_orbits\":" + std::to_string(geometry.circle_completed_orbits) +
-        ",\"orbit_angle_rad\":" + std::to_string(geometry.orbit_angle_rad);
+        ",\"orbit_angle_rad\":" + std::to_string(geometry.orbit_angle_rad) +
+        ",\"orbit_mode_latched\":" + std::string(geometry.orbit_mode_latched ? "true" : "false");
 
     if (debug_level >= 2) {
         const double yaw_delta_deg = command.yaw_valid ? rad_to_deg(command.yaw_rad - ego.local_T_body.rotation_rpy.z) : 0.0;
@@ -898,6 +907,7 @@ void ObjectBehaviorMissionController::reset_behavior_run(TimePoint now) {
     execute_tick_count_ = 0;
     last_behavior_display_detail_.clear();
     previous_selection_.reset();
+    circle_in_orbit_mode_ = false;
     circle_orbit_tracking_ = false;
     circle_previous_angle_rad_ = 0.0;
     circle_completed_orbits_ = 0.0;
@@ -1003,13 +1013,31 @@ MissionTickOutput ObjectBehaviorMissionController::tick(const MissionTickInput& 
                 FollowGeometry geometry;
                 Vec3 raw_velocity{0.0, 0.0, 0.0};
                 if (!input.finish_requested && !duration_complete) {
-                    raw_velocity = behavior_velocity(
-                        ego,
-                        control_selection,
-                        config_.behavior_spec.behavior,
-                        config_,
-                        &geometry);
-                    orbit_count_complete = update_circle_orbit_progress(config_.behavior_spec.behavior, geometry.circle_phase == "circling", geometry.orbit_angle_rad);
+                    if (config_.behavior_spec.behavior.type == BehaviorType::Circle) {
+                        geometry = circle_geometry(
+                            ego,
+                            control_selection,
+                            config_.behavior_spec.behavior,
+                            config_,
+                            circle_in_orbit_mode_);
+                        const bool circling = geometry.circle_phase == "circling";
+                        if (circling) {
+                            circle_in_orbit_mode_ = true;
+                        }
+                        raw_velocity = clamp_velocity(
+                            geometry.desired_velocity,
+                            config_.behavior_spec.behavior.max_speed_mps,
+                            config_.behavior_spec.behavior.max_vertical_speed_mps);
+                        orbit_count_complete = update_circle_orbit_progress(config_.behavior_spec.behavior, circling, geometry.orbit_angle_rad);
+                    } else {
+                        raw_velocity = behavior_velocity(
+                            ego,
+                            control_selection,
+                            config_.behavior_spec.behavior,
+                            config_,
+                            &geometry);
+                        orbit_count_complete = update_circle_orbit_progress(config_.behavior_spec.behavior, geometry.circle_phase == "circling", geometry.orbit_angle_rad);
+                    }
                     geometry.circle_completed_orbits = circle_completed_orbits_;
                     geometry.orbit_count_target = config_.behavior_spec.behavior.orbit_count;
                 }

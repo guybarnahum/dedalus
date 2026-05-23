@@ -91,6 +91,7 @@ private:
     bool aborting_{false};
     std::string abort_reason_;
     std::string last_behavior_display_detail_;
+    bool circle_in_orbit_mode_{false};
     bool circle_orbit_tracking_{false};
     double circle_previous_angle_rad_{0.0};
     double circle_completed_orbits_{0.0};
