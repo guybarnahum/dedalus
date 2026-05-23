@@ -374,7 +374,7 @@ void circle_display_detail_transitions_arriving_to_circling() {
         controller,
         make_circle_snapshot(
             300000000,
-            dedalus::Vec3{-10.0, 0.0, -2.0},
+            dedalus::Vec3{-17.0, 0.0, -2.0},
             dedalus::Vec3{0.0, 0.0, 0.0}));
 
     dedalus::MissionTickInput input;
