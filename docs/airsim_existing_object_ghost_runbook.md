@@ -1,14 +1,15 @@
 # AirSim Existing-Object Ghost Validation Runbook
 
-This runbook validates the 2.26E existing-object ghost source: a Dedalus ghost detection is bound to a real object already present in the AirSim scene.
+This runbook validates Dedalus ghost detections bound to real objects already present in the AirSim scene. It covers the 2.26E follow/existing-object path and the 2.27A/2.27B circle validation path.
 
-The first canonical run config is:
+Canonical existing-object configs:
 
 ```text
 config/core_stack_object_behavior_airsim_existing_object.yaml
+config/core_stack_object_behavior_airsim_existing_object_circle.yml
 ```
 
-It binds:
+Default binding:
 
 ```text
 source_track_id: ghost_person_001
@@ -50,15 +51,11 @@ Expected shape:
 {"schema_version":1,"source":"airsim_object_poses","timestamp_ns":...,"objects":[{"name":"BRPlayer_01_96","pose_available":true,"position_ned_m":[...],"orientation_quat_xyzw":[...]}]}
 ```
 
-If the bridge fails, pick another visible object from the listing and update:
-
-```text
-config/core_stack_object_behavior_airsim_existing_object.yaml
-```
+If the bridge fails, pick another visible object from the listing and update the relevant core-stack config.
 
 ---
 
-## 2. Run mission-loop with runtime stream
+## 2. Follow/existing-object smoke run
 
 Clean prior output:
 
@@ -110,7 +107,127 @@ mission_event
 
 ---
 
-## 3. Expected visual result
+## 3. Circle/orbit validation run
+
+Circle behavior uses:
+
+```text
+config/core_stack_object_behavior_airsim_existing_object_circle.yml
+config/behaviors/circle_existing_object_person.yaml
+```
+
+For a three-orbit validation, make sure the behavior spec contains:
+
+```yaml
+behavior:
+  type: circle
+  radius_m: 10.0
+  orbit_count: 3.0
+
+completion:
+  after_s: 360
+  then: go_home_land
+```
+
+and the core-stack config has a long enough override:
+
+```yaml
+mission_options.object_behavior_completion_after_s: 360.0
+```
+
+Clean prior output:
+
+```bash
+rm -rf \
+  out/object_behavior_airsim_existing_object_circle \
+  out/object_behavior_airsim_existing_object_circle_annotation
+```
+
+Terminal 1:
+
+```bash
+./build-staging/apps/dedalus_mission_loop \
+  --config config/core_stack_object_behavior_airsim_existing_object_circle.yml \
+  --output-dir out/object_behavior_airsim_existing_object_circle \
+  --max-frames 5400 \
+  --shutdown-max-frames 1800 \
+  --world-snapshot-stream-port 47770 \
+  --safe-height 40 \
+  --behavior-duration-s 360 \
+  --progress
+```
+
+Terminal 2:
+
+```bash
+python3 simulation/airsim-world-overlay.py \
+  --stream-port 47770 \
+  --follow \
+  --rate-hz 5 \
+  --duration-s 240 \
+  --clear \
+  --label \
+  --osd \
+  --debug \
+  --debug-json out/object_behavior_airsim_existing_object_circle/overlay_debug_latest.json
+```
+
+Expected behavior event:
+
+```bash
+grep '"behavior_complete"' out/object_behavior_airsim_existing_object_circle/mission_events.jsonl
+```
+
+Expected completion reason:
+
+```text
+orbit_count_elapsed
+```
+
+This proves the run completed because the controller counted the requested orbits, not because the fallback duration expired.
+
+---
+
+## 4. Circle trajectory validator
+
+2.27B adds an artifact-only validator for circle/orbit quality:
+
+```bash
+python3 simulation/validate-circle-trajectory.py \
+  --events out/object_behavior_airsim_existing_object_circle/mission_events.jsonl \
+  --min-orbits 3.0 \
+  --radius 10.0 \
+  --avg-radius-error-max 1.0 \
+  --max-radius-error-after-latch 3.0 \
+  --expect-complete-reason orbit_count_elapsed \
+  --require-terminal-settled \
+  --require-lifecycle
+```
+
+The validator reads `mission_events.jsonl` only. It does not connect to AirSim, PX4, the runtime stream, or the overlay. It checks durable artifacts for:
+
+```text
+target_selected
+Mission / circling samples
+orbit_mode_latched=true
+completed orbit count
+behavior_complete reason
+radius error statistics
+GoHome -> Land -> Complete lifecycle evidence
+runtime_stop terminal_settled=true
+```
+
+Useful quick greps:
+
+```bash
+grep '"display_detail":"circling"' out/object_behavior_airsim_existing_object_circle/mission_events.jsonl | head
+grep '"orbit_mode_latched":true' out/object_behavior_airsim_existing_object_circle/mission_events.jsonl | head
+grep '"circle_completed_orbits"' out/object_behavior_airsim_existing_object_circle/mission_events.jsonl | tail -40
+```
+
+---
+
+## 5. Expected visual result
 
 In the AirSim viewport, the selected object should show:
 
@@ -125,7 +242,7 @@ SEL marker:
   comes from mission_event target_selected matched against the latest world_snapshot agent
 ```
 
-For the first existing-object run, all three should be near the visible AirSim object named in the config.
+For the existing-object run, all three should be near the visible AirSim object named in the config.
 
 Important interpretation:
 
@@ -137,19 +254,21 @@ SEL appears after behavior selects the target.
 
 Small visual offsets are acceptable because markers are lifted above the object for readability. Large horizontal offsets mean a coordinate or source mismatch.
 
+For circle behavior, the AirSim viewport or follow camera is an operator review aid only. The authoritative circle validation is `mission_events.jsonl` plus `simulation/validate-circle-trajectory.py`.
+
 ---
 
-## 4. Artifact checks
+## 6. Artifact checks
 
-The existing-object run should produce:
+The existing-object runs should produce:
 
 ```text
-out/object_behavior_airsim_existing_object/mission_events.jsonl
-out/object_behavior_airsim_existing_object/snapshot_manifest.txt
-out/object_behavior_airsim_existing_object/snapshot_*.json
-out/object_behavior_airsim_existing_object_annotation/frame_*.ppm
-out/object_behavior_airsim_existing_object_annotation/frame_*.world_overlay.json
-out/object_behavior_airsim_existing_object/overlay_debug_latest.json
+out/object_behavior_airsim_existing_object*/mission_events.jsonl
+out/object_behavior_airsim_existing_object*/snapshot_manifest.txt
+out/object_behavior_airsim_existing_object*/snapshot_*.json
+out/object_behavior_airsim_existing_object*_annotation/frame_*.ppm
+out/object_behavior_airsim_existing_object*_annotation/frame_*.world_overlay.json
+out/object_behavior_airsim_existing_object*/overlay_debug_latest.json
 ```
 
 Quick checks:
@@ -170,9 +289,9 @@ and a small `delta_plan_minus_world_norm_m` when both PLAN and AG are available.
 
 ---
 
-## 5. What this validates
+## 7. What this validates
 
-This run validates:
+The follow/existing-object run validates:
 
 ```text
 AirSim object pose bridge can read a selected scene object.
@@ -185,16 +304,26 @@ Runtime stream carries ghost_detections, world_snapshot, and mission_event.
 AirSim overlay renders PLAN / AG / SEL over the visible object.
 ```
 
+The circle/existing-object run additionally validates:
+
+```text
+ObjectBehaviorMissionController executes continuous orbit-capture circle behavior.
+Circle uses tangent velocity at current radial angle plus radial correction.
+Orbit mode latches after capture.
+Completed orbit count advances while circling.
+Behavior completes with reason=orbit_count_elapsed for orbit-count runs.
+Mission proceeds through GoHome -> Land -> Disarm -> Settled.
+```
+
 ---
 
-## 6. What this does not validate yet
+## 8. What this does not validate yet
 
 This does not yet validate:
 
 ```text
 random/all AirSim object selection modes
 moving existing AirSim scene actors
-circle behavior around the object
 camera-derived real detector quality
 custom mesh/proxy actor injection
 obstacle avoidance
@@ -204,12 +333,12 @@ Those are later slices.
 
 ---
 
-## 7. Next step after success
+## 9. Next step after success
 
-After PLAN / AG / SEL align on the existing object, move to 2.27:
+After a three-orbit circle run passes `validate-circle-trajectory.py`, 2.27A/B circle behavior should be considered validated for the static existing-object path.
+
+Likely next behavior slice:
 
 ```text
-Circle an existing visible static object.
-Prefer a parked car or static prop if available.
-Use BRPlayer_* only if no better static object is available.
+Approach behavior, or sequence behavior: approach -> circle -> go_home_land.
 ```
