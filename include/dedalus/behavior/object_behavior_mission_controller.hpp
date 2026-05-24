@@ -14,6 +14,19 @@ enum class ObjectBehaviorAltitudePolicy {
     SafeHeightFloor,
 };
 
+enum class ObjectBehaviorYawMode {
+    Trajectory,
+    Target,
+    Hold,
+    None,
+};
+
+enum class ObjectBehaviorVerticalStareMode {
+    None,
+    DebugOnly,
+    Gimbal,
+};
+
 struct ObjectBehaviorMissionConfig {
     BehaviorMissionSpec behavior_spec;
     double hold_velocity_mps{0.0};
@@ -23,6 +36,9 @@ struct ObjectBehaviorMissionConfig {
     double yaw_offset_rad{0.0};
     double yaw_min_speed_mps{0.35};
     bool yaw_hold_last_when_unstable{true};
+    ObjectBehaviorYawMode yaw_mode{ObjectBehaviorYawMode::Trajectory};
+    ObjectBehaviorVerticalStareMode vertical_stare_mode{ObjectBehaviorVerticalStareMode::None};
+    bool vertical_stare_warn_if_unavailable{true};
     int debug_every_n_ticks{0};
     int debug_level{1};
     ObjectBehaviorAltitudePolicy altitude_policy{ObjectBehaviorAltitudePolicy::TargetRelative};
@@ -57,11 +73,18 @@ private:
         TimePoint timestamp,
         Vec3 velocity_local_mps,
         double yaw_offset_rad = 0.0) const;
+    [[nodiscard]] VelocityCommand command_from_behavior_velocity(
+        TimePoint timestamp,
+        Vec3 velocity_local_mps,
+        const EgoState& ego,
+        const TargetSelection& selection,
+        double yaw_offset_rad = 0.0) const;
     [[nodiscard]] VelocityCommand command_with_kind(TimePoint timestamp, FlightCommandKind kind) const;
     [[nodiscard]] std::string target_event(const TargetSelection& selection) const;
     [[nodiscard]] std::string behavior_event(const std::string& event, const std::string& reason) const;
     [[nodiscard]] bool completion_elapsed(TimePoint now) const;
     [[nodiscard]] Vec3 go_home_velocity(const EgoState& ego) const;
+    [[nodiscard]] std::optional<std::string> maybe_vertical_stare_warning(const EgoState& ego, const TargetSelection& selection);
     void begin_abort_recovery(TimePoint now, double height_m, const std::string& reason);
     bool update_circle_orbit_progress(const BehaviorSpec& behavior, bool circling, double orbit_angle_rad);
     void reset_behavior_run(TimePoint now);
@@ -84,6 +107,7 @@ private:
     bool behavior_start_emitted_{false};
     bool behavior_complete_emitted_{false};
     bool behavior_tick_sample_emitted_{false};
+    bool vertical_stare_warning_emitted_{false};
     bool arm_command_sent_{false};
     bool takeoff_command_sent_{false};
     bool land_command_sent_{false};
