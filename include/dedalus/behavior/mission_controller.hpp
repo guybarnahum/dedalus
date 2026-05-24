@@ -56,6 +56,7 @@ struct VelocityCommand {
     double yaw_rad{0.0};
     bool yaw_rate_valid{true};
     bool yaw_valid{false};
+    std::string yaw_source{"disabled"};
 };
 
 struct FlightCommandResult {
