@@ -390,6 +390,64 @@ void circle_display_detail_transitions_arriving_to_circling() {
     require(circling.events.back().find("\"circle_phase\":\"circling\"") != std::string::npos, "circling tick should publish circle phase");
 }
 
+void circle_target_yaw_points_at_selected_target_not_velocity() {
+    auto config = make_circle_config();
+    config.yaw_mode = dedalus::ObjectBehaviorYawMode::Target;
+    dedalus::ObjectBehaviorMissionController controller{config};
+
+    const auto behavior = first_execute_tick(
+        controller,
+        make_circle_snapshot(
+            300000000,
+            dedalus::Vec3{10.0, 0.0, -2.0},
+            dedalus::Vec3{0.0, 0.0, 0.0}));
+
+    require(behavior.command.has_value(), "target-yaw circle should emit command");
+    require(behavior.command->yaw_valid, "target-yaw circle should emit yaw");
+    require_near(
+        behavior.command->yaw_rad,
+        3.14159265358979323846,
+        1.0e-6,
+        "ego at +X should yaw toward target at pi radians");
+    require(behavior.command->yaw_source == "target", "yaw source should be target");
+    require(
+        behavior.command->velocity_local_mps.y < 0.0,
+        "clockwise circle should still fly tangent while yawing at target");
+}
+
+void vertical_stare_gimbal_warns_once_when_unavailable() {
+    auto config = make_circle_config();
+    config.vertical_stare_mode = dedalus::ObjectBehaviorVerticalStareMode::Gimbal;
+    dedalus::ObjectBehaviorMissionController controller{config};
+
+    const auto first = first_execute_tick(
+        controller,
+        make_circle_snapshot(
+            300000000,
+            dedalus::Vec3{10.0, 0.0, -2.0},
+            dedalus::Vec3{0.0, 0.0, 0.0}));
+
+    bool found_warning = false;
+    for (const auto& event : first.events) {
+        found_warning = found_warning || event.find("\"event\":\"pointing_warning\"") != std::string::npos;
+    }
+    require(found_warning, "gimbal vertical stare should emit one unavailable warning");
+
+    dedalus::MissionTickInput input;
+    input.now = dedalus::TimePoint{400000000};
+    input.snapshot = make_circle_snapshot(
+        400000000,
+        dedalus::Vec3{10.0, 0.0, -2.0},
+        dedalus::Vec3{0.0, 0.0, 0.0});
+    const auto second = controller.tick(input);
+
+    for (const auto& event : second.events) {
+        require(
+            event.find("\"event\":\"pointing_warning\"") == std::string::npos,
+            "vertical stare warning should be emitted only once");
+    }
+}
+
 }  // namespace
 
 int main() {
@@ -403,6 +461,8 @@ int main() {
         circle_radial_correction_pushes_inward_and_outward();
         circle_command_speed_is_clamped();
         circle_display_detail_transitions_arriving_to_circling();
+        circle_target_yaw_points_at_selected_target_not_velocity();
+        vertical_stare_gimbal_warns_once_when_unavailable();
     } catch (const std::exception& exc) {
         std::cerr << "test_object_behavior_mission_controller failed: " << exc.what() << '\n';
         return 1;

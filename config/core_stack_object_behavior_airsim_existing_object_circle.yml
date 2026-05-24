@@ -52,10 +52,17 @@ mission_options.object_behavior_follow_arrival_slow_radius_m: 10.0
 mission_options.object_behavior_follow_arrival_hold_radius_m: 3.0
 mission_options.object_behavior_follow_arrival_kp: 0.30
 
-# 90-degree side-look yaw offset is useful while orbiting.
-mission_options.object_behavior_yaw_offset_rad: 1.5708
+# Target-facing yaw points the drone/front camera at the selected object while
+# the velocity controller still flies tangent/radial orbit commands.
+mission_options.object_behavior_yaw_mode: target
+mission_options.object_behavior_yaw_offset_rad: 0.0
 mission_options.object_behavior_yaw_min_speed_mps: 0.35
 mission_options.object_behavior_yaw_hold_last_when_unstable: true
+
+# Vertical stare is explicit but currently not applied unless a camera/gimbal
+# sink is added. In gimbal mode the controller emits one warning event.
+mission_options.object_behavior_vertical_stare_mode: gimbal
+mission_options.object_behavior_vertical_stare_warn_if_unavailable: true
 
 # Emit behavior_debug into mission_events.jsonl every N ExecuteMission ticks.
 mission_options.object_behavior_debug_every_n_ticks: 10

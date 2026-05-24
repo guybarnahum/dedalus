@@ -155,6 +155,35 @@ ObjectBehaviorAltitudePolicy parse_altitude_policy(const std::string& value) {
     throw std::invalid_argument("unknown object_behavior_altitude_policy: " + value);
 }
 
+ObjectBehaviorYawMode parse_yaw_mode(const std::string& value) {
+    if (value.empty() || value == "trajectory" || value == "travel_direction" || value == "from_heading") {
+        return ObjectBehaviorYawMode::Trajectory;
+    }
+    if (value == "target" || value == "to_target" || value == "stare_at_target") {
+        return ObjectBehaviorYawMode::Target;
+    }
+    if (value == "hold") {
+        return ObjectBehaviorYawMode::Hold;
+    }
+    if (value == "none" || value == "disabled") {
+        return ObjectBehaviorYawMode::None;
+    }
+    throw std::invalid_argument("unknown object_behavior_yaw_mode: " + value);
+}
+
+ObjectBehaviorVerticalStareMode parse_vertical_stare_mode(const std::string& value) {
+    if (value.empty() || value == "none" || value == "disabled") {
+        return ObjectBehaviorVerticalStareMode::None;
+    }
+    if (value == "debug" || value == "debug_only") {
+        return ObjectBehaviorVerticalStareMode::DebugOnly;
+    }
+    if (value == "gimbal") {
+        return ObjectBehaviorVerticalStareMode::Gimbal;
+    }
+    throw std::invalid_argument("unknown object_behavior_vertical_stare_mode: " + value);
+}
+
 Vec3 velocity_toward_xy(const Vec3& from, const Vec3& to, double speed_mps) {
     const Vec3 delta{to.x - from.x, to.y - from.y, 0.0};
     const double distance = norm_xy(delta);
@@ -539,11 +568,8 @@ std::string class_label_event_string(ClassLabel label) {
     }
 }
 
-std::string yaw_source_for(const VelocityCommand& command, double min_speed_mps) {
-    if (!command.yaw_valid) {
-        return "disabled";
-    }
-    return norm_xy(command.velocity_local_mps) >= min_speed_mps ? "travel_direction" : "hold_last";
+std::string yaw_source_for(const VelocityCommand& command, double /*min_speed_mps*/) {
+    return command.yaw_source;
 }
 
 }  // namespace
@@ -563,6 +589,13 @@ ObjectBehaviorMissionConfig load_object_behavior_mission_config(const MissionOpt
     config.yaw_hold_last_when_unstable = parse_bool(
         options.get_or("object_behavior_yaw_hold_last_when_unstable", "true"),
         true);
+    config.yaw_mode = parse_yaw_mode(options.get_or("object_behavior_yaw_mode", "trajectory"));
+    config.vertical_stare_mode = parse_vertical_stare_mode(
+        options.get_or("object_behavior_vertical_stare_mode", "none"));
+    config.vertical_stare_warn_if_unavailable = parse_bool(
+        options.get_or("object_behavior_vertical_stare_warn_if_unavailable", "true"),
+        true);
+
     config.debug_every_n_ticks = std::stoi(options.get_or("object_behavior_debug_every_n_ticks", "0"));
     config.debug_level = std::stoi(options.get_or(
         "object_behavior_debug_level",
@@ -622,18 +655,76 @@ VelocityCommand ObjectBehaviorMissionController::command_from_velocity(
     command.yaw_rate_radps = 0.0;
     command.yaw_rate_valid = true;
     command.yaw_valid = false;
+    command.yaw_source = "disabled";
 
     const double horizontal = norm_xy(velocity_local_mps);
     if (horizontal >= config_.yaw_min_speed_mps) {
         command.yaw_valid = true;
         command.yaw_rad = std::atan2(velocity_local_mps.y, velocity_local_mps.x) + yaw_offset_rad;
+        command.yaw_source = "trajectory";
         last_stable_yaw_valid_ = true;
         last_stable_yaw_rad_ = command.yaw_rad;
     } else if (config_.yaw_hold_last_when_unstable && last_stable_yaw_valid_) {
         command.yaw_valid = true;
         command.yaw_rad = last_stable_yaw_rad_;
+        command.yaw_source = "hold_last";
     }
     return command;
+}
+
+VelocityCommand ObjectBehaviorMissionController::command_from_behavior_velocity(
+    TimePoint timestamp,
+    Vec3 velocity_local_mps,
+    const EgoState& ego,
+    const TargetSelection& selection,
+    double yaw_offset_rad) const {
+    if (config_.yaw_mode == ObjectBehaviorYawMode::Trajectory) {
+        return command_from_velocity(timestamp, velocity_local_mps, yaw_offset_rad);
+    }
+
+    VelocityCommand command;
+    command.kind = FlightCommandKind::Velocity;
+    command.timestamp = timestamp;
+    command.velocity_local_mps = velocity_local_mps;
+    command.yaw_rate_radps = 0.0;
+    command.yaw_rate_valid = true;
+    command.yaw_valid = false;
+    command.yaw_source = "disabled";
+
+    if (config_.yaw_mode == ObjectBehaviorYawMode::None) {
+        return command;
+    }
+
+    if (config_.yaw_mode == ObjectBehaviorYawMode::Hold) {
+        if (last_stable_yaw_valid_) {
+            command.yaw_valid = true;
+            command.yaw_rad = last_stable_yaw_rad_;
+            command.yaw_source = "hold_last";
+        }
+        return command;
+    }
+
+    if (config_.yaw_mode == ObjectBehaviorYawMode::Target) {
+        const Vec3 target_delta{
+            selection.position_local.x - ego.local_T_body.position.x,
+            selection.position_local.y - ego.local_T_body.position.y,
+            0.0};
+        const double target_range_xy_m = norm_xy(target_delta);
+        if (target_range_xy_m > 1e-6) {
+            command.yaw_valid = true;
+            command.yaw_rad = std::atan2(target_delta.y, target_delta.x) + yaw_offset_rad;
+            command.yaw_source = "target";
+            last_stable_yaw_valid_ = true;
+            last_stable_yaw_rad_ = command.yaw_rad;
+        } else if (config_.yaw_hold_last_when_unstable && last_stable_yaw_valid_) {
+            command.yaw_valid = true;
+            command.yaw_rad = last_stable_yaw_rad_;
+            command.yaw_source = "hold_last";
+        }
+        return command;
+    }
+
+    return command_from_velocity(timestamp, velocity_local_mps, yaw_offset_rad);
 }
 
 VelocityCommand ObjectBehaviorMissionController::command_with_kind(
@@ -839,6 +930,37 @@ bool ObjectBehaviorMissionController::completion_elapsed(TimePoint now) const {
     return seconds_between(behavior_start_, now) >= after_s;
 }
 
+std::optional<std::string> ObjectBehaviorMissionController::maybe_vertical_stare_warning(
+    const EgoState& ego,
+    const TargetSelection& selection) {
+    if (vertical_stare_warning_emitted_) {
+        return std::nullopt;
+    }
+    if (!config_.vertical_stare_warn_if_unavailable) {
+        return std::nullopt;
+    }
+    if (config_.vertical_stare_mode != ObjectBehaviorVerticalStareMode::Gimbal) {
+        return std::nullopt;
+    }
+
+    vertical_stare_warning_emitted_ = true;
+    const double dx = selection.position_local.x - ego.local_T_body.position.x;
+    const double dy = selection.position_local.y - ego.local_T_body.position.y;
+    const double dz = selection.position_local.z - ego.local_T_body.position.z;
+    const double range_xy = std::max(std::hypot(dx, dy), 1e-6);
+    const double elevation_rad = std::atan2(dz, range_xy);
+
+    return "\"event\":\"pointing_warning\""
+        ",\"reason\":\"vertical_stare_unavailable\""
+        ",\"vertical_stare_mode\":\"gimbal\""
+        ",\"target_elevation_rad\":" + std::to_string(elevation_rad) +
+        ",\"target_elevation_deg\":" + std::to_string(rad_to_deg(elevation_rad)) +
+        ",\"message\":\"No camera/gimbal command sink is configured; vertical stare is not applied\""
+        ",\"agent_id\":" + q(selection.agent_id.value) +
+        ",\"source_track_id\":" + q(selection.source_track_id.value) +
+        behavior_display_fields("arriving");
+}
+
 Vec3 ObjectBehaviorMissionController::go_home_velocity(const EgoState& ego) const {
     if (!home_initialized_) {
         return Vec3{0.0, 0.0, 0.0};
@@ -904,6 +1026,7 @@ void ObjectBehaviorMissionController::reset_behavior_run(TimePoint now) {
     behavior_start_emitted_ = false;
     behavior_complete_emitted_ = false;
     behavior_tick_sample_emitted_ = false;
+    vertical_stare_warning_emitted_ = false;
     execute_tick_count_ = 0;
     last_behavior_display_detail_.clear();
     previous_selection_.reset();
@@ -1010,6 +1133,10 @@ MissionTickOutput ObjectBehaviorMissionController::tick(const MissionTickInput& 
                     control_selection.velocity_local = Vec3{0.0, 0.0, 0.0};
                 }
 
+                if (auto warning = maybe_vertical_stare_warning(ego, control_selection)) {
+                    output.events.push_back(*warning);
+                }
+
                 FollowGeometry geometry;
                 Vec3 raw_velocity{0.0, 0.0, 0.0};
                 if (!input.finish_requested && !duration_complete) {
@@ -1057,9 +1184,11 @@ MissionTickOutput ObjectBehaviorMissionController::tick(const MissionTickInput& 
                         config_,
                         config_.behavior_spec.behavior,
                         height_m);
-                    output.command = command_from_velocity(
+                    output.command = command_from_behavior_velocity(
                         input.now,
                         velocity,
+                        ego,
+                        control_selection,
                         config_.yaw_offset_rad + config_.behavior_spec.behavior.yaw_offset_rad);
                     const std::string behavior_detail =
                         behavior_detail_for_tick(config_.behavior_spec.behavior, geometry);
