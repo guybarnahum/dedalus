@@ -221,10 +221,12 @@ fi
 
 # ---------------- Configuration ----------------
 S3_BUCKET="s3://dedalus-sim-assets-colosseum"
-SIM_DIR="colosseum_environments/${TARGET_ENV}_LinuxNoEditor"
+REPO_ROOT_ABS="$(cd ../.. && pwd)"
+THIRD_PARTY_DIR_ABS="$REPO_ROOT_ABS/third_party"
+SIM_DIR="$THIRD_PARTY_DIR_ABS/colosseum_environments/${TARGET_ENV}_LinuxNoEditor"
+PX4_DIR_ABS="$THIRD_PARTY_DIR_ABS/PX4-Autopilot"
 VENV_PATH="$HOME/dedalus/venv"
 AIRSIM_CANONICAL_SETTINGS_ABS="$(pwd)/settings.json"
-REPO_ROOT_ABS="$(cd ../.. && pwd)"
 CORE_BUILD_DIR_ABS="$(cd "$CORE_BUILD_DIR" 2>/dev/null && pwd || true)"
 CORE_CONFIG_ABS="$(cd "$(dirname "$CORE_CONFIG")" && pwd)/$(basename "$CORE_CONFIG")"
 CORE_OUTPUT_DIR_ABS="$(mkdir -p "$CORE_OUTPUT_DIR" && cd "$CORE_OUTPUT_DIR" && pwd)"
@@ -527,7 +529,12 @@ fi
 echo "✈️  Booting PX4 SITL (Software In The Loop)..."
 
 PX4_LOG_ABS="$(pwd)/$LOG_DIR/px4_$TIMESTAMP.log"
-PX4_DIR_ABS="$(pwd)/PX4-Autopilot"
+
+if [ ! -d "$PX4_DIR_ABS" ]; then
+    echo "❌ Missing PX4 checkout: $PX4_DIR_ABS"
+    echo "   Run from repo root: ./setup.sh --yes"
+    cleanup
+fi
 
 tmux new-window -t "$SESSION_NAME" -n px4 \
     "cd '$PX4_DIR_ABS' && source '$VENV_PATH/bin/activate' && PX4_SIM_HOSTNAME=localhost PX4_SIM_HOST_ADDR=127.0.0.1 PX4_GZ_STANDALONE=1 make px4_sitl none_iris 2>&1 | tee '$PX4_LOG_ABS'"

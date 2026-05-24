@@ -10,12 +10,15 @@
 # - Pre-loads configured Colosseum Environments
 #
 set -e
-# Ensure script runs from the repository root, then stage AirSim/PX4 SITL assets under simulation/airsim.
+# Ensure script runs from the repository root, while staging external dependencies under third_party/.
 cd "$(dirname "$0")"
 REPO_ROOT="$(pwd)"
 AIRSIM_DIR="$REPO_ROOT/simulation/airsim"
-mkdir -p "$AIRSIM_DIR"
-cd "$AIRSIM_DIR"
+THIRD_PARTY_DIR="$REPO_ROOT/third_party"
+PX4_DIR="$THIRD_PARTY_DIR/PX4-Autopilot"
+ICEORYX_BUILD_DIR="$THIRD_PARTY_DIR/iceoryx_build"
+COLOSSEUM_DIR="$THIRD_PARTY_DIR/colosseum_environments"
+mkdir -p "$AIRSIM_DIR" "$THIRD_PARTY_DIR" "$COLOSSEUM_DIR"
 
 # ---------------- Configuration ----------------
 PRELOAD_ENVS=("Blocks" "AirSimNH" "LandscapeMountains" "Africa_Savannah")
@@ -228,17 +231,17 @@ fi
 
 # ---------------- Step 4: Eclipse iceoryx (IPC) ----------------
 echo "⚙️  Building Eclipse iceoryx (IPC)..."
-if [ ! -f "../../infrastructure/iceoryx_build/.installed" ]; then
-  mkdir -p ../../infrastructure/iceoryx_build
-  cd ../../infrastructure/iceoryx_build
+if [ ! -f "$ICEORYX_BUILD_DIR/.installed" ]; then
+  mkdir -p "$ICEORYX_BUILD_DIR"
+  cd "$ICEORYX_BUILD_DIR"
   if [ ! -d "iceoryx" ]; then
     run_and_log "Clone iceoryx" git clone --branch v2.90.0 https://github.com/eclipse-iceoryx/iceoryx.git
   fi
   cd iceoryx
   run_and_log "Configure iceoryx CMake" cmake -Bbuild -Hiceoryx_meta -DBUILD_STRICT=OFF -DROUDI_ENVIRONMENT=OFF
   run_and_log "Compile iceoryx" sudo cmake --build build --target install --parallel "$(nproc)"
-  touch ../.installed
-  cd ../../../simulation/airsim
+  touch "$ICEORYX_BUILD_DIR/.installed"
+  cd "$REPO_ROOT"
   echo "✅ iceoryx built and staged."
 else
   echo "✅ iceoryx build directory found. Skipping."
@@ -246,15 +249,15 @@ fi
 
 # ---------------- Step 5: PX4 SITL ----------------
 echo "✈️  Building PX4 SITL..."
-if [ ! -f "PX4-Autopilot/.installed" ]; then
-  if [ -d "PX4-Autopilot" ]; then
-    run_and_log "Remove broken PX4 clone" rm -rf PX4-Autopilot
+if [ ! -f "$PX4_DIR/.installed" ]; then
+  if [ -d "$PX4_DIR" ]; then
+    run_and_log "Remove broken PX4 clone" rm -rf "$PX4_DIR"
   fi
-  run_and_log "Clone PX4" git clone --recursive https://github.com/PX4/PX4-Autopilot.git
-  cd PX4-Autopilot
+  run_and_log "Clone PX4" git clone --recursive https://github.com/PX4/PX4-Autopilot.git "$PX4_DIR"
+  cd "$PX4_DIR"
   run_and_log "Install PX4 dependencies" bash ./Tools/setup/ubuntu.sh --no-nuttx --no-sim-tools
   touch .installed
-  cd ../
+  cd "$REPO_ROOT"
   echo "✅ PX4 source staged."
 else
   echo "✅ PX4 build directory found. Skipping."
@@ -262,17 +265,17 @@ fi
 
 echo "🔨 Verifying PX4 SITL build artifacts..."
 source "$HOME/dedalus/venv/bin/activate"
-cd PX4-Autopilot
+cd "$PX4_DIR"
 run_and_log "Build PX4 SITL" make px4_sitl
-cd ../
+cd "$REPO_ROOT"
 echo "✅ PX4 SITL build verified."
 
 # ---------------- Step 6: Pre-load Environments ----------------
 echo "🌍 Pre-loading Colosseum Environments..."
-mkdir -p colosseum_environments
+mkdir -p "$COLOSSEUM_DIR"
 
 for ENV in "${PRELOAD_ENVS[@]}"; do
-    TARGET_DIR="colosseum_environments/${ENV}_LinuxNoEditor"
+    TARGET_DIR="$COLOSSEUM_DIR/${ENV}_LinuxNoEditor"
     EXE_NAME="${ENV}.sh"
     BINARY_NAME="${ENV}.zip"
 

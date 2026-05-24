@@ -150,3 +150,20 @@ Desktop.ini
 # -----------------------------
 modules/
 site/
+
+# Third-party generated/source checkouts and downloaded simulator assets
+third_party/PX4-Autopilot/
+third_party/iceoryx_build/
+third_party/colosseum_environments/
+
+# Legacy roots (pre-2.28B.1 layout); ignored in case of manual moves
+PX4-Autopilot/
+simulation/PX4-Autopilot/
+simulation/colosseum_environments/
+colosseum_environments/
+
+# AirSim runtime state
+simulation/airsim/logs/
+simulation/airsim/*.bak_*
+simulation/airsim/PX4-Autopilot/
+simulation/airsim/colosseum_environments/

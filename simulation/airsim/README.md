@@ -32,7 +32,7 @@ The environment uses a "Ghost Boot" strategy. Once configured, the visual deskto
 1. **Provision the Environment:**
    Run the master setup script to install dependencies, fetch Colosseum binaries, and configure the XDCV virtual display manager:
    ```bash
-   ./simulation/setup.sh
+   ./setup.sh
    ```
 2. **Set User Password:**
    NICE DCV requires a system password for the session owner:
@@ -47,7 +47,7 @@ The `run.sh` script is configured to dynamically bridge your terminal session to
 
 ### Launching via SSH or DCV Terminal:
 ```bash
-cd ~/dedalus/simulation
+cd ~/dedalus/simulation/airsim
 ./run.sh AirSimNH
 ```
 *The script automatically probes the DCV metadata to export the correct `DISPLAY` and `XAUTHORITY` variables, and grants X11 permissions via `xhost`.*
@@ -78,7 +78,7 @@ The **`test-flight.py`** harness enables automated flight sequences with multi-m
 ### Control Mode Architecture
 
 ```
-Command: python test-flight.py --control <MODE>
+Command: python scripts/test-flight.py --control <MODE>
 
 MODE=auto (default)
 ├─ Tries: PX4 shell (arm/takeoff/land) + AirSim velocity injection
@@ -181,7 +181,7 @@ python test-flight.py
 
 **2. Custom Trajectory with PX4 Shell**
 ```bash
-python test-flight.py --control px4 --trajectory trajectories/circle_figure8.json
+python test-flight.py --control px4 --trajectory ../../config/behaviors/trajectories/circle_figure8.json
 # Runs: arm → execute orbit/figure-8 → land via PX4 shell
 ```
 
