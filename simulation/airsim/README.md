@@ -234,17 +234,22 @@ Trajectory files are validated at startup:
 
 ## Directory Structure
 ```text
-simulation/
-├── colosseum_environments/  # Compiled Unreal Engine binaries (Blocks, AirSimNH)
-├── trajectories/            # JSON trajectory files for autonomous flight testing
-├── scenarios/               # CI/CD test gate definitions
-├── settings.json            # AirSim vehicle config (TCP ports, PX4 params)
-├── setup.sh                 # Master provisioner (NICE DCV, XDCV, systemd, Python venv)
-├── run.sh                   # Visual-aware simulation launcher
-├── cleanup.sh               # Teardown with soft/hard/PX4-only modes
-├── test-flight.py           # Autonomous flight test harness
-├── INSTALL.md               # EC2 provisioning guide
-└── README.md                # This document
+.
+├── setup.sh                         # Root provisioner
+├── cleanup.sh                       # Root cleanup helper
+├── third_party/
+│   ├── PX4-Autopilot/               # Generated PX4 upstream checkout
+│   ├── iceoryx_build/               # Generated iceoryx checkout/build state
+│   └── colosseum_environments/      # Downloaded Colosseum/AirSim environments
+├── config/behaviors/trajectories/   # JSON trajectory files
+└── simulation/airsim/
+    ├── run.sh                       # AirSim/PX4 SITL launcher
+    ├── stop.sh                      # AirSim/PX4 SITL stop helper
+    ├── settings.json                # AirSim vehicle config
+    ├── scripts/                     # AirSim RPC and diagnostic scripts
+    ├── validation/                  # AirSim-specific validation helpers
+    ├── INSTALL.md                   # EC2 provisioning guide
+    └── README.md                    # This document
 ```
 
 ## Maintenance & Persistence
