@@ -22,9 +22,9 @@ RGB-only stream with separate ego bridge:
 frame_source: airsim
 bridge_transport: pipe
 bridge_mode: stream_binary
-bridge_command: python3 simulation/airsim-stream-frames-binary.py --count 0 --rate-hz 5
+bridge_command: python3 simulation/airsim/scripts/airsim-stream-frames-binary.py --count 0 --rate-hz 5
 ego_provider: airsim
-ego_bridge_command: python3 simulation/airsim-capture-ego.py
+ego_bridge_command: python3 simulation/airsim/scripts/airsim-capture-ego.py
 ```
 
 RGB + ego sidecar stream:
@@ -33,7 +33,7 @@ RGB + ego sidecar stream:
 frame_source: airsim
 bridge_transport: pipe
 bridge_mode: stream_binary_ego
-bridge_command: python3 simulation/airsim-stream-frames-binary.py --count 0 --rate-hz 5 --include-ego
+bridge_command: python3 simulation/airsim/scripts/airsim-stream-frames-binary.py --count 0 --rate-hz 5 --include-ego
 ego_provider: frame_hint
 ```
 
@@ -75,7 +75,7 @@ payload         raw RGB bytes
 sidecar         optional UTF-8 JSON bytes when version == 2
 ```
 
-Version 2 sidecar JSON currently uses the same flat schema as `simulation/airsim-capture-ego.py`:
+Version 2 sidecar JSON currently uses the same flat schema as `simulation/airsim/scripts/airsim-capture-ego.py`:
 
 ```json
 {"timestamp_ns":123456789,"position":[1,2,3],"rotation_rpy":[0,0,0],"velocity":[0,0,0],"angular_velocity":[0,0,0]}

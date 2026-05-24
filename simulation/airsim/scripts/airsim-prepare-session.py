@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Prepare a deterministic AirSim/PX4 session before mission arming.
 
-This mirrors the known-good startup sequence from simulation/test-flight.py:
+This mirrors the known-good startup sequence from simulation/airsim/scripts/test-flight.py:
   1. connect to AirSim
   2. confirm the requested vehicle exists
   3. wait for timestamped AirSim state

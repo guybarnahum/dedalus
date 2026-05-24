@@ -8,7 +8,7 @@ Canonical runtime diagrams live in:
 docs/runtime_dataflow.md
 ```
 
-As of 2.26D.7, `simulation/airsim-world-overlay.py` is a stream-only subscriber/renderer. It does not evaluate ghost scenarios locally, does not discover AirSim scene objects, and does not read `snapshot_manifest.txt` in normal operation.
+As of 2.26D.7, `simulation/airsim/scripts/airsim-world-overlay.py` is a stream-only subscriber/renderer. It does not evaluate ghost scenarios locally, does not discover AirSim scene objects, and does not read `snapshot_manifest.txt` in normal operation.
 
 2.26E direction:
 
@@ -39,14 +39,14 @@ Ghost target source
 The current implemented ghost source is a deterministic JSON scenario:
 
 ```text
-simulation/ghost_detections/person_pair_crossing.json
+config/behaviors/ghost_detections/person_pair_crossing.json
 ```
 
 Each dynamic detection references an existing trajectory JSON file:
 
 ```text
-simulation/trajectories/ghost_person_001_crossing.json
-simulation/trajectories/ghost_person_002_crossing.json
+config/behaviors/trajectories/ghost_person_001_crossing.json
+config/behaviors/trajectories/ghost_person_002_crossing.json
 ```
 
 Static detections use `trajectory_path: null`.
@@ -90,21 +90,21 @@ Later convenience modes may add `all` and seeded `random`, but deterministic exp
 Useful discovery commands:
 
 ```bash
-python3 simulation/airsim-list-objects.py \
+python3 simulation/airsim/scripts/airsim-list-objects.py \
   --match-class person \
   --sort distance \
   --format table
 ```
 
 ```bash
-python3 simulation/airsim-list-objects.py \
+python3 simulation/airsim/scripts/airsim-list-objects.py \
   --match-class animal \
   --sort distance \
   --format table
 ```
 
 ```bash
-python3 simulation/airsim-list-objects.py \
+python3 simulation/airsim/scripts/airsim-list-objects.py \
   --only-matched \
   --output out/airsim_scene_objects.json
 ```
@@ -152,7 +152,7 @@ Dedalus receives live camera frames and ego telemetry from AirSim/PX4 through a 
 
 ```text
 AirSim / PX4
-  -> simulation/airsim-stream-frames-binary.py
+  -> simulation/airsim/scripts/airsim-stream-frames-binary.py
   -> stdout binary frame protocol
   -> AirSimFrameSource
   -> FrameHintEgoProvider
@@ -166,7 +166,7 @@ In the AirSim ghost config:
 ```yaml
 bridge_mode: stream_binary_ego
 bridge_transport: pipe
-bridge_command: python3 simulation/airsim-stream-frames-binary.py --include-ego --rate-hz 5 --mavlink-armed-endpoints udpin:127.0.0.1:14540
+bridge_command: python3 simulation/airsim/scripts/airsim-stream-frames-binary.py --include-ego --rate-hz 5 --mavlink-armed-endpoints udpin:127.0.0.1:14540
 ```
 
 ### 2.2 Ghost simulation / perception injection path
@@ -175,7 +175,7 @@ Current trajectory scenario config:
 
 ```yaml
 ghost_targets_enabled: true
-ghost_targets_scenario_path: simulation/ghost_detections/person_pair_crossing.json
+ghost_targets_scenario_path: config/behaviors/ghost_detections/person_pair_crossing.json
 ```
 
 Runtime path:
@@ -289,12 +289,12 @@ dropped_clients
 
 ### 2.4 AirSim visualization subscriber path
 
-`simulation/airsim-world-overlay.py` is display-only:
+`simulation/airsim/scripts/airsim-world-overlay.py` is display-only:
 
 ```text
 RuntimeEventStreamServer
   -> TCP JSONL stream
-  -> simulation/airsim-world-overlay.py
+  -> simulation/airsim/scripts/airsim-world-overlay.py
        caches latest ghost_detections
        caches latest world_snapshot
        caches latest target_selected mission_event
@@ -308,7 +308,7 @@ RuntimeEventStreamServer
 Run:
 
 ```bash
-python3 simulation/airsim-world-overlay.py \
+python3 simulation/airsim/scripts/airsim-world-overlay.py \
   --stream-port 47770 \
   --follow \
   --rate-hz 5 \
@@ -400,7 +400,7 @@ Commands go back to PX4/AirSim through the PX4 bridge command sink:
 ObjectBehaviorMissionController
   -> VelocityCommand / lifecycle command
   -> Px4BridgeCommandSink
-  -> simulation/px4-command-bridge.py
+  -> tools/px4/px4-command-bridge.py
   -> PX4 shell / pymavlink
   -> PX4 / AirSim
 ```
@@ -428,7 +428,7 @@ out/object_behavior_airsim_ghost_annotation/
 The validator reads those artifacts after the run:
 
 ```text
-simulation/validate-object-behavior-airsim-ghost.py
+simulation/airsim/validation/validate-object-behavior-airsim-ghost.py
   -> mission_events.jsonl
   -> snapshots
   -> annotation sidecars
@@ -461,7 +461,7 @@ Terminal 1, run mission-loop with runtime event stream enabled:
 Terminal 2, visualize live runtime events in AirSim:
 
 ```bash
-python3 simulation/airsim-world-overlay.py \
+python3 simulation/airsim/scripts/airsim-world-overlay.py \
   --stream-port 47770 \
   --follow \
   --rate-hz 5 \
@@ -526,21 +526,21 @@ The behavior should not switch to `ghost_person_002` merely because it has highe
 Use the listing tool while AirSim is running:
 
 ```bash
-python3 simulation/airsim-list-objects.py \
+python3 simulation/airsim/scripts/airsim-list-objects.py \
   --match-class person \
   --sort distance \
   --format table
 ```
 
 ```bash
-python3 simulation/airsim-list-objects.py \
+python3 simulation/airsim/scripts/airsim-list-objects.py \
   --match-class animal \
   --sort distance \
   --format table
 ```
 
 ```bash
-python3 simulation/airsim-list-objects.py \
+python3 simulation/airsim/scripts/airsim-list-objects.py \
   --only-matched \
   --output out/airsim_scene_objects.json
 ```
@@ -562,7 +562,7 @@ Verify PLAN / AG / SEL align over the visible object.
 ## 5. Validate the run artifacts
 
 ```bash
-python3 simulation/validate-object-behavior-airsim-ghost.py \
+python3 simulation/airsim/validation/validate-object-behavior-airsim-ghost.py \
   out/object_behavior_airsim_ghost \
   --annotation-dir out/object_behavior_airsim_ghost_annotation
 ```
@@ -685,6 +685,6 @@ Specific to this runbook:
 Do not use artifact files as runtime IPC when the live stream or in-process subscriber boundary is the right abstraction.
 Do not reintroduce direct snapshot file writing into dedalus_mission_loop; keep it behind ArtifactSnapshotWriter.
 Do not bypass WorldSnapshotPublisher for behavior-facing snapshot delivery.
-Do not make simulation/airsim-world-overlay.py evaluate GhostScenario, discover AirSim objects, or poll artifacts in normal mode.
+Do not make simulation/airsim/scripts/airsim-world-overlay.py evaluate GhostScenario, discover AirSim objects, or poll artifacts in normal mode.
 Keep generic event machinery generic: EventPublisher<T> / EventSubscriber<T>.
 Keep domain consumers readable: WorldSnapshotSubscriber::on_snapshot(...), GhostDetectionsSubscriber::on_ghost_detections(...), MissionEventSubscriber::on_mission_event(...), not generic on_event(...) in domain code.

@@ -2,7 +2,7 @@
 """Persistent PX4 command bridge for Dedalus live missions.
 
 This bridge intentionally follows the known-good control path in
-simulation/test-flight.py:
+simulation/airsim/scripts/test-flight.py:
 
   - PX4 shell for lifecycle commands: arm, takeoff, land, disarm
   - pymavlink connection created lazily after shell takeoff, before OFFBOARD

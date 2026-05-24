@@ -72,7 +72,7 @@ ls "$HOME/dedalus/venv/bin/activate"
 dcv describe-session dedalus-sim --json
 
 # Verify simulation scripts exist
-ls simulation/setup.sh simulation/run.sh simulation/stop.sh simulation/cleanup.sh
+ls simulation/setup.sh simulation/airsim/run.sh simulation/airsim/stop.sh simulation/cleanup.sh
 ```
 
 ## 6. Next Step

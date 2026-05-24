@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Fake AirSim bridge used by CTest.
 
-It accepts the same arguments as simulation/airsim-capture-frame.py and emits a
+It accepts the same arguments as simulation/airsim/scripts/airsim-capture-frame.py and emits a
 small binary PPM frame to stdout without importing AirSim.
 """
 

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Integration tests for simulation/validate-circle-trajectory.py."""
+"""Integration tests for tools/validation/validate-circle-trajectory.py."""
 
 from __future__ import annotations
 
@@ -110,7 +110,7 @@ def run_validator(repo_root: Path, events: Path) -> subprocess.CompletedProcess[
     return subprocess.run(
         [
             sys.executable,
-            str(repo_root / "simulation" / "validate-circle-trajectory.py"),
+            str(repo_root / "tools" / "validation" / "validate-circle-trajectory.py"),
             "--events",
             str(events),
             "--min-orbits",

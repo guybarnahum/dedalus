@@ -32,7 +32,7 @@ If that object is not visible or not present in a given environment, discover an
 With AirSim running:
 
 ```bash
-python3 simulation/airsim-list-objects.py \
+python3 simulation/airsim/scripts/airsim-list-objects.py \
   --match-class person \
   --sort distance \
   --format table
@@ -41,7 +41,7 @@ python3 simulation/airsim-list-objects.py \
 Directly smoke the pose bridge for the selected object:
 
 ```bash
-python3 simulation/airsim-object-poses.py \
+python3 simulation/airsim/scripts/airsim-object-poses.py \
   --object BRPlayer_01_96
 ```
 
@@ -80,7 +80,7 @@ Terminal 1:
 Terminal 2:
 
 ```bash
-python3 simulation/airsim-world-overlay.py \
+python3 simulation/airsim/scripts/airsim-world-overlay.py \
   --stream-port 47770 \
   --follow \
   --rate-hz 5 \
@@ -160,7 +160,7 @@ Terminal 1:
 Terminal 2:
 
 ```bash
-python3 simulation/airsim-world-overlay.py \
+python3 simulation/airsim/scripts/airsim-world-overlay.py \
   --stream-port 47770 \
   --follow \
   --rate-hz 5 \
@@ -193,7 +193,7 @@ This proves the run completed because the controller counted the requested orbit
 2.27B adds an artifact-only validator for circle/orbit quality:
 
 ```bash
-python3 simulation/validate-circle-trajectory.py \
+python3 tools/validation/validate-circle-trajectory.py \
   --events out/object_behavior_airsim_existing_object_circle/mission_events.jsonl \
   --min-orbits 3.0 \
   --radius 10.0 \
@@ -254,7 +254,7 @@ SEL appears after behavior selects the target.
 
 Small visual offsets are acceptable because markers are lifted above the object for readability. Large horizontal offsets mean a coordinate or source mismatch.
 
-For circle behavior, the AirSim viewport or follow camera is an operator review aid only. The authoritative circle validation is `mission_events.jsonl` plus `simulation/validate-circle-trajectory.py`.
+For circle behavior, the AirSim viewport or follow camera is an operator review aid only. The authoritative circle validation is `mission_events.jsonl` plus `tools/validation/validate-circle-trajectory.py`.
 
 ---
 

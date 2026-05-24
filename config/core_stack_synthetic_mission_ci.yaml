@@ -14,7 +14,7 @@ mission_tick_hz: 10
 flight_command_sink: disabled
 mission_options.flight_control_mode: px4
 mission_options.flight_safe_height_m: 2
-mission_options.flight_trajectory_path: simulation/trajectories/synthetic_mission_ci.json
+mission_options.flight_trajectory_path: config/behaviors/trajectories/synthetic_mission_ci.json
 mission_options.flight_home_policy: initial_ego_pose
 mission_options.flight_max_velocity_mps: 5
 mission_options.flight_arm_retry_interval_s: 0.2

@@ -39,9 +39,9 @@ struct CoreStackProviderConfig {
     std::string vehicle_name{"PX4"};
     std::string vehicle_camera_name{"front_center"};
     std::string bridge_transport{"pipe"};
-    std::string bridge_command{"python3 simulation/airsim-capture-frame.py"};
+    std::string bridge_command{"python3 simulation/airsim/scripts/airsim-capture-frame.py"};
     std::string bridge_mode{"one_shot_ppm"};
-    std::string ego_bridge_command{"python3 simulation/airsim-capture-ego.py"};
+    std::string ego_bridge_command{"python3 simulation/airsim/scripts/airsim-capture-ego.py"};
     MapFrameId fallback_map_frame_id{"map_local_0001"};
 
     std::string mission_controller{"disabled"};

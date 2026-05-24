@@ -73,7 +73,7 @@ Metrics:
 
 Note:
   --width and --height do not change AirSim resolution. They are used for
-  throughput metadata and actual-resolution checks. Change simulation/settings.json
+  throughput metadata and actual-resolution checks. Change simulation/airsim/settings.json
   and restart AirSim to perform a real resolution sweep.
 
 Absolute p95 latency capacity thresholds:
@@ -204,7 +204,7 @@ write_config() {
   local bridge_mode="stream_binary"
   local ego_provider="airsim"
   local bridge_extra=""
-  local ego_bridge_line="ego_bridge_command: python3 simulation/airsim-capture-ego.py --host $HOST --rpc-port $RPC_PORT --vehicle-name $VEHICLE_NAME --camera-name $CAMERA_NAME"
+  local ego_bridge_line="ego_bridge_command: python3 simulation/airsim/scripts/airsim-capture-ego.py --host $HOST --rpc-port $RPC_PORT --vehicle-name $VEHICLE_NAME --camera-name $CAMERA_NAME"
 
   if [[ "$BRIDGE_TIMING" == "1" ]]; then
     bridge_extra="$bridge_extra --timing-jsonl $out_dir/bridge_timing.jsonl"
@@ -221,7 +221,7 @@ write_config() {
 frame_source: airsim
 bridge_mode: $bridge_mode
 bridge_transport: pipe
-bridge_command: python3 simulation/airsim-stream-frames-binary.py --host $HOST --rpc-port $RPC_PORT --vehicle-name $VEHICLE_NAME --camera-name $CAMERA_NAME --count $FRAMES --rate-hz $RATE_HZ$bridge_extra
+bridge_command: python3 simulation/airsim/scripts/airsim-stream-frames-binary.py --host $HOST --rpc-port $RPC_PORT --vehicle-name $VEHICLE_NAME --camera-name $CAMERA_NAME --count $FRAMES --rate-hz $RATE_HZ$bridge_extra
 ego_provider: $ego_provider
 $ego_bridge_line
 detector: scripted

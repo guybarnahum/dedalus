@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Summarize AirSim bridge-internal timing JSONL.
 
-Input is produced by simulation/airsim-stream-frames-binary.py --timing-jsonl.
+Input is produced by simulation/airsim/scripts/airsim-stream-frames-binary.py --timing-jsonl.
 The script intentionally has no third-party dependencies.
 """
 

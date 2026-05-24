@@ -16,7 +16,7 @@ Artifact files are evidence/debug outputs, not IPC.
 
 ```text
 AirSim / PX4
-  -> simulation/airsim-stream-frames-binary.py
+  -> simulation/airsim/scripts/airsim-stream-frames-binary.py
        stdout: binary frame protocol only
        stderr: human diagnostics
   -> AirSimFrameSource
@@ -67,7 +67,7 @@ In-process subscribers
     -> MissionRuntime
     -> ObjectBehaviorMissionController / TrajectoryMissionController
     -> Px4BridgeCommandSink
-    -> simulation/px4-command-bridge.py
+    -> tools/px4/px4-command-bridge.py
     -> PX4 / AirSim
 
 Evidence subscribers
@@ -84,7 +84,7 @@ External live subscribers
   RuntimeEventStreamServer
     subscribes to GhostDetectionsPublisher, WorldSnapshotPublisher, and MissionEventPublisher
     emits TCP JSONL runtime events
-    -> simulation/airsim-world-overlay.py
+    -> simulation/airsim/scripts/airsim-world-overlay.py
     -> external/debug/customer tools
 ```
 
@@ -98,14 +98,14 @@ Current implemented source modes:
 
 ```text
 trajectory_scenario:
-  simulation/ghost_detections/*.json
-    -> references simulation/trajectories/*.json
+  config/behaviors/ghost_detections/*.json
+    -> references config/behaviors/trajectories/*.json
     -> GhostScenario evaluates static and dynamic detections at frame time
     -> GhostDetectionsFrame + Observation3D list
 
 airsim_objects:
   explicit existing AirSim scene object name
-    -> simulation/airsim-object-poses.py
+    -> simulation/airsim/scripts/airsim-object-poses.py
     -> AirSim simGetObjectPose(object_name)
     -> GhostDetectionState at that AirSim pose
     -> GhostDetectionsFrame + Observation3D list
@@ -238,12 +238,12 @@ Sequence numbers are stream-local and shared across event types. A client should
 
 ## 5. AirSim overlay subscriber dataflow
 
-`simulation/airsim-world-overlay.py` is now a subscriber/renderer only.
+`simulation/airsim/scripts/airsim-world-overlay.py` is now a subscriber/renderer only.
 
 ```text
 RuntimeEventStreamServer
   -> TCP JSONL stream
-  -> simulation/airsim-world-overlay.py
+  -> simulation/airsim/scripts/airsim-world-overlay.py
        cache latest ghost_detections
        cache latest world_snapshot
        cache latest target_selected mission_event
@@ -260,7 +260,7 @@ RuntimeEventStreamServer
 Run:
 
 ```bash
-python3 simulation/airsim-world-overlay.py \
+python3 simulation/airsim/scripts/airsim-world-overlay.py \
   --stream-port 47770 \
   --follow \
   --rate-hz 5 \
@@ -299,7 +299,7 @@ WorldSnapshotPublisher
        -> emits behavior display details such as arriving / following / positioned / circling / done
        -> behavior math emits bounded velocity intent
   -> Px4BridgeCommandSink
-  -> simulation/px4-command-bridge.py
+  -> tools/px4/px4-command-bridge.py
        PX4 shell: arm / takeoff / land / disarm
        pymavlink: OFFBOARD velocity setpoints
   -> PX4 / AirSim

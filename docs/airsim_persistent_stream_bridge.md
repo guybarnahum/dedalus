@@ -26,9 +26,9 @@ Key fields:
 ```yaml
 frame_source: airsim
 airsim_bridge_mode: stream_jsonl
-airsim_bridge_command: python3 simulation/airsim-stream-frames.py --count 0 --rate-hz 5
+airsim_bridge_command: python3 simulation/airsim/scripts/airsim-stream-frames.py --count 0 --rate-hz 5
 ego_provider: airsim
-airsim_ego_bridge_command: python3 simulation/airsim-capture-ego.py
+airsim_ego_bridge_command: python3 simulation/airsim/scripts/airsim-capture-ego.py
 ```
 
 `--count 0` means the Python bridge streams until stopped. `dedalus_replay_recording --max-frames N` controls how many frames the C++ side consumes.

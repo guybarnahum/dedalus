@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# Setup script for Project Dedalus Simulation Environment (AWS/EC2 GPU)
+# Setup script for Project Dedalus development and AirSim/PX4 SITL environment (AWS/EC2 GPU)
 # - Verifies NVIDIA L4/A10G/T4 GPU presence
 # - Esculates and maintains sudo privileges
 # - Installs core system dependencies (Docker, CMake, Ninja, build-essential, libacl1-dev, ffmpeg)
@@ -10,8 +10,12 @@
 # - Pre-loads configured Colosseum Environments
 #
 set -e
-# Ensure script runs from its own directory
+# Ensure script runs from the repository root, then stage AirSim/PX4 SITL assets under simulation/airsim.
 cd "$(dirname "$0")"
+REPO_ROOT="$(pwd)"
+AIRSIM_DIR="$REPO_ROOT/simulation/airsim"
+mkdir -p "$AIRSIM_DIR"
+cd "$AIRSIM_DIR"
 
 # ---------------- Configuration ----------------
 PRELOAD_ENVS=("Blocks" "AirSimNH" "LandscapeMountains" "Africa_Savannah")
@@ -224,9 +228,9 @@ fi
 
 # ---------------- Step 4: Eclipse iceoryx (IPC) ----------------
 echo "⚙️  Building Eclipse iceoryx (IPC)..."
-if [ ! -f "../infrastructure/iceoryx_build/.installed" ]; then
-  mkdir -p ../infrastructure/iceoryx_build
-  cd ../infrastructure/iceoryx_build
+if [ ! -f "../../infrastructure/iceoryx_build/.installed" ]; then
+  mkdir -p ../../infrastructure/iceoryx_build
+  cd ../../infrastructure/iceoryx_build
   if [ ! -d "iceoryx" ]; then
     run_and_log "Clone iceoryx" git clone --branch v2.90.0 https://github.com/eclipse-iceoryx/iceoryx.git
   fi
@@ -234,7 +238,7 @@ if [ ! -f "../infrastructure/iceoryx_build/.installed" ]; then
   run_and_log "Configure iceoryx CMake" cmake -Bbuild -Hiceoryx_meta -DBUILD_STRICT=OFF -DROUDI_ENVIRONMENT=OFF
   run_and_log "Compile iceoryx" sudo cmake --build build --target install --parallel "$(nproc)"
   touch ../.installed
-  cd ../../../simulation
+  cd ../../../simulation/airsim
   echo "✅ iceoryx built and staged."
 else
   echo "✅ iceoryx build directory found. Skipping."
@@ -380,6 +384,6 @@ echo "   4. Log in using your Ubuntu credentials."
 echo ""
 echo "🚀 LAUNCHING THE SIMULATION:"
 echo "   Once inside the graphical desktop, open a terminal and run:"
-echo "   cd ~/dedalus/simulation && ./run.sh [EnvironmentName]"
+echo "   cd ~/dedalus/simulation/airsim && ./run.sh [EnvironmentName]"
 echo "   (Example: ./run.sh Neighborhood)"
 echo "=================================================================="

@@ -18,7 +18,7 @@ bool validate_scripted_observation_chain() {
     const dedalus::TimePoint timestamp{2000000000};
     const dedalus::MapFrameId map_frame_id{"map_local_0001"};
     const dedalus::GhostTargetProvider provider{
-        dedalus::GhostScenario::load_from_file("simulation/ghost_detections/person_pair_crossing.json")};
+        dedalus::GhostScenario::load_from_file("config/behaviors/ghost_detections/person_pair_crossing.json")};
 
     const auto observations = provider.observations_at(timestamp, map_frame_id, start);
     if (observations.size() != 3U) {

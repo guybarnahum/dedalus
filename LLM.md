@@ -56,7 +56,7 @@ AirSim live frame + ego sidecar
        -> MissionEventPublisher
   -> ObjectBehaviorMissionController
   -> Px4BridgeCommandSink
-  -> persistent simulation/px4-command-bridge.py
+  -> persistent tools/px4/px4-command-bridge.py
        - PX4 shell: arm, takeoff, land, disarm
        - pymavlink: OFFBOARD velocity setpoints
        - LOCAL_POSITION_NED feedback climb to safe height
@@ -99,7 +99,7 @@ config/core_stack_object_behavior_airsim_existing_object_circle.yml
 config/behaviors/circle_existing_object_person.yaml
   -> circle behavior spec for the validated existing-object path
 
-simulation/airsim-object-poses.py
+simulation/airsim/scripts/airsim-object-poses.py
   -> calls AirSim simGetObjectPose(object_name)
   -> returns compact JSON object poses
 
@@ -181,7 +181,7 @@ Circle trajectory validator passed on the 3-orbit AirSim run:
 Circle validator:
 
 ```text
-simulation/validate-circle-trajectory.py
+tools/validation/validate-circle-trajectory.py
   -> parses mission_events.jsonl
   -> checks target_selected, circling samples, orbit_mode_latched, orbit count, radius stats,
      behavior_complete reason, terminal_settled, and GoHome -> Land -> Complete lifecycle evidence
@@ -193,7 +193,7 @@ tests/integration/test_circle_trajectory_validator.py
 Overlay / OSD:
 
 ```text
-simulation/airsim-world-overlay.py is stream-only.
+simulation/airsim/scripts/airsim-world-overlay.py is stream-only.
 It renders PLAN / PLAN* from ghost_detections.
 It renders AG / EGO from world_snapshot.
 It renders SEL from mission_event target_selected.
@@ -360,7 +360,7 @@ ctest --test-dir build-staging --output-on-failure
 Focused current behavior/runtime validation:
 
 ```bash
-python3 -m py_compile simulation/airsim-world-overlay.py
+python3 -m py_compile simulation/airsim/scripts/airsim-world-overlay.py
 
 ctest --test-dir build-staging --output-on-failure -R \
   'mission_runtime|object_behavior_mission_controller|object_behavior_mission_smoke|core_stack_config_loader|behavior_spec|target_selector|world_snapshot_stream_server|circle_trajectory_validator'
@@ -369,7 +369,7 @@ ctest --test-dir build-staging --output-on-failure -R \
 AirSim existing-object follow validation:
 
 ```bash
-python3 simulation/airsim-object-poses.py --object BRPlayer_01_96
+python3 simulation/airsim/scripts/airsim-object-poses.py --object BRPlayer_01_96
 
 ./build-staging/apps/dedalus_mission_loop \
   --config config/core_stack_object_behavior_airsim_existing_object.yaml \
@@ -399,7 +399,7 @@ AirSim existing-object circle validation:
 Circle trajectory validator:
 
 ```bash
-python3 simulation/validate-circle-trajectory.py \
+python3 tools/validation/validate-circle-trajectory.py \
   --events out/object_behavior_airsim_existing_object_circle/mission_events.jsonl \
   --min-orbits 3.0 \
   --radius 10.0 \
@@ -413,7 +413,7 @@ python3 simulation/validate-circle-trajectory.py \
 Overlay subscriber for live operator review:
 
 ```bash
-python3 simulation/airsim-world-overlay.py \
+python3 simulation/airsim/scripts/airsim-world-overlay.py \
   --stream-port 47770 \
   --follow \
   --rate-hz 5 \
@@ -477,7 +477,7 @@ Do not keep retrying increasingly complex connector paths after a connector fail
 - Do not bypass WorldSnapshot/TargetSelector by hardcoding selected_target in config for main validation.
 - Do not keep global behavior specs under simulation/behaviors; use config/behaviors.
 - Do not use artifact files as runtime IPC when a live stream or in-process subscriber is the right boundary.
-- Do not make simulation/airsim-world-overlay.py evaluate GhostScenario, discover AirSim objects, or poll snapshot artifacts in normal mode; it should subscribe and render.
+- Do not make simulation/airsim/scripts/airsim-world-overlay.py evaluate GhostScenario, discover AirSim objects, or poll snapshot artifacts in normal mode; it should subscribe and render.
 - Do not put behavior semantics in overlay logic. Mission/behavior events should publish display_state/display_detail; overlay should render them.
 - Do not implement circle as a yaw-only, latch-only, or fixed-waypoint visual hack.
 - Do not require exact 3 o'clock orbit insertion; circle must tolerate imperfect initial position, velocity, attitude, and overshoot.

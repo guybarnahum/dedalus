@@ -56,7 +56,7 @@ MissionRuntime
   -> MissionController
   -> VelocityCommand
   -> Px4BridgeCommandSink
-  -> simulation/px4-command-bridge.py
+  -> tools/px4/px4-command-bridge.py
   -> PX4 / AirSim
 ```
 
@@ -264,7 +264,7 @@ config/behaviors/sequence_approach_circle.yaml
 Simulation-specific target fixtures remain under:
 
 ```text
-simulation/ghost_targets/person_pair_crossing.yaml
+config/behaviors/ghost_targets/person_pair_crossing.yaml
 ```
 
 Design rule:
@@ -274,7 +274,7 @@ Behavior spec:
   config/behaviors/*.yaml
 
 Ghost/scripted target scenario:
-  simulation/ghost_targets/*.yaml
+  config/behaviors/ghost_targets/*.yaml
 
 Core-stack config that references behavior:
   config/core_stack_object_behavior_mission.yaml
@@ -803,7 +803,7 @@ config/behaviors/follow_specific_track.yaml
 config/behaviors/circle_car.yaml
 config/behaviors/approach_target.yaml
 config/behaviors/sequence_approach_circle.yaml
-simulation/ghost_targets/person_pair_crossing.yaml
+config/behaviors/ghost_targets/person_pair_crossing.yaml
 
 config/core_stack_object_behavior_mission.yaml
 ```
@@ -815,7 +815,7 @@ include/dedalus/visualization/world_to_image_projector.hpp
 src/visualization/world_to_image_projector.cpp
 include/dedalus/visualization/world_overlay_sidecar.hpp
 src/visualization/world_overlay_sidecar.cpp
-simulation/airsim-world-annotation.py
+simulation/airsim/scripts/airsim-world-annotation.py
 ```
 
 Tests:
@@ -896,7 +896,7 @@ ctest --test-dir build-staging --output-on-failure -R 'world_to_image_projector|
 After live mission behavior changes:
 
 ```bash
-RUNS=3 simulation/repeat-mission-smoke.sh
+RUNS=3 tools/mission/repeat-mission-smoke.sh
 ```
 
 After object-conditioned behavior exists:

@@ -34,7 +34,7 @@ std::string ghost_scenario_path_from(const CoreStackProviderConfig& config) {
         return config.ghost_targets_scenario_path;
     }
     if (config.ghost_targets_scenario == "person_pair_crossing") {
-        return "simulation/ghost_detections/person_pair_crossing.json";
+        return "config/behaviors/ghost_detections/person_pair_crossing.json";
     }
     throw std::invalid_argument("unknown ghost_targets_scenario: " + config.ghost_targets_scenario);
 }
@@ -49,7 +49,7 @@ std::unique_ptr<GhostTargetProvider> make_ghost_target_provider(const CoreStackP
             AirSimGhostObjectSourceConfig{
                 .host = config.source_host,
                 .rpc_port = config.source_rpc_port,
-                .bridge_command = "python3 simulation/airsim-object-poses.py",
+                .bridge_command = "python3 simulation/airsim/scripts/airsim-object-poses.py",
                 .bridge_transport = config.bridge_transport,
                 .objects = config.ghost_targets_airsim_objects});
     }

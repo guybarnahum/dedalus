@@ -29,7 +29,7 @@ A scenario run invokes one `dedalus_mission_loop`, writes artifacts, then valida
 Synthetic Complete lifecycle example:
 
 ```bash
-python3 simulation/run-mission-scenario.py \
+python3 tools/mission/run-mission-scenario.py \
   --name synthetic_lifecycle \
   --run-id run_0001 \
   --config config/core_stack_synthetic_mission_ci.yaml \
@@ -46,7 +46,7 @@ python3 simulation/run-mission-scenario.py \
 Synthetic expected-Abort lifecycle example:
 
 ```bash
-python3 simulation/run-mission-scenario.py \
+python3 tools/mission/run-mission-scenario.py \
   --name synthetic_abort_land_timeout \
   --run-id run_0001 \
   --config config/core_stack_synthetic_mission_abort_ci.yaml \
@@ -79,7 +79,7 @@ out/mission_scenarios/<scenario>/<run_id>/
 The scenario runner delegates validation to:
 
 ```bash
-python3 simulation/validate-mission-artifacts.py <run-dir> \
+python3 tools/mission/validate-mission-artifacts.py <run-dir> \
   --expect-final-state Complete \
   --safe-height-m <safe-height> \
   --landed-height-m <landed-height>
@@ -90,7 +90,7 @@ python3 simulation/validate-mission-artifacts.py <run-dir> \
 Expected-Abort validation uses:
 
 ```bash
-python3 simulation/validate-mission-artifacts.py <run-dir> \
+python3 tools/mission/validate-mission-artifacts.py <run-dir> \
   --expect-final-state Abort \
   --safe-height-m <safe-height> \
   --landed-height-m <landed-height>
@@ -104,12 +104,12 @@ For future M3 object-conditioned behavior scenarios, add:
 
 ## Campaign runner
 
-A campaign expands one or more scenarios into repeated scenario runs. The campaign runner delegates each real run to `simulation/run-mission-scenario.py`; this keeps the per-run artifact contract centralized.
+A campaign expands one or more scenarios into repeated scenario runs. The campaign runner delegates each real run to `tools/mission/run-mission-scenario.py`; this keeps the per-run artifact contract centralized.
 
 CLI-driven single-scenario campaign example:
 
 ```bash
-python3 simulation/run-mission-campaign.py \
+python3 tools/mission/run-mission-campaign.py \
   --campaign synthetic_single \
   --campaign-id campaign_0001 \
   --scenario synthetic_lifecycle \
@@ -128,7 +128,7 @@ python3 simulation/run-mission-campaign.py \
 Campaign spec example:
 
 ```bash
-python3 simulation/run-mission-campaign.py \
+python3 tools/mission/run-mission-campaign.py \
   --campaign-file config/mission_campaigns/synthetic_ci.json \
   --campaign-id campaign_0001 \
   --app ./build-staging/apps/dedalus_mission_loop \
@@ -189,7 +189,7 @@ landed_height_m: 1
 Use dry-run to validate campaign parsing, repeat expansion, expected final states, output layout, planned command lines, and report generation without launching `dedalus_mission_loop`.
 
 ```bash
-python3 simulation/run-mission-campaign.py \
+python3 tools/mission/run-mission-campaign.py \
   --campaign-file config/mission_campaigns/airsim_live_smoke.json \
   --campaign-id dry_run_0001 \
   --output-root out/mission_campaigns \
@@ -212,7 +212,7 @@ The status is `planned`, and run records include the planned scenario command.
 Assuming AirSim/PX4 is already running:
 
 ```bash
-python3 simulation/run-mission-campaign.py \
+python3 tools/mission/run-mission-campaign.py \
   --campaign-file config/mission_campaigns/airsim_live_smoke.json \
   --campaign-id live_0001 \
   --output-root out/mission_campaigns \

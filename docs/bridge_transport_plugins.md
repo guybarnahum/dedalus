@@ -42,8 +42,8 @@ source_rpc_port: 41451
 vehicle_name: PX4
 vehicle_camera_name: front_center
 bridge_mode: stream_jsonl
-bridge_command: python3 simulation/airsim-stream-frames.py --count 0 --rate-hz 5
-ego_bridge_command: python3 simulation/airsim-capture-ego.py
+bridge_command: python3 simulation/airsim/scripts/airsim-stream-frames.py --count 0 --rate-hz 5
+ego_bridge_command: python3 simulation/airsim/scripts/airsim-capture-ego.py
 ```
 
 Only source-neutral bridge and source keys are accepted by the config loader.
@@ -63,18 +63,18 @@ The current frame bridge modes use it as follows:
 
 ```text
 one_shot_ppm
-  -> request_once(simulation/airsim-capture-frame.py)
+  -> request_once(simulation/airsim/scripts/airsim-capture-frame.py)
   -> P6 PPM stdout
 
 stream_jsonl
-  -> read_stream_line(simulation/airsim-stream-frames.py)
+  -> read_stream_line(simulation/airsim/scripts/airsim-stream-frames.py)
   -> JSONL frame records with base64 PPM payloads
 ```
 
 The current ego provider uses `request_once()` with:
 
 ```text
-simulation/airsim-capture-ego.py
+simulation/airsim/scripts/airsim-capture-ego.py
 ```
 
 ## Future Transport: SharedMemoryBridgeTransport

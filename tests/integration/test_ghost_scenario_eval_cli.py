@@ -41,7 +41,7 @@ def main() -> int:
     repo_root = Path(sys.argv[1]).resolve()
     build_dir = Path(sys.argv[2]).resolve()
     app = build_dir / "apps" / "dedalus_ghost_scenario_eval"
-    scenario = repo_root / "simulation" / "ghost_detections" / "person_pair_crossing.json"
+    scenario = repo_root / "config" / "behaviors" / "ghost_detections" / "person_pair_crossing.json"
 
     require(app.exists(), f"missing evaluator binary: {app}")
     require(scenario.exists(), f"missing scenario fixture: {scenario}")

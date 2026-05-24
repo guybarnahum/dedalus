@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Smoke test for simulation/run-mission-scenario.py."""
+"""Smoke test for tools/mission/run-mission-scenario.py."""
 
 from __future__ import annotations
 
@@ -44,7 +44,7 @@ def main() -> int:
 
     command = [
         sys.executable,
-        str(repo_root / "simulation" / "run-mission-scenario.py"),
+        str(repo_root / "tools" / "mission" / "run-mission-scenario.py"),
         "--name",
         "ci_smoke",
         "--run-id",

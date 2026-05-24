@@ -27,7 +27,7 @@ def default_campaign_id() -> str:
 
 
 def repo_root_from_script() -> Path:
-    return Path(__file__).resolve().parents[1]
+    return Path(__file__).resolve().parents[2]
 
 
 def load_run_metadata(path: Path) -> dict[str, Any]:

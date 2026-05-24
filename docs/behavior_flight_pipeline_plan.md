@@ -131,7 +131,7 @@ flight_command_sink: airsim_velocity
 mission_options:
   flight_control_mode: px4
   flight_safe_height_m: 8
-  flight_trajectory_path: simulation/trajectories/circle_figure8.json
+  flight_trajectory_path: config/behaviors/trajectories/circle_figure8.json
   flight_home_policy: initial_ego_pose
 ```
 
@@ -165,7 +165,7 @@ search_pattern_mission
 
 ## Initial placeholder mission controller
 
-The first implementation should be a `trajectory_mission` controller that mirrors the current `simulation/test-flight.py` behavior.
+The first implementation should be a `trajectory_mission` controller that mirrors the current `simulation/airsim/scripts/test-flight.py` behavior.
 
 Purpose:
 
@@ -301,7 +301,7 @@ The first AirSim/PX4 sink can be implemented as:
 ```text
 AirSimVelocityCommandSink
   sends bounded velocity commands into AirSim/PX4 SITL
-  uses the same safe operational assumptions as simulation/test-flight.py
+  uses the same safe operational assumptions as simulation/airsim/scripts/test-flight.py
 ```
 
 ## Runtime threading model

@@ -44,7 +44,7 @@ AirSim live frame + ego sidecar
   -> MissionRuntime async loop
   -> TrajectoryMissionController
   -> Px4BridgeCommandSink
-  -> simulation/px4-command-bridge.py
+  -> tools/px4/px4-command-bridge.py
   -> PX4 / AirSim
 ```
 
@@ -60,8 +60,8 @@ Milestone 2.20 closed the first live mission robustness phase:
 - safe-height climb, trajectory execution, GoHome, Land, and Disarm work
 - Ctrl-C / SIGTERM requests graceful mission finish
 - mission_events.jsonl is the compact source artifact for mission debugging
-- simulation/mission-events-summary.py summarizes and validates mission event artifacts
-- simulation/repeat-mission-smoke.sh validates repeated live mission runs
+- tools/mission/mission-events-summary.py summarizes and validates mission event artifacts
+- tools/mission/repeat-mission-smoke.sh validates repeated live mission runs
 ```
 
 Current mission-loop artifacts:
@@ -126,12 +126,12 @@ apps/dedalus_mission_loop.cpp
 Important mission tooling:
 
 ```text
-simulation/test-flight.py
-simulation/px4-command-bridge.py
-simulation/airsim-prepare-session.py
-simulation/airsim-stream-frames-binary.py
-simulation/mission-events-summary.py
-simulation/repeat-mission-smoke.sh
+simulation/airsim/scripts/test-flight.py
+tools/px4/px4-command-bridge.py
+simulation/airsim/scripts/airsim-prepare-session.py
+simulation/airsim/scripts/airsim-stream-frames-binary.py
+tools/mission/mission-events-summary.py
+tools/mission/repeat-mission-smoke.sh
 ```
 
 ## Public contracts added

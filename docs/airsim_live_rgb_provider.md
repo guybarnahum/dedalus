@@ -8,9 +8,9 @@ The core stack now supports live AirSim scene images and ego-state telemetry thr
 
 ```text
 frame_source: airsim
-airsim_bridge_command: python3 simulation/airsim-capture-frame.py
+airsim_bridge_command: python3 simulation/airsim/scripts/airsim-capture-frame.py
 ego_provider: airsim
-airsim_ego_bridge_command: python3 simulation/airsim-capture-ego.py
+airsim_ego_bridge_command: python3 simulation/airsim/scripts/airsim-capture-ego.py
 detector: scripted
 projector: flat_ground
 ```
@@ -35,9 +35,9 @@ Example RGB + ego config:
 
 ```yaml
 frame_source: airsim
-airsim_bridge_command: python3 simulation/airsim-capture-frame.py
+airsim_bridge_command: python3 simulation/airsim/scripts/airsim-capture-frame.py
 ego_provider: airsim
-airsim_ego_bridge_command: python3 simulation/airsim-capture-ego.py
+airsim_ego_bridge_command: python3 simulation/airsim/scripts/airsim-capture-ego.py
 detector: scripted
 tracker: simple_centroid
 identity_resolver: appearance_only
@@ -81,13 +81,13 @@ For multiple snapshots:
 
 ```text
 AirSim scene image
-  -> simulation/airsim-capture-frame.py
+  -> simulation/airsim/scripts/airsim-capture-frame.py
   -> P6 PPM stdout
   -> AirSimFrameSource
   -> FramePacket
 
 AirSim vehicle state
-  -> simulation/airsim-capture-ego.py
+  -> simulation/airsim/scripts/airsim-capture-ego.py
   -> flat JSON stdout
   -> AirSimEgoStateProvider
   -> EgoState

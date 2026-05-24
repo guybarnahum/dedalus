@@ -42,7 +42,7 @@ AirSim / PX4
 RuntimeEventStreamServer
   -> ghost_detections events for planned simulation/debug markers
   -> world_snapshot events for AG/EGO world-model markers
-  -> simulation/airsim-world-overlay.py and other external subscribers
+  -> simulation/airsim/scripts/airsim-world-overlay.py and other external subscribers
 ```
 
 The AirSim overlay is now a subscriber/renderer only: it consumes `ghost_detections` and `world_snapshot` records from the runtime stream and renders PLAN / PLAN* / AG / EGO markers. It does not evaluate ghost scenarios locally and does not poll snapshot artifacts in normal operation.
@@ -64,7 +64,7 @@ The Virtual Proving Ground (`simulation/` directory) provides a complete high-fi
 1. **Provision:** Follow [simulation/INSTALL.md](simulation/INSTALL.md) to bootstrap a `g6.2xlarge` GPU instance.
 2. **Launch:** Connect via NICE DCV and run:
    ```bash
-   cd ~/dedalus/simulation && ./run.sh AirSimNH
+   cd ~/dedalus/simulation/airsim && ./run.sh AirSimNH
    ```
 3. **Test Flight:** Execute autonomous flight sequences with:
    ```bash
@@ -177,7 +177,7 @@ In another terminal, export one or more AirSim frames:
 ```bash
 cd ~/dedalus
 source ~/dedalus/venv/bin/activate
-python simulation/export-airsim-frames.py \
+python simulation/airsim/scripts/export-airsim-frames.py \
   --host 127.0.0.1 \
   --rpc-port 41451 \
   --vehicle-name PX4 \
@@ -330,13 +330,13 @@ FrameSource
 
 The behavior pipeline should consume `WorldSnapshot` or a future `EffectiveWorldView` and emit bounded kinematic intents, not direct motor or attitude commands. PX4 remains responsible for stabilization, estimator fusion, arming, motor control, and low-level failsafes.
 
-Initial placeholder behavior should mirror `simulation/test-flight.py`: it reads the existing trajectory JSON format and emits velocity vectors at a configured rate while ignoring the world model. That gives a complete perception -> world-model -> behavior -> flight-control path before higher-level autonomy is ready.
+Initial placeholder behavior should mirror `simulation/airsim/scripts/test-flight.py`: it reads the existing trajectory JSON format and emits velocity vectors at a configured rate while ignoring the world model. That gives a complete perception -> world-model -> behavior -> flight-control path before higher-level autonomy is ready.
 
 Proposed initial config shape:
 
 ```yaml
 behavior_pipeline: trajectory
-behavior_trajectory_path: simulation/trajectories/circle_figure8.json
+behavior_trajectory_path: config/behaviors/trajectories/circle_figure8.json
 behavior_rate_hz: 10
 
 flight_command_sink: airsim_velocity

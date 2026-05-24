@@ -19,7 +19,7 @@ def main() -> int:
 
     command = [
         sys.executable,
-        str(repo_root / "simulation" / "run-mission-scenario.py"),
+        str(repo_root / "tools" / "mission" / "run-mission-scenario.py"),
         "--name",
         "abort_land_timeout",
         "--run-id",

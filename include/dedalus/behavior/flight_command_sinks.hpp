@@ -18,7 +18,7 @@ struct AirSimVelocityCommandSinkConfig {
     std::string host{"127.0.0.1"};
     int rpc_port{41451};
     std::string vehicle_name{"PX4"};
-    std::string bridge_command{"python3 simulation/airsim-send-velocity.py"};
+    std::string bridge_command{"python3 simulation/airsim/scripts/airsim-send-velocity.py"};
     double command_duration_s{0.1};
     double max_velocity_mps{5.0};
     bool debug_logging{false};
@@ -138,7 +138,7 @@ private:
 };
 
 struct Px4BridgeCommandSinkConfig {
-    std::string bridge_command{"python3 simulation/px4-command-bridge.py"};
+    std::string bridge_command{"python3 tools/px4/px4-command-bridge.py"};
     double command_duration_s{0.1};
     double max_velocity_mps{5.0};
     int verbosity{0};

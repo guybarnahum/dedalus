@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Smoke test for simulation/run-mission-campaign.py."""
+"""Smoke test for tools/mission/run-mission-campaign.py."""
 
 from __future__ import annotations
 
@@ -28,7 +28,7 @@ def require_file(path: Path) -> bool:
 def validate_synthetic_dry_run(repo_root: Path, build_dir: Path, out_root: Path) -> int:
     command = [
         sys.executable,
-        str(repo_root / "simulation" / "run-mission-campaign.py"),
+        str(repo_root / "tools" / "mission" / "run-mission-campaign.py"),
         "--campaign-file",
         str(repo_root / "config" / "mission_campaigns" / "synthetic_ci.json"),
         "--campaign-id",
@@ -125,7 +125,7 @@ def validate_synthetic_dry_run(repo_root: Path, build_dir: Path, out_root: Path)
 def validate_airsim_dry_run(repo_root: Path, build_dir: Path, out_root: Path) -> int:
     command = [
         sys.executable,
-        str(repo_root / "simulation" / "run-mission-campaign.py"),
+        str(repo_root / "tools" / "mission" / "run-mission-campaign.py"),
         "--campaign-file",
         str(repo_root / "config" / "mission_campaigns" / "airsim_live_smoke.json"),
         "--campaign-id",

@@ -2,11 +2,11 @@
 #
 # Replace BRPlayer_01_96 with an object discovered from:
 #
-#   python3 simulation/airsim-list-objects.py --match-class person --sort distance --format table
+#   python3 simulation/airsim/scripts/airsim-list-objects.py --match-class person --sort distance --format table
 #
 # The AirSim object ghost source reads selected object poses through:
 #
-#   python3 simulation/airsim-object-poses.py
+#   python3 simulation/airsim/scripts/airsim-object-poses.py
 
 frame_source: airsim
 ego_provider: frame_hint
@@ -27,7 +27,7 @@ vehicle_name: PX4
 vehicle_camera_name: front_center
 bridge_transport: pipe
 bridge_mode: stream_binary_ego
-bridge_command: python3 simulation/airsim-stream-frames-binary.py --include-ego --rate-hz 5 --mavlink-armed-endpoints udpin:127.0.0.1:14540
+bridge_command: python3 simulation/airsim/scripts/airsim-stream-frames-binary.py --include-ego --rate-hz 5 --mavlink-armed-endpoints udpin:127.0.0.1:14540
 
 # 2.26E explicit existing-object ghost binding.
 ghost_targets_enabled: true
@@ -47,5 +47,5 @@ mission_options.flight_control_mode: px4
 mission_options.flight_safe_height_m: 16
 mission_options.flight_max_velocity_mps: 3.0
 mission_options.flight_home_policy: initial_ego_pose
-mission_options.flight_px4_command_bridge: python3 simulation/px4-command-bridge.py --endpoint udpin:127.0.0.1:14550 --px4-tmux-target dedalus-sim:px4 --safe-height-m 16
-mission_options.flight_prepare_session_command: python3 simulation/airsim-prepare-session.py --vehicle-name PX4 --px4-tmux-target dedalus-sim:px4 --mavlink-endpoints udpin:127.0.0.1:14540 --wait-gps --gps-timeout-s 20
+mission_options.flight_px4_command_bridge: python3 tools/px4/px4-command-bridge.py --endpoint udpin:127.0.0.1:14550 --px4-tmux-target dedalus-sim:px4 --safe-height-m 16
+mission_options.flight_prepare_session_command: python3 simulation/airsim/scripts/airsim-prepare-session.py --vehicle-name PX4 --px4-tmux-target dedalus-sim:px4 --mavlink-endpoints udpin:127.0.0.1:14540 --wait-gps --gps-timeout-s 20

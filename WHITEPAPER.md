@@ -235,7 +235,7 @@ AirSim / PX4
 RuntimeEventStreamServer
   -> ghost_detections events
   -> world_snapshot events
-  -> simulation/airsim-world-overlay.py and external/debug subscribers
+  -> simulation/airsim/scripts/airsim-world-overlay.py and external/debug subscribers
 ```
 
 The design rule is:
@@ -268,11 +268,11 @@ AirSim live frame + ego sidecar
   -> MissionRuntime async loop
   -> TrajectoryMissionController / ObjectBehaviorMissionController
   -> Px4BridgeCommandSink
-  -> simulation/px4-command-bridge.py
+  -> tools/px4/px4-command-bridge.py
   -> PX4 / AirSim
 ```
 
-The working flight-control split deliberately mirrors `simulation/test-flight.py`:
+The working flight-control split deliberately mirrors `simulation/airsim/scripts/test-flight.py`:
 
 ```text
 PX4 shell:
@@ -662,10 +662,10 @@ config/behaviors/
   approach_target.yaml
   sequence_approach_circle.yaml
 
-simulation/ghost_detections/
+config/behaviors/ghost_detections/
   person_pair_crossing.json
 
-simulation/trajectories/
+config/behaviors/trajectories/
   ghost_person_001_crossing.json
   ghost_person_002_crossing.json
 ```

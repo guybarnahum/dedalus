@@ -11,7 +11,7 @@ case "${1:-}" in
   -h|--help)
     cat <<'EOF'
 Usage:
-  RUNS=3 simulation/repeat-mission-smoke.sh
+  RUNS=3 tools/mission/repeat-mission-smoke.sh
 
 Environment overrides:
   RUNS                  Default: 3
@@ -28,7 +28,7 @@ REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$REPO_ROOT"
 
 APP="./build-staging/apps/dedalus_mission_loop"
-SUMMARY="./simulation/mission-events-summary.py"
+SUMMARY="./tools/mission/mission-events-summary.py"
 
 if [[ ! -x "$APP" ]]; then
   echo "Missing executable: $APP" >&2

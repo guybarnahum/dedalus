@@ -81,14 +81,14 @@ Validation:
 
   For current behavior/runtime changes, also include:
 
-    python3 -m py_compile simulation/airsim-world-overlay.py
+    python3 -m py_compile simulation/airsim/scripts/airsim-world-overlay.py
 
     ctest --test-dir build-staging --output-on-failure -R \
       'mission_runtime|object_behavior_mission_controller|object_behavior_mission_smoke|core_stack_config_loader|behavior_spec|target_selector|world_snapshot_stream_server'
 
   For live AirSim validation, include:
 
-    python3 simulation/airsim-object-poses.py --object BRPlayer_01_96
+    python3 simulation/airsim/scripts/airsim-object-poses.py --object BRPlayer_01_96
 
     ./build-staging/apps/dedalus_mission_loop \
       --config config/core_stack_object_behavior_airsim_existing_object.yaml \
@@ -100,7 +100,7 @@ Validation:
       --behavior-duration-s 90 \
       --progress
 
-    python3 simulation/airsim-world-overlay.py \
+    python3 simulation/airsim/scripts/airsim-world-overlay.py \
       --stream-port 47770 \
       --follow \
       --rate-hz 5 \
@@ -164,7 +164,7 @@ Current architecture:
          -> MissionEventPublisher
     -> ObjectBehaviorMissionController
     -> Px4BridgeCommandSink
-    -> persistent simulation/px4-command-bridge.py
+    -> persistent tools/px4/px4-command-bridge.py
     -> PX4 / AirSim
 
   RuntimeEventStreamServer emits one TCP JSONL stream:
@@ -172,7 +172,7 @@ Current architecture:
     world_snapshot
     mission_event
 
-  simulation/airsim-world-overlay.py is a stream-only subscriber/renderer.
+  simulation/airsim/scripts/airsim-world-overlay.py is a stream-only subscriber/renderer.
   It renders PLAN / PLAN* from ghost_detections, AG / EGO from world_snapshot, SEL from mission_event target_selected, and OSD from mission_event display_state/display_detail.
 
 Current observed behavior:
@@ -239,7 +239,7 @@ Do not:
   - Do not bypass WorldSnapshot/TargetSelector by hardcoding selected_target in config for main validation.
   - Do not keep global behavior specs under simulation/behaviors; use config/behaviors.
   - Do not use artifact files as runtime IPC when a live stream or in-process subscriber is the right boundary.
-  - Do not make simulation/airsim-world-overlay.py evaluate GhostScenario, discover AirSim objects, or poll snapshot artifacts in normal mode; it should subscribe and render.
+  - Do not make simulation/airsim/scripts/airsim-world-overlay.py evaluate GhostScenario, discover AirSim objects, or poll snapshot artifacts in normal mode; it should subscribe and render.
   - Do not put behavior semantics in overlay logic. Mission/behavior events should publish display_state/display_detail; overlay should render them.
   - Do not implement circle as a yaw-only or latch-based visual hack.
   - Do not add shims to preserve stale pre-refactor APIs unless there is a current user and an explicit removal plan.
@@ -260,7 +260,7 @@ Validation:
 
   Focused 2.27A:
 
-    python3 -m py_compile simulation/airsim-world-overlay.py
+    python3 -m py_compile simulation/airsim/scripts/airsim-world-overlay.py
 
     ctest --test-dir build-staging --output-on-failure -R \
       'mission_runtime|object_behavior_mission_controller|object_behavior_mission_smoke|core_stack_config_loader|behavior_spec|target_selector|world_snapshot_stream_server'

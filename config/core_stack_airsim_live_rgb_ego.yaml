@@ -3,9 +3,9 @@
 # Depth projection and AirSim ground-truth detection are still not enabled here.
 
 frame_source: airsim
-bridge_command: python3 simulation/airsim-capture-frame.py
+bridge_command: python3 simulation/airsim/scripts/airsim-capture-frame.py
 ego_provider: airsim
-ego_bridge_command: python3 simulation/airsim-capture-ego.py
+ego_bridge_command: python3 simulation/airsim/scripts/airsim-capture-ego.py
 detector: scripted
 tracker: simple_centroid
 identity_resolver: appearance_only

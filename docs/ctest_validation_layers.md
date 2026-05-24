@@ -169,13 +169,13 @@ No normal CTest test is labeled `airsim_live` today. Real live AirSim/PX4 valida
 Use one of:
 
 ```bash
-RUNS=3 simulation/repeat-mission-smoke.sh
+RUNS=3 tools/mission/repeat-mission-smoke.sh
 ```
 
 or:
 
 ```bash
-python3 simulation/run-mission-campaign.py \
+python3 tools/mission/run-mission-campaign.py \
   --campaign-file config/mission_campaigns/airsim_live_smoke.json \
   --campaign-id live_<N> \
   --output-root out/mission_campaigns \

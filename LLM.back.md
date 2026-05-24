@@ -40,7 +40,7 @@ Most of this work is now stable enough to serve as infrastructure for the missio
 A prior investigation showed that passing `--settings` to the packaged Colosseum/AirSim environment was unreliable in practice. The effective workaround was to patch the canonical:
 
 ```text
-simulation/settings.json
+simulation/airsim/settings.json
 ```
 
 before starting AirSim.
@@ -167,7 +167,7 @@ Arm / Disarm:
   dispatched through PX4 shell using tmux send-keys
 
 Velocity:
-  dispatched through AirSim moveByVelocityAsync via simulation/airsim-send-velocity.py
+  dispatched through AirSim moveByVelocityAsync via simulation/airsim/scripts/airsim-send-velocity.py
 ```
 
 Observed behavior:
@@ -202,7 +202,7 @@ SET_POSITION_TARGET_LOCAL_NED for velocity
 Meaningful failure:
 
 ```text
-simulation/test-flight.py worked, but the native sink did not reliably climb/execute trajectory.
+simulation/airsim/scripts/test-flight.py worked, but the native sink did not reliably climb/execute trajectory.
 ```
 
 Root cause category:
@@ -223,13 +223,13 @@ The current working path uses:
 
 ```text
 src/behavior/px4_bridge_command_sink.cpp
-simulation/px4-command-bridge.py
+tools/px4/px4-command-bridge.py
 ```
 
 This preserves the C++ mission state machine while delegating flight-critical PX4/OFFBOARD control to the same `pymavlink` behavior proven in:
 
 ```text
-simulation/test-flight.py
+simulation/airsim/scripts/test-flight.py
 ```
 
 Important bridge fixes that made it match `test-flight.py`:
@@ -289,7 +289,7 @@ Only later consider a native C++ PX4/MAVLink backend, and only with a real teste
 Bottom line:
 
 ```text
-Python is not required for AirSim access. It is currently the stable choice for PX4/MAVLink mission control because `pymavlink` plus `simulation/test-flight.py` is the proven implementation.
+Python is not required for AirSim access. It is currently the stable choice for PX4/MAVLink mission control because `pymavlink` plus `simulation/airsim/scripts/test-flight.py` is the proven implementation.
 ```
 
 ---
@@ -392,8 +392,8 @@ Key outcomes:
 ```text
 - `mission_events.jsonl` became the compact source artifact for mission behavior.
 - `dedalus_mission_loop` prints a final summary derived from `mission_events.jsonl`.
-- `simulation/mission-events-summary.py` can summarize and validate event artifacts after the run.
-- `simulation/repeat-mission-smoke.sh` can run repeated live missions and validate each event artifact.
+- `tools/mission/mission-events-summary.py` can summarize and validate event artifacts after the run.
+- `tools/mission/repeat-mission-smoke.sh` can run repeated live missions and validate each event artifact.
 - Back-to-back mission-loop runs were validated without restarting AirSim.
 ```
 
@@ -412,7 +412,7 @@ Important design compromise:
 mission_options.flight_arm_dispatch_fallback_s: 2.0
 ```
 
-This exists because repeat runs showed stale armed telemetry even though PX4 shell arm/takeoff was healthy and `simulation/test-flight.py` succeeded. The fallback may move from `Prepare` to `Takeoff` after successful Arm dispatch and a short settle interval when armed telemetry is stale.
+This exists because repeat runs showed stale armed telemetry even though PX4 shell arm/takeoff was healthy and `simulation/airsim/scripts/test-flight.py` succeeded. The fallback may move from `Prepare` to `Takeoff` after successful Arm dispatch and a short settle interval when armed telemetry is stale.
 
 This is acceptable because:
 
@@ -639,7 +639,7 @@ Do not validate target selection by hardcoding `selected_target` directly from c
 The important design correction was:
 
 ```text
-simulation/airsim-world-overlay.py should be a subscriber/renderer only.
+simulation/airsim/scripts/airsim-world-overlay.py should be a subscriber/renderer only.
 It should not evaluate GhostScenario locally.
 It should not poll snapshot_manifest.txt in normal mode.
 It should not own source modes such as combined/world_snapshot/artifact_snapshot.

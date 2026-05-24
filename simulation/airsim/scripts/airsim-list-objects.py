@@ -7,20 +7,20 @@ modify the simulator.
 
 Examples:
 
-  python3 simulation/airsim-list-objects.py
+  python3 simulation/airsim/scripts/airsim-list-objects.py
 
-  python3 simulation/airsim-list-objects.py \
+  python3 simulation/airsim/scripts/airsim-list-objects.py \
     --name-regex '.*(Car|Vehicle|Person|Human|Pedestrian|BRPlayer).*' \
     --class-pattern car='(?i)(car|vehicle)' \
     --class-pattern person='(?i)(person|human|pedestrian|brplayer)' \
     --only-matched \
     --format table
 
-  python3 simulation/airsim-list-objects.py \
+  python3 simulation/airsim/scripts/airsim-list-objects.py \
     --match-class person \
     --format table
 
-  python3 simulation/airsim-list-objects.py \
+  python3 simulation/airsim/scripts/airsim-list-objects.py \
     --only-matched \
     --output out/airsim_scene_objects.json
 """

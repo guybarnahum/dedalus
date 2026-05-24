@@ -94,12 +94,12 @@ int main() {
     if (mission_config.mission_options.get_or("flight_control_mode", "") != "px4" ||
         mission_config.mission_options.get_or("flight_safe_height_m", "") != "16" ||
         mission_config.mission_options.get_or("flight_trajectory_path", "") !=
-            "simulation/trajectories/circle_figure8.json" ||
+            "config/behaviors/trajectories/circle_figure8.json" ||
         mission_config.mission_options.get_or("flight_home_policy", "") != "initial_ego_pose" ||
         mission_config.mission_options.get_or("flight_px4_command_bridge", "").find(
-            "simulation/px4-command-bridge.py") == std::string::npos ||
+            "tools/px4/px4-command-bridge.py") == std::string::npos ||
         mission_config.mission_options.get_or("flight_prepare_session_command", "").find(
-            "simulation/airsim-prepare-session.py") == std::string::npos) {
+            "simulation/airsim/scripts/airsim-prepare-session.py") == std::string::npos) {
         std::cerr << "mission placeholder did not parse expected mission_options.* values\n";
         return 1;
     }

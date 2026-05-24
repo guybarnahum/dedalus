@@ -163,9 +163,9 @@ cat > "$CONFIG_PATH" <<EOF
 frame_source: airsim
 bridge_mode: stream_binary
 bridge_transport: pipe
-bridge_command: python3 simulation/airsim-stream-frames-binary.py --host $AIRSIM_HOST --rpc-port $AIRSIM_RPC_PORT --vehicle-name $AIRSIM_VEHICLE_NAME --camera-name $AIRSIM_CAMERA_NAME --count $AIRSIM_FRAME_COUNT --rate-hz $AIRSIM_RATE_HZ
+bridge_command: python3 simulation/airsim/scripts/airsim-stream-frames-binary.py --host $AIRSIM_HOST --rpc-port $AIRSIM_RPC_PORT --vehicle-name $AIRSIM_VEHICLE_NAME --camera-name $AIRSIM_CAMERA_NAME --count $AIRSIM_FRAME_COUNT --rate-hz $AIRSIM_RATE_HZ
 ego_provider: airsim
-ego_bridge_command: python3 simulation/airsim-capture-ego.py --host $AIRSIM_HOST --rpc-port $AIRSIM_RPC_PORT --vehicle-name $AIRSIM_VEHICLE_NAME --camera-name $AIRSIM_CAMERA_NAME
+ego_bridge_command: python3 simulation/airsim/scripts/airsim-capture-ego.py --host $AIRSIM_HOST --rpc-port $AIRSIM_RPC_PORT --vehicle-name $AIRSIM_VEHICLE_NAME --camera-name $AIRSIM_CAMERA_NAME
 detector: scripted
 camera_stabilizer: null
 tracker: simple_centroid

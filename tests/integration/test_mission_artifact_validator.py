@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Smoke tests for simulation/validate-mission-artifacts.py."""
+"""Smoke tests for tools/mission/validate-mission-artifacts.py."""
 
 from __future__ import annotations
 
@@ -41,7 +41,7 @@ def valid_records() -> list[dict[str, object]]:
 
 def run_validator(repo_root: Path, run_dir: Path, *args: str) -> subprocess.CompletedProcess[str]:
     return subprocess.run(
-        [sys.executable, str(repo_root / "simulation" / "validate-mission-artifacts.py"), str(run_dir), *args],
+        [sys.executable, str(repo_root / "tools" / "mission" / "validate-mission-artifacts.py"), str(run_dir), *args],
         cwd=repo_root,
         check=False,
         text=True,

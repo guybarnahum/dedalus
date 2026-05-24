@@ -49,7 +49,7 @@ int main() {
     config.host = "127.0.0.1";
     config.rpc_port = 41451;
     config.vehicle_name = "PX4";
-    config.bridge_command = "python3 simulation/airsim-send-velocity.py";
+    config.bridge_command = "python3 simulation/airsim/scripts/airsim-send-velocity.py";
     config.command_duration_s = 0.2;
     config.max_velocity_mps = 2.0;
 
@@ -95,7 +95,7 @@ int main() {
 
     const auto& rendered = fake_transport_ptr->commands[2];
     const std::string required_tokens[] = {
-        "python3 simulation/airsim-send-velocity.py",
+        "python3 simulation/airsim/scripts/airsim-send-velocity.py",
         "--command velocity",
         "--host '127.0.0.1'",
         "--rpc-port 41451",

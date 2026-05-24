@@ -18,14 +18,14 @@ AirSim live frame + ego sidecar
   -> MissionRuntime async loop
   -> TrajectoryMissionController
   -> Px4BridgeCommandSink
-  -> simulation/px4-command-bridge.py
+  -> tools/px4/px4-command-bridge.py
   -> PX4 / AirSim
 ```
 
 Known-good standalone reference:
 
 ```bash
-python ./simulation/test-flight.py --trajectory trajectories/circle_figure8.json
+python ./simulation/airsim/scripts/test-flight.py --trajectory trajectories/circle_figure8.json
 ```
 
 The mission-loop path deliberately mirrors that known-good control sequence.
@@ -55,7 +55,7 @@ pymavlink:
   send SET_POSITION_TARGET_LOCAL_NED velocity setpoints
 ```
 
-The C++ mission runtime owns mission lifecycle state. The Python bridge owns the PX4/MAVLink transport behavior that has already been validated by `simulation/test-flight.py`.
+The C++ mission runtime owns mission lifecycle state. The Python bridge owns the PX4/MAVLink transport behavior that has already been validated by `simulation/airsim/scripts/test-flight.py`.
 
 Do not replace this with the native C++ MAVLink sink as the default live path. The native sink may remain in-tree as experimental/deprecated code.
 
@@ -161,7 +161,7 @@ cd ~/dedalus/simulation
 # Terminal 2: run several mission loops without restarting AirSim.
 cd ~/dedalus
 source venv/bin/activate
-RUNS=3 simulation/repeat-mission-smoke.sh
+RUNS=3 tools/mission/repeat-mission-smoke.sh
 ```
 
 Expected result for every run:
@@ -207,12 +207,12 @@ include/dedalus/behavior/flight_command_sinks.hpp
 src/behavior/mission_runtime.cpp
 src/behavior/trajectory_mission_controller.cpp
 src/behavior/px4_bridge_command_sink.cpp
-simulation/px4-command-bridge.py
-simulation/airsim-prepare-session.py
-simulation/airsim-stream-frames-binary.py
-simulation/mission-events-summary.py
-simulation/validate-mission-artifacts.py
-simulation/repeat-mission-smoke.sh
+tools/px4/px4-command-bridge.py
+simulation/airsim/scripts/airsim-prepare-session.py
+simulation/airsim/scripts/airsim-stream-frames-binary.py
+tools/mission/mission-events-summary.py
+tools/mission/validate-mission-artifacts.py
+tools/mission/repeat-mission-smoke.sh
 config/core_stack_trajectory_mission_placeholder.yaml
 ```
 
@@ -371,14 +371,14 @@ Quick inspection:
 
 ```bash
 tail -n 40 out/airsim_mission_snapshots/mission_events.jsonl
-python3 simulation/mission-events-summary.py out/airsim_mission_snapshots/mission_events.jsonl
-python3 simulation/mission-events-summary.py out/airsim_mission_snapshots/mission_events.jsonl --expect-complete
+python3 tools/mission/mission-events-summary.py out/airsim_mission_snapshots/mission_events.jsonl
+python3 tools/mission/mission-events-summary.py out/airsim_mission_snapshots/mission_events.jsonl --expect-complete
 ```
 
 Formal live-run artifact validation:
 
 ```bash
-python3 simulation/validate-mission-artifacts.py \
+python3 tools/mission/validate-mission-artifacts.py \
   out/airsim_mission_snapshots \
   --expect-complete \
   --safe-height-m 16 \
@@ -400,7 +400,7 @@ The validator checks:
 For later M3 object-conditioned behavior runs, add:
 
 ```bash
-python3 simulation/validate-mission-artifacts.py \
+python3 tools/mission/validate-mission-artifacts.py \
   out/object_behavior_mission \
   --expect-complete \
   --expect-behavior \

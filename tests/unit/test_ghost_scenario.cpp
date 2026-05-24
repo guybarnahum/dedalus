@@ -31,7 +31,7 @@ const dedalus::GhostDetectionState& find_state(
 }
 
 void loads_json_and_referenced_trajectories() {
-    const auto scenario = dedalus::GhostScenario::load_from_file("simulation/ghost_detections/person_pair_crossing.json");
+    const auto scenario = dedalus::GhostScenario::load_from_file("config/behaviors/ghost_detections/person_pair_crossing.json");
     require(scenario.name() == "person_pair_crossing", "scenario name should parse");
     require(scenario.map_frame_id().value == "map_airsim_mission_0001", "map frame should parse");
     require(scenario.detections().size() == 3U, "expected three detections");
@@ -41,7 +41,7 @@ void loads_json_and_referenced_trajectories() {
 }
 
 void evaluates_static_and_dynamic_positions() {
-    const auto scenario = dedalus::GhostScenario::load_from_file("simulation/ghost_detections/person_pair_crossing.json");
+    const auto scenario = dedalus::GhostScenario::load_from_file("config/behaviors/ghost_detections/person_pair_crossing.json");
 
     const auto start = scenario.evaluate(0.0);
     require(start.size() == 3U, "evaluate(0) should return three detections");

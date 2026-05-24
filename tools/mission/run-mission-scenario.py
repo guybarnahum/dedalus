@@ -26,7 +26,7 @@ def default_run_id() -> str:
 
 
 def repo_root_from_script() -> Path:
-    return Path(__file__).resolve().parents[1]
+    return Path(__file__).resolve().parents[2]
 
 
 def expected_final_state_from(args: argparse.Namespace) -> str | None:
@@ -203,7 +203,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--config", default="config/core_stack_trajectory_mission_placeholder.yaml")
     parser.add_argument("--output-root", default="out/mission_scenarios")
     parser.add_argument("--app", default="./build-staging/apps/dedalus_mission_loop")
-    parser.add_argument("--validator", default="python3 simulation/validate-mission-artifacts.py")
+    parser.add_argument("--validator", default="python3 tools/mission/validate-mission-artifacts.py")
     parser.add_argument("--max-frames", type=int, default=900)
     parser.add_argument("--shutdown-max-frames", type=int, default=400)
     parser.add_argument("--safe-height-m", type=float, default=16.0)

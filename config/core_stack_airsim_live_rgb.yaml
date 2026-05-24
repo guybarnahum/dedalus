@@ -4,7 +4,7 @@
 # It requires a running AirSim/Colosseum simulation and the Python AirSim package.
 
 frame_source: airsim
-bridge_command: python3 simulation/airsim-capture-frame.py
+bridge_command: python3 simulation/airsim/scripts/airsim-capture-frame.py
 ego_provider: no_telemetry
 detector: scripted
 tracker: simple_centroid
