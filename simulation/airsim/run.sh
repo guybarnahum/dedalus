@@ -12,7 +12,7 @@ cd "$(dirname "$0")"
 LOG_DIR="logs"
 mkdir -p "$LOG_DIR"
 TIMESTAMP=$(date +%Y%m%d_%H%M%S)
-SIM_LOG="$LOG_DIR/sim_$TIMESTAMP.log"
+SIM_LOG="$(pwd)/$LOG_DIR/sim_$TIMESTAMP.log"
 
 # ------------ CLI CONFIGURATION --------------------
 TARGET_ENV="AirSimNH"

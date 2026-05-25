@@ -403,7 +403,7 @@ FollowGeometry circle_geometry(
     const EgoState& ego,
     const TargetSelection& selection,
     const BehaviorSpec& behavior,
-    const ObjectBehaviorMissionConfig& config,
+    const ObjectBehaviorMissionConfig& /*config*/,
     bool orbit_mode_latched = false) {
     FollowGeometry geometry;
     geometry.orbit_radius_m = behavior.radius_m;
