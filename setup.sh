@@ -207,7 +207,7 @@ After=network.target
 [Service]
 Type=simple
 # Remove RemainAfterExit=yes so systemd knows when the session is actually gone
-ExecStart=/usr/bin/dcv create-session --type virtual --owner %u dedalus-sim --init \"/usr/bin/startxfce4\"
+ExecStart=/usr/bin/dcv create-session --type virtual --owner %u dedalus-sim --init "/usr/bin/startxfce4"
 Restart=on-failure
 RestartSec=5
 
@@ -289,14 +289,13 @@ run_and_log "Install AirSim build-time blockers" python -m pip install numpy msg
 run_and_log "Install AirSim Python package" python -m pip install airsim --no-build-isolation
 
 # 6. Install the remaining flight stack tools and PX4 Python build deps.
-# PX4 generators import em, yaml, jinja2, and several schema/template helpers
-# from the Python interpreter used by make px4_sitl. Because this build is
-# intentionally run from the Dedalus venv, install those deps there too.
+# PX4 generators still expect the Empy 3.x API, including em.RAW_OPT and
+# em.BUFFERED_OPT. Keep this pinned so pip does not resolve Empy 4.x.
 run_and_log "Install flight Python dependencies" python -m pip install \
   pymavlink \
   pyserial \
   kconfiglib \
-  empy \
+  empy==3.3.4 \
   pyyaml \
   jinja2 \
   toml \
@@ -304,7 +303,7 @@ run_and_log "Install flight Python dependencies" python -m pip install \
   pyros-genmsg \
   packaging
 
-run_and_log "Verify PX4 Python build dependencies" python -c "import em, yaml, jinja2, toml, jsonschema, genmsg, packaging, menuconfig, kconfiglib"
+run_and_log "Verify PX4 Python build dependencies" python -c "import em, yaml, jinja2, toml, jsonschema, genmsg, packaging, menuconfig, kconfiglib; assert hasattr(em, 'RAW_OPT') and hasattr(em, 'BUFFERED_OPT')"
 
 echo "✅ Python environment ready at $VENV_PATH"
 # --------------------------------------------------------------
