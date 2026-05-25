@@ -16,8 +16,10 @@ Current handoff state:
 2.27B is complete and locally/live validated by build/tests plus the circle trajectory validator.
 2.28B is complete: no-shim repo layout migration is validated.
 2.28B.1 is complete: generated third-party dependencies are staged under third_party/ and validated from empty-state setup.
+2.28C.A is complete: AirSim camera pitch can be driven at runtime from selected-target geometry.
+2.28C.B is complete: C++ emits camera_pointing_intent events and the AirSim bridge fans that intent out to front_center and camera 0.
 
-Active next work: 2.28C — CameraPointingIntent and AirSim/MAVLink-gimbal sink abstraction for target-stare pitch.
+Active next work: 2.28C.C — formalize the camera/gimbal sink boundary and real-hardware MAVLink gimbal path without rewriting stable flight control.
 
 GitHub status checks may be absent; continue to run local build/tests after code changes.
 ```
@@ -35,7 +37,9 @@ Milestone 2.27A: robust circle behavior with continuous orbit-capture control la
 Milestone 2.27B: validation hardening for circle/orbit behavior. Complete after validator CLI, validator test, runbook update, 34/34 CTest, and live trajectory validator pass.
 Milestone 2.28B: no-shim target/tool/dependency layout migration. Complete after empty-state setup and live AirSim validation.
 Milestone 2.28B.1: generated dependency staging under third_party/. Complete after PX4 SITL, iceoryx, and Colosseum assets staged under third_party and no stale generated dirs under root/simulation.
-Milestone 2.28C: CameraPointingIntent and camera/gimbal sink abstraction. Active next slice.
+Milestone 2.28C.A: AirSim camera-pointing bridge prototype. Complete after runtime simSetCameraPose validation and proof images.
+Milestone 2.28C.B: C++ camera_pointing_intent policy plus AirSim multi-camera sink bridge. Complete after front_center + 0 fan-out validation.
+Milestone 2.28C.C: Camera/gimbal sink abstraction and MAVLink-gimbal design/stub. Active next slice.
 ```
 
 ---
@@ -59,12 +63,21 @@ AirSim live frame + ego sidecar
   -> MissionRuntime async loop
        -> MissionEventPublisher
   -> ObjectBehaviorMissionController
+       -> VelocityCommand policy for vehicle translation/yaw
+       -> camera_pointing_intent policy for target-stare camera pitch
   -> Px4BridgeCommandSink
   -> persistent tools/px4/px4-command-bridge.py
        - PX4 shell: arm, takeoff, land, disarm
        - pymavlink: OFFBOARD velocity setpoints
        - LOCAL_POSITION_NED feedback climb to safe height
   -> PX4 / AirSim
+
+Runtime stream camera side-channel:
+  dedalus_mission_loop --world-snapshot-stream-port 47770
+    -> mission_event camera_pointing_intent
+    -> simulation/airsim/scripts/airsim-camera-pointing-bridge.py
+    -> AirSim simSetCameraPose(front_center, pitch)
+    -> AirSim simSetCameraPose(0, pitch)
 ```
 
 Runtime-event stream:
@@ -120,7 +133,7 @@ Overlay is a subscriber/renderer only.
 
 ---
 
-## 3. Completed Capabilities Through 2.28B.1
+## 3. Completed Capabilities Through 2.28C.B
 
 AirSim existing-object binding:
 
@@ -177,40 +190,33 @@ Behavior is robust to imperfect insertion geometry:
 For known static AirSim existing-object bindings, object_behavior_zero_target_velocity may be enabled so the controller does not velocity-match synthetic/static-object velocity noise. This zeroes target_velocity only; tangent velocity remains active.
 ```
 
-2.27A live validation result:
+Target-stare yaw and pitch:
 
 ```text
-3-orbit AirSim existing-object circle run succeeded.
-behavior_complete reason=orbit_count_elapsed.
-Mission transitioned to GoHome after orbit-count completion.
+Horizontal target stare:
+  C++ ObjectBehaviorMissionController owns yaw_mode=target and emits vehicle yaw through VelocityCommand.
+
+Vertical target stare:
+  C++ ObjectBehaviorMissionController owns pitch policy and emits per-tick camera_pointing_intent mission events when vertical_stare_mode is non-none.
+
+Current AirSim transport:
+  simulation/airsim/scripts/airsim-camera-pointing-bridge.py subscribes to camera_pointing_intent and applies the pitch to every camera in the event.
+
+Validated AirSim camera mapping:
+  front_center = Dedalus capture/perception camera.
+  0 = AirSim operator FPV/F view camera candidate.
+
+The bridge fans out to both front_center and 0 using one pitch/send decision per tick and reports per_camera_verify in debug JSON.
 ```
 
 2.27B validation result:
 
 ```text
-Focused tests passed:
-  behavior_spec
-  core_stack_config_loader
-  object_behavior_mission_controller
-  circle_trajectory_validator
-
-Full CTest passed:
-  34/34 tests passed
-
-Circle trajectory validator passed on the 3-orbit AirSim run:
-  events: 3636
-  circle samples: 144
-  circling samples: 131
-  post-latch samples: 131
-  orbit radius target: 10.0
-  orbit mode latched observed: true
-  actual radius min/avg/max: 9.703 / 10.246 / 12.434
-  radius error min/avg/max: -0.297 / 0.246 / 2.434
-  avg abs radius error: 0.256
-  completed orbits first/last: 0.000 -> 2.982
-  behavior_complete reason: orbit_count_elapsed
-  runtime_stop terminal_settled: true
-  state path: Idle -> Prepare -> Takeoff -> ExecuteMission -> GoHome -> Land -> Complete
+Full CTest passed: 34/34
+Circle trajectory validator passed on a 3-orbit AirSim run.
+behavior_complete reason: orbit_count_elapsed
+runtime_stop terminal_settled: true
+state path: Idle -> Prepare -> Takeoff -> ExecuteMission -> GoHome -> Land -> Complete
 ```
 
 2.28B / 2.28B.1 validation result:
@@ -222,160 +228,86 @@ PX4 SITL built successfully from third_party/PX4-Autopilot.
 iceoryx build state staged under third_party/iceoryx_build.
 Colosseum/AirSim environments downloaded/extracted under third_party/colosseum_environments.
 No stale generated dependency dirs were present under repo root, simulation/, simulation/airsim/, or infrastructure/.
-
-Script validation passed:
-  bash -n setup.sh
-  bash -n cleanup.sh
-  bash -n simulation/airsim/run.sh
-  bash -n simulation/airsim/stop.sh
-
-Python tool validation passed:
-  py_compile for simulation/airsim/scripts, simulation/airsim/validation, tools/px4, tools/mission, tools/validation, tools/trajectory
-
-Build/test validation passed:
-  cmake configure passed
-  cmake build passed
-  full ctest passed: 34/34
-  focused 2.28 tests passed: 7/7
-
-Live/runtime validation passed:
-  simulation/airsim/run.sh launches AirSim / PX4 SITL.
-  simulation/airsim/stop.sh stops the runtime and reports no build artifacts removed.
-  AirSim camera/gimbal probe passed with overall_ok=True.
-  Existing-object circle mission reached Complete / terminal_settled.
-  validate-circle-trajectory passed for configured orbit_count=1.0.
+Full CTest passed: 34/34.
+AirSim camera/gimbal probe passed overall_ok=True.
+Existing-object circle mission reached Complete / terminal_settled.
+validate-circle-trajectory passed for configured orbit_count=1.0.
 ```
 
-Circle validator:
+2.28C.A / 2.28C.B validation result:
 
 ```text
-tools/validation/validate-circle-trajectory.py
-  -> parses mission_events.jsonl
-  -> checks target_selected, circling samples, orbit_mode_latched, orbit count, radius stats,
-     behavior_complete reason, terminal_settled, and GoHome -> Land -> Complete lifecycle evidence
-
-tests/integration/test_circle_trajectory_validator.py
-  -> deterministic synthetic fixture test for pass/fail validator behavior
-```
-
-Overlay / OSD:
-
-```text
-simulation/airsim/scripts/airsim-world-overlay.py is stream-only.
-It renders PLAN / PLAN* from ghost_detections.
-It renders AG / EGO from world_snapshot.
-It renders SEL from mission_event target_selected.
-It renders DEDALUS numeric OSD from ego motion.
-It renders DEDALUS-STATE from mission_event display_state/display_detail.
-It should not infer behavior semantics.
-```
-
-Display-state ownership:
-
-```text
-MissionRuntime owns lifecycle / command display:
-  Arm, Takeoff, Mission, GoHome, Land, Disarm, Settled, Failed
-
-ObjectBehaviorMissionController owns behavior detail:
-  arriving, following, positioned, circling, done
-
-Overlay renders display_state + display_detail.
-Fallback tables in overlay are compatibility only for old event streams.
-```
-
-Expected validated OSD flow:
-
-```text
-Arm / arming or ok
-Takeoff / climbing
-Mission / arriving
-Mission / following, positioned, or circling
-GoHome / returning
-Land / landing
-Disarm / ok
-Settled / done
+AirSim can change vehicle camera pitch at runtime through simSetCameraPose.
+C++ emits camera_pointing_intent events from selected-target geometry.
+The AirSim bridge consumes camera_pointing_intent rather than duplicating geometry by default.
+The bridge applies the same pitch to front_center and 0.
+Proof frames are saved with camera names in the filename.
+Debug JSON includes per_camera_verify with accepted_pitch_deg for each camera.
+The live operator F view was found to correspond to camera 0 in this setup, while front_center remains the Dedalus capture camera.
 ```
 
 ---
 
-## 4. Active Next Work: 2.28C CameraPointingIntent / Target-Stare Pitch
+## 4. Active Next Work: 2.28C.C Camera/Gimbal Sink Boundary
 
 Goal:
 
 ```text
-Add a hardware-neutral camera/gimbal pointing intent for vertical target stare, with AirSim camera pitch as the first concrete sink and MAVLink gimbal support as the real-hardware path.
+Formalize camera/gimbal pointing as a sink boundary separate from PX4 velocity/yaw flight control, and prepare the real-hardware MAVLink gimbal path.
 ```
 
-Motivation:
+Current split:
 
 ```text
-Target stare is a 2-axis pointing policy:
-  - vehicle yaw keeps the target centered horizontally in the camera image
-  - camera/gimbal pitch keeps the target centered vertically in the camera image
+Policy is already C++:
+  ObjectBehaviorMissionController computes target-stare pitch and emits camera_pointing_intent.
 
-PX4 velocity/yaw remains the vehicle control path.
-Camera/gimbal pitch should not be hidden inside PX4 velocity commands.
-It should be a separate CameraPointingIntent emitted by the behavior/runtime layer and executed by a camera/gimbal sink.
+AirSim transport is still Python:
+  airsim-camera-pointing-bridge.py subscribes to the runtime stream and calls AirSim simSetCameraPose.
 ```
 
-Proposed architecture:
+When to move to pure C++:
 
 ```text
-ObjectBehaviorMissionController / MissionRuntime
-  -> VelocityCommand {vx, vy, vz, yaw}
-       -> Px4BridgeCommandSink
-       -> tools/px4/px4-command-bridge.py
-       -> PX4 OFFBOARD / AirSim or real vehicle
+Do not rewrite the AirSim transport in C++ just because yaw is C++.
+Yaw is part of the vehicle command already supported by the existing C++ VelocityCommand -> px4_bridge path.
+Camera pitch is a separate gimbal/camera actuator path and should move to C++ only after the sink interface is explicit.
 
-  -> CameraPointingIntent {camera_name, pitch_rad, yaw_rad?, source_track_id, mode}
-       -> AirSimCameraPointingSink for simulation
-       -> future MavlinkGimbalPointingSink for real hardware
-       -> NullCameraPointingSink with one-time warning when unsupported
+Move transport to pure C++ when at least one of these is true:
+  1. CameraPointingIntent becomes a typed field in MissionTickOutput rather than only a mission_event string.
+  2. A CameraPointingSink interface exists with Null, AirSim, and MAVLink-gimbal implementations.
+  3. We need process-lifetime, latency, or packaging guarantees that the Python AirSim bridge cannot provide.
+  4. We choose to implement a native C++ AirSim RPC client or embed an AirSim control adaptor in the runtime.
+  5. We are integrating real hardware and need a native MAVLink gimbal manager sink.
+
+Until then, keep the Python bridge as the simulator transport adaptor because it is validated, isolated, and does not duplicate behavior policy.
 ```
 
-Required 2.28C implementation phases:
+Proposed 2.28C.C implementation:
 
 ```text
-1. Define CameraPointingIntent and a small sink boundary.
-2. Compute target pitch from selected target geometry:
-     pitch_to_target = atan2(delta_z, hypot(delta_x, delta_y))
-   Verify sign convention against AirSim probe images before declaring done.
-3. Add config fields for camera pointing:
-     object_behavior_camera_pointing_sink: none | airsim | mavlink_gimbal
-     object_behavior_camera_pitch_mode: none | target | fixed | hold
-     object_behavior_camera_name: front_center
-     object_behavior_camera_pitch_min_deg
-     object_behavior_camera_pitch_max_deg
-4. Add AirSim camera pointing implementation using the proven simSetCameraPose path.
-5. Add mission events / debug fields for camera_pointing:
-     pitch_mode
-     camera
-     pitch_rad / pitch_deg
-     target_elevation_rad
-     source_track_id
-6. Add Null sink with one-time warning when pitch targeting is requested but unavailable.
-7. Add MAVLink gimbal design/stub path using MAVLink Gimbal Protocol v2 / gimbal manager, without requiring real gimbal hardware for CI.
-8. Validate in AirSim with circle/follow target-stare yaw plus camera pitch enabled.
+1. Add a documented CameraPointingIntent schema in docs/runtime_dataflow.md or a new docs/camera_pointing_intent.md.
+2. Add explicit config fields:
+     mission_options.object_behavior_camera_pointing_sink: none | runtime_stream | mavlink_gimbal
+     mission_options.object_behavior_camera_pointing_cameras: front_center,0
+     mission_options.object_behavior_camera_pitch_min_deg
+     mission_options.object_behavior_camera_pitch_max_deg
+     mission_options.object_behavior_camera_pitch_sign
+     mission_options.object_behavior_camera_pitch_offset_deg
+3. Add/clean runbook commands for:
+     mission loop + camera-pointing bridge
+     expected per_camera_verify JSON
+     expected proof frame filenames
+4. Add MAVLink gimbal design/stub path using MAVLink Gimbal Protocol v2 / gimbal manager.
+5. Keep AirSim bridge as the validated simulator sink until a native C++ AirSim sink has a clear payoff.
 ```
 
-Expected 2.28C success criteria:
-
-```text
-Build passes.
-Full CTest passes.
-AirSim camera/gimbal probe still passes overall_ok=True.
-CameraPointingIntent events are emitted when configured.
-AirSim sink changes camera pitch at runtime.
-No camera/gimbal behavior semantics are placed in overlay logic.
-Vehicle yaw and camera pitch remain separate intent/sink paths.
-```
-
-Non-goals for 2.28C:
+Non-goals for 2.28C.C:
 
 ```text
 No obstacle avoidance.
 No real hardware gimbal validation requirement.
-No native C++ MAVLink flight sink rewrite.
+No rewrite of stable PX4 velocity/yaw control.
 No overlay-side behavior inference.
 No general mission planner.
 ```
@@ -395,6 +327,7 @@ Focused current behavior/runtime validation:
 
 ```bash
 python3 -m py_compile simulation/airsim/scripts/airsim-world-overlay.py
+python3 -m py_compile simulation/airsim/scripts/airsim-camera-pointing-bridge.py
 
 ctest --test-dir build-staging --output-on-failure -R \
   'mission_runtime|object_behavior_mission_controller|object_behavior_mission_smoke|core_stack_config_loader|behavior_spec|target_selector|world_snapshot_stream_server|circle_trajectory_validator'
@@ -415,19 +348,6 @@ python3 -m py_compile \
   tools/mission/*.py \
   tools/validation/*.py \
   tools/trajectory/*.py
-
-du -sh \
-  third_party/PX4-Autopilot \
-  third_party/colosseum_environments \
-  third_party/iceoryx_build 2>/dev/null
-
-du -sh \
-  PX4-Autopilot \
-  simulation/PX4-Autopilot \
-  simulation/airsim/PX4-Autopilot \
-  simulation/colosseum_environments \
-  simulation/airsim/colosseum_environments \
-  infrastructure/iceoryx_build 2>/dev/null
 ```
 
 AirSim runtime control:
@@ -442,32 +362,6 @@ simulation/airsim/stop.sh
 # Use cleanup.sh only for reset/rebuild cleanup, not normal runtime stop.
 ```
 
-AirSim camera/gimbal probe:
-
-```bash
-python3 simulation/airsim/scripts/airsim-camera-gimbal-probe.py \
-  --host 127.0.0.1 \
-  --rpc-port 41451 \
-  --vehicle-name PX4 \
-  --output-dir out/airsim_camera_gimbal_probe
-```
-
-AirSim existing-object follow validation:
-
-```bash
-python3 simulation/airsim/scripts/airsim-object-poses.py --object BRPlayer_01_96
-
-./build-staging/apps/dedalus_mission_loop \
-  --config config/core_stack_object_behavior_airsim_existing_object.yaml \
-  --output-dir out/object_behavior_airsim_existing_object \
-  --max-frames 2400 \
-  --shutdown-max-frames 1800 \
-  --world-snapshot-stream-port 47770 \
-  --safe-height 40 \
-  --behavior-duration-s 90 \
-  --progress
-```
-
 AirSim existing-object circle validation:
 
 ```bash
@@ -480,6 +374,41 @@ AirSim existing-object circle validation:
   --safe-height 40 \
   --behavior-duration-s 360 \
   --progress
+```
+
+Camera pointing bridge validation:
+
+```bash
+rm -rf out/object_behavior_airsim_existing_object_circle/camera_pointing_frames
+mkdir -p out/object_behavior_airsim_existing_object_circle/camera_pointing_frames
+
+python3 simulation/airsim/scripts/airsim-camera-pointing-bridge.py \
+  --stream-port 47770 \
+  --host 127.0.0.1 \
+  --rpc-port 41451 \
+  --vehicle-name PX4 \
+  --cameras front_center \
+  --cameras 0 \
+  --rate-hz 10 \
+  --resend-s 0.25 \
+  --verify-pose \
+  --capture-dir out/object_behavior_airsim_existing_object_circle/camera_pointing_frames \
+  --capture-every-s 1.0 \
+  --debug \
+  --debug-json out/object_behavior_airsim_existing_object_circle/camera_pointing_latest.json
+```
+
+Expected camera pointing artifacts:
+
+```text
+camera_pointing_latest.json includes:
+  cameras: ["front_center", "0"]
+  per_camera_verify.front_center.accepted_pitch_deg
+  per_camera_verify.0.accepted_pitch_deg
+
+camera_pointing_frames includes paired frames such as:
+  camera_pointing_00042_front_center_-074.95.png
+  camera_pointing_00042_0_-074.95.png
 ```
 
 Circle trajectory validator for current checked-in config (`orbit_count: 1.0`):
@@ -569,6 +498,8 @@ Do not keep retrying increasingly complex connector paths after a connector fail
 - Do not require exact 3 o'clock orbit insertion; circle must tolerate imperfect initial position, velocity, attitude, and overshoot.
 - Do not let approach fly directly into the target; standoff capture and overshoot recovery are required.
 - Do not use cleanup.sh as the normal way to stop AirSim/PX4 SITL. Use simulation/airsim/stop.sh for runtime shutdown; cleanup.sh is for reset/rebuild cleanup.
+- Do not move camera/gimbal pitch into VelocityCommand. Vehicle yaw and camera pitch are separate actuator paths.
+- Do not rewrite the validated Python AirSim camera bridge in C++ until a formal CameraPointingSink boundary exists and a native transport has a clear payoff.
 - Do not add shims to preserve stale pre-refactor APIs unless there is a current user and an explicit removal plan.
 - Do not create branches or PRs unless explicitly requested.
 ```
