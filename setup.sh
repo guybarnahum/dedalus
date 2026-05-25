@@ -263,8 +263,48 @@ else
   echo "✅ PX4 build directory found. Skipping."
 fi
 
+# ----------------- PYTHON VIRTUAL ENVIRONMENT -----------------
+echo "🐍 Setting up Python Virtual Environment..."
+
+# 1. Define and ensure the venv exists
+VENV_PATH="${DEDALUS_VENV_PATH:-$REPO_ROOT/venv}"
+
+if [ ! -d "$VENV_PATH" ]; then
+    echo "📦 Creating fresh venv at $VENV_PATH..."
+    python3 -m venv "$VENV_PATH"
+fi
+
+# 2. Activate the environment using the absolute path
+source "$VENV_PATH/bin/activate"
+
+# 3. Upgrade core packaging tools
+pip install --upgrade pip setuptools wheel
+
+# 4. Install build-time blockers
+# AirSim 1.8.1 eagerly imports these during its own metadata generation
+echo "📦 Installing build-time blockers..."
+pip install numpy msgpack-rpc-python
+
+# 5. Install AirSim with build isolation DISABLED
+# Forces pip to use the numpy/msgpackrpc we just installed in this venv.
+echo "📦 Installing AirSim (Legacy Build Mode)..."
+pip install airsim --no-build-isolation
+
+# 6. Install the remaining flight stack tools and PX4 Python build deps
+echo "📦 Installing remaining dependencies..."
+pip install pymavlink pyserial kconfiglib menuconfig
+
+echo "🔎 Verifying PX4 Python build dependencies..."
+python -c "import menuconfig, kconfiglib" || {
+  echo "❌ PX4 Python deps failed."
+  echo "   Expected imports: menuconfig, kconfiglib"
+  exit 1
+}
+
+echo "✅ Python environment ready at $VENV_PATH"
+# --------------------------------------------------------------
+
 echo "🔨 Verifying PX4 SITL build artifacts..."
-source "$HOME/dedalus/venv/bin/activate"
 cd "$PX4_DIR"
 run_and_log "Build PX4 SITL" make px4_sitl
 cd "$REPO_ROOT"
@@ -327,48 +367,6 @@ for ENV in "${PRELOAD_ENVS[@]}"; do
     fi
 done
 
-# ----------------- PYTHON VIRTUAL ENVIRONMENT -----------------
-echo "🐍 Setting up Python Virtual Environment..."
-
-# 1. Define and ensure the venv exists
-VENV_PATH="$HOME/dedalus/venv"
-
-if [ ! -d "$VENV_PATH" ]; then
-    echo "📦 Creating fresh venv at $VENV_PATH..."
-    python3 -m venv "$VENV_PATH"
-fi
-
-# 2. Activate the environment using the absolute path
-# This prevents the '/bin/activate' error if the variable was previously unset
-source "$VENV_PATH/bin/activate"
-
-# 3. Upgrade core packaging tools
-pip install --upgrade pip setuptools wheel
-
-# 4. Install build-time blockers
-# AirSim 1.8.1 eagerly imports these during its own metadata generation
-echo "📦 Installing build-time blockers..."
-pip install numpy msgpack-rpc-python
-
-# 5. Install AirSim with build isolation DISABLED
-# Forces pip to use the numpy/msgpackrpc we just installed in this venv
-# instead of trying to create an isolated (and broken) temp build environment
-echo "📦 Installing AirSim (Legacy Build Mode)..."
-pip install airsim --no-build-isolation
-
-# 6. Install the remaining flight stack tools
-echo "📦 Installing remaining dependencies..."
-pip install pymavlink pyserial kconfiglib
-
-echo "🔎 Verifying PX4 Python build dependencies..."
-python -c "import menuconfig, kconfiglib" || {
-  echo "❌ PX4 Python deps failed."
-  echo "   Expected imports: menuconfig, kconfiglib"
-  exit 1
-}
-
-echo "✅ Python environment ready at $VENV_PATH"
-# --------------------------------------------------------------
 
 echo ""
 echo "=================================================================="

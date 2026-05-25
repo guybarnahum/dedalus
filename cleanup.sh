@@ -185,7 +185,7 @@ if [[ "$MODE" == "soft" ]]; then
   run_and_log "Clear iceoryx shared memory" sudo rm -rf /dev/shm/iox*
   
   if [ -d "PX4-Autopilot" ]; then
-    run_and_log "Clear PX4 Build Cache" bash -c 'source "$HOME/dedalus/venv/bin/activate" 2>/dev/null || true; make -C PX4-Autopilot clean' || true
+    run_and_log "Clear PX4 Build Cache" bash -c 'source "${DEDALUS_VENV_PATH:-$(cd "$(dirname "$0")" && pwd)/venv}/bin/activate" 2>/dev/null || true; make -C PX4-Autopilot clean' || true
   fi
   
   run_and_log "Clear local CMake build artifacts" bash -c 'rm -rf ../src/build/* 2>/dev/null || true'
