@@ -88,7 +88,11 @@ private:
     [[nodiscard]] VelocityCommand command_with_kind(TimePoint timestamp, FlightCommandKind kind) const;
     [[nodiscard]] std::string target_event(const TargetSelection& selection) const;
     [[nodiscard]] std::string behavior_event(const std::string& event, const std::string& reason) const;
-    [[nodiscard]] std::optional<std::string> camera_pointing_intent_event(const EgoState& ego, const TargetSelection& selection) const;
+    [[nodiscard]] std::optional<CameraPointingCommand> camera_pointing_command(
+        TimePoint timestamp,
+        const EgoState& ego,
+        const TargetSelection& selection) const;
+    [[nodiscard]] std::string camera_pointing_intent_event(const CameraPointingCommand& command) const;
     [[nodiscard]] Vec3 go_home_velocity(const EgoState& ego) const;
     [[nodiscard]] bool completion_elapsed(TimePoint now) const;
     void begin_abort_recovery(TimePoint now, double height_m, const std::string& reason);
