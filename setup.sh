@@ -278,28 +278,22 @@ fi
 source "$VENV_PATH/bin/activate"
 
 # 3. Upgrade core packaging tools
-pip install --upgrade pip setuptools wheel
+run_and_log "Upgrade Python packaging tools" python -m pip install --upgrade pip setuptools wheel
 
 # 4. Install build-time blockers
-# AirSim 1.8.1 eagerly imports these during its own metadata generation
-echo "📦 Installing build-time blockers..."
-pip install numpy msgpack-rpc-python
+# AirSim 1.8.1 eagerly imports these during its own metadata generation.
+run_and_log "Install AirSim build-time blockers" python -m pip install numpy msgpack-rpc-python
 
-# 5. Install AirSim with build isolation DISABLED
+# 5. Install AirSim with build isolation DISABLED.
 # Forces pip to use the numpy/msgpackrpc we just installed in this venv.
-echo "📦 Installing AirSim (Legacy Build Mode)..."
-pip install airsim --no-build-isolation
+run_and_log "Install AirSim Python package" python -m pip install airsim --no-build-isolation
 
-# 6. Install the remaining flight stack tools and PX4 Python build deps
-echo "📦 Installing remaining dependencies..."
-pip install pymavlink pyserial kconfiglib menuconfig
+# 6. Install the remaining flight stack tools and PX4 Python build deps.
+# PX4 imports the menuconfig module from kconfiglib; there is no standalone
+# PyPI package named menuconfig.
+run_and_log "Install flight Python dependencies" python -m pip install pymavlink pyserial kconfiglib
 
-echo "🔎 Verifying PX4 Python build dependencies..."
-python -c "import menuconfig, kconfiglib" || {
-  echo "❌ PX4 Python deps failed."
-  echo "   Expected imports: menuconfig, kconfiglib"
-  exit 1
-}
+run_and_log "Verify PX4 Python build dependencies" python -c "import menuconfig, kconfiglib"
 
 echo "✅ Python environment ready at $VENV_PATH"
 # --------------------------------------------------------------
