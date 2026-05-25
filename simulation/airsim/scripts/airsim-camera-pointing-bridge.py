@@ -336,6 +336,8 @@ def main() -> int:
     last_debug_s = 0.0
     last_capture_s = 0.0
     last_pitch_rad: float | None = None
+    last_verify: dict[str, Any] = {}
+    last_image_path: str | None = None
     commands_sent = 0
     image_type = image_type_value(args.image_type)
     latest: dict[str, Any] = {
@@ -417,11 +419,13 @@ def main() -> int:
                                         "accepted_pitch_rad": accepted_pitch_rad,
                                         "accepted_pitch_deg": math.degrees(accepted_pitch_rad) if accepted_pitch_rad is not None else None,
                                     }
+                                    last_verify = verify
                                 if args.capture_dir is not None and now - last_capture_s >= max(0.0, args.capture_every_s):
                                     image = client.simGetImage(args.camera, image_type, vehicle_name=args.vehicle_name)
                                     image_file = args.capture_dir / f"camera_pointing_{commands_sent:05d}_{pointing['pitch_deg']:+07.2f}.png"
                                     if write_image(image_file, image):
                                         image_path = str(image_file)
+                                        last_image_path = image_path
                                         last_capture_s = now
                             last_pitch_rad = float(pointing["pitch_rad"])
                             last_send_s = now
@@ -432,7 +436,9 @@ def main() -> int:
                             "send_reason": "pitch_changed" if pitch_changed else ("resend" if resend_due else "deadband"),
                             "commands_sent": commands_sent,
                             "image_path": image_path,
+                            "last_image_path": last_image_path,
                             **pointing,
+                            **last_verify,
                             **verify,
                         }
 
