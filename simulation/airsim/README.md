@@ -30,7 +30,7 @@ Simulating high-speed vision pipelines is computationally heavy.
 The environment uses a "Ghost Boot" strategy. Once configured, the visual desktop is persistent and auto-starts on boot.
 
 1. **Provision the Environment:**
-   Run the master setup script to install dependencies, fetch Colosseum binaries, and configure the XDCV virtual display manager:
+   Run the master setup script from the repository root to install dependencies, fetch Colosseum binaries, and configure the XDCV virtual display manager:
    ```bash
    ./setup.sh
    ```
@@ -51,6 +51,19 @@ cd ~/dedalus/simulation/airsim
 ./run.sh AirSimNH
 ```
 *The script automatically probes the DCV metadata to export the correct `DISPLAY` and `XAUTHORITY` variables, and grants X11 permissions via `xhost`.*
+
+### Stopping the simulation runtime
+
+Use the AirSim target stop script for normal runtime shutdown:
+
+```bash
+cd ~/dedalus/simulation/airsim
+./stop.sh
+```
+
+`stop.sh` stops the tmux session and runtime processes without removing build artifacts or generated third-party dependencies.
+
+Do not use the root `cleanup.sh` as the normal stop command. Use `cleanup.sh` only when intentionally resetting/rebuilding generated state.
 
 ---
 
@@ -157,7 +170,7 @@ If no trajectory is specified (`--trajectory` omitted), test-flight.py uses a ha
 ### CLI Reference
 
 ```bash
-python test-flight.py [OPTIONS]
+python scripts/test-flight.py [OPTIONS]
 ```
 
 | Option | Default | Description |
@@ -175,32 +188,32 @@ python test-flight.py [OPTIONS]
 
 **1. Simple Test (Default Hover)**
 ```bash
-python test-flight.py
+python scripts/test-flight.py
 # Runs: arm → 10s hover → land via PX4 shell (auto mode)
 ```
 
 **2. Custom Trajectory with PX4 Shell**
 ```bash
-python test-flight.py --control px4 --trajectory ../../config/behaviors/trajectories/circle_figure8.json
+python scripts/test-flight.py --control px4 --trajectory ../../config/behaviors/trajectories/circle_figure8.json
 # Runs: arm → execute orbit/figure-8 → land via PX4 shell
 ```
 
 **3. MAVLink Testing with Climb Verification**
 ```bash
-python test-flight.py --control mavlink --mavlink-endpoint 127.0.0.1:14550
+python scripts/test-flight.py --control mavlink --mavlink-endpoint 127.0.0.1:14550
 # Runs: arm via MAVLink (checks altitude gain) → 10s hover on quad → land
 # Fails if takeoff returns false ACK or no altitude gain
 ```
 
 **4. Rapid Iteration (Skip Arm Phase)**
 ```bash
-python test-flight.py --skip-arm --trajectory my_payload.json
+python scripts/test-flight.py --skip-arm --trajectory my_payload.json
 # Assumes vehicle already armed; tests only trajectory playback and landing
 ```
 
 **5. Multi-Endpoint Fallback**
 ```bash
-python test-flight.py --control mavlink \
+python scripts/test-flight.py --control mavlink \
   --mavlink-endpoint 127.0.0.1:14550 \
   --mavlink-endpoint 127.0.0.1:14540 \
   --mavlink-endpoint 127.0.0.1:14600
@@ -209,7 +222,7 @@ python test-flight.py --control mavlink \
 
 **6. AirSim-Only Control (for debugging)**
 ```bash
-python test-flight.py --control airsim --trajectory minimal.json
+python scripts/test-flight.py --control airsim --trajectory minimal.json
 # Tests pure AirSim RPC arm/takeoff (not recommended for real payloads)
 ```
 
@@ -236,7 +249,7 @@ Trajectory files are validated at startup:
 ```text
 .
 ├── setup.sh                         # Root provisioner
-├── cleanup.sh                       # Root cleanup helper
+├── cleanup.sh                       # Root reset/rebuild cleanup helper
 ├── third_party/
 │   ├── PX4-Autopilot/               # Generated PX4 upstream checkout
 │   ├── iceoryx_build/               # Generated iceoryx checkout/build state
@@ -244,7 +257,7 @@ Trajectory files are validated at startup:
 ├── config/behaviors/trajectories/   # JSON trajectory files
 └── simulation/airsim/
     ├── run.sh                       # AirSim/PX4 SITL launcher
-    ├── stop.sh                      # AirSim/PX4 SITL stop helper
+    ├── stop.sh                      # Normal AirSim/PX4 SITL runtime stop helper
     ├── settings.json                # AirSim vehicle config
     ├── scripts/                     # AirSim RPC and diagnostic scripts
     ├── validation/                  # AirSim-specific validation helpers
@@ -258,4 +271,9 @@ Trajectory files are validated at startup:
   ```bash
   systemctl --user restart dcv-session.service
   ```
-* **Session Safety:** Avoid clicking "Log Out" inside the DCV desktop. Simply close the client app to keep the simulation running in the background.
+
+## Cleanup versus stop
+
+Use `simulation/airsim/stop.sh` for normal runtime shutdown. It stops the tmux session and simulator/PX4 runtime processes without removing build artifacts.
+
+Use root `cleanup.sh` only when you intentionally want reset/rebuild cleanup. It is not the normal runtime stop path.
