@@ -1,0 +1,13 @@
+frame_source: recorded_frames
+recorded_manifest_path: tests/fixtures/recorded_frames/manifest.txt
+ego_provider: no_telemetry
+detector: scripted
+camera_stabilizer: null
+tracker: simple_centroid
+identity_resolver: appearance_only
+projector: flat_ground
+world_model: in_memory
+frame_annotator: ppm_sequence
+annotation_output_path: out/recorded_ppm_validation/annotations
+annotation_output_fps: 5
+fallback_map_frame_id: map_recorded_ci_0001

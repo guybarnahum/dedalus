@@ -63,6 +63,11 @@ mission_options.object_behavior_yaw_hold_last_when_unstable: true
 # sink is added. In gimbal mode the controller emits one warning event.
 mission_options.object_behavior_vertical_stare_mode: gimbal
 mission_options.object_behavior_vertical_stare_warn_if_unavailable: true
+mission_options.object_behavior_camera_pointing_cameras: front_center,0
+mission_options.object_behavior_camera_pitch_min_deg: -80
+mission_options.object_behavior_camera_pitch_max_deg: 35
+mission_options.object_behavior_camera_pitch_sign: -1
+mission_options.object_behavior_camera_pitch_offset_deg: 0
 
 # Emit behavior_debug into mission_events.jsonl every N ExecuteMission ticks.
 mission_options.object_behavior_debug_every_n_ticks: 10

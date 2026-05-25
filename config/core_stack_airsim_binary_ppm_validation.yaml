@@ -1,0 +1,20 @@
+frame_source: airsim
+bridge_mode: stream_binary
+bridge_transport: pipe
+bridge_command: python3 simulation/airsim/scripts/airsim-stream-frames-binary.py --host 127.0.0.1 --rpc-port 41451 --vehicle-name PX4 --camera-name front_center --count 3 --rate-hz 2
+ego_provider: airsim
+ego_bridge_command: python3 simulation/airsim/scripts/airsim-capture-ego.py --host 127.0.0.1 --rpc-port 41451 --vehicle-name PX4 --camera-name front_center
+detector: scripted
+camera_stabilizer: null
+tracker: simple_centroid
+identity_resolver: appearance_only
+projector: flat_ground
+world_model: in_memory
+frame_annotator: ppm_sequence
+annotation_output_path: out/airsim_binary_ppm_validation/annotations
+annotation_output_fps: 2
+fallback_map_frame_id: map_airsim_binary_ppm_validation_0001
+source_host: 127.0.0.1
+source_rpc_port: 41451
+vehicle_name: PX4
+vehicle_camera_name: front_center

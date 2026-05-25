@@ -415,9 +415,12 @@ void circle_target_yaw_points_at_selected_target_not_velocity() {
         "clockwise circle should still fly tangent while yawing at target");
 }
 
-void vertical_stare_gimbal_warns_once_when_unavailable() {
+void vertical_stare_gimbal_emits_camera_pointing_intent() {
     auto config = make_circle_config();
     config.vertical_stare_mode = dedalus::ObjectBehaviorVerticalStareMode::Gimbal;
+    config.camera_pointing_cameras = {"front_center", "0"};
+    config.camera_pitch_min_rad = -80.0 * 3.14159265358979323846 / 180.0;
+    config.camera_pitch_max_rad =  80.0 * 3.14159265358979323846 / 180.0;
     dedalus::ObjectBehaviorMissionController controller{config};
 
     const auto first = first_execute_tick(
@@ -427,25 +430,41 @@ void vertical_stare_gimbal_warns_once_when_unavailable() {
             dedalus::Vec3{10.0, 0.0, -2.0},
             dedalus::Vec3{0.0, 0.0, 0.0}));
 
-    bool found_warning = false;
+    bool found_intent = false;
     for (const auto& event : first.events) {
-        found_warning = found_warning || event.find("\"event\":\"pointing_warning\"") != std::string::npos;
+        if (event.find("\"event\":\"camera_pointing_intent\"") != std::string::npos) {
+            require(
+                event.find("\"cameras\":[\"front_center\",\"0\"]") != std::string::npos,
+                "camera_pointing_intent should include cameras array");
+            require(
+                event.find("\"pitch_valid\":true") != std::string::npos,
+                "camera_pointing_intent should have pitch_valid:true");
+            require(
+                event.find("\"pitch_deg\":") != std::string::npos,
+                "camera_pointing_intent should include pitch_deg");
+            found_intent = true;
+        }
     }
-    require(found_warning, "gimbal vertical stare should emit one unavailable warning");
+    require(found_intent, "gimbal vertical stare should emit camera_pointing_intent");
 
     dedalus::MissionTickInput input;
     input.now = dedalus::TimePoint{400000000};
     input.snapshot = make_circle_snapshot(
         400000000,
         dedalus::Vec3{10.0, 0.0, -2.0},
-        dedalus::Vec3{0.0, 0.0, 0.0});
+        dedalus::Vec3{0.0, 0.0, -12.0});
     const auto second = controller.tick(input);
 
+    bool found_second_intent = false;
     for (const auto& event : second.events) {
-        require(
-            event.find("\"event\":\"pointing_warning\"") == std::string::npos,
-            "vertical stare warning should be emitted only once");
+        if (event.find("\"event\":\"camera_pointing_intent\"") != std::string::npos) {
+            require(
+                event.find("\"pitch_deg\":45.000000") != std::string::npos,
+                "second tick camera_pointing_intent pitch_deg should be 45.000000");
+            found_second_intent = true;
+        }
     }
+    require(found_second_intent, "second tick should also emit camera_pointing_intent");
 }
 
 }  // namespace
@@ -462,7 +481,7 @@ int main() {
         circle_command_speed_is_clamped();
         circle_display_detail_transitions_arriving_to_circling();
         circle_target_yaw_points_at_selected_target_not_velocity();
-        vertical_stare_gimbal_warns_once_when_unavailable();
+        vertical_stare_gimbal_emits_camera_pointing_intent();
     } catch (const std::exception& exc) {
         std::cerr << "test_object_behavior_mission_controller failed: " << exc.what() << '\n';
         return 1;

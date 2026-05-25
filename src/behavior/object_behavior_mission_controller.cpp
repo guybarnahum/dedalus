@@ -6,6 +6,7 @@
 #include <stdexcept>
 #include <string>
 #include <utility>
+#include <vector>
 
 namespace dedalus {
 namespace {
@@ -143,6 +144,51 @@ bool parse_bool(const std::string& value, bool fallback) {
         return false;
     }
     throw std::invalid_argument("invalid boolean value: " + value);
+}
+
+std::vector<std::string> split_csv(const std::string& value, const std::vector<std::string>& fallback) {
+    if (value.empty()) {
+        return fallback;
+    }
+    std::vector<std::string> result;
+    std::string token;
+    for (char c : value) {
+        if (c == ',') {
+            // strip surrounding whitespace/CR/LF
+            std::string t;
+            for (char ch : token) {
+                if (ch != ' ' && ch != '\t' && ch != '\r' && ch != '\n') {
+                    t += ch;
+                }
+            }
+            if (!t.empty()) {
+                result.push_back(std::move(t));
+            }
+            token.clear();
+        } else {
+            token += c;
+        }
+    }
+    std::string t;
+    for (char ch : token) {
+        if (ch != ' ' && ch != '\t' && ch != '\r' && ch != '\n') {
+            t += ch;
+        }
+    }
+    if (!t.empty()) {
+        result.push_back(std::move(t));
+    }
+    return result.empty() ? fallback : result;
+}
+
+std::string json_string_array(const std::vector<std::string>& values) {
+    std::string out = "[";
+    for (std::size_t i = 0; i < values.size(); ++i) {
+        if (i > 0) out += ",";
+        out += q(values[i]);
+    }
+    out += "]";
+    return out;
 }
 
 ObjectBehaviorAltitudePolicy parse_altitude_policy(const std::string& value) {
@@ -595,6 +641,32 @@ ObjectBehaviorMissionConfig load_object_behavior_mission_config(const MissionOpt
     config.vertical_stare_warn_if_unavailable = parse_bool(
         options.get_or("object_behavior_vertical_stare_warn_if_unavailable", "true"),
         true);
+    config.camera_pointing_cameras = split_csv(
+        options.get_or("object_behavior_camera_pointing_cameras", ""),
+        {});
+    {
+        const auto min_deg_str = options.get_or("object_behavior_camera_pitch_min_deg", "");
+        if (!min_deg_str.empty()) {
+            config.camera_pitch_min_rad = deg_to_rad(std::stod(min_deg_str));
+        }
+    }
+    {
+        const auto max_deg_str = options.get_or("object_behavior_camera_pitch_max_deg", "");
+        if (!max_deg_str.empty()) {
+            config.camera_pitch_max_rad = deg_to_rad(std::stod(max_deg_str));
+        }
+    }
+    config.camera_pitch_sign = std::stod(options.get_or("object_behavior_camera_pitch_sign", "-1"));
+    {
+        const auto offset_deg_str = options.get_or("object_behavior_camera_pitch_offset_deg", "");
+        if (!offset_deg_str.empty()) {
+            config.camera_pitch_offset_rad = deg_to_rad(std::stod(offset_deg_str));
+        }
+    }
+    if (config.camera_pitch_min_rad > config.camera_pitch_max_rad) {
+        throw std::invalid_argument(
+            "object_behavior_camera_pitch_min_deg must be <= object_behavior_camera_pitch_max_deg");
+    }
 
     config.debug_every_n_ticks = std::stoi(options.get_or("object_behavior_debug_every_n_ticks", "0"));
     config.debug_level = std::stoi(options.get_or(
@@ -930,32 +1002,33 @@ bool ObjectBehaviorMissionController::completion_elapsed(TimePoint now) const {
     return seconds_between(behavior_start_, now) >= after_s;
 }
 
-std::optional<std::string> ObjectBehaviorMissionController::maybe_vertical_stare_warning(
+std::optional<std::string> ObjectBehaviorMissionController::camera_pointing_intent_event(
     const EgoState& ego,
-    const TargetSelection& selection) {
-    if (vertical_stare_warning_emitted_) {
-        return std::nullopt;
-    }
-    if (!config_.vertical_stare_warn_if_unavailable) {
-        return std::nullopt;
-    }
-    if (config_.vertical_stare_mode != ObjectBehaviorVerticalStareMode::Gimbal) {
+    const TargetSelection& selection) const {
+    if (config_.vertical_stare_mode == ObjectBehaviorVerticalStareMode::None) {
         return std::nullopt;
     }
 
-    vertical_stare_warning_emitted_ = true;
     const double dx = selection.position_local.x - ego.local_T_body.position.x;
     const double dy = selection.position_local.y - ego.local_T_body.position.y;
     const double dz = selection.position_local.z - ego.local_T_body.position.z;
     const double range_xy = std::max(std::hypot(dx, dy), 1e-6);
     const double elevation_rad = std::atan2(dz, range_xy);
+    const double unclamped_pitch_rad = config_.camera_pitch_sign * elevation_rad + config_.camera_pitch_offset_rad;
+    const double pitch_rad = std::max(config_.camera_pitch_min_rad, std::min(config_.camera_pitch_max_rad, unclamped_pitch_rad));
+    const bool pitch_valid = true;
 
-    return "\"event\":\"pointing_warning\""
-        ",\"reason\":\"vertical_stare_unavailable\""
-        ",\"vertical_stare_mode\":\"gimbal\""
+    return "\"event\":\"camera_pointing_intent\""
+        ",\"cameras\":" + json_string_array(config_.camera_pointing_cameras) +
+        ",\"pitch_valid\":" + (pitch_valid ? std::string("true") : std::string("false")) +
+        ",\"pitch_rad\":" + std::to_string(pitch_rad) +
+        ",\"pitch_deg\":" + std::to_string(rad_to_deg(pitch_rad)) +
+        ",\"pitch_unclamped_rad\":" + std::to_string(unclamped_pitch_rad) +
+        ",\"pitch_unclamped_deg\":" + std::to_string(rad_to_deg(unclamped_pitch_rad)) +
+        ",\"pitch_clamped\":" + (std::abs(pitch_rad - unclamped_pitch_rad) > 1e-9 ? std::string("true") : std::string("false")) +
         ",\"target_elevation_rad\":" + std::to_string(elevation_rad) +
         ",\"target_elevation_deg\":" + std::to_string(rad_to_deg(elevation_rad)) +
-        ",\"message\":\"No camera/gimbal command sink is configured; vertical stare is not applied\""
+        ",\"range_xy_m\":" + std::to_string(range_xy) +
         ",\"agent_id\":" + q(selection.agent_id.value) +
         ",\"source_track_id\":" + q(selection.source_track_id.value) +
         behavior_display_fields("arriving");
@@ -1026,7 +1099,6 @@ void ObjectBehaviorMissionController::reset_behavior_run(TimePoint now) {
     behavior_start_emitted_ = false;
     behavior_complete_emitted_ = false;
     behavior_tick_sample_emitted_ = false;
-    vertical_stare_warning_emitted_ = false;
     execute_tick_count_ = 0;
     last_behavior_display_detail_.clear();
     previous_selection_.reset();
@@ -1133,8 +1205,8 @@ MissionTickOutput ObjectBehaviorMissionController::tick(const MissionTickInput& 
                     control_selection.velocity_local = Vec3{0.0, 0.0, 0.0};
                 }
 
-                if (auto warning = maybe_vertical_stare_warning(ego, control_selection)) {
-                    output.events.push_back(*warning);
+                if (auto intent = camera_pointing_intent_event(ego, control_selection)) {
+                    output.events.push_back(*intent);
                 }
 
                 FollowGeometry geometry;

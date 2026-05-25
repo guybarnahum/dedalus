@@ -2,6 +2,7 @@
 
 #include <optional>
 #include <string>
+#include <vector>
 
 #include "dedalus/behavior/behavior_spec.hpp"
 #include "dedalus/behavior/mission_controller.hpp"
@@ -39,6 +40,11 @@ struct ObjectBehaviorMissionConfig {
     ObjectBehaviorYawMode yaw_mode{ObjectBehaviorYawMode::Trajectory};
     ObjectBehaviorVerticalStareMode vertical_stare_mode{ObjectBehaviorVerticalStareMode::None};
     bool vertical_stare_warn_if_unavailable{true};
+    std::vector<std::string> camera_pointing_cameras;
+    double camera_pitch_min_rad{-1.3962634015954636};
+    double camera_pitch_max_rad{0.6108652381980153};
+    double camera_pitch_sign{-1.0};
+    double camera_pitch_offset_rad{0.0};
     int debug_every_n_ticks{0};
     int debug_level{1};
     ObjectBehaviorAltitudePolicy altitude_policy{ObjectBehaviorAltitudePolicy::TargetRelative};
@@ -82,9 +88,9 @@ private:
     [[nodiscard]] VelocityCommand command_with_kind(TimePoint timestamp, FlightCommandKind kind) const;
     [[nodiscard]] std::string target_event(const TargetSelection& selection) const;
     [[nodiscard]] std::string behavior_event(const std::string& event, const std::string& reason) const;
-    [[nodiscard]] bool completion_elapsed(TimePoint now) const;
+    [[nodiscard]] std::optional<std::string> camera_pointing_intent_event(const EgoState& ego, const TargetSelection& selection) const;
     [[nodiscard]] Vec3 go_home_velocity(const EgoState& ego) const;
-    [[nodiscard]] std::optional<std::string> maybe_vertical_stare_warning(const EgoState& ego, const TargetSelection& selection);
+    [[nodiscard]] bool completion_elapsed(TimePoint now) const;
     void begin_abort_recovery(TimePoint now, double height_m, const std::string& reason);
     bool update_circle_orbit_progress(const BehaviorSpec& behavior, bool circling, double orbit_angle_rad);
     void reset_behavior_run(TimePoint now);
@@ -107,7 +113,6 @@ private:
     bool behavior_start_emitted_{false};
     bool behavior_complete_emitted_{false};
     bool behavior_tick_sample_emitted_{false};
-    bool vertical_stare_warning_emitted_{false};
     bool arm_command_sent_{false};
     bool takeoff_command_sent_{false};
     bool land_command_sent_{false};
