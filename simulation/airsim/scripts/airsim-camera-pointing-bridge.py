@@ -10,9 +10,9 @@ It intentionally does not command PX4 flight control and does not own behavior
 semantics. Vehicle yaw remains a PX4 velocity/yaw concern; this bridge only
 adapts camera/gimbal pitch for the AirSim simulation target.
 
-The default AirSim pitch sign is -1 because AirSim/Unreal camera pitch commonly
-uses negative values for looking down. Use --airsim-pitch-sign 1 if validation
-against saved images shows the opposite sign for a given vehicle/camera.
+The external AirSim follow camera is not the commanded vehicle camera. To verify
+camera pitch, use the front-camera image/sensor view or enable --capture-dir and
+--verify-pose.
 """
 
 from __future__ import annotations
@@ -145,7 +145,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--rpc-port", type=int, default=41451, help="AirSim RPC port")
     parser.add_argument("--vehicle-name", default="PX4", help="AirSim vehicle name")
     parser.add_argument("--camera", default="front_center", help="AirSim camera name/id to command")
-    parser.add_argument("--rate-hz", type=float, default=10.0, help="Maximum camera command rate")
+    parser.add_argument("--rate-hz", type=float, default=10.0, help="Maximum camera compute/send loop rate")
     parser.add_argument("--duration-s", type=float, default=0.0, help="0 means run until Ctrl-C")
     parser.add_argument("--pitch-min-deg", type=float, default=-80.0)
     parser.add_argument("--pitch-max-deg", type=float, default=35.0)
@@ -157,7 +157,12 @@ def parse_args() -> argparse.Namespace:
         choices=[-1.0, 1.0],
         help="Maps target elevation to AirSim pitch. Default -1 means positive target elevation commands negative camera pitch.",
     )
-    parser.add_argument("--deadband-deg", type=float, default=0.25, help="Minimum pitch change before sending a new command")
+    parser.add_argument("--deadband-deg", type=float, default=0.25, help="Pitch-change threshold for immediate sends")
+    parser.add_argument("--resend-s", type=float, default=0.25, help="Re-send current camera pitch at this cadence; 0 disables resend")
+    parser.add_argument("--verify-pose", action="store_true", help="Read simGetCameraInfo after sends and report accepted pose")
+    parser.add_argument("--capture-dir", type=Path, default=None, help="Optional directory for front-camera proof images")
+    parser.add_argument("--capture-every-s", type=float, default=1.0, help="Minimum interval between proof image captures")
+    parser.add_argument("--image-type", default="Scene", help="AirSim ImageType name for --capture-dir")
     parser.add_argument("--dry-run", action="store_true", help="Compute pitch but do not call simSetCameraPose")
     parser.add_argument("--debug", action="store_true")
     parser.add_argument("--debug-every-s", type=float, default=1.0)
@@ -269,6 +274,38 @@ def connect_airsim(host: str, rpc_port: int, wait_for_airsim_s: float) -> Any:
             time.sleep(1.0)
 
 
+def image_type_value(name: str) -> int:
+    return int(getattr(airsim.ImageType, name))
+
+
+def quat_to_list(quat: Any) -> list[float]:
+    return [float(quat.x_val), float(quat.y_val), float(quat.z_val), float(quat.w_val)]
+
+
+def pose_pitch_rad(info: Any) -> float | None:
+    try:
+        angles = airsim.to_eularian_angles(info.pose.orientation)
+        return float(angles[0])
+    except Exception:
+        return None
+
+
+def write_image(path: Path, data: Any) -> bool:
+    if data is None:
+        return False
+    if isinstance(data, str):
+        if data == "":
+            return False
+        path.write_bytes(data.encode("latin1"))
+        return True
+    if isinstance(data, (bytes, bytearray)):
+        if not data:
+            return False
+        path.write_bytes(bytes(data))
+        return True
+    return False
+
+
 def write_debug(path: Path | None, payload: dict[str, Any]) -> None:
     if path is None:
         return
@@ -282,6 +319,8 @@ def main() -> int:
         raise SystemExit("--rate-hz must be positive")
     if args.pitch_min_deg > args.pitch_max_deg:
         raise SystemExit("--pitch-min-deg must be <= --pitch-max-deg")
+    if args.resend_s < 0.0:
+        raise SystemExit("--resend-s must be >= 0")
 
     client = None if args.dry_run else connect_airsim(args.host, args.rpc_port, args.wait_for_airsim_s)
     stream = RuntimeEventStreamClient(args.stream_host, args.stream_port)
@@ -292,15 +331,27 @@ def main() -> int:
     deadband_rad = math.radians(max(0.0, args.deadband_deg))
     period_s = 1.0 / args.rate_hz
     start_s = time.monotonic()
-    last_command_s = 0.0
+    last_loop_s = 0.0
+    last_send_s = 0.0
     last_debug_s = 0.0
+    last_capture_s = 0.0
     last_pitch_rad: float | None = None
     commands_sent = 0
+    image_type = image_type_value(args.image_type)
+    latest: dict[str, Any] = {
+        "ok": False,
+        "reason": "waiting_for_world_snapshot_and_target_selected",
+        "commands_sent": commands_sent,
+    }
+
+    if args.capture_dir is not None:
+        args.capture_dir.mkdir(parents=True, exist_ok=True)
 
     print(
         "airsim-camera-pointing-bridge: running "
         f"camera={args.camera!r} stream={args.stream_host}:{args.stream_port} "
-        f"airsim={args.host}:{args.rpc_port} dry_run={args.dry_run}",
+        f"airsim={args.host}:{args.rpc_port} dry_run={args.dry_run} "
+        f"resend_s={args.resend_s} verify_pose={args.verify_pose}",
         file=sys.stderr,
     )
 
@@ -313,66 +364,99 @@ def main() -> int:
             stream.poll()
             snapshot = stream.latest_world_snapshot
             selected = stream.latest_selected_target
-            latest: dict[str, Any] = {
-                "ok": False,
-                "reason": "waiting_for_world_snapshot_and_target_selected",
-                "commands_sent": commands_sent,
-            }
 
-            if snapshot is not None and selected is not None and now - last_command_s >= period_s:
-                pointing = compute_pitch(
-                    snapshot=snapshot,
-                    selected=selected,
-                    pitch_sign=args.airsim_pitch_sign,
-                    pitch_offset_rad=pitch_offset_rad,
-                    pitch_min_rad=pitch_min_rad,
-                    pitch_max_rad=pitch_max_rad,
-                )
-                if pointing is None:
+            if now - last_loop_s >= period_s:
+                last_loop_s = now
+                if snapshot is None or selected is None:
                     latest = {
                         "ok": False,
-                        "reason": "selected_target_not_found_in_world_snapshot",
-                        "selected_target": selected,
+                        "reason": "waiting_for_world_snapshot_and_target_selected",
+                        "has_snapshot": snapshot is not None,
+                        "has_target_selected": selected is not None,
                         "commands_sent": commands_sent,
                     }
                 else:
-                    pointing["camera"] = args.camera
-                    pointing["vehicle_name"] = args.vehicle_name
-                    pointing["dry_run"] = args.dry_run
-                    pointing["seq"] = stream.latest_seq
-                    send = last_pitch_rad is None or abs(pointing["pitch_rad"] - last_pitch_rad) >= deadband_rad
-                    if send:
-                        if client is not None:
-                            pose = airsim.Pose(
-                                airsim.Vector3r(0.0, 0.0, 0.0),
-                                airsim.to_quaternion(float(pointing["pitch_rad"]), 0.0, 0.0),
-                            )
-                            client.simSetCameraPose(args.camera, pose, vehicle_name=args.vehicle_name)
-                        last_pitch_rad = float(pointing["pitch_rad"])
-                        last_command_s = now
-                        commands_sent += 1
-                    latest = {
-                        "ok": True,
-                        "command_sent": send,
-                        "commands_sent": commands_sent,
-                        **pointing,
-                    }
+                    pointing = compute_pitch(
+                        snapshot=snapshot,
+                        selected=selected,
+                        pitch_sign=args.airsim_pitch_sign,
+                        pitch_offset_rad=pitch_offset_rad,
+                        pitch_min_rad=pitch_min_rad,
+                        pitch_max_rad=pitch_max_rad,
+                    )
+                    if pointing is None:
+                        latest = {
+                            "ok": False,
+                            "reason": "selected_target_not_found_in_world_snapshot",
+                            "selected_target": selected,
+                            "commands_sent": commands_sent,
+                        }
+                    else:
+                        pointing["camera"] = args.camera
+                        pointing["vehicle_name"] = args.vehicle_name
+                        pointing["dry_run"] = args.dry_run
+                        pointing["seq"] = stream.latest_seq
+                        pitch_changed = last_pitch_rad is None or abs(pointing["pitch_rad"] - last_pitch_rad) >= deadband_rad
+                        resend_due = args.resend_s > 0.0 and now - last_send_s >= args.resend_s
+                        send = pitch_changed or resend_due
+                        verify: dict[str, Any] = {}
+                        image_path: str | None = None
+                        if send:
+                            if client is not None:
+                                pose = airsim.Pose(
+                                    airsim.Vector3r(0.0, 0.0, 0.0),
+                                    airsim.to_quaternion(float(pointing["pitch_rad"]), 0.0, 0.0),
+                                )
+                                client.simSetCameraPose(args.camera, pose, vehicle_name=args.vehicle_name)
+                                if args.verify_pose:
+                                    info = client.simGetCameraInfo(args.camera, vehicle_name=args.vehicle_name)
+                                    accepted_pitch_rad = pose_pitch_rad(info)
+                                    verify = {
+                                        "camera_info_available": True,
+                                        "accepted_orientation_quat_xyzw": quat_to_list(info.pose.orientation),
+                                        "accepted_pitch_rad": accepted_pitch_rad,
+                                        "accepted_pitch_deg": math.degrees(accepted_pitch_rad) if accepted_pitch_rad is not None else None,
+                                    }
+                                if args.capture_dir is not None and now - last_capture_s >= max(0.0, args.capture_every_s):
+                                    image = client.simGetImage(args.camera, image_type, vehicle_name=args.vehicle_name)
+                                    image_file = args.capture_dir / f"camera_pointing_{commands_sent:05d}_{pointing['pitch_deg']:+07.2f}.png"
+                                    if write_image(image_file, image):
+                                        image_path = str(image_file)
+                                        last_capture_s = now
+                            last_pitch_rad = float(pointing["pitch_rad"])
+                            last_send_s = now
+                            commands_sent += 1
+                        latest = {
+                            "ok": True,
+                            "command_sent": send,
+                            "send_reason": "pitch_changed" if pitch_changed else ("resend" if resend_due else "deadband"),
+                            "commands_sent": commands_sent,
+                            "image_path": image_path,
+                            **pointing,
+                            **verify,
+                        }
 
             if args.debug and now - last_debug_s >= args.debug_every_s:
                 last_debug_s = now
                 if latest.get("ok"):
+                    accepted = latest.get("accepted_pitch_deg")
+                    accepted_text = "" if accepted is None else f" accepted={accepted:.2f}deg"
                     print(
                         "airsim-camera-pointing-bridge: "
                         f"pitch={latest['pitch_deg']:.2f}deg "
                         f"elev={latest['target_elevation_deg']:.2f}deg "
                         f"range_xy={latest['range_xy_m']:.2f}m "
-                        f"sent={latest['command_sent']}",
+                        f"sent={latest['command_sent']} "
+                        f"reason={latest['send_reason']} "
+                        f"count={latest['commands_sent']}"
+                        f"{accepted_text}",
                         file=sys.stderr,
                     )
                 else:
                     print(
                         "airsim-camera-pointing-bridge: "
-                        f"{latest.get('reason', 'waiting')}",
+                        f"{latest.get('reason', 'waiting')} "
+                        f"snapshot={latest.get('has_snapshot')} target={latest.get('has_target_selected')}",
                         file=sys.stderr,
                     )
             write_debug(args.debug_json, latest)
