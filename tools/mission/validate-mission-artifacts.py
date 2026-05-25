@@ -12,6 +12,7 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+from collections import Counter
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -29,6 +30,11 @@ OBJECT_BEHAVIOR_EVENTS = {
     "fallback_start",
     "fallback_complete",
 }
+CAMERA_POINTING_EVENTS = {
+    "camera_pointing_intent",
+    "camera_pointing_dispatch",
+    "camera_pointing_result",
+}
 
 
 @dataclass
@@ -40,6 +46,9 @@ class ValidationResult:
     failures: list[str] = field(default_factory=list)
     warnings: list[str] = field(default_factory=list)
     behavior_events: dict[str, int] = field(default_factory=dict)
+    camera_pointing_events: dict[str, int] = field(default_factory=dict)
+    camera_pointing_modes: dict[str, int] = field(default_factory=dict)
+    camera_proof_frames: dict[str, int] = field(default_factory=dict)
     velocity_commands: int = 0
     safe_height_gate_height_m: float | None = None
     landed_gate_height_m: float | None = None
@@ -98,6 +107,22 @@ def count_snapshots(run_dir: Path) -> int:
     return len(list(run_dir.glob("snapshot_*.json")))
 
 
+def camera_frame_counts(path: Path) -> Counter[str]:
+    counts: Counter[str] = Counter()
+    if not path.exists():
+        return counts
+    for file in path.glob("camera_pointing_*.png"):
+        stem = file.stem
+        parts = stem.split("_")
+        # Expected: camera_pointing_00042_front_center_-074.95
+        if len(parts) >= 5:
+            camera = "_".join(parts[3:-1]) or "unknown"
+        else:
+            camera = "legacy_or_unknown"
+        counts[camera] += 1
+    return counts
+
+
 def collect_timeline(events: list[dict[str, Any]], result: ValidationResult) -> None:
     for event in events:
         event_name = event.get("event")
@@ -127,6 +152,11 @@ def collect_timeline(events: list[dict[str, Any]], result: ValidationResult) -> 
             result.velocity_commands += 1
         if isinstance(event_name, str) and event_name in OBJECT_BEHAVIOR_EVENTS:
             result.behavior_events[event_name] = result.behavior_events.get(event_name, 0) + 1
+        if isinstance(event_name, str) and event_name in CAMERA_POINTING_EVENTS:
+            result.camera_pointing_events[event_name] = result.camera_pointing_events.get(event_name, 0) + 1
+        if event_name == "camera_pointing_intent":
+            mode = str(event.get("camera_pointing_mode") or event.get("mode") or "unknown")
+            result.camera_pointing_modes[mode] = result.camera_pointing_modes.get(mode, 0) + 1
 
 
 def validate_state_order(result: ValidationResult, expected_order: list[str]) -> None:
@@ -232,11 +262,43 @@ def validate_behavior_expectations(result: ValidationResult) -> None:
         result.failures.append("expected velocity commands during behavior run")
 
 
+def validate_camera_pointing_expectations(
+    result: ValidationResult,
+    *,
+    expected_modes: list[str],
+    camera_frames_dir: Path | None,
+    expect_camera_proof_frames: bool,
+) -> None:
+    if result.camera_pointing_events.get("camera_pointing_intent", 0) == 0:
+        result.failures.append("expected camera_pointing_intent events")
+    if result.camera_pointing_events.get("camera_pointing_dispatch", 0) == 0:
+        result.failures.append("expected camera_pointing_dispatch events")
+    if result.camera_pointing_events.get("camera_pointing_result", 0) == 0:
+        result.failures.append("expected camera_pointing_result events")
+
+    for mode in expected_modes:
+        if result.camera_pointing_modes.get(mode, 0) == 0:
+            result.failures.append(f"expected camera_pointing_mode {mode}")
+
+    if camera_frames_dir is not None:
+        result.camera_proof_frames = dict(camera_frame_counts(camera_frames_dir))
+
+    if expect_camera_proof_frames:
+        if camera_frames_dir is None:
+            result.failures.append("--expect-camera-proof-frames requires --camera-frames-dir")
+        elif not result.camera_proof_frames:
+            result.failures.append(f"expected camera proof frames in {camera_frames_dir}")
+
+
 def validate_run_dir(
     run_dir: Path,
     *,
     expected_final_state: str | None,
     expect_behavior: bool,
+    expect_camera_pointing: bool,
+    expect_camera_modes: list[str],
+    camera_frames_dir: Path | None,
+    expect_camera_proof_frames: bool,
     safe_height_m: float,
     landed_height_m: float,
     allow_missing_snapshots: bool,
@@ -271,6 +333,14 @@ def validate_run_dir(
     if expect_behavior:
         validate_behavior_expectations(result)
 
+    if expect_camera_pointing:
+        validate_camera_pointing_expectations(
+            result,
+            expected_modes=expect_camera_modes,
+            camera_frames_dir=camera_frames_dir,
+            expect_camera_proof_frames=expect_camera_proof_frames,
+        )
+
     return result
 
 
@@ -292,11 +362,27 @@ def print_result(result: ValidationResult) -> None:
         print("  behavior_events:")
         for name in sorted(result.behavior_events):
             print(f"    {name}: {result.behavior_events[name]}")
+    if result.camera_pointing_events:
+        print("  camera_pointing_events:")
+        for name in sorted(result.camera_pointing_events):
+            print(f"    {name}: {result.camera_pointing_events[name]}")
+    if result.camera_pointing_modes:
+        print("  camera_pointing_modes:")
+        for mode in sorted(result.camera_pointing_modes):
+            print(f"    {mode}: {result.camera_pointing_modes[mode]}")
+    if result.camera_proof_frames:
+        print("  camera_proof_frames:")
+        for camera in sorted(result.camera_proof_frames):
+            print(f"    {camera}: {result.camera_proof_frames[camera]}")
     print(f"  failures: {len(result.failures)}")
     for failure in result.failures:
         print(f"    - {failure}")
     for warning in result.warnings:
         print(f"  warning: {warning}")
+
+
+def parse_csv(value: str) -> list[str]:
+    return [item.strip() for item in value.split(",") if item.strip()]
 
 
 def main() -> int:
@@ -309,6 +395,14 @@ def main() -> int:
         help="Require a specific final mission state",
     )
     parser.add_argument("--expect-behavior", action="store_true", help="Require M3 object-conditioned behavior events")
+    parser.add_argument("--expect-camera-pointing", action="store_true", help="Require camera-pointing intent/dispatch/result events")
+    parser.add_argument(
+        "--expect-camera-modes",
+        default="",
+        help="Comma-separated camera_pointing_mode values required when --expect-camera-pointing is set",
+    )
+    parser.add_argument("--camera-frames-dir", type=Path, default=None, help="Directory containing camera_pointing_*.png proof frames")
+    parser.add_argument("--expect-camera-proof-frames", action="store_true", help="Require at least one AirSim camera proof frame")
     parser.add_argument(
         "--safe-height-m",
         type=float,
@@ -339,6 +433,10 @@ def main() -> int:
         args.run_dir,
         expected_final_state=expected_final_state,
         expect_behavior=args.expect_behavior,
+        expect_camera_pointing=args.expect_camera_pointing,
+        expect_camera_modes=parse_csv(args.expect_camera_modes),
+        camera_frames_dir=args.camera_frames_dir,
+        expect_camera_proof_frames=args.expect_camera_proof_frames,
         safe_height_m=args.safe_height_m,
         landed_height_m=args.landed_height_m,
         allow_missing_snapshots=args.allow_missing_snapshots,
