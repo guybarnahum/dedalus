@@ -8,6 +8,7 @@
 #   - mission-loop: dedalus_mission_loop with existing-object/OCD config
 #   - camera-pointing: AirSim camera/gimbal pitch bridge for front_center + 0
 #   - overlay: optional AirSim world overlay / OSD subscriber
+#   - validation: canonical post-run artifact validators
 #
 # Normal sim lifecycle:
 #   simulation/airsim/run.sh AirSimNH
@@ -16,7 +17,6 @@
 
 set -euo pipefail
 
-ORIGINAL_ARGS=("$@")
 cd "$(dirname "$0")"
 
 REPO_ROOT_ABS="$(cd ../.. && pwd)"
@@ -44,8 +44,14 @@ CAMERA_RESEND_S="0.25"
 CAMERA_CAPTURE_EVERY_S="1.0"
 WITH_CAMERA=1
 WITH_OVERLAY=1
+WITH_VALIDATION=1
 OVERLAY_RATE_HZ="5"
 OVERLAY_DURATION_S="0"
+VALIDATION_MIN_ORBITS="1.0"
+VALIDATION_RADIUS="10.0"
+VALIDATION_TIMEOUT_S="0"
+VALIDATION_AVG_RADIUS_ERROR_MAX="1.0"
+VALIDATION_MAX_RADIUS_ERROR_AFTER_LATCH="3.0"
 ATTACH=0
 EXIT_ON_COMPLETE=1
 KILL_EXISTING=1
@@ -60,6 +66,7 @@ Starts the validated AirSim object-conditioned behavior mission stack in tmux:
   mission-loop      dedalus_mission_loop
   camera-pointing   AirSim camera pitch bridge for front_center and 0
   overlay           optional world overlay / OSD subscriber
+  validation        canonical post-run validators
 
 Prerequisite:
   ./run.sh AirSimNH
@@ -68,6 +75,7 @@ Examples:
   ./run_mission.sh
   ./run_mission.sh --attach
   ./run_mission.sh --no-overlay
+  ./run_mission.sh --no-validation
   ./run_mission.sh --camera 0 --camera front_center
   ./run_mission.sh --config ../../config/core_stack_object_behavior_airsim_existing_object_circle.yml
   ./run_mission.sh --safe-height 40 --behavior-duration-s 360 --max-frames 5400
@@ -81,7 +89,7 @@ Options:
   --stream-port PORT          runtime stream port. Default: 47770
   --max-frames N              mission-loop --max-frames. Default: 5400
   --shutdown-max-frames N     mission-loop --shutdown-max-frames. Default: 1800
-  --safe-height M             mission-loop --safe-height. Default: 40
+  --safe-height M             mission-loop --safe-height and artifact validator safe-height gate. Default: 40
   --behavior-duration-s S     mission-loop --behavior-duration-s. Default: 360
   --vehicle-name NAME         AirSim vehicle name. Default: PX4
   --airsim-host HOST          AirSim RPC host. Default: 127.0.0.1
@@ -89,8 +97,12 @@ Options:
   --camera CAMERA             AirSim camera to command. May repeat. Default: front_center and 0
   --no-camera                 Do not start camera-pointing bridge
   --no-overlay                Do not start overlay
+  --no-validation             Do not start post-run validators
   --overlay-rate-hz HZ        overlay update rate. Default: 5
   --overlay-duration-s S      overlay duration; 0 means run until session stops. Default: 0
+  --validation-min-orbits N   Circle validator --min-orbits. Default: 1.0
+  --validation-radius M       Circle validator --radius. Default: 10.0
+  --validation-timeout-s S    Wait timeout for runtime_stop; 0 means wait forever. Default: 0
   --no-progress               Do not pass --progress to mission-loop
   --attach                    Attach to tmux after starting
   --keep-tools-running        Do not stop camera bridge / overlay on mission runtime_stop
@@ -189,12 +201,28 @@ while [[ $# -gt 0 ]]; do
             WITH_OVERLAY=0
             shift
             ;;
+        --no-validation)
+            WITH_VALIDATION=0
+            shift
+            ;;
         --overlay-rate-hz)
             OVERLAY_RATE_HZ="$2"
             shift 2
             ;;
         --overlay-duration-s)
             OVERLAY_DURATION_S="$2"
+            shift 2
+            ;;
+        --validation-min-orbits)
+            VALIDATION_MIN_ORBITS="$2"
+            shift 2
+            ;;
+        --validation-radius)
+            VALIDATION_RADIUS="$2"
+            shift 2
+            ;;
+        --validation-timeout-s)
+            VALIDATION_TIMEOUT_S="$2"
             shift 2
             ;;
         --no-progress)
@@ -229,6 +257,7 @@ MISSION_BIN="$BUILD_DIR/apps/dedalus_mission_loop"
 MISSION_LOG="$LOG_DIR_ABS/mission_${TIMESTAMP}.log"
 CAMERA_LOG="$LOG_DIR_ABS/camera_pointing_${TIMESTAMP}.log"
 OVERLAY_LOG="$LOG_DIR_ABS/overlay_${TIMESTAMP}.log"
+VALIDATION_LOG="$LOG_DIR_ABS/validation_${TIMESTAMP}.log"
 CAMERA_DEBUG_JSON="$OUTPUT_DIR/camera_pointing_latest.json"
 OVERLAY_DEBUG_JSON="$OUTPUT_DIR/overlay_debug_latest.json"
 CAMERA_FRAMES_DIR="$OUTPUT_DIR/camera_pointing_frames"
@@ -306,6 +335,68 @@ if [[ "$OVERLAY_DURATION_S" != "0" ]]; then
     OVERLAY_CMD+=(--duration-s "$OVERLAY_DURATION_S")
 fi
 
+VALIDATION_SHELL=$(cat <<EOF
+set -euo pipefail
+cd $(printf '%q' "$REPO_ROOT_ABS")
+EVENTS=$(printf '%q' "$OUTPUT_DIR/mission_events.jsonl")
+TIMEOUT=$(printf '%q' "$VALIDATION_TIMEOUT_S")
+python3 - "\$EVENTS" "\$TIMEOUT" <<'PY'
+import json
+import sys
+import time
+from pathlib import Path
+
+path = Path(sys.argv[1])
+timeout_s = float(sys.argv[2])
+start = time.monotonic()
+last_count = -1
+print(f"validation: waiting for runtime_stop in {path}", flush=True)
+while True:
+    events = []
+    if path.exists():
+        for line in path.read_text(encoding="utf-8").splitlines():
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                events.append(json.loads(line))
+            except json.JSONDecodeError:
+                pass
+    if len(events) != last_count:
+        print(f"validation: events={len(events)}", flush=True)
+        last_count = len(events)
+    runtime_stop = [event for event in events if isinstance(event, dict) and event.get("event") == "runtime_stop"]
+    if runtime_stop:
+        print("validation: runtime_stop observed", flush=True)
+        break
+    if timeout_s > 0 and time.monotonic() - start >= timeout_s:
+        raise SystemExit(f"validation: timed out waiting for runtime_stop after {timeout_s}s")
+    time.sleep(2.0)
+PY
+python3 tools/mission/mission-events-summary.py "\$EVENTS" --expect-complete
+VALIDATE_MISSION_CMD=(python3 tools/mission/validate-mission-artifacts.py $(printf '%q' "$OUTPUT_DIR") --expect-complete --expect-behavior --safe-height-m $(printf '%q' "$SAFE_HEIGHT") --landed-height-m 1.0)
+EOF
+)
+if [[ "$WITH_CAMERA" -eq 1 ]]; then
+    VALIDATION_SHELL+=$'\n'
+    VALIDATION_SHELL+="VALIDATE_MISSION_CMD+=(--expect-camera-pointing --expect-camera-modes neutral,target,home,landing_area --camera-frames-dir $(printf '%q' "$CAMERA_FRAMES_DIR") --expect-camera-proof-frames)"
+fi
+VALIDATION_SHELL+=$'\n'
+VALIDATION_SHELL+=$(cat <<EOF
+"\${VALIDATE_MISSION_CMD[@]}"
+python3 tools/validation/validate-circle-trajectory.py \
+  --events "\$EVENTS" \
+  --min-orbits $(printf '%q' "$VALIDATION_MIN_ORBITS") \
+  --radius $(printf '%q' "$VALIDATION_RADIUS") \
+  --avg-radius-error-max $(printf '%q' "$VALIDATION_AVG_RADIUS_ERROR_MAX") \
+  --max-radius-error-after-latch $(printf '%q' "$VALIDATION_MAX_RADIUS_ERROR_AFTER_LATCH") \
+  --expect-complete-reason orbit_count_elapsed \
+  --require-terminal-settled \
+  --require-lifecycle
+echo "validation: PASS"
+EOF
+)
+
 if [[ "$KILL_EXISTING" -eq 1 ]]; then
     tmux kill-session -t "$SESSION_NAME" 2>/dev/null || true
 elif tmux has-session -t "$SESSION_NAME" 2>/dev/null; then
@@ -323,6 +414,10 @@ fi
 if [[ "$WITH_OVERLAY" -eq 1 ]]; then
     OVERLAY_SHELL="cd $(printf '%q' "$REPO_ROOT_ABS") && $(quote_cmd "${OVERLAY_CMD[@]}") 2>&1 | tee $(printf '%q' "$OVERLAY_LOG")"
     tmux new-window -t "$SESSION_NAME" -n overlay "bash -lc $(printf '%q' "$OVERLAY_SHELL")"
+fi
+
+if [[ "$WITH_VALIDATION" -eq 1 ]]; then
+    tmux new-window -t "$SESSION_NAME" -n validation "bash -lc $(printf '%q' "$VALIDATION_SHELL 2>&1 | tee $(printf '%q' "$VALIDATION_LOG")")"
 fi
 
 MISSION_SHELL="cd $(printf '%q' "$REPO_ROOT_ABS") && $(quote_cmd "${MISSION_CMD[@]}") 2>&1 | tee $(printf '%q' "$MISSION_LOG")"
@@ -348,6 +443,12 @@ if [[ "$WITH_OVERLAY" -eq 1 ]]; then
     echo "Overlay:"
     echo "  log:        $OVERLAY_LOG"
     echo "  debug json: $OVERLAY_DEBUG_JSON"
+    echo ""
+fi
+if [[ "$WITH_VALIDATION" -eq 1 ]]; then
+    echo "Validation:"
+    echo "  log:        $VALIDATION_LOG"
+    echo "  validators: mission-events-summary, validate-mission-artifacts, validate-circle-trajectory"
     echo ""
 fi
 
