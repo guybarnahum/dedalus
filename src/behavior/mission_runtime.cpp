@@ -132,6 +132,16 @@ std::string display_fields(const std::string& primary, const std::string& detail
     return ",\"display_state\":" + q(primary) + ",\"display_detail\":" + q(detail);
 }
 
+class NullCameraPointingSink final : public CameraPointingSink {
+public:
+    CameraPointingResult send(const CameraPointingCommand& command) override {
+        if (!command.pitch_valid) {
+            return CameraPointingResult{false, "camera_pointing_invalid"};
+        }
+        return CameraPointingResult{true, "camera_pointing_ignored"};
+    }
+};
+
 }  // namespace
 
 MissionRuntime::MissionRuntime(
@@ -139,11 +149,13 @@ MissionRuntime::MissionRuntime(
     std::shared_ptr<LatestWorldSnapshot> snapshots,
     std::unique_ptr<MissionController> controller,
     std::unique_ptr<FlightCommandSink> sink,
-    std::shared_ptr<MissionEventPublisher> mission_event_publisher)
+    std::shared_ptr<MissionEventPublisher> mission_event_publisher,
+    std::unique_ptr<CameraPointingSink> camera_pointing_sink)
     : config_(std::move(config)),
       snapshots_(std::move(snapshots)),
       controller_(std::move(controller)),
       sink_(std::move(sink)),
+      camera_pointing_sink_(std::move(camera_pointing_sink)),
       mission_event_publisher_(std::move(mission_event_publisher)) {
     if (config_.tick_hz <= 0.0) {
         throw std::invalid_argument("MissionRuntime requires positive tick_hz");
@@ -156,6 +168,9 @@ MissionRuntime::MissionRuntime(
     }
     if (!sink_) {
         throw std::invalid_argument("MissionRuntime requires a flight command sink");
+    }
+    if (!camera_pointing_sink_) {
+        camera_pointing_sink_ = std::make_unique<NullCameraPointingSink>();
     }
     if (!config_.event_log_path.empty()) {
         event_log_.open(config_.event_log_path, std::ios::out | std::ios::trunc);
@@ -267,6 +282,62 @@ bool MissionRuntime::tick_once() {
                       << ":" << (input.last_command_result->success ? "ok" : "failed");
         }
         std::cerr << "\n";
+    }
+
+    if (output.camera_pointing.has_value()) {
+        const auto& camera_pointing = *output.camera_pointing;
+        write_event(
+            "\"event\":\"camera_pointing_dispatch\",\"tick\":" + std::to_string(tick_count_) +
+            ",\"state\":" + q(to_string(output.state)) +
+            ",\"timestamp_ns\":" + std::to_string(camera_pointing.timestamp.timestamp_ns) +
+            ",\"camera_pointing_mode\":" + q(camera_pointing.mode) +
+            ",\"pitch_valid\":" + (camera_pointing.pitch_valid ? std::string{"true"} : std::string{"false"}) +
+            ",\"pitch_rad\":" + std::to_string(camera_pointing.pitch_rad) +
+            ",\"pitch_deg\":" + std::to_string(camera_pointing.pitch_rad * 180.0 / 3.14159265358979323846) +
+            ",\"pitch_clamped\":" + (camera_pointing.pitch_clamped ? std::string{"true"} : std::string{"false"}) +
+            ",\"source_track_id\":" + q(camera_pointing.source_track_id) +
+            ",\"agent_id\":" + q(camera_pointing.agent_id) +
+            ",\"identity_id\":" + q(camera_pointing.identity_id) +
+            display_fields("Camera", camera_pointing.mode.empty() ? "pointing" : camera_pointing.mode));
+        if (config_.verbosity >= 2) {
+            std::cerr << "dedalus_mission: send_camera_pointing mode=" << camera_pointing.mode
+                      << " pitch_deg=" << camera_pointing.pitch_rad * 180.0 / 3.14159265358979323846
+                      << " cameras=" << camera_pointing.cameras.size()
+                      << "\n";
+        }
+        try {
+            last_camera_pointing_result_ = camera_pointing_sink_->send(camera_pointing);
+        } catch (const std::exception& ex) {
+            last_camera_pointing_result_ = CameraPointingResult{false, ex.what()};
+            write_event(
+                "\"event\":\"camera_pointing_exception\",\"tick\":" + std::to_string(tick_count_) +
+                ",\"state\":" + q(to_string(output.state)) +
+                ",\"camera_pointing_mode\":" + q(camera_pointing.mode) +
+                ",\"error\":" + q(ex.what()) +
+                display_fields("Failed", "camera"));
+            std::cerr << "dedalus_mission: camera_pointing_exception mode=" << camera_pointing.mode
+                      << " status=" << ex.what() << "\n";
+        }
+        if (!last_camera_pointing_result_.has_value()) {
+            last_camera_pointing_result_ = CameraPointingResult{false, "camera_pointing_sink_missing_result"};
+        }
+        write_event(
+            "\"event\":\"camera_pointing_result\",\"tick\":" + std::to_string(tick_count_) +
+            ",\"state\":" + q(to_string(output.state)) +
+            ",\"camera_pointing_mode\":" + q(camera_pointing.mode) +
+            ",\"success\":" + (last_camera_pointing_result_->success ? std::string{"true"} : std::string{"false"}) +
+            ",\"status\":" + q(last_camera_pointing_result_->status) +
+            display_fields(
+                last_camera_pointing_result_->success ? "Camera" : "Failed",
+                last_camera_pointing_result_->success ? camera_pointing.mode : "camera"));
+        if (config_.verbosity >= 2) {
+            std::cerr << "dedalus_mission: camera_pointing_result success="
+                      << (last_camera_pointing_result_->success ? "true" : "false")
+                      << " status=" << last_camera_pointing_result_->status;
+            if (last_camera_pointing_result_->status.empty() || last_camera_pointing_result_->status.back() != '\n') {
+                std::cerr << "\n";
+            }
+        }
     }
 
     if (output.command.has_value()) {

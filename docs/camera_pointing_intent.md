@@ -209,6 +209,33 @@ mission_options.object_behavior_camera_pointing_hardware_sink: mavlink_gimbal
 
 ## When to move transport to pure C++
 
+2.28C.F introduced the first runtime dispatch boundary:
+
+```text
+MissionTickOutput.camera_pointing
+  -> CameraPointingSink
+```
+
+Current default sink:
+
+```text
+NullCameraPointingSink
+  - validates that a typed command exists
+  - records camera_pointing_dispatch / camera_pointing_result events
+  - does not command a simulator or hardware actuator
+```
+
+The existing `camera_pointing_intent` mission event is still emitted by the
+controller for compatibility with the validated bridge processes:
+
+```text
+camera_pointing_intent JSON
+  -> simulation/airsim/scripts/airsim-camera-pointing-bridge.py
+  -> tools/px4/mavlink-gimbal-pointing-bridge.py
+```
+
+The next pure-C++ step is to replace the null sink with native sink implementations.
+
 The target-stare policy is already C++.
 
 The remaining Python code is transport adaptation:

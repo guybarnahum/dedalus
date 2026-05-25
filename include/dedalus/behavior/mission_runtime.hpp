@@ -46,7 +46,8 @@ public:
         std::shared_ptr<LatestWorldSnapshot> snapshots,
         std::unique_ptr<MissionController> controller,
         std::unique_ptr<FlightCommandSink> sink,
-        std::shared_ptr<MissionEventPublisher> mission_event_publisher = nullptr);
+        std::shared_ptr<MissionEventPublisher> mission_event_publisher = nullptr,
+        std::unique_ptr<CameraPointingSink> camera_pointing_sink = nullptr);
     ~MissionRuntime();
 
     MissionRuntime(const MissionRuntime&) = delete;
@@ -74,6 +75,7 @@ private:
     std::shared_ptr<LatestWorldSnapshot> snapshots_;
     std::unique_ptr<MissionController> controller_;
     std::unique_ptr<FlightCommandSink> sink_;
+    std::unique_ptr<CameraPointingSink> camera_pointing_sink_;
     std::shared_ptr<MissionEventPublisher> mission_event_publisher_;
     std::atomic<bool> running_{false};
     std::atomic<bool> finish_requested_{false};
@@ -82,6 +84,7 @@ private:
     std::size_t tick_count_{0U};
     MissionLifecycleState last_state_{MissionLifecycleState::Idle};
     std::optional<FlightCommandResult> last_command_result_;
+    std::optional<CameraPointingResult> last_camera_pointing_result_;
     std::ofstream event_log_;
     mutable std::mutex event_log_mutex_;
 };

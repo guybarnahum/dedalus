@@ -79,6 +79,11 @@ struct CameraPointingCommand {
     bool pitch_clamped{false};
 };
 
+struct CameraPointingResult {
+    bool success{false};
+    std::string status;
+};
+
 struct FlightCommandResult {
     FlightCommandKind kind{FlightCommandKind::Velocity};
     bool success{false};
@@ -144,6 +149,12 @@ class FlightCommandSink {
 public:
     virtual ~FlightCommandSink() = default;
     virtual FlightCommandResult send(const VelocityCommand& command) = 0;
+};
+
+class CameraPointingSink {
+public:
+    virtual ~CameraPointingSink() = default;
+    virtual CameraPointingResult send(const CameraPointingCommand& command) = 0;
 };
 
 }  // namespace dedalus
