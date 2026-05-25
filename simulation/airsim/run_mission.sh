@@ -47,6 +47,7 @@ WITH_OVERLAY=1
 OVERLAY_RATE_HZ="5"
 OVERLAY_DURATION_S="0"
 ATTACH=0
+EXIT_ON_COMPLETE=1
 KILL_EXISTING=1
 PROGRESS_FLAG="--progress"
 
@@ -92,6 +93,7 @@ Options:
   --overlay-duration-s S      overlay duration; 0 means run until session stops. Default: 0
   --no-progress               Do not pass --progress to mission-loop
   --attach                    Attach to tmux after starting
+  --keep-tools-running        Do not stop camera bridge / overlay on mission runtime_stop
   --no-kill-existing          Do not kill an existing tmux session with the same name
   -h, --help                  Show this help
 EOF
@@ -203,6 +205,10 @@ while [[ $# -gt 0 ]]; do
             ATTACH=1
             shift
             ;;
+        --keep-tools-running)
+            EXIT_ON_COMPLETE=0
+            shift
+            ;;
         --no-kill-existing)
             KILL_EXISTING=0
             shift
@@ -274,6 +280,9 @@ CAMERA_CMD=(
     --debug
     --debug-json "$CAMERA_DEBUG_JSON"
 )
+if [[ "$EXIT_ON_COMPLETE" -eq 1 ]]; then
+    CAMERA_CMD+=(--exit-on-runtime-stop)
+fi
 for camera in "${CAMERAS[@]}"; do
     CAMERA_CMD+=(--cameras "$camera")
 done
@@ -290,6 +299,9 @@ OVERLAY_CMD=(
     --debug
     --debug-json "$OVERLAY_DEBUG_JSON"
 )
+if [[ "$EXIT_ON_COMPLETE" -eq 1 ]]; then
+    OVERLAY_CMD+=(--exit-on-runtime-stop)
+fi
 if [[ "$OVERLAY_DURATION_S" != "0" ]]; then
     OVERLAY_CMD+=(--duration-s "$OVERLAY_DURATION_S")
 fi
@@ -301,12 +313,11 @@ elif tmux has-session -t "$SESSION_NAME" 2>/dev/null; then
     exit 1
 fi
 
-MISSION_SHELL="cd $(printf '%q' "$REPO_ROOT_ABS") && $(quote_cmd "${MISSION_CMD[@]}") 2>&1 | tee $(printf '%q' "$MISSION_LOG")"
-tmux new-session -d -s "$SESSION_NAME" -n mission-loop "bash -lc $(printf '%q' "$MISSION_SHELL")"
-
 if [[ "$WITH_CAMERA" -eq 1 ]]; then
     CAMERA_SHELL="cd $(printf '%q' "$REPO_ROOT_ABS") && $(quote_cmd "${CAMERA_CMD[@]}") 2>&1 | tee $(printf '%q' "$CAMERA_LOG")"
-    tmux new-window -t "$SESSION_NAME" -n camera-pointing "bash -lc $(printf '%q' "$CAMERA_SHELL")"
+    tmux new-session -d -s "$SESSION_NAME" -n camera-pointing "bash -lc $(printf '%q' "$CAMERA_SHELL")"
+else
+    tmux new-session -d -s "$SESSION_NAME" -n launcher "bash -lc 'sleep infinity'"
 fi
 
 if [[ "$WITH_OVERLAY" -eq 1 ]]; then
@@ -314,6 +325,8 @@ if [[ "$WITH_OVERLAY" -eq 1 ]]; then
     tmux new-window -t "$SESSION_NAME" -n overlay "bash -lc $(printf '%q' "$OVERLAY_SHELL")"
 fi
 
+MISSION_SHELL="cd $(printf '%q' "$REPO_ROOT_ABS") && $(quote_cmd "${MISSION_CMD[@]}") 2>&1 | tee $(printf '%q' "$MISSION_LOG")"
+tmux new-window -t "$SESSION_NAME" -n mission-loop "bash -lc $(printf '%q' "$MISSION_SHELL")"
 tmux select-window -t "$SESSION_NAME:mission-loop"
 
 echo "✅ AirSim mission stack started in tmux session '$SESSION_NAME'"
@@ -338,6 +351,7 @@ if [[ "$WITH_OVERLAY" -eq 1 ]]; then
     echo ""
 fi
 
+echo "Exit on mission complete: $([[ "$EXIT_ON_COMPLETE" -eq 1 ]] && echo yes || echo no)"
 echo "Useful commands:"
 echo "  attach: tmux attach -t $SESSION_NAME"
 echo "  stop mission stack: tmux kill-session -t $SESSION_NAME"

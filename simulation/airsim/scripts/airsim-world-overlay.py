@@ -54,6 +54,8 @@ class RuntimeEventStreamClient:
         self.latest_mission_event: dict[str, Any] | None = None
         self.latest_mission_seq: int | None = None
         self.last_message_s: float | None = None
+        self.runtime_stop_event: dict[str, Any] | None = None
+        self.terminal_settled: bool | None = None
 
     def close(self) -> None:
         if self.sock is not None:
@@ -139,6 +141,9 @@ class RuntimeEventStreamClient:
                 self.latest_mission_seq = seq_value
                 if event.get("event") == "target_selected":
                     self.latest_selected_target = event
+                elif event.get("event") == "runtime_stop":
+                    self.runtime_stop_event = event
+                    self.terminal_settled = bool(event.get("terminal_settled", False))
                 self.last_message_s = now
 
 
@@ -173,6 +178,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--osd-arrow-duration-s", type=float, default=0.18)
     parser.add_argument("--osd-arrow-thickness", type=float, default=3.0)
     parser.add_argument("--wait-for-airsim-s", type=float, default=0.0, help="0 means wait until Ctrl-C.")
+    parser.add_argument("--exit-on-runtime-stop", action="store_true",
+                        help="Exit cleanly when the mission stream publishes runtime_stop.")
     parser.add_argument("--wait-for-stream-s", type=float, default=0.0, help="0 means wait until Ctrl-C.")
     parser.add_argument("--hide-planned", action="store_true")
     parser.add_argument("--hide-world", action="store_true")
@@ -760,6 +767,12 @@ def main() -> int:
 
     while True:
         stream.poll()
+        if args.exit_on_runtime_stop and stream.runtime_stop_event is not None:
+            print(
+                "airsim-world-overlay: exiting on runtime_stop "
+                f"terminal_settled={stream.terminal_settled}",
+                file=sys.stderr)
+            break
         if stream.last_message_s is None:
             if not waiting_reported:
                 print(f"airsim-world-overlay: waiting for runtime events on {args.stream_host}:{args.stream_port}", file=sys.stderr)

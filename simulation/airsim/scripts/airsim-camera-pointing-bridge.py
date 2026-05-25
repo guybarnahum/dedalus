@@ -47,6 +47,8 @@ class RuntimeEventStreamClient:
         self.latest_mission_event: dict[str, Any] | None = None
         self.latest_seq: int | None = None
         self.last_message_s: float | None = None
+        self.runtime_stop_event: dict[str, Any] | None = None
+        self.terminal_settled: bool | None = None
 
     def close(self) -> None:
         if self.sock is not None:
@@ -138,6 +140,9 @@ class RuntimeEventStreamClient:
                     self.latest_selected_target = event
                 elif event.get("event") == "camera_pointing_intent":
                     self.latest_camera_pointing_intent = event
+                elif event.get("event") == "runtime_stop":
+                    self.runtime_stop_event = event
+                    self.terminal_settled = bool(event.get("terminal_settled", False))
 
 
 def parse_args() -> argparse.Namespace:
@@ -173,6 +178,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--debug", action="store_true")
     parser.add_argument("--debug-every-s", type=float, default=1.0)
     parser.add_argument("--debug-json", type=Path, default=None)
+    parser.add_argument("--exit-on-runtime-stop", action="store_true",
+                        help="Exit cleanly when the mission stream publishes runtime_stop.")
     parser.add_argument("--wait-for-airsim-s", type=float, default=0.0, help="0 means wait until Ctrl-C")
     return parser.parse_args()
 
@@ -452,6 +459,12 @@ def main() -> int:
             snapshot = stream.latest_world_snapshot
             selected = stream.latest_selected_target
             intent = stream.latest_camera_pointing_intent
+            if args.exit_on_runtime_stop and stream.runtime_stop_event is not None:
+                print(
+                    "airsim-camera-pointing-bridge: exiting on runtime_stop "
+                    f"terminal_settled={stream.terminal_settled}",
+                    file=sys.stderr)
+                break
 
             if now - last_loop_s >= period_s:
                 last_loop_s = now
