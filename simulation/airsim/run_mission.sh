@@ -258,6 +258,7 @@ MISSION_LOG="$LOG_DIR_ABS/mission_${TIMESTAMP}.log"
 CAMERA_LOG="$LOG_DIR_ABS/camera_pointing_${TIMESTAMP}.log"
 OVERLAY_LOG="$LOG_DIR_ABS/overlay_${TIMESTAMP}.log"
 VALIDATION_LOG="$LOG_DIR_ABS/validation_${TIMESTAMP}.log"
+VALIDATION_SCRIPT="$LOG_DIR_ABS/validation_${TIMESTAMP}.sh"
 CAMERA_DEBUG_JSON="$OUTPUT_DIR/camera_pointing_latest.json"
 OVERLAY_DEBUG_JSON="$OUTPUT_DIR/overlay_debug_latest.json"
 CAMERA_FRAMES_DIR="$OUTPUT_DIR/camera_pointing_frames"
@@ -397,6 +398,9 @@ echo "validation: PASS"
 EOF
 )
 
+printf '%s\n' "$VALIDATION_SHELL" > "$VALIDATION_SCRIPT"
+chmod +x "$VALIDATION_SCRIPT"
+
 if [[ "$KILL_EXISTING" -eq 1 ]]; then
     tmux kill-session -t "$SESSION_NAME" 2>/dev/null || true
 elif tmux has-session -t "$SESSION_NAME" 2>/dev/null; then
@@ -417,7 +421,8 @@ if [[ "$WITH_OVERLAY" -eq 1 ]]; then
 fi
 
 if [[ "$WITH_VALIDATION" -eq 1 ]]; then
-    tmux new-window -t "$SESSION_NAME" -n validation "bash -lc $(printf '%q' "$VALIDATION_SHELL 2>&1 | tee $(printf '%q' "$VALIDATION_LOG")")"
+    VALIDATION_RUN_SHELL="bash $(printf '%q' "$VALIDATION_SCRIPT") 2>&1 | tee $(printf '%q' "$VALIDATION_LOG")"
+    tmux new-window -t "$SESSION_NAME" -n validation "bash -lc $(printf '%q' "$VALIDATION_RUN_SHELL")"
 fi
 
 MISSION_SHELL="cd $(printf '%q' "$REPO_ROOT_ABS") && $(quote_cmd "${MISSION_CMD[@]}") 2>&1 | tee $(printf '%q' "$MISSION_LOG")"
@@ -448,6 +453,7 @@ fi
 if [[ "$WITH_VALIDATION" -eq 1 ]]; then
     echo "Validation:"
     echo "  log:        $VALIDATION_LOG"
+    echo "  script:     $VALIDATION_SCRIPT"
     echo "  validators: mission-events-summary, validate-mission-artifacts, validate-circle-trajectory"
     echo ""
 fi
