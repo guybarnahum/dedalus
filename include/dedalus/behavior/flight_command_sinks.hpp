@@ -201,4 +201,32 @@ public:
     }
 };
 
+struct MavlinkGimbalPointingSinkConfig {
+    // Native C++ MAVLink writer. Use udpout endpoints that point at the PX4 /
+    // companion MAVLink listener. This sink intentionally does not use the
+    // Python MAVLink bridge.
+    std::string endpoints{"udpout:127.0.0.1:14550"};
+    std::uint8_t source_system_id{255U};
+    std::uint8_t source_component_id{191U};
+    std::uint8_t target_system_id{1U};
+    std::uint8_t target_component_id{1U};
+    std::uint8_t gimbal_device_id{0U};
+    std::uint32_t gimbal_manager_flags{0U};
+    double deadband_rad{0.004363323129985824};  // 0.25 deg
+    double resend_interval_s{0.25};
+    bool debug_logging{false};
+};
+
+class MavlinkGimbalPointingSink final : public CameraPointingSink {
+public:
+    explicit MavlinkGimbalPointingSink(MavlinkGimbalPointingSinkConfig config);
+    ~MavlinkGimbalPointingSink() override;
+
+    CameraPointingResult send(const CameraPointingCommand& command) override;
+
+private:
+    struct Impl;
+    std::unique_ptr<Impl> impl_;
+};
+
 }  // namespace dedalus

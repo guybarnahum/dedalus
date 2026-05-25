@@ -236,6 +236,32 @@ camera_pointing_intent JSON
 
 The next pure-C++ step is to replace the null sink with native sink implementations.
 
+## Native C++ MAVLink gimbal sink
+
+2.28C.G adds:
+
+```text
+object_behavior_camera_pointing_sink: mavlink_gimbal
+```
+
+In this mode, `dedalus_mission_loop` sends `CameraPointingCommand` directly to
+PX4 / MAVLink using a native C++ UDP MAVLink writer. The normal hardware path no
+longer requires `tools/px4/mavlink-gimbal-pointing-bridge.py`.
+
+Example:
+
+```yaml
+mission_options.object_behavior_camera_pointing_sink: mavlink_gimbal
+mission_options.object_behavior_camera_pointing_mavlink_endpoints: udpout:127.0.0.1:14550
+mission_options.object_behavior_camera_pointing_mavlink_target_system_id: 1
+mission_options.object_behavior_camera_pointing_mavlink_target_component_id: 1
+mission_options.object_behavior_camera_pointing_mavlink_gimbal_device_id: 0
+mission_options.object_behavior_camera_pointing_resend_s: 0.25
+mission_options.object_behavior_camera_pointing_deadband_rad: 0.004363323129985824
+```
+
+The Python MAVLink bridge remains a diagnostic/prototype tool, not the normal hardware path.
+
 The target-stare policy is already C++.
 
 The remaining Python code is transport adaptation:

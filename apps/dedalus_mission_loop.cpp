@@ -579,6 +579,44 @@ std::unique_ptr<dedalus::FlightCommandSink> create_flight_command_sink(
     throw std::invalid_argument("unknown flight_command_sink: " + config.flight_command_sink);
 }
 
+std::unique_ptr<dedalus::CameraPointingSink> create_camera_pointing_sink(
+    const dedalus::CoreStackProviderConfig& config,
+    int verbosity) {
+    const auto sink = config.mission_options.get_or(
+        "object_behavior_camera_pointing_sink",
+        "null");
+    if (sink == "null" || sink == "disabled" || sink == "runtime_stream") {
+        return nullptr;
+    }
+    if (sink == "mavlink_gimbal") {
+        dedalus::MavlinkGimbalPointingSinkConfig sink_config;
+        sink_config.endpoints = config.mission_options.get_or(
+            "object_behavior_camera_pointing_mavlink_endpoints",
+            sink_config.endpoints);
+        sink_config.source_system_id = static_cast<std::uint8_t>(std::stoi(
+            config.mission_options.get_or("object_behavior_camera_pointing_mavlink_source_system_id", "255")));
+        sink_config.source_component_id = static_cast<std::uint8_t>(std::stoi(
+            config.mission_options.get_or("object_behavior_camera_pointing_mavlink_source_component_id", "191")));
+        sink_config.target_system_id = static_cast<std::uint8_t>(std::stoi(
+            config.mission_options.get_or("object_behavior_camera_pointing_mavlink_target_system_id", "1")));
+        sink_config.target_component_id = static_cast<std::uint8_t>(std::stoi(
+            config.mission_options.get_or("object_behavior_camera_pointing_mavlink_target_component_id", "1")));
+        sink_config.gimbal_device_id = static_cast<std::uint8_t>(std::stoi(
+            config.mission_options.get_or("object_behavior_camera_pointing_mavlink_gimbal_device_id", "0")));
+        sink_config.gimbal_manager_flags = static_cast<std::uint32_t>(std::stoul(
+            config.mission_options.get_or("object_behavior_camera_pointing_mavlink_flags", "0")));
+        sink_config.deadband_rad = std::stod(config.mission_options.get_or(
+            "object_behavior_camera_pointing_deadband_rad",
+            "0.004363323129985824"));
+        sink_config.resend_interval_s = std::stod(config.mission_options.get_or(
+            "object_behavior_camera_pointing_resend_s",
+            "0.25"));
+        sink_config.debug_logging = verbosity >= 2;
+        return std::make_unique<dedalus::MavlinkGimbalPointingSink>(sink_config);
+    }
+    throw std::invalid_argument("unknown object_behavior_camera_pointing_sink: " + sink);
+}
+
 }  // namespace
 
 int main(int argc, char** argv) {
@@ -657,7 +695,8 @@ int main(int argc, char** argv) {
                 latest_snapshot,
                 std::move(controller),
                 create_flight_command_sink(config, args.verbosity),
-                mission_event_publisher);
+                mission_event_publisher,
+                create_camera_pointing_sink(config, args.verbosity));
             mission_runtime->start();
             std::cout << "Mission runtime: " << config.mission_controller
                       << " @ " << config.mission_tick_hz << " Hz"
