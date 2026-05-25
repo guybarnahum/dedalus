@@ -59,6 +59,26 @@ struct VelocityCommand {
     std::string yaw_source{"disabled"};
 };
 
+struct CameraPointingCommand {
+    TimePoint timestamp;
+    std::vector<std::string> cameras;
+    std::string mode{"target"};
+    std::string source_track_id;
+    std::string agent_id;
+    std::string identity_id;
+    double pitch_rad{0.0};
+    double pitch_unclamped_rad{0.0};
+    double pitch_min_rad{0.0};
+    double pitch_max_rad{0.0};
+    double target_elevation_rad{0.0};
+    double range_xy_m{0.0};
+    double delta_z_m{0.0};
+    double pitch_sign{-1.0};
+    double pitch_offset_rad{0.0};
+    bool pitch_valid{false};
+    bool pitch_clamped{false};
+};
+
 struct FlightCommandResult {
     FlightCommandKind kind{FlightCommandKind::Velocity};
     bool success{false};
@@ -109,6 +129,7 @@ struct MissionTickInput {
 struct MissionTickOutput {
     MissionLifecycleState state{MissionLifecycleState::Idle};
     std::optional<VelocityCommand> command;
+    std::optional<CameraPointingCommand> camera_pointing;
     std::string status;
     std::vector<std::string> events;
 };
