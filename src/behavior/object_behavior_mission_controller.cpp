@@ -1002,12 +1002,24 @@ bool ObjectBehaviorMissionController::completion_elapsed(TimePoint now) const {
     return seconds_between(behavior_start_, now) >= after_s;
 }
 
-std::optional<std::string> ObjectBehaviorMissionController::camera_pointing_intent_event(
+std::optional<CameraPointingCommand> ObjectBehaviorMissionController::camera_pointing_command(
+    TimePoint timestamp,
     const EgoState& ego,
     const TargetSelection& selection) const {
     if (config_.vertical_stare_mode == ObjectBehaviorVerticalStareMode::None) {
         return std::nullopt;
     }
+
+    CameraPointingCommand command;
+    command.timestamp = timestamp;
+    command.cameras = config_.camera_pointing_cameras;
+    if (command.cameras.empty()) {
+        command.cameras.push_back("front_center");
+    }
+    command.mode = "target";
+    command.source_track_id = selection.source_track_id.value;
+    command.agent_id = selection.agent_id.value;
+    command.identity_id = selection.identity_id.value;
 
     const double dx = selection.position_local.x - ego.local_T_body.position.x;
     const double dy = selection.position_local.y - ego.local_T_body.position.y;
@@ -1016,21 +1028,44 @@ std::optional<std::string> ObjectBehaviorMissionController::camera_pointing_inte
     const double elevation_rad = std::atan2(dz, range_xy);
     const double unclamped_pitch_rad = config_.camera_pitch_sign * elevation_rad + config_.camera_pitch_offset_rad;
     const double pitch_rad = std::max(config_.camera_pitch_min_rad, std::min(config_.camera_pitch_max_rad, unclamped_pitch_rad));
-    const bool pitch_valid = true;
 
+    command.pitch_rad = pitch_rad;
+    command.pitch_unclamped_rad = unclamped_pitch_rad;
+    command.pitch_min_rad = config_.camera_pitch_min_rad;
+    command.pitch_max_rad = config_.camera_pitch_max_rad;
+    command.target_elevation_rad = elevation_rad;
+    command.range_xy_m = range_xy;
+    command.delta_z_m = dz;
+    command.pitch_sign = config_.camera_pitch_sign;
+    command.pitch_offset_rad = config_.camera_pitch_offset_rad;
+    command.pitch_valid = true;
+    command.pitch_clamped = std::abs(pitch_rad - unclamped_pitch_rad) > 1e-9;
+    return command;
+}
+
+std::string ObjectBehaviorMissionController::camera_pointing_intent_event(
+    const CameraPointingCommand& command) const {
     return "\"event\":\"camera_pointing_intent\""
-        ",\"cameras\":" + json_string_array(config_.camera_pointing_cameras) +
-        ",\"pitch_valid\":" + (pitch_valid ? std::string("true") : std::string("false")) +
-        ",\"pitch_rad\":" + std::to_string(pitch_rad) +
-        ",\"pitch_deg\":" + std::to_string(rad_to_deg(pitch_rad)) +
-        ",\"pitch_unclamped_rad\":" + std::to_string(unclamped_pitch_rad) +
-        ",\"pitch_unclamped_deg\":" + std::to_string(rad_to_deg(unclamped_pitch_rad)) +
-        ",\"pitch_clamped\":" + (std::abs(pitch_rad - unclamped_pitch_rad) > 1e-9 ? std::string("true") : std::string("false")) +
-        ",\"target_elevation_rad\":" + std::to_string(elevation_rad) +
-        ",\"target_elevation_deg\":" + std::to_string(rad_to_deg(elevation_rad)) +
-        ",\"range_xy_m\":" + std::to_string(range_xy) +
-        ",\"agent_id\":" + q(selection.agent_id.value) +
-        ",\"source_track_id\":" + q(selection.source_track_id.value) +
+        ",\"camera_pointing_mode\":" + q(command.mode) +
+        ",\"vertical_stare_mode\":" + q(config_.vertical_stare_mode == ObjectBehaviorVerticalStareMode::Gimbal ? "gimbal" : "debug_only") +
+        ",\"cameras\":" + json_string_array(command.cameras) +
+        ",\"pitch_valid\":" + std::string(command.pitch_valid ? "true" : "false") +
+        ",\"pitch_rad\":" + std::to_string(command.pitch_rad) +
+        ",\"pitch_deg\":" + std::to_string(rad_to_deg(command.pitch_rad)) +
+        ",\"pitch_unclamped_rad\":" + std::to_string(command.pitch_unclamped_rad) +
+        ",\"pitch_unclamped_deg\":" + std::to_string(rad_to_deg(command.pitch_unclamped_rad)) +
+        ",\"pitch_min_rad\":" + std::to_string(command.pitch_min_rad) +
+        ",\"pitch_max_rad\":" + std::to_string(command.pitch_max_rad) +
+        ",\"pitch_sign\":" + std::to_string(command.pitch_sign) +
+        ",\"pitch_offset_rad\":" + std::to_string(command.pitch_offset_rad) +
+        ",\"pitch_clamped\":" + std::string(command.pitch_clamped ? "true" : "false") +
+        ",\"target_elevation_rad\":" + std::to_string(command.target_elevation_rad) +
+        ",\"target_elevation_deg\":" + std::to_string(rad_to_deg(command.target_elevation_rad)) +
+        ",\"range_xy_m\":" + std::to_string(command.range_xy_m) +
+        ",\"delta_z_m\":" + std::to_string(command.delta_z_m) +
+        ",\"agent_id\":" + q(command.agent_id) +
+        ",\"source_track_id\":" + q(command.source_track_id) +
+        ",\"identity_id\":" + q(command.identity_id) +
         behavior_display_fields("arriving");
 }
 
@@ -1205,8 +1240,9 @@ MissionTickOutput ObjectBehaviorMissionController::tick(const MissionTickInput& 
                     control_selection.velocity_local = Vec3{0.0, 0.0, 0.0};
                 }
 
-                if (auto intent = camera_pointing_intent_event(ego, control_selection)) {
-                    output.events.push_back(*intent);
+                if (auto camera_pointing = camera_pointing_command(input.now, ego, control_selection)) {
+                    output.camera_pointing = *camera_pointing;
+                    output.events.push_back(camera_pointing_intent_event(*camera_pointing));
                 }
 
                 FollowGeometry geometry;

@@ -431,6 +431,24 @@ void vertical_stare_gimbal_emits_camera_pointing_intent() {
             dedalus::Vec3{0.0, 0.0, 0.0}));
 
     bool found_intent = false;
+    require(first.camera_pointing.has_value(), "gimbal vertical stare should populate typed camera_pointing command");
+    require(
+        first.camera_pointing->cameras.size() == 2 &&
+            first.camera_pointing->cameras[0] == "front_center" &&
+            first.camera_pointing->cameras[1] == "0",
+        "typed camera_pointing command should carry configured cameras");
+    require(
+        first.camera_pointing->pitch_valid,
+        "typed camera_pointing command should mark pitch valid");
+    require(
+        first.camera_pointing->source_track_id == "ghost_car_001",
+        "typed camera_pointing command should carry source_track_id");
+    require(
+        first.camera_pointing->agent_id == "agent_ghost_car_001",
+        "typed camera_pointing command should carry agent_id");
+    require(
+        first.camera_pointing->pitch_rad < 0.0,
+        "target below ego should request negative typed camera pitch (sign=-1, target elevation positive)");
     for (const auto& event : first.events) {
         if (event.find("\"event\":\"camera_pointing_intent\"") != std::string::npos) {
             require(
@@ -454,6 +472,14 @@ void vertical_stare_gimbal_emits_camera_pointing_intent() {
         dedalus::Vec3{10.0, 0.0, -2.0},
         dedalus::Vec3{0.0, 0.0, -12.0});
     const auto second = controller.tick(input);
+
+    require(second.camera_pointing.has_value(), "second tick should populate typed camera_pointing command");
+    require(
+        std::abs(second.camera_pointing->pitch_rad - (45.0 * 3.14159265358979323846 / 180.0)) < 1e-6,
+        "below-target geometry should request positive typed AirSim pitch with sign=-1");
+    require(
+        second.camera_pointing->pitch_clamped == false,
+        "45 degree pitch should not clamp with +/-80 degree limits");
 
     bool found_second_intent = false;
     for (const auto& event : second.events) {
