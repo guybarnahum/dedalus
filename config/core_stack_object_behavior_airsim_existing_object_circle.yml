@@ -59,8 +59,9 @@ mission_options.object_behavior_yaw_offset_rad: 0.0
 mission_options.object_behavior_yaw_min_speed_mps: 0.35
 mission_options.object_behavior_yaw_hold_last_when_unstable: true
 
-# Vertical stare is explicit but currently not applied unless a camera/gimbal
-# sink is added. In gimbal mode the controller emits one warning event.
+# Target-facing camera pitch is emitted by C++ as camera_pointing_intent events.
+# The AirSim camera-pointing bridge consumes the intent and applies the same
+# pitch to front_center (Dedalus capture) and 0 (AirSim operator FPV/F view).
 mission_options.object_behavior_vertical_stare_mode: gimbal
 mission_options.object_behavior_vertical_stare_warn_if_unavailable: true
 mission_options.object_behavior_camera_pointing_cameras: front_center,0
