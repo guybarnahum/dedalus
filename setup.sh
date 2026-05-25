@@ -207,7 +207,7 @@ After=network.target
 [Service]
 Type=simple
 # Remove RemainAfterExit=yes so systemd knows when the session is actually gone
-ExecStart=/usr/bin/dcv create-session --type virtual --owner %u dedalus-sim --init "/usr/bin/startxfce4"
+ExecStart=/usr/bin/dcv create-session --type virtual --owner %u dedalus-sim --init \"/usr/bin/startxfce4\"
 Restart=on-failure
 RestartSec=5
 
@@ -289,11 +289,22 @@ run_and_log "Install AirSim build-time blockers" python -m pip install numpy msg
 run_and_log "Install AirSim Python package" python -m pip install airsim --no-build-isolation
 
 # 6. Install the remaining flight stack tools and PX4 Python build deps.
-# PX4 imports the menuconfig module from kconfiglib; there is no standalone
-# PyPI package named menuconfig.
-run_and_log "Install flight Python dependencies" python -m pip install pymavlink pyserial kconfiglib
+# PX4 generators import em, yaml, jinja2, and several schema/template helpers
+# from the Python interpreter used by make px4_sitl. Because this build is
+# intentionally run from the Dedalus venv, install those deps there too.
+run_and_log "Install flight Python dependencies" python -m pip install \
+  pymavlink \
+  pyserial \
+  kconfiglib \
+  empy \
+  pyyaml \
+  jinja2 \
+  toml \
+  jsonschema \
+  pyros-genmsg \
+  packaging
 
-run_and_log "Verify PX4 Python build dependencies" python -c "import menuconfig, kconfiglib"
+run_and_log "Verify PX4 Python build dependencies" python -c "import em, yaml, jinja2, toml, jsonschema, genmsg, packaging, menuconfig, kconfiglib"
 
 echo "✅ Python environment ready at $VENV_PATH"
 # --------------------------------------------------------------
