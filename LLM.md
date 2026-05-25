@@ -13,9 +13,11 @@ Current handoff state:
 ```text
 2.26E is complete and live-validated by the operator.
 2.27A is complete and live-validated by the operator.
-2.27B is complete and locally validated by build/tests plus the circle trajectory validator.
+2.27B is complete and locally/live validated by build/tests plus the circle trajectory validator.
+2.28B is complete: no-shim repo layout migration is validated.
+2.28B.1 is complete: generated third-party dependencies are staged under third_party/ and validated from empty-state setup.
 
-Active next work: 2.28 — approach behavior and optional approach -> circle sequence validation.
+Active next work: 2.28C — CameraPointingIntent and AirSim/MAVLink-gimbal sink abstraction for target-stare pitch.
 
 GitHub status checks may be absent; continue to run local build/tests after code changes.
 ```
@@ -31,7 +33,9 @@ Milestone 2.25: ObjectBehaviorMissionController skeleton and bounded follow base
 Milestone 2.26: AirSim ghost behavior validation, live runtime-event stream, AirSim existing-object binding, follow arrival control, and live overlay / OSD. Complete after 2.26E validation.
 Milestone 2.27A: robust circle behavior with continuous orbit-capture control law and orbit-count completion. Complete after 3-orbit AirSim validation.
 Milestone 2.27B: validation hardening for circle/orbit behavior. Complete after validator CLI, validator test, runbook update, 34/34 CTest, and live trajectory validator pass.
-Milestone 2.28: approach behavior and approach -> circle sequence validation. Active next slice.
+Milestone 2.28B: no-shim target/tool/dependency layout migration. Complete after empty-state setup and live AirSim validation.
+Milestone 2.28B.1: generated dependency staging under third_party/. Complete after PX4 SITL, iceoryx, and Colosseum assets staged under third_party and no stale generated dirs under root/simulation.
+Milestone 2.28C: CameraPointingIntent and camera/gimbal sink abstraction. Active next slice.
 ```
 
 ---
@@ -73,6 +77,37 @@ dedalus_mission_loop --world-snapshot-stream-port 47770
        mission_event
 ```
 
+Repo layout boundary:
+
+```text
+simulation/airsim/
+  Dedalus-owned AirSim target runtime scripts, settings, logs, and AirSim-specific validation.
+
+simulation/airsim/run.sh
+  Starts AirSim / PX4 SITL runtime.
+
+simulation/airsim/stop.sh
+  Normal way to stop AirSim / PX4 SITL runtime.
+
+cleanup.sh
+  Root cleanup/reset helper for rebuild/reset state. Do not present cleanup.sh as the normal simulation stop command.
+
+third_party/
+  Generated external dependency checkouts/downloads:
+    PX4-Autopilot/
+    iceoryx_build/
+    colosseum_environments/
+
+tools/px4/
+  Dedalus PX4/MAVLink protocol tools.
+
+tools/validation/
+  Artifact validators.
+
+config/behaviors/
+  Behavior specs, trajectories, and ghost fixture assets.
+```
+
 Core boundary:
 
 ```text
@@ -85,7 +120,7 @@ Overlay is a subscriber/renderer only.
 
 ---
 
-## 3. Completed Capabilities Through 2.27B
+## 3. Completed Capabilities Through 2.28B.1
 
 AirSim existing-object binding:
 
@@ -178,6 +213,39 @@ Circle trajectory validator passed on the 3-orbit AirSim run:
   state path: Idle -> Prepare -> Takeoff -> ExecuteMission -> GoHome -> Land -> Complete
 ```
 
+2.28B / 2.28B.1 validation result:
+
+```text
+Empty-state setup passed on EC2 L4.
+setup.sh completed end-to-end.
+PX4 SITL built successfully from third_party/PX4-Autopilot.
+iceoryx build state staged under third_party/iceoryx_build.
+Colosseum/AirSim environments downloaded/extracted under third_party/colosseum_environments.
+No stale generated dependency dirs were present under repo root, simulation/, simulation/airsim/, or infrastructure/.
+
+Script validation passed:
+  bash -n setup.sh
+  bash -n cleanup.sh
+  bash -n simulation/airsim/run.sh
+  bash -n simulation/airsim/stop.sh
+
+Python tool validation passed:
+  py_compile for simulation/airsim/scripts, simulation/airsim/validation, tools/px4, tools/mission, tools/validation, tools/trajectory
+
+Build/test validation passed:
+  cmake configure passed
+  cmake build passed
+  full ctest passed: 34/34
+  focused 2.28 tests passed: 7/7
+
+Live/runtime validation passed:
+  simulation/airsim/run.sh launches AirSim / PX4 SITL.
+  simulation/airsim/stop.sh stops the runtime and reports no build artifacts removed.
+  AirSim camera/gimbal probe passed with overall_ok=True.
+  Existing-object circle mission reached Complete / terminal_settled.
+  validate-circle-trajectory passed for configured orbit_count=1.0.
+```
+
 Circle validator:
 
 ```text
@@ -230,120 +298,86 @@ Settled / done
 
 ---
 
-## 4. Active Next Work: 2.28 Approach Behavior / Approach -> Circle Sequence
+## 4. Active Next Work: 2.28C CameraPointingIntent / Target-Stare Pitch
 
 Goal:
 
 ```text
-Add approach behavior as the next object-conditioned control law and validate a simple approach -> circle -> go_home_land sequence.
+Add a hardware-neutral camera/gimbal pointing intent for vertical target stare, with AirSim camera pitch as the first concrete sink and MAVLink gimbal support as the real-hardware path.
 ```
 
 Motivation:
 
 ```text
-Follow maintains a relative offset.
-Circle maintains a target-relative orbit.
-Approach should move toward a selected target until a standoff condition is satisfied, then hold/complete without colliding with the target.
+Target stare is a 2-axis pointing policy:
+  - vehicle yaw keeps the target centered horizontally in the camera image
+  - camera/gimbal pitch keeps the target centered vertically in the camera image
 
-Approach is the natural bridge to sequence behavior because useful object-conditioned missions often look like:
-  select target -> approach to standoff -> circle/inspect -> go home and land
+PX4 velocity/yaw remains the vehicle control path.
+Camera/gimbal pitch should not be hidden inside PX4 velocity commands.
+It should be a separate CameraPointingIntent emitted by the behavior/runtime layer and executed by a camera/gimbal sink.
 ```
 
-Proposed approach semantics:
+Proposed architecture:
 
 ```text
-Approach consumes the same TargetSelector output as follow/circle.
-It should produce bounded kinematic intent only.
-It must not implement obstacle avoidance.
+ObjectBehaviorMissionController / MissionRuntime
+  -> VelocityCommand {vx, vy, vz, yaw}
+       -> Px4BridgeCommandSink
+       -> tools/px4/px4-command-bridge.py
+       -> PX4 OFFBOARD / AirSim or real vehicle
 
-Command law, first implementation:
-  radial vector = ego position relative to selected target
-  actual_distance = norm_xy(target_to_ego)
-  desired_standoff = stop_distance_m or behavior.radius_m-style configured standoff
-  distance_error = actual_distance - desired_standoff
-
-If outside standoff:
-  move inward toward the target along the radial direction, with target_velocity added when appropriate.
-
-If at/inside standoff:
-  stop closing and hold/track target velocity tangentially/locally as needed.
-
-Vertical behavior:
-  use altitude_offset_m and existing safe-height policy.
-  keep horizontal approach law separate from altitude correction.
+  -> CameraPointingIntent {camera_name, pitch_rad, yaw_rad?, source_track_id, mode}
+       -> AirSimCameraPointingSink for simulation
+       -> future MavlinkGimbalPointingSink for real hardware
+       -> NullCameraPointingSink with one-time warning when unsupported
 ```
 
-Required robust-control principle:
+Required 2.28C implementation phases:
 
 ```text
-Like circle, approach should tolerate imperfect initial position, velocity, attitude, estimator noise, and overshoot.
-It should not require hitting a single waypoint.
-It should continuously recompute distance/standoff error and recover if the drone overshoots too close or drifts too far.
+1. Define CameraPointingIntent and a small sink boundary.
+2. Compute target pitch from selected target geometry:
+     pitch_to_target = atan2(delta_z, hypot(delta_x, delta_y))
+   Verify sign convention against AirSim probe images before declaring done.
+3. Add config fields for camera pointing:
+     object_behavior_camera_pointing_sink: none | airsim | mavlink_gimbal
+     object_behavior_camera_pitch_mode: none | target | fixed | hold
+     object_behavior_camera_name: front_center
+     object_behavior_camera_pitch_min_deg
+     object_behavior_camera_pitch_max_deg
+4. Add AirSim camera pointing implementation using the proven simSetCameraPose path.
+5. Add mission events / debug fields for camera_pointing:
+     pitch_mode
+     camera
+     pitch_rad / pitch_deg
+     target_elevation_rad
+     source_track_id
+6. Add Null sink with one-time warning when pitch targeting is requested but unavailable.
+7. Add MAVLink gimbal design/stub path using MAVLink Gimbal Protocol v2 / gimbal manager, without requiring real gimbal hardware for CI.
+8. Validate in AirSim with circle/follow target-stare yaw plus camera pitch enabled.
 ```
 
-Suggested 2.28 implementation phases:
-
-```text
-1. Inspect current BehaviorSpec approach fields and config/behaviors/approach_target.yaml.
-2. Define exact approach fields to support now:
-   - stop_distance_m or equivalent standoff distance
-   - altitude_offset_m
-   - max_speed_mps
-   - max_vertical_speed_mps
-   - position_tolerance_m
-   - lost_target_timeout_s if already parsed
-3. Add ApproachGeometry / approach_velocity helpers near the follow/circle helpers.
-4. Add behavior_tick_sample / behavior_debug fields for approach:
-   - approach_phase
-   - standoff_distance_m
-   - actual_distance_m
-   - distance_error_m
-   - closing_velocity_mps
-   - target_velocity_mps
-   - desired_velocity_mps
-5. Add unit tests:
-   - far target command points toward target
-   - moving target command includes target_velocity when appropriate
-   - inside standoff does not continue closing into target
-   - overshoot recovers outward or holds safely
-   - speed is clamped
-   - display_detail transitions arriving -> positioned / approached
-6. Validate synthetic/unit tests first.
-7. Add an approach existing-object config if needed.
-8. Validate live AirSim existing-object approach path.
-9. Add or extend a sequence config:
-   approach -> circle -> go_home_land
-   Keep sequence minimal; do not balloon into a general mission planner.
-```
-
-Expected display details for 2.28:
-
-```text
-Mission / arriving       while closing to standoff
-Mission / positioned     when standoff is captured / held
-Mission / circling       if sequence advances into circle
-```
-
-Suggested 2.28 success criteria:
+Expected 2.28C success criteria:
 
 ```text
 Build passes.
 Full CTest passes.
-Approach unit tests pass.
-Approach debug events expose standoff geometry.
-Live existing-object approach reaches standoff without collision-like closing behavior.
-Optional approach -> circle sequence reaches circle, completes orbit_count_elapsed, then GoHome -> Land -> Disarm -> Settled.
+AirSim camera/gimbal probe still passes overall_ok=True.
+CameraPointingIntent events are emitted when configured.
+AirSim sink changes camera pitch at runtime.
+No camera/gimbal behavior semantics are placed in overlay logic.
+Vehicle yaw and camera pitch remain separate intent/sink paths.
 ```
 
-Non-goals for 2.28:
+Non-goals for 2.28C:
 
 ```text
 No obstacle avoidance.
-No moving-actor full validation unless trivial from current ghost path.
-No native C++ MAVLink rewrite.
+No real hardware gimbal validation requirement.
+No native C++ MAVLink flight sink rewrite.
 No overlay-side behavior inference.
 No general mission planner.
-No multi-target assignment.
 ```
 
 ---
@@ -364,6 +398,58 @@ python3 -m py_compile simulation/airsim/scripts/airsim-world-overlay.py
 
 ctest --test-dir build-staging --output-on-failure -R \
   'mission_runtime|object_behavior_mission_controller|object_behavior_mission_smoke|core_stack_config_loader|behavior_spec|target_selector|world_snapshot_stream_server|circle_trajectory_validator'
+```
+
+Setup/layout validation:
+
+```bash
+bash -n setup.sh
+bash -n cleanup.sh
+bash -n simulation/airsim/run.sh
+bash -n simulation/airsim/stop.sh
+
+python3 -m py_compile \
+  simulation/airsim/scripts/*.py \
+  simulation/airsim/validation/*.py \
+  tools/px4/*.py \
+  tools/mission/*.py \
+  tools/validation/*.py \
+  tools/trajectory/*.py
+
+du -sh \
+  third_party/PX4-Autopilot \
+  third_party/colosseum_environments \
+  third_party/iceoryx_build 2>/dev/null
+
+du -sh \
+  PX4-Autopilot \
+  simulation/PX4-Autopilot \
+  simulation/airsim/PX4-Autopilot \
+  simulation/colosseum_environments \
+  simulation/airsim/colosseum_environments \
+  infrastructure/iceoryx_build 2>/dev/null
+```
+
+AirSim runtime control:
+
+```bash
+# Start AirSim / PX4 SITL:
+simulation/airsim/run.sh AirSimNH
+
+# Stop AirSim / PX4 SITL:
+simulation/airsim/stop.sh
+
+# Use cleanup.sh only for reset/rebuild cleanup, not normal runtime stop.
+```
+
+AirSim camera/gimbal probe:
+
+```bash
+python3 simulation/airsim/scripts/airsim-camera-gimbal-probe.py \
+  --host 127.0.0.1 \
+  --rpc-port 41451 \
+  --vehicle-name PX4 \
+  --output-dir out/airsim_camera_gimbal_probe
 ```
 
 AirSim existing-object follow validation:
@@ -396,12 +482,12 @@ AirSim existing-object circle validation:
   --progress
 ```
 
-Circle trajectory validator:
+Circle trajectory validator for current checked-in config (`orbit_count: 1.0`):
 
 ```bash
 python3 tools/validation/validate-circle-trajectory.py \
   --events out/object_behavior_airsim_existing_object_circle/mission_events.jsonl \
-  --min-orbits 3.0 \
+  --min-orbits 1.0 \
   --radius 10.0 \
   --avg-radius-error-max 1.0 \
   --max-radius-error-after-latch 3.0 \
@@ -482,6 +568,7 @@ Do not keep retrying increasingly complex connector paths after a connector fail
 - Do not implement circle as a yaw-only, latch-only, or fixed-waypoint visual hack.
 - Do not require exact 3 o'clock orbit insertion; circle must tolerate imperfect initial position, velocity, attitude, and overshoot.
 - Do not let approach fly directly into the target; standoff capture and overshoot recovery are required.
+- Do not use cleanup.sh as the normal way to stop AirSim/PX4 SITL. Use simulation/airsim/stop.sh for runtime shutdown; cleanup.sh is for reset/rebuild cleanup.
 - Do not add shims to preserve stale pre-refactor APIs unless there is a current user and an explicit removal plan.
 - Do not create branches or PRs unless explicitly requested.
 ```
