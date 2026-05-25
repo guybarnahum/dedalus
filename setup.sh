@@ -289,11 +289,21 @@ run_and_log "Install AirSim build-time blockers" python -m pip install numpy msg
 run_and_log "Install AirSim Python package" python -m pip install airsim --no-build-isolation
 
 # 6. Install the remaining flight stack tools and PX4 Python build deps.
-# PX4 imports the menuconfig module from kconfiglib; there is no standalone
-# PyPI package named menuconfig.
-run_and_log "Install flight Python dependencies" python -m pip install pymavlink pyserial kconfiglib
+# PX4 generators still expect the Empy 3.x API, including em.RAW_OPT and
+# em.BUFFERED_OPT. Keep this pinned so pip does not resolve Empy 4.x.
+run_and_log "Install flight Python dependencies" python -m pip install \
+  pymavlink \
+  pyserial \
+  kconfiglib \
+  empy==3.3.4 \
+  pyyaml \
+  jinja2 \
+  toml \
+  jsonschema \
+  pyros-genmsg \
+  packaging
 
-run_and_log "Verify PX4 Python build dependencies" python -c "import menuconfig, kconfiglib"
+run_and_log "Verify PX4 Python build dependencies" python -c "import em, yaml, jinja2, toml, jsonschema, genmsg, packaging, menuconfig, kconfiglib; assert hasattr(em, 'RAW_OPT') and hasattr(em, 'BUFFERED_OPT')"
 
 echo "✅ Python environment ready at $VENV_PATH"
 # --------------------------------------------------------------
