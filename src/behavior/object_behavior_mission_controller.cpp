@@ -663,6 +663,15 @@ ObjectBehaviorMissionConfig load_object_behavior_mission_config(const MissionOpt
             config.camera_pitch_offset_rad = deg_to_rad(std::stod(offset_deg_str));
         }
     }
+    config.camera_pointing_go_home_mode = options.get_or(
+        "object_behavior_camera_pointing_go_home_mode",
+        "home");
+    config.camera_pointing_land_mode = options.get_or(
+        "object_behavior_camera_pointing_land_mode",
+        "landing_area");
+    config.camera_pointing_complete_mode = options.get_or(
+        "object_behavior_camera_pointing_complete_mode",
+        "neutral");
     if (config.camera_pitch_min_rad > config.camera_pitch_max_rad) {
         throw std::invalid_argument(
             "object_behavior_camera_pitch_min_deg must be <= object_behavior_camera_pitch_max_deg");
@@ -1010,20 +1019,43 @@ std::optional<CameraPointingCommand> ObjectBehaviorMissionController::camera_poi
         return std::nullopt;
     }
 
+    auto command = camera_pointing_command_to_point(
+        timestamp,
+        ego,
+        selection.position_local,
+        "target");
+    if (!command) {
+        return std::nullopt;
+    }
+    command->source_track_id = selection.source_track_id.value;
+    command->agent_id = selection.agent_id.value;
+    command->identity_id = selection.identity_id.value;
+    return command;
+}
+
+std::optional<CameraPointingCommand> ObjectBehaviorMissionController::camera_pointing_command_to_point(
+    TimePoint timestamp,
+    const EgoState& ego,
+    const Vec3& target_position_local,
+    const std::string& mode) const {
+    if (config_.vertical_stare_mode == ObjectBehaviorVerticalStareMode::None || mode == "none" || mode == "disabled") {
+        return std::nullopt;
+    }
+    if (mode == "neutral" || mode == "reset") {
+        return neutral_camera_pointing_command(timestamp, mode);
+    }
+
     CameraPointingCommand command;
     command.timestamp = timestamp;
     command.cameras = config_.camera_pointing_cameras;
     if (command.cameras.empty()) {
         command.cameras.push_back("front_center");
     }
-    command.mode = "target";
-    command.source_track_id = selection.source_track_id.value;
-    command.agent_id = selection.agent_id.value;
-    command.identity_id = selection.identity_id.value;
+    command.mode = mode;
 
-    const double dx = selection.position_local.x - ego.local_T_body.position.x;
-    const double dy = selection.position_local.y - ego.local_T_body.position.y;
-    const double dz = selection.position_local.z - ego.local_T_body.position.z;
+    const double dx = target_position_local.x - ego.local_T_body.position.x;
+    const double dy = target_position_local.y - ego.local_T_body.position.y;
+    const double dz = target_position_local.z - ego.local_T_body.position.z;
     const double range_xy = std::max(std::hypot(dx, dy), 1e-6);
     const double elevation_rad = std::atan2(dz, range_xy);
     const double unclamped_pitch_rad = config_.camera_pitch_sign * elevation_rad + config_.camera_pitch_offset_rad;
@@ -1040,6 +1072,34 @@ std::optional<CameraPointingCommand> ObjectBehaviorMissionController::camera_poi
     command.pitch_offset_rad = config_.camera_pitch_offset_rad;
     command.pitch_valid = true;
     command.pitch_clamped = std::abs(pitch_rad - unclamped_pitch_rad) > 1e-9;
+    return command;
+}
+
+std::optional<CameraPointingCommand> ObjectBehaviorMissionController::neutral_camera_pointing_command(
+    TimePoint timestamp,
+    const std::string& mode) const {
+    if (config_.vertical_stare_mode == ObjectBehaviorVerticalStareMode::None || mode == "none" || mode == "disabled") {
+        return std::nullopt;
+    }
+
+    CameraPointingCommand command;
+    command.timestamp = timestamp;
+    command.cameras = config_.camera_pointing_cameras;
+    if (command.cameras.empty()) {
+        command.cameras.push_back("front_center");
+    }
+    command.mode = mode;
+    command.pitch_rad = 0.0;
+    command.pitch_unclamped_rad = 0.0;
+    command.pitch_min_rad = config_.camera_pitch_min_rad;
+    command.pitch_max_rad = config_.camera_pitch_max_rad;
+    command.target_elevation_rad = 0.0;
+    command.range_xy_m = 0.0;
+    command.delta_z_m = 0.0;
+    command.pitch_sign = config_.camera_pitch_sign;
+    command.pitch_offset_rad = config_.camera_pitch_offset_rad;
+    command.pitch_valid = true;
+    command.pitch_clamped = false;
     return command;
 }
 
@@ -1067,6 +1127,13 @@ std::string ObjectBehaviorMissionController::camera_pointing_intent_event(
         ",\"source_track_id\":" + q(command.source_track_id) +
         ",\"identity_id\":" + q(command.identity_id) +
         behavior_display_fields("arriving");
+}
+
+void ObjectBehaviorMissionController::emit_camera_pointing(
+    MissionTickOutput& output,
+    const CameraPointingCommand& command) const {
+    output.camera_pointing = command;
+    output.events.push_back(camera_pointing_intent_event(command));
 }
 
 Vec3 ObjectBehaviorMissionController::go_home_velocity(const EgoState& ego) const {
@@ -1241,8 +1308,7 @@ MissionTickOutput ObjectBehaviorMissionController::tick(const MissionTickInput& 
                 }
 
                 if (auto camera_pointing = camera_pointing_command(input.now, ego, control_selection)) {
-                    output.camera_pointing = *camera_pointing;
-                    output.events.push_back(camera_pointing_intent_event(*camera_pointing));
+                    emit_camera_pointing(output, *camera_pointing);
                 }
 
                 FollowGeometry geometry;
@@ -1330,6 +1396,20 @@ MissionTickOutput ObjectBehaviorMissionController::tick(const MissionTickInput& 
             break;
         }
         case MissionLifecycleState::GoHome: {
+            if (home_initialized_) {
+                if (auto camera_pointing = camera_pointing_command_to_point(
+                        input.now,
+                        ego,
+                        home_pose_.position,
+                        config_.camera_pointing_go_home_mode)) {
+                    emit_camera_pointing(output, *camera_pointing);
+                }
+            } else if (auto camera_pointing = neutral_camera_pointing_command(
+                           input.now,
+                           config_.camera_pointing_complete_mode)) {
+                emit_camera_pointing(output, *camera_pointing);
+            }
+
             const Vec3 raw_velocity = go_home_velocity(ego);
             const Vec3 velocity = apply_altitude_policy(
                 raw_velocity,
@@ -1348,6 +1428,16 @@ MissionTickOutput ObjectBehaviorMissionController::tick(const MissionTickInput& 
             break;
         }
         case MissionLifecycleState::Land:
+            if (home_initialized_) {
+                if (auto camera_pointing = camera_pointing_command_to_point(
+                        input.now,
+                        ego,
+                        home_pose_.position,
+                        config_.camera_pointing_land_mode)) {
+                    emit_camera_pointing(output, *camera_pointing);
+                }
+            }
+
             if (height_m <= kLandHeightM) {
                 state_ = MissionLifecycleState::Complete;
                 state_start_ = input.now;
@@ -1365,6 +1455,10 @@ MissionTickOutput ObjectBehaviorMissionController::tick(const MissionTickInput& 
             }
             break;
         case MissionLifecycleState::Complete:
+            if (auto camera_pointing = neutral_camera_pointing_command(input.now, config_.camera_pointing_complete_mode)) {
+                emit_camera_pointing(output, *camera_pointing);
+            }
+
             if (ego.armed_valid && !ego.armed) {
                 if (aborting_) {
                     state_ = MissionLifecycleState::Abort;

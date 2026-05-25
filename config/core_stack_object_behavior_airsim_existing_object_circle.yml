@@ -69,6 +69,9 @@ mission_options.object_behavior_camera_pitch_min_deg: -80
 mission_options.object_behavior_camera_pitch_max_deg: 35
 mission_options.object_behavior_camera_pitch_sign: -1
 mission_options.object_behavior_camera_pitch_offset_deg: 0
+mission_options.object_behavior_camera_pointing_go_home_mode: home
+mission_options.object_behavior_camera_pointing_land_mode: landing_area
+mission_options.object_behavior_camera_pointing_complete_mode: neutral
 
 # Emit behavior_debug into mission_events.jsonl every N ExecuteMission ticks.
 mission_options.object_behavior_debug_every_n_ticks: 10

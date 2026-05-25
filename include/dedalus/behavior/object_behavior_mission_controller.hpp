@@ -45,6 +45,9 @@ struct ObjectBehaviorMissionConfig {
     double camera_pitch_max_rad{0.6108652381980153};
     double camera_pitch_sign{-1.0};
     double camera_pitch_offset_rad{0.0};
+    std::string camera_pointing_go_home_mode{"home"};
+    std::string camera_pointing_land_mode{"landing_area"};
+    std::string camera_pointing_complete_mode{"neutral"};
     int debug_every_n_ticks{0};
     int debug_level{1};
     ObjectBehaviorAltitudePolicy altitude_policy{ObjectBehaviorAltitudePolicy::TargetRelative};
@@ -92,7 +95,16 @@ private:
         TimePoint timestamp,
         const EgoState& ego,
         const TargetSelection& selection) const;
+    [[nodiscard]] std::optional<CameraPointingCommand> camera_pointing_command_to_point(
+        TimePoint timestamp,
+        const EgoState& ego,
+        const Vec3& target_position_local,
+        const std::string& mode) const;
+    [[nodiscard]] std::optional<CameraPointingCommand> neutral_camera_pointing_command(
+        TimePoint timestamp,
+        const std::string& mode) const;
     [[nodiscard]] std::string camera_pointing_intent_event(const CameraPointingCommand& command) const;
+    void emit_camera_pointing(MissionTickOutput& output, const CameraPointingCommand& command) const;
     [[nodiscard]] Vec3 go_home_velocity(const EgoState& ego) const;
     [[nodiscard]] bool completion_elapsed(TimePoint now) const;
     void begin_abort_recovery(TimePoint now, double height_m, const std::string& reason);

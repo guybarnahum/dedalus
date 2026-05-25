@@ -493,6 +493,85 @@ void vertical_stare_gimbal_emits_camera_pointing_intent() {
     require(found_second_intent, "second tick should also emit camera_pointing_intent");
 }
 
+void camera_pointing_follows_lifecycle_recovery_and_resets_neutral() {
+    auto config = make_circle_config();
+    config.vertical_stare_mode = dedalus::ObjectBehaviorVerticalStareMode::Gimbal;
+    config.camera_pointing_cameras = {"front_center"};
+    config.camera_pitch_min_rad = -80.0 * 3.14159265358979323846 / 180.0;
+    config.camera_pitch_max_rad =  80.0 * 3.14159265358979323846 / 180.0;
+    config.camera_pointing_go_home_mode = "home";
+    config.camera_pointing_land_mode = "landing_area";
+    config.camera_pointing_complete_mode = "neutral";
+    dedalus::ObjectBehaviorMissionController controller{config};
+
+    dedalus::MissionTickInput input;
+    // Tick 1: unarmed at origin — home_pose_ set to {0,0,0}, enters Prepare
+    input.now = dedalus::TimePoint{0};
+    input.snapshot = make_circle_snapshot(0, dedalus::Vec3{0.0, 0.0, 0.0}, dedalus::Vec3{10.0, 0.0, 0.0});
+    input.snapshot.ego.armed = false;
+    input.snapshot.ego.height_m = 0.0;
+    (void)controller.tick(input);
+
+    // Tick 2: armed → Takeoff
+    input.now = dedalus::TimePoint{100000000};
+    input.snapshot.ego.armed = true;
+    (void)controller.tick(input);
+
+    // Tick 3: at safe height → ExecuteMission
+    input.now = dedalus::TimePoint{200000000};
+    input.snapshot = make_circle_snapshot(200000000, dedalus::Vec3{10.0, 0.0, -2.5}, dedalus::Vec3{10.0, 0.0, 0.0});
+    (void)controller.tick(input);
+
+    // Tick 4: ExecuteMission with finish_requested=true → camera mode=target, transitions to GoHome
+    input.now = dedalus::TimePoint{300000000};
+    input.snapshot.timestamp = input.now;
+    input.finish_requested = true;
+    const auto execute_output = controller.tick(input);
+    input.finish_requested = false;
+    require(execute_output.camera_pointing.has_value(), "ExecuteMission should emit camera_pointing");
+    require(execute_output.camera_pointing->mode == "target",
+        "ExecuteMission camera_pointing mode should be target");
+
+    // Tick 5: GoHome — ego at {10,0,-2.5}, home at {0,0,0}, far away → stays GoHome
+    input.now = dedalus::TimePoint{400000000};
+    input.snapshot.timestamp = input.now;
+    const auto go_home_output = controller.tick(input);
+    require(go_home_output.camera_pointing.has_value(), "GoHome should emit camera_pointing");
+    require(go_home_output.camera_pointing->mode == "home",
+        "GoHome camera_pointing mode should be home");
+
+    // Tick 6: GoHome — ego arrives at home XY {0,0,-2.5} → transitions to Land
+    input.now = dedalus::TimePoint{500000000};
+    input.snapshot = make_circle_snapshot(500000000, dedalus::Vec3{0.0, 0.0, -2.5}, dedalus::Vec3{10.0, 0.0, 0.0});
+    const auto go_home_arrived = controller.tick(input);
+    require(go_home_arrived.camera_pointing.has_value(), "GoHome arrival tick should emit camera_pointing");
+    require(go_home_arrived.camera_pointing->mode == "home",
+        "GoHome arrival camera_pointing mode should be home");
+
+    // Tick 7: Land — height above kLandHeightM → camera mode=landing_area, stays in Land
+    input.now = dedalus::TimePoint{600000000};
+    input.snapshot.timestamp = input.now;
+    const auto land_output = controller.tick(input);
+    require(land_output.camera_pointing.has_value(), "Land should emit camera_pointing");
+    require(land_output.camera_pointing->mode == "landing_area",
+        "Land camera_pointing mode should be landing_area");
+
+    // Tick 8: Land — height=0.1 ≤ kLandHeightM → camera mode=landing_area, transitions to Complete
+    input.now = dedalus::TimePoint{700000000};
+    input.snapshot = make_circle_snapshot(700000000, dedalus::Vec3{0.0, 0.0, -0.1}, dedalus::Vec3{10.0, 0.0, 0.0});
+    (void)controller.tick(input);
+
+    // Tick 9: Complete → camera mode=neutral, pitch_rad=0
+    input.now = dedalus::TimePoint{800000000};
+    input.snapshot.timestamp = input.now;
+    const auto complete_output = controller.tick(input);
+    require(complete_output.camera_pointing.has_value(), "Complete should emit camera_pointing");
+    require(complete_output.camera_pointing->mode == "neutral",
+        "Complete camera_pointing mode should be neutral");
+    require_near(complete_output.camera_pointing->pitch_rad, 0.0, 1e-9,
+        "Complete camera_pointing pitch_rad should be 0");
+}
+
 }  // namespace
 
 int main() {
@@ -508,6 +587,7 @@ int main() {
         circle_display_detail_transitions_arriving_to_circling();
         circle_target_yaw_points_at_selected_target_not_velocity();
         vertical_stare_gimbal_emits_camera_pointing_intent();
+        camera_pointing_follows_lifecycle_recovery_and_resets_neutral();
     } catch (const std::exception& exc) {
         std::cerr << "test_object_behavior_mission_controller failed: " << exc.what() << '\n';
         return 1;

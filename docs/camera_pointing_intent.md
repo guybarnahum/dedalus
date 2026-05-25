@@ -26,6 +26,18 @@ dedalus_mission_loop --world-snapshot-stream-port 47770
 
 ## Intent schema
 
+Default lifecycle policy:
+
+```text
+ExecuteMission -> mode=target, point at selected target
+GoHome         -> mode=home, point at home / recovery location
+Land           -> mode=landing_area, continue looking at the landing location
+Complete       -> mode=neutral, reset pitch to 0 while disarming / after landing
+```
+
+This keeps the camera useful during recovery and landing, then avoids leaving
+the gimbal tilted down after mission completion.
+
 Current event fields:
 
 ```json
@@ -178,6 +190,9 @@ mission_options.object_behavior_camera_pitch_min_deg: -80
 mission_options.object_behavior_camera_pitch_max_deg: 35
 mission_options.object_behavior_camera_pitch_sign: -1
 mission_options.object_behavior_camera_pitch_offset_deg: 0
+mission_options.object_behavior_camera_pointing_go_home_mode: home
+mission_options.object_behavior_camera_pointing_land_mode: landing_area
+mission_options.object_behavior_camera_pointing_complete_mode: neutral
 ```
 
 Future config fields should make the sink explicit:
