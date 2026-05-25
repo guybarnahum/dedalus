@@ -499,6 +499,8 @@ void camera_pointing_follows_lifecycle_recovery_and_resets_neutral() {
     config.camera_pointing_cameras = {"front_center"};
     config.camera_pitch_min_rad = -80.0 * 3.14159265358979323846 / 180.0;
     config.camera_pitch_max_rad =  80.0 * 3.14159265358979323846 / 180.0;
+    config.camera_pointing_prepare_mode = "neutral";
+    config.camera_pointing_takeoff_mode = "neutral";
     config.camera_pointing_go_home_mode = "home";
     config.camera_pointing_land_mode = "landing_area";
     config.camera_pointing_complete_mode = "neutral";
@@ -510,17 +512,26 @@ void camera_pointing_follows_lifecycle_recovery_and_resets_neutral() {
     input.snapshot = make_circle_snapshot(0, dedalus::Vec3{0.0, 0.0, 0.0}, dedalus::Vec3{10.0, 0.0, 0.0});
     input.snapshot.ego.armed = false;
     input.snapshot.ego.height_m = 0.0;
-    (void)controller.tick(input);
+    auto prepare = controller.tick(input);
+    require(prepare.camera_pointing.has_value(), "Prepare should emit neutral camera reset");
+    require(prepare.camera_pointing->mode == "neutral", "Prepare camera pointing should be neutral");
+    require(std::abs(prepare.camera_pointing->pitch_rad) < 1e-9, "Prepare neutral reset should use pitch 0");
 
     // Tick 2: armed → Takeoff
     input.now = dedalus::TimePoint{100000000};
     input.snapshot.ego.armed = true;
-    (void)controller.tick(input);
+    auto takeoff_entry = controller.tick(input);
+    require(takeoff_entry.camera_pointing.has_value(), "Prepare-to-Takeoff tick should emit neutral camera reset");
+    require(takeoff_entry.camera_pointing->mode == "neutral", "Prepare-to-Takeoff camera pointing should be neutral");
+    require(std::abs(takeoff_entry.camera_pointing->pitch_rad) < 1e-9, "Prepare-to-Takeoff neutral reset should use pitch 0");
 
     // Tick 3: at safe height → ExecuteMission
     input.now = dedalus::TimePoint{200000000};
     input.snapshot = make_circle_snapshot(200000000, dedalus::Vec3{10.0, 0.0, -2.5}, dedalus::Vec3{10.0, 0.0, 0.0});
-    (void)controller.tick(input);
+    auto execute_entry = controller.tick(input);
+    require(execute_entry.camera_pointing.has_value(), "Takeoff-to-ExecuteMission tick should emit neutral camera reset");
+    require(execute_entry.camera_pointing->mode == "neutral", "Takeoff camera pointing should be neutral");
+    require(std::abs(execute_entry.camera_pointing->pitch_rad) < 1e-9, "Takeoff neutral reset should use pitch 0");
 
     // Tick 4: ExecuteMission with finish_requested=true → camera mode=target, transitions to GoHome
     input.now = dedalus::TimePoint{300000000};

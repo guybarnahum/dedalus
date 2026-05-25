@@ -663,6 +663,12 @@ ObjectBehaviorMissionConfig load_object_behavior_mission_config(const MissionOpt
             config.camera_pitch_offset_rad = deg_to_rad(std::stod(offset_deg_str));
         }
     }
+    config.camera_pointing_prepare_mode = options.get_or(
+        "object_behavior_camera_pointing_prepare_mode",
+        "neutral");
+    config.camera_pointing_takeoff_mode = options.get_or(
+        "object_behavior_camera_pointing_takeoff_mode",
+        "neutral");
     config.camera_pointing_go_home_mode = options.get_or(
         "object_behavior_camera_pointing_go_home_mode",
         "home");
@@ -1231,6 +1237,11 @@ MissionTickOutput ObjectBehaviorMissionController::tick(const MissionTickInput& 
 
     switch (state_) {
         case MissionLifecycleState::Prepare:
+            if (auto camera_pointing = neutral_camera_pointing_command(
+                    input.now,
+                    config_.camera_pointing_prepare_mode)) {
+                emit_camera_pointing(output, *camera_pointing);
+            }
             if (input.finish_requested && ego.armed_valid && !ego.armed) {
                 state_ = MissionLifecycleState::Complete;
                 state_start_ = input.now;
@@ -1263,6 +1274,11 @@ MissionTickOutput ObjectBehaviorMissionController::tick(const MissionTickInput& 
             }
             break;
         case MissionLifecycleState::Takeoff:
+            if (auto camera_pointing = neutral_camera_pointing_command(
+                    input.now,
+                    config_.camera_pointing_takeoff_mode)) {
+                emit_camera_pointing(output, *camera_pointing);
+            }
             if (input.finish_requested) {
                 state_ = height_m > kLandHeightM ? MissionLifecycleState::Land : MissionLifecycleState::Complete;
                 state_start_ = input.now;

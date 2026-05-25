@@ -45,6 +45,8 @@ struct ObjectBehaviorMissionConfig {
     double camera_pitch_max_rad{0.6108652381980153};
     double camera_pitch_sign{-1.0};
     double camera_pitch_offset_rad{0.0};
+    std::string camera_pointing_prepare_mode{"neutral"};
+    std::string camera_pointing_takeoff_mode{"neutral"};
     std::string camera_pointing_go_home_mode{"home"};
     std::string camera_pointing_land_mode{"landing_area"};
     std::string camera_pointing_complete_mode{"neutral"};
