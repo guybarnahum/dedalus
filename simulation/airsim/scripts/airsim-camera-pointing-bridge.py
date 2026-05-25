@@ -333,24 +333,68 @@ def cameras_from_intent(intent: dict[str, Any], fallback: list[str]) -> list[str
     return fallback
 
 
-def pointing_from_intent(intent: dict[str, Any], camera: str) -> dict[str, Any] | None:
+def dedupe_cameras(cameras: list[str]) -> list[str]:
+    result: list[str] = []
+    seen: set[str] = set()
+    for camera in cameras:
+        camera = str(camera).strip()
+        if not camera or camera in seen:
+            continue
+        seen.add(camera)
+        result.append(camera)
+    return result
+
+
+def pointing_from_intent(intent: dict[str, Any], cameras: list[str]) -> dict[str, Any] | None:
     pitch_deg = float_or_none(intent.get("pitch_deg"))
     if pitch_deg is None:
         return None
     pitch_rad_val = float_or_none(intent.get("pitch_rad"))
     if pitch_rad_val is None:
         pitch_rad_val = math.radians(pitch_deg)
+
+    target_elevation_deg = float_or_none(intent.get("target_elevation_deg"))
+    target_elevation_rad = float_or_none(intent.get("target_elevation_rad"))
+    if target_elevation_deg is None and target_elevation_rad is not None:
+        target_elevation_deg = math.degrees(target_elevation_rad)
+    if target_elevation_rad is None and target_elevation_deg is not None:
+        target_elevation_rad = math.radians(target_elevation_deg)
+
     return {
-        "camera": camera,
+        "camera": ",".join(cameras),
+        "cameras": cameras,
         "pitch_rad": pitch_rad_val,
         "pitch_deg": pitch_deg,
         "pitch_valid": bool(intent.get("pitch_valid", True)),
+        "pitch_clamped": bool(intent.get("pitch_clamped", False)),
+        "pitch_unclamped_rad": float_or_none(intent.get("pitch_unclamped_rad")),
+        "pitch_unclamped_deg": float_or_none(intent.get("pitch_unclamped_deg")),
+        "target_elevation_rad": target_elevation_rad,
+        "target_elevation_deg": target_elevation_deg,
+        "range_xy_m": float_or_none(intent.get("range_xy_m")),
+        "delta_z_m": float_or_none(intent.get("delta_z_m")),
+        "source_track_id": intent.get("source_track_id"),
+        "agent_id": intent.get("agent_id"),
+        "identity_id": intent.get("identity_id"),
+        "camera_pointing_mode": intent.get("camera_pointing_mode", "target"),
+        "vertical_stare_mode": intent.get("vertical_stare_mode"),
         "source": "camera_pointing_intent",
     }
 
 
 def safe_camera_name(camera: str) -> str:
-    return "".join(c if c.isalnum() or c in ("-", "_") else "_" for c in camera)
+    safe = "".join(c if c.isalnum() or c in ("-", "_") else "_" for c in camera)
+    return safe or "camera"
+
+
+def fmt_float(value: Any) -> str:
+    try:
+        f = float(value)
+    except Exception:
+        return "nan"
+    if math.isnan(f):
+        return "nan"
+    return f"{f:.2f}"
 
 
 def main() -> int:
@@ -412,18 +456,14 @@ def main() -> int:
             if now - last_loop_s >= period_s:
                 last_loop_s = now
 
-                # Resolve per-camera pointings from intent or legacy snapshot path
+                # Resolve one pitch command and one camera fan-out set per tick.
                 if intent is not None:
-                    cameras = cameras_from_intent(intent, fallback_cameras)
-                    per_camera_pointings = []
-                    for cam in cameras:
-                        p = pointing_from_intent(intent, cam)
-                        if p is not None:
-                            per_camera_pointings.append(p)
+                    cameras = dedupe_cameras(cameras_from_intent(intent, fallback_cameras))
+                    pointing = pointing_from_intent(intent, cameras)
                     use_legacy = False
                 elif args.legacy_compute_from_world_snapshot and snapshot is not None and selected is not None:
-                    cameras = fallback_cameras
-                    base_pointing = compute_pitch(
+                    cameras = dedupe_cameras(fallback_cameras)
+                    pointing = compute_pitch(
                         snapshot=snapshot,
                         selected=selected,
                         pitch_sign=args.airsim_pitch_sign,
@@ -431,18 +471,17 @@ def main() -> int:
                         pitch_min_rad=pitch_min_rad,
                         pitch_max_rad=pitch_max_rad,
                     )
-                    per_camera_pointings = []
-                    if base_pointing is not None:
-                        for cam in cameras:
-                            p = dict(base_pointing)
-                            p["camera"] = cam
-                            per_camera_pointings.append(p)
+                    if pointing is not None:
+                        pointing["camera"] = ",".join(cameras)
+                        pointing["cameras"] = cameras
+                        pointing["source"] = "legacy_world_snapshot_compute"
                     use_legacy = True
                 else:
-                    per_camera_pointings = []
+                    cameras = []
+                    pointing = None
                     use_legacy = False
 
-                if not per_camera_pointings:
+                if pointing is None:
                     latest = {
                         "ok": False,
                         "reason": "waiting_for_camera_pointing_intent" if not use_legacy else "selected_target_not_found_in_world_snapshot",
@@ -452,55 +491,76 @@ def main() -> int:
                         "commands_sent": commands_sent,
                     }
                 else:
-                    for pointing in per_camera_pointings:
-                        cam = pointing["camera"]
-                        pointing["vehicle_name"] = args.vehicle_name
-                        pointing["dry_run"] = args.dry_run
-                        pointing["seq"] = stream.latest_seq
-                        pitch_changed = last_pitch_rad is None or abs(pointing["pitch_rad"] - last_pitch_rad) >= deadband_rad
-                        resend_due = args.resend_s > 0.0 and now - last_send_s >= args.resend_s
-                        send = pitch_changed or resend_due
-                        verify: dict[str, Any] = {}
-                        image_path: str | None = None
-                        if send:
-                            if client is not None:
-                                pose = airsim.Pose(
-                                    airsim.Vector3r(0.0, 0.0, 0.0),
-                                    airsim.to_quaternion(float(pointing["pitch_rad"]), 0.0, 0.0),
-                                )
+                    cameras = dedupe_cameras([str(c) for c in pointing.get("cameras", cameras)])
+                    pointing["camera"] = ",".join(cameras)
+                    pointing["cameras"] = cameras
+                    pointing["vehicle_name"] = args.vehicle_name
+                    pointing["dry_run"] = args.dry_run
+                    pointing["seq"] = stream.latest_seq
+
+                    pitch_changed = last_pitch_rad is None or abs(pointing["pitch_rad"] - last_pitch_rad) >= deadband_rad
+                    resend_due = args.resend_s > 0.0 and now - last_send_s >= args.resend_s
+                    send = pitch_changed or resend_due
+                    send_reason = "pitch_changed" if pitch_changed else ("resend" if resend_due else "deadband")
+
+                    verify: dict[str, Any] = {}
+                    image_paths: list[str] = []
+                    image_path: str | None = None
+
+                    if send:
+                        if client is not None:
+                            pose = airsim.Pose(
+                                airsim.Vector3r(0.0, 0.0, 0.0),
+                                airsim.to_quaternion(float(pointing["pitch_rad"]), 0.0, 0.0),
+                            )
+                            per_camera_verify: dict[str, Any] = {}
+                            for cam in cameras:
                                 client.simSetCameraPose(cam, pose, vehicle_name=args.vehicle_name)
                                 if args.verify_pose:
                                     info = client.simGetCameraInfo(cam, vehicle_name=args.vehicle_name)
                                     accepted_pitch_rad = pose_pitch_rad(info)
-                                    verify = {
+                                    per_camera_verify[cam] = {
                                         "camera_info_available": True,
                                         "accepted_orientation_quat_xyzw": quat_to_list(info.pose.orientation),
                                         "accepted_pitch_rad": accepted_pitch_rad,
                                         "accepted_pitch_deg": math.degrees(accepted_pitch_rad) if accepted_pitch_rad is not None else None,
                                     }
-                                    last_verify = verify
-                                if args.capture_dir is not None and now - last_capture_s >= max(0.0, args.capture_every_s):
+
+                            if args.verify_pose:
+                                verify = {"per_camera_verify": per_camera_verify}
+                                if cameras and cameras[0] in per_camera_verify:
+                                    primary = per_camera_verify[cameras[0]]
+                                    verify.update(primary)
+                                last_verify = verify
+
+                            if args.capture_dir is not None and now - last_capture_s >= max(0.0, args.capture_every_s):
+                                for cam in cameras:
                                     image = client.simGetImage(cam, image_type, vehicle_name=args.vehicle_name)
                                     cam_safe = safe_camera_name(cam)
                                     image_file = args.capture_dir / f"camera_pointing_{commands_sent:05d}_{cam_safe}_{pointing['pitch_deg']:+07.2f}.png"
                                     if write_image(image_file, image):
-                                        image_path = str(image_file)
-                                        last_image_path = image_path
-                                        last_capture_s = now
-                            last_pitch_rad = float(pointing["pitch_rad"])
-                            last_send_s = now
-                            commands_sent += 1
-                        latest = {
-                            "ok": True,
-                            "command_sent": send,
-                            "send_reason": "pitch_changed" if pitch_changed else ("resend" if resend_due else "deadband"),
-                            "commands_sent": commands_sent,
-                            "image_path": image_path,
-                            "last_image_path": last_image_path,
-                            **pointing,
-                            **last_verify,
-                            **verify,
-                        }
+                                        image_paths.append(str(image_file))
+                                if image_paths:
+                                    image_path = image_paths[-1]
+                                    last_image_path = image_path
+                                    last_capture_s = now
+
+                        last_pitch_rad = float(pointing["pitch_rad"])
+                        last_send_s = now
+                        commands_sent += 1
+
+                    latest = {
+                        "ok": True,
+                        "command_sent": send,
+                        "send_reason": send_reason,
+                        "commands_sent": commands_sent,
+                        "image_paths": image_paths,
+                        "image_path": image_path,
+                        "last_image_path": last_image_path,
+                        **pointing,
+                        **last_verify,
+                        **verify,
+                    }
 
             if args.debug and now - last_debug_s >= args.debug_every_s:
                 last_debug_s = now
@@ -509,10 +569,10 @@ def main() -> int:
                     accepted_text = "" if accepted is None else f" accepted={accepted:.2f}deg"
                     print(
                         "airsim-camera-pointing-bridge: "
-                        f"cameras={latest.get('camera', '?')!r} "
+                        f"cameras={latest.get('cameras', latest.get('camera', '?'))!r} "
                         f"pitch={latest['pitch_deg']:.2f}deg "
-                        f"elev={latest.get('target_elevation_deg', float('nan')):.2f}deg "
-                        f"range_xy={latest.get('range_xy_m', float('nan')):.2f}m "
+                        f"elev={fmt_float(latest.get('target_elevation_deg'))}deg "
+                        f"range_xy={fmt_float(latest.get('range_xy_m'))}m "
                         f"sent={latest['command_sent']} "
                         f"reason={latest['send_reason']} "
                         f"count={latest['commands_sent']}"
@@ -523,7 +583,9 @@ def main() -> int:
                     print(
                         "airsim-camera-pointing-bridge: "
                         f"{latest.get('reason', 'waiting')} "
-                        f"snapshot={latest.get('has_snapshot')} target={latest.get('has_target_selected')}",
+                        f"intent={latest.get('has_intent')} "
+                        f"snapshot={latest.get('has_snapshot')} "
+                        f"target={latest.get('has_target_selected')}",
                         file=sys.stderr,
                     )
             write_debug(args.debug_json, latest)
