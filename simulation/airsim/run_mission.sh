@@ -52,6 +52,9 @@ VALIDATION_RADIUS="10.0"
 VALIDATION_TIMEOUT_S="0"
 VALIDATION_AVG_RADIUS_ERROR_MAX="1.0"
 VALIDATION_MAX_RADIUS_ERROR_AFTER_LATCH="3.0"
+VALIDATION_COMPLETE_REASON="orbit_count_elapsed"
+VALIDATION_EXPECT_SEQUENCE=0
+VALIDATION_SEQUENCE_STEPS="approach,circle"
 ATTACH=0
 EXIT_ON_COMPLETE=1
 KILL_EXISTING=1
@@ -78,6 +81,7 @@ Examples:
   ./run_mission.sh --no-validation
   ./run_mission.sh --camera 0 --camera front_center
   ./run_mission.sh --config ../../config/core_stack_object_behavior_airsim_existing_object_circle.yml
+  ./run_mission.sh --config ../../config/core_stack_object_behavior_airsim_existing_object_sequence.yml --output-dir ../../out/object_behavior_airsim_existing_object_sequence --expect-sequence --validation-complete-reason sequence_complete
   ./run_mission.sh --safe-height 40 --behavior-duration-s 360 --max-frames 5400
 
 Options:
@@ -103,6 +107,10 @@ Options:
   --validation-min-orbits N   Circle validator --min-orbits. Default: 1.0
   --validation-radius M       Circle validator --radius. Default: 10.0
   --validation-timeout-s S    Wait timeout for runtime_stop; 0 means wait forever. Default: 0
+  --validation-complete-reason REASON
+                                Behavior complete reason for circle validator. Default: orbit_count_elapsed
+  --expect-sequence            Require behavior sequence step events in artifact validation.
+  --expect-sequence-steps CSV  Sequence step order. Default: approach,circle
   --no-progress               Do not pass --progress to mission-loop
   --attach                    Attach to tmux after starting
   --keep-tools-running        Do not stop camera bridge / overlay on mission runtime_stop
@@ -223,6 +231,18 @@ while [[ $# -gt 0 ]]; do
             ;;
         --validation-timeout-s)
             VALIDATION_TIMEOUT_S="$2"
+            shift 2
+            ;;
+        --validation-complete-reason)
+            VALIDATION_COMPLETE_REASON="$2"
+            shift 2
+            ;;
+        --expect-sequence)
+            VALIDATION_EXPECT_SEQUENCE=1
+            shift
+            ;;
+        --expect-sequence-steps)
+            VALIDATION_SEQUENCE_STEPS="$2"
             shift 2
             ;;
         --no-progress)
@@ -378,6 +398,10 @@ python3 tools/mission/mission-events-summary.py "\$EVENTS" --expect-complete
 VALIDATE_MISSION_CMD=(python3 tools/mission/validate-mission-artifacts.py $(printf '%q' "$OUTPUT_DIR") --expect-complete --expect-behavior --safe-height-m $(printf '%q' "$SAFE_HEIGHT") --landed-height-m 1.0)
 EOF
 )
+if [[ "$VALIDATION_EXPECT_SEQUENCE" -eq 1 ]]; then
+    VALIDATION_SHELL+=$'\n'
+    VALIDATION_SHELL+="VALIDATE_MISSION_CMD+=(--expect-sequence --expect-sequence-steps $(printf '%q' "$VALIDATION_SEQUENCE_STEPS"))"
+fi
 if [[ "$WITH_CAMERA" -eq 1 ]]; then
     VALIDATION_SHELL+=$'\n'
     VALIDATION_SHELL+="VALIDATE_MISSION_CMD+=(--expect-camera-pointing --expect-camera-modes neutral,target,home,landing_area --camera-frames-dir $(printf '%q' "$CAMERA_FRAMES_DIR") --expect-camera-proof-frames)"
@@ -391,7 +415,7 @@ python3 tools/validation/validate-circle-trajectory.py \
   --radius $(printf '%q' "$VALIDATION_RADIUS") \
   --avg-radius-error-max $(printf '%q' "$VALIDATION_AVG_RADIUS_ERROR_MAX") \
   --max-radius-error-after-latch $(printf '%q' "$VALIDATION_MAX_RADIUS_ERROR_AFTER_LATCH") \
-  --expect-complete-reason orbit_count_elapsed \
+  --expect-complete-reason $(printf '%q' "$VALIDATION_COMPLETE_REASON") \
   --require-terminal-settled \
   --require-lifecycle
 echo "validation: PASS"
@@ -455,6 +479,10 @@ if [[ "$WITH_VALIDATION" -eq 1 ]]; then
     echo "  log:        $VALIDATION_LOG"
     echo "  script:     $VALIDATION_SCRIPT"
     echo "  validators: mission-events-summary, validate-mission-artifacts, validate-circle-trajectory"
+    echo "  complete reason: $VALIDATION_COMPLETE_REASON"
+    if [[ "$VALIDATION_EXPECT_SEQUENCE" -eq 1 ]]; then
+        echo "  sequence steps: $VALIDATION_SEQUENCE_STEPS"
+    fi
     echo ""
 fi
 
