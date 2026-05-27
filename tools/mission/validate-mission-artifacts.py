@@ -29,11 +29,17 @@ OBJECT_BEHAVIOR_EVENTS = {
     "behavior_failed",
     "fallback_start",
     "fallback_complete",
+    "behavior_sequence_step_start",
+    "behavior_sequence_step_complete",
 }
 CAMERA_POINTING_EVENTS = {
     "camera_pointing_intent",
     "camera_pointing_dispatch",
     "camera_pointing_result",
+}
+SEQUENCE_EVENTS = {
+    "behavior_sequence_step_start",
+    "behavior_sequence_step_complete",
 }
 
 
@@ -46,6 +52,9 @@ class ValidationResult:
     failures: list[str] = field(default_factory=list)
     warnings: list[str] = field(default_factory=list)
     behavior_events: dict[str, int] = field(default_factory=dict)
+    sequence_events: dict[str, int] = field(default_factory=dict)
+    sequence_started_steps: list[str] = field(default_factory=list)
+    sequence_completed_steps: list[str] = field(default_factory=list)
     camera_pointing_events: dict[str, int] = field(default_factory=dict)
     camera_pointing_modes: dict[str, int] = field(default_factory=dict)
     camera_proof_frames: dict[str, int] = field(default_factory=dict)
@@ -152,6 +161,13 @@ def collect_timeline(events: list[dict[str, Any]], result: ValidationResult) -> 
             result.velocity_commands += 1
         if isinstance(event_name, str) and event_name in OBJECT_BEHAVIOR_EVENTS:
             result.behavior_events[event_name] = result.behavior_events.get(event_name, 0) + 1
+        if isinstance(event_name, str) and event_name in SEQUENCE_EVENTS:
+            result.sequence_events[event_name] = result.sequence_events.get(event_name, 0) + 1
+            step = str(event.get("step_behavior") or "unknown")
+            if event_name == "behavior_sequence_step_start":
+                result.sequence_started_steps.append(step)
+            elif event_name == "behavior_sequence_step_complete":
+                result.sequence_completed_steps.append(step)
         if isinstance(event_name, str) and event_name in CAMERA_POINTING_EVENTS:
             result.camera_pointing_events[event_name] = result.camera_pointing_events.get(event_name, 0) + 1
         if event_name == "camera_pointing_intent":
@@ -262,6 +278,27 @@ def validate_behavior_expectations(result: ValidationResult) -> None:
         result.failures.append("expected velocity commands during behavior run")
 
 
+def validate_sequence_expectations(result: ValidationResult, expected_steps: list[str]) -> None:
+    if result.sequence_events.get("behavior_sequence_step_start", 0) == 0:
+        result.failures.append("expected behavior_sequence_step_start events")
+    if result.sequence_events.get("behavior_sequence_step_complete", 0) == 0:
+        result.failures.append("expected behavior_sequence_step_complete events")
+    for expected in expected_steps:
+        if expected not in result.sequence_started_steps:
+            result.failures.append(f"expected sequence step start for {expected}")
+    if len(expected_steps) > 1:
+        for expected in expected_steps[:-1]:
+            if expected not in result.sequence_completed_steps:
+                result.failures.append(f"expected sequence step complete for {expected}")
+    if expected_steps:
+        observed_prefix = result.sequence_started_steps[: len(expected_steps)]
+        if observed_prefix != expected_steps:
+            result.failures.append(
+                "sequence step start order mismatch: "
+                f"observed={observed_prefix} expected={expected_steps}"
+            )
+
+
 def validate_camera_pointing_expectations(
     result: ValidationResult,
     *,
@@ -295,6 +332,8 @@ def validate_run_dir(
     *,
     expected_final_state: str | None,
     expect_behavior: bool,
+    expect_sequence: bool,
+    expect_sequence_steps: list[str],
     expect_camera_pointing: bool,
     expect_camera_modes: list[str],
     camera_frames_dir: Path | None,
@@ -333,6 +372,9 @@ def validate_run_dir(
     if expect_behavior:
         validate_behavior_expectations(result)
 
+    if expect_sequence:
+        validate_sequence_expectations(result, expect_sequence_steps)
+
     if expect_camera_pointing:
         validate_camera_pointing_expectations(
             result,
@@ -362,6 +404,12 @@ def print_result(result: ValidationResult) -> None:
         print("  behavior_events:")
         for name in sorted(result.behavior_events):
             print(f"    {name}: {result.behavior_events[name]}")
+    if result.sequence_events:
+        print("  sequence_events:")
+        for name in sorted(result.sequence_events):
+            print(f"    {name}: {result.sequence_events[name]}")
+        print(f"  sequence_started_steps: {','.join(result.sequence_started_steps)}")
+        print(f"  sequence_completed_steps: {','.join(result.sequence_completed_steps)}")
     if result.camera_pointing_events:
         print("  camera_pointing_events:")
         for name in sorted(result.camera_pointing_events):
@@ -395,6 +443,12 @@ def main() -> int:
         help="Require a specific final mission state",
     )
     parser.add_argument("--expect-behavior", action="store_true", help="Require M3 object-conditioned behavior events")
+    parser.add_argument("--expect-sequence", action="store_true", help="Require behavior sequence step events")
+    parser.add_argument(
+        "--expect-sequence-steps",
+        default="",
+        help="Comma-separated step_behavior values expected in sequence start order, e.g. approach,circle",
+    )
     parser.add_argument("--expect-camera-pointing", action="store_true", help="Require camera-pointing intent/dispatch/result events")
     parser.add_argument(
         "--expect-camera-modes",
@@ -433,6 +487,8 @@ def main() -> int:
         args.run_dir,
         expected_final_state=expected_final_state,
         expect_behavior=args.expect_behavior,
+        expect_sequence=args.expect_sequence,
+        expect_sequence_steps=parse_csv(args.expect_sequence_steps),
         expect_camera_pointing=args.expect_camera_pointing,
         expect_camera_modes=parse_csv(args.expect_camera_modes),
         camera_frames_dir=args.camera_frames_dir,
