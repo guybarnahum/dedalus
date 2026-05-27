@@ -39,6 +39,20 @@ def valid_records() -> list[dict[str, object]]:
     ]
 
 
+def sequence_records() -> list[dict[str, object]]:
+    records = valid_records()
+    insert_at = 9
+    records[insert_at:insert_at] = [
+        {"event": "target_selected", "tick": 43, "agent_id": "agent_ghost_person_001", "source_track_id": "ghost_person_001"},
+        {"event": "behavior_start", "tick": 43, "behavior": "sequence", "mission": "sequence_test", "reason": "target_selected"},
+        {"event": "behavior_sequence_step_start", "tick": 43, "behavior": "sequence", "step_index": 0, "step_behavior": "approach", "mission": "sequence_test", "reason": "sequence_start"},
+        {"event": "behavior_sequence_step_complete", "tick": 50, "behavior": "sequence", "step_index": 0, "step_behavior": "approach", "mission": "sequence_test", "reason": "approach_standoff_reached"},
+        {"event": "behavior_sequence_step_start", "tick": 50, "behavior": "sequence", "step_index": 1, "step_behavior": "circle", "mission": "sequence_test", "reason": "previous_step_complete"},
+        {"event": "behavior_complete", "tick": 68, "behavior": "sequence", "mission": "sequence_test", "reason": "sequence_complete"},
+    ]
+    return records
+
+
 def run_validator(repo_root: Path, run_dir: Path, *args: str) -> subprocess.CompletedProcess[str]:
     return subprocess.run(
         [sys.executable, str(repo_root / "tools" / "mission" / "validate-mission-artifacts.py"), str(run_dir), *args],
@@ -68,6 +82,33 @@ def main() -> int:
         if "final_state: Complete" not in ok.stdout or "failures: 0" not in ok.stdout:
             print(ok.stdout)
             print("validator did not report expected success summary", file=sys.stderr)
+            return 1
+
+        sequence_dir = Path(tmp) / "sequence_run"
+        sequence_dir.mkdir()
+        write_jsonl(sequence_dir / "mission_events.jsonl", sequence_records())
+        (sequence_dir / "snapshot_manifest.txt").write_text("snapshot_0001.json\n", encoding="utf-8")
+        (sequence_dir / "snapshot_0001.json").write_text("{}\n", encoding="utf-8")
+        sequence = run_validator(
+            repo_root,
+            sequence_dir,
+            "--expect-complete",
+            "--expect-behavior",
+            "--expect-sequence",
+            "--expect-sequence-steps",
+            "approach,circle",
+            "--safe-height-m",
+            "16",
+            "--landed-height-m",
+            "0.5",
+        )
+        if sequence.returncode != 0:
+            print(sequence.stdout)
+            print(sequence.stderr, file=sys.stderr)
+            return 1
+        if "sequence_started_steps: approach,circle" not in sequence.stdout or "failures: 0" not in sequence.stdout:
+            print(sequence.stdout)
+            print("validator did not report expected sequence success summary", file=sys.stderr)
             return 1
 
         low_height_dir = Path(tmp) / "low_height_run"
