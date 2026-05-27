@@ -219,6 +219,20 @@ ObjectBehaviorYawMode parse_yaw_mode(const std::string& value) {
     throw std::invalid_argument("unknown object_behavior_yaw_mode: " + value);
 }
 
+std::string yaw_mode_event_string(ObjectBehaviorYawMode mode) {
+    switch (mode) {
+        case ObjectBehaviorYawMode::Trajectory:
+            return "trajectory";
+        case ObjectBehaviorYawMode::Target:
+            return "target";
+        case ObjectBehaviorYawMode::Hold:
+            return "hold";
+        case ObjectBehaviorYawMode::None:
+            return "none";
+    }
+    return "unknown";
+}
+
 ObjectBehaviorVerticalStareMode parse_vertical_stare_mode(const std::string& value) {
     if (value.empty() || value == "none" || value == "disabled") {
         return ObjectBehaviorVerticalStareMode::None;
@@ -965,6 +979,8 @@ std::string ObjectBehaviorMissionController::sequence_step_event(
         ",\"behavior\":\"sequence\"" +
         ",\"step_index\":" + std::to_string(index) +
         ",\"step_behavior\":" + q(to_string(behavior.type)) +
+        ",\"step_yaw_mode\":" + q(behavior.yaw_mode.empty() ? "inherit" : behavior.yaw_mode) +
+        ",\"step_camera_pointing_mode\":" + q(behavior.camera_pointing_mode.empty() ? "inherit" : behavior.camera_pointing_mode) +
         ",\"mission\":" + q(config_.behavior_spec.mission_name) +
         ",\"reason\":" + q(reason) +
         behavior_display_fields(behavior_detail_for_event(event));
@@ -972,11 +988,17 @@ std::string ObjectBehaviorMissionController::sequence_step_event(
 
 std::string behavior_tick_event(
     const BehaviorMissionSpec& spec,
+    const BehaviorSpec& active_behavior,
     const TargetSelection& selection,
     const Vec3& velocity,
-    const FollowGeometry& geometry) {
-    return "\"event\":\"behavior_tick_sample\""
+    const FollowGeometry& geometry,
+    const std::optional<std::size_t>& sequence_step_index,
+    std::size_t sequence_step_count,
+    ObjectBehaviorYawMode yaw_mode,
+    const std::string& camera_pointing_mode) {
+    std::string event = "\"event\":\"behavior_tick_sample\""
         ",\"behavior\":" + q(to_string(spec.behavior.type)) +
+        ",\"active_behavior\":" + q(to_string(active_behavior.type)) +
         ",\"mission\":" + q(spec.mission_name) +
         ",\"agent_id\":" + q(selection.agent_id.value) +
         ",\"source_track_id\":" + q(selection.source_track_id.value) +
@@ -1007,7 +1029,17 @@ std::string behavior_tick_event(
         ",\"circle_completed_orbits\":" + std::to_string(geometry.circle_completed_orbits) +
         ",\"orbit_angle_rad\":" + std::to_string(geometry.orbit_angle_rad) +
         ",\"orbit_mode_latched\":" + std::string(geometry.orbit_mode_latched ? "true" : "false") +
-        behavior_display_fields(behavior_detail_for_tick(spec.behavior, geometry));
+        ",\"active_yaw_mode\":" + q(yaw_mode_event_string(yaw_mode)) +
+        ",\"active_camera_pointing_mode\":" + q(camera_pointing_mode);
+    if (sequence_step_index.has_value()) {
+        event += ",\"sequence_step_index\":" + std::to_string(*sequence_step_index) +
+            ",\"sequence_step_count\":" + std::to_string(sequence_step_count) +
+            ",\"sequence_step_behavior\":" + q(to_string(active_behavior.type)) +
+            ",\"sequence_step_yaw_mode\":" + q(active_behavior.yaw_mode.empty() ? "inherit" : active_behavior.yaw_mode) +
+            ",\"sequence_step_camera_pointing_mode\":" + q(active_behavior.camera_pointing_mode.empty() ? "inherit" : active_behavior.camera_pointing_mode);
+    }
+    event += behavior_display_fields(behavior_detail_for_tick(active_behavior, geometry));
+    return event;
 }
 
 std::string behavior_debug_event(
@@ -1537,6 +1569,10 @@ MissionTickOutput ObjectBehaviorMissionController::tick(const MissionTickInput& 
 
                 const bool sequence_complete =
                     step_complete && active_behavior_is_last_sequence_step();
+                const ObjectBehaviorYawMode active_yaw_mode = yaw_mode_for_behavior(behavior);
+                const std::string active_camera_pointing_mode = behavior.camera_pointing_mode.empty()
+                    ? "target"
+                    : behavior.camera_pointing_mode;
                 if (input.finish_requested || duration_complete || orbit_count_complete || sequence_complete) {
                     if (!behavior_complete_emitted_) {
                         behavior_complete_emitted_ = true;
@@ -1561,13 +1597,24 @@ MissionTickOutput ObjectBehaviorMissionController::tick(const MissionTickInput& 
                         ego,
                         control_selection,
                         config_.yaw_offset_rad + behavior.yaw_offset_rad,
-                        yaw_mode_for_behavior(behavior));
+                        active_yaw_mode);
                     const std::string behavior_detail =
                         behavior_detail_for_tick(behavior, geometry);
                     if (!behavior_tick_sample_emitted_ || behavior_detail != last_behavior_display_detail_) {
                         behavior_tick_sample_emitted_ = true;
                         last_behavior_display_detail_ = behavior_detail;
-                        output.events.push_back(behavior_tick_event(config_.behavior_spec, control_selection, velocity, geometry));
+                        output.events.push_back(behavior_tick_event(
+                            config_.behavior_spec,
+                            behavior,
+                            control_selection,
+                            velocity,
+                            geometry,
+                            sequence_active()
+                                ? std::optional<std::size_t>{sequence_step_index_}
+                                : std::nullopt,
+                            sequence_active() ? config_.behavior_spec.behavior.steps.size() : 0U,
+                            active_yaw_mode,
+                            active_camera_pointing_mode));
                     }
                     if (config_.debug_every_n_ticks > 0 && execute_tick_count_ % config_.debug_every_n_ticks == 0) {
                         output.events.push_back(behavior_debug_event(
