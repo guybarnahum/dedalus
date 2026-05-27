@@ -38,6 +38,7 @@ BEHAVIOR_DURATION_S="360"
 VEHICLE_NAME="PX4"
 AIRSIM_HOST="127.0.0.1"
 AIRSIM_RPC_PORT="41451"
+AIRSIM_PREFLIGHT=1
 CAMERAS=("front_center" "0")
 CAMERA_RATE_HZ="10"
 CAMERA_RESEND_S="0.25"
@@ -98,6 +99,7 @@ Options:
   --vehicle-name NAME         AirSim vehicle name. Default: PX4
   --airsim-host HOST          AirSim RPC host. Default: 127.0.0.1
   --airsim-rpc-port PORT      AirSim RPC port. Default: 41451
+  --no-airsim-preflight       Skip the AirSim RPC preflight check
   --camera CAMERA             AirSim camera to command. May repeat. Default: front_center and 0
   --no-camera                 Do not start camera-pointing bridge
   --no-overlay                Do not start overlay
@@ -138,6 +140,57 @@ quote_cmd() {
         out+=" $(printf '%q' "$arg")"
     done
     printf '%s\n' "${out# }"
+}
+
+airsim_rpc_reachable() {
+    python3 - "$AIRSIM_HOST" "$AIRSIM_RPC_PORT" <<'PY'
+import socket
+import sys
+
+host = sys.argv[1]
+port = int(sys.argv[2])
+
+try:
+    with socket.create_connection((host, port), timeout=2.0):
+        pass
+except OSError:
+    raise SystemExit(1)
+
+raise SystemExit(0)
+PY
+}
+
+require_airsim_rpc() {
+    if airsim_rpc_reachable; then
+        return 0
+    fi
+
+    cat >&2 <<EOF
+❌ AirSim RPC is not reachable at ${AIRSIM_HOST}:${AIRSIM_RPC_PORT}.
+
+This usually means the simulator/PX4 runtime is not running yet.
+
+Start the simulator first:
+
+  cd ${REPO_ROOT_ABS}/simulation/airsim
+  ./run.sh AirSimNH
+
+Wait until the Unreal/AirSim window is loaded in NICE DCV, then rerun:
+
+  ./run_mission.sh
+
+Useful diagnostics:
+
+  tmux ls
+  ss -ltnp | grep ${AIRSIM_RPC_PORT} || true
+  tail -200 "\$(ls -t ${REPO_ROOT_ABS}/simulation/airsim/logs/sim_*.log | head -1)"
+
+To bypass this check for advanced debugging:
+
+  ./run_mission.sh --no-airsim-preflight ...
+EOF
+
+    return 1
 }
 
 while [[ $# -gt 0 ]]; do
@@ -193,6 +246,10 @@ while [[ $# -gt 0 ]]; do
         --airsim-rpc-port)
             AIRSIM_RPC_PORT="$2"
             shift 2
+            ;;
+        --no-airsim-preflight)
+            AIRSIM_PREFLIGHT=0
+            shift
             ;;
         --camera)
             if [[ "${CAMERAS[*]}" == "front_center 0" ]]; then
@@ -297,6 +354,10 @@ fi
 if [[ ${#CAMERAS[@]} -eq 0 && "$WITH_CAMERA" -eq 1 ]]; then
     echo "❌ At least one --camera is required when camera bridge is enabled." >&2
     exit 1
+fi
+
+if [[ "$AIRSIM_PREFLIGHT" -eq 1 ]]; then
+    require_airsim_rpc
 fi
 
 mkdir -p "$OUTPUT_DIR" "$CAMERA_FRAMES_DIR"
