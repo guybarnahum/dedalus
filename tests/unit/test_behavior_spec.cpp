@@ -195,11 +195,15 @@ behavior:
   steps:
     - type: approach
       stop_distance_m: 8.0
+      yaw_mode: target
+      camera_pointing_mode: target
       altitude_offset_m: 4.0
       max_speed_mps: 2.0
     - type: circle
       radius_m: 10.0
       altitude_offset_m: 5.0
+      yaw_mode: trajectory
+      camera_pointing_mode: target
       angular_speed_deg_s: 10.0
       duration_s: 20.0
     - type: go_home_land
@@ -210,9 +214,15 @@ behavior:
     require(spec.behavior.steps.size() == 3U, "sequence steps should parse");
     require(spec.behavior.steps[0].type == dedalus::BehaviorType::Approach, "first step should be approach");
     require_near(spec.behavior.steps[0].stop_distance_m, 8.0, "approach stop distance should parse");
+    require(spec.behavior.steps[0].yaw_mode == "target", "approach yaw_mode should parse");
+    require(spec.behavior.steps[0].camera_pointing_mode == "target", "approach camera_pointing_mode should parse");
     require(spec.behavior.steps[1].type == dedalus::BehaviorType::Circle, "second step should be circle");
     require_near(spec.behavior.steps[1].duration_s, 20.0, "circle duration should parse");
+    require(spec.behavior.steps[1].yaw_mode == "trajectory", "circle yaw_mode should parse");
+    require(spec.behavior.steps[1].camera_pointing_mode == "target", "circle camera_pointing_mode should parse");
     require(spec.behavior.steps[2].type == dedalus::BehaviorType::GoHomeLand, "third step should go home and land");
+    require(spec.behavior.steps[2].yaw_mode.empty(), "omitted yaw_mode should inherit default");
+    require(spec.behavior.steps[2].camera_pointing_mode.empty(), "omitted camera_pointing_mode should inherit default");
 }
 
 void rejects_invalid_specs() {

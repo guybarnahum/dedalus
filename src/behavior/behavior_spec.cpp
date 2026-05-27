@@ -535,6 +535,8 @@ BehaviorSpec parse_behavior(const ConfigNode& node, const std::string& context) 
     spec.max_vertical_speed_mps = optional_double(node, "max_vertical_speed_mps", spec.max_vertical_speed_mps);
     spec.position_tolerance_m = optional_double(node, "position_tolerance_m", spec.position_tolerance_m);
     spec.lost_target_timeout_s = optional_double(node, "lost_target_timeout_s", spec.lost_target_timeout_s);
+    spec.yaw_mode = optional_string(node, "yaw_mode", spec.yaw_mode);
+    spec.camera_pointing_mode = optional_string(node, "camera_pointing_mode", spec.camera_pointing_mode);
     spec.radius_m = optional_double(node, "radius_m", spec.radius_m);
     spec.altitude_offset_m = optional_double(node, "altitude_offset_m", spec.altitude_offset_m);
     spec.angular_speed_deg_s = optional_double(node, "angular_speed_deg_s", spec.angular_speed_deg_s);
