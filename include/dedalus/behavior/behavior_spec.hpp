@@ -90,16 +90,14 @@ struct BehaviorSpec {
     double max_vertical_speed_mps{1.0};
     double position_tolerance_m{1.0};
     double lost_target_timeout_s{5.0};
-    std::string yaw_mode{};
-    std::string camera_pointing_mode{};
-    double yaw_offset_rad{0.0};
 
     // Optional per-behavior policy overrides. Empty string means inherit the
     // mission/controller default. Values are intentionally stored as strings so
     // the behavior spec parser stays independent from ObjectBehaviorMissionController
     // enums while still preserving the validated syntax.
-    std::string yaw_mode;
-    std::string camera_pointing_mode;
+    std::string yaw_mode{};
+    std::string camera_pointing_mode{};
+    double yaw_offset_rad{0.0};
 
     double radius_m{0.0};
     double altitude_offset_m{0.0};
