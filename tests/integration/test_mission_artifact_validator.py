@@ -45,9 +45,9 @@ def sequence_records() -> list[dict[str, object]]:
     records[insert_at:insert_at] = [
         {"event": "target_selected", "tick": 43, "agent_id": "agent_ghost_person_001", "source_track_id": "ghost_person_001"},
         {"event": "behavior_start", "tick": 43, "behavior": "sequence", "mission": "sequence_test", "reason": "target_selected"},
-        {"event": "behavior_sequence_step_start", "tick": 43, "behavior": "sequence", "step_index": 0, "step_behavior": "approach", "mission": "sequence_test", "reason": "sequence_start"},
-        {"event": "behavior_sequence_step_complete", "tick": 50, "behavior": "sequence", "step_index": 0, "step_behavior": "approach", "mission": "sequence_test", "reason": "approach_standoff_reached"},
-        {"event": "behavior_sequence_step_start", "tick": 50, "behavior": "sequence", "step_index": 1, "step_behavior": "circle", "mission": "sequence_test", "reason": "previous_step_complete"},
+        {"event": "behavior_sequence_step_start", "tick": 43, "behavior": "sequence", "step_index": 0, "step_behavior": "approach", "step_yaw_mode": "target", "step_camera_pointing_mode": "target", "mission": "sequence_test", "reason": "sequence_start"},
+        {"event": "behavior_sequence_step_complete", "tick": 50, "behavior": "sequence", "step_index": 0, "step_behavior": "approach", "step_yaw_mode": "target", "step_camera_pointing_mode": "target", "mission": "sequence_test", "reason": "approach_standoff_reached"},
+        {"event": "behavior_sequence_step_start", "tick": 50, "behavior": "sequence", "step_index": 1, "step_behavior": "circle", "step_yaw_mode": "target", "step_camera_pointing_mode": "target", "mission": "sequence_test", "reason": "previous_step_complete"},
         {"event": "behavior_complete", "tick": 68, "behavior": "sequence", "mission": "sequence_test", "reason": "sequence_complete"},
     ]
     return records
@@ -97,6 +97,8 @@ def main() -> int:
             "--expect-sequence",
             "--expect-sequence-steps",
             "approach,circle",
+            "--expect-sequence-step-modes",
+            "approach:target:target,circle:target:target",
             "--safe-height-m",
             "16",
             "--landed-height-m",
@@ -109,6 +111,10 @@ def main() -> int:
         if "sequence_started_steps: approach,circle" not in sequence.stdout or "failures: 0" not in sequence.stdout:
             print(sequence.stdout)
             print("validator did not report expected sequence success summary", file=sys.stderr)
+            return 1
+        if "approach: yaw=target camera=target" not in sequence.stdout or "circle: yaw=target camera=target" not in sequence.stdout:
+            print(sequence.stdout)
+            print("validator did not report expected sequence mode summary", file=sys.stderr)
             return 1
 
         low_height_dir = Path(tmp) / "low_height_run"

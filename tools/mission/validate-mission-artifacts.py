@@ -55,6 +55,7 @@ class ValidationResult:
     sequence_events: dict[str, int] = field(default_factory=dict)
     sequence_started_steps: list[str] = field(default_factory=list)
     sequence_completed_steps: list[str] = field(default_factory=list)
+    sequence_step_modes: list[tuple[str, str, str]] = field(default_factory=list)
     camera_pointing_events: dict[str, int] = field(default_factory=dict)
     camera_pointing_modes: dict[str, int] = field(default_factory=dict)
     camera_proof_frames: dict[str, int] = field(default_factory=dict)
@@ -166,6 +167,11 @@ def collect_timeline(events: list[dict[str, Any]], result: ValidationResult) -> 
             step = str(event.get("step_behavior") or "unknown")
             if event_name == "behavior_sequence_step_start":
                 result.sequence_started_steps.append(step)
+                result.sequence_step_modes.append((
+                    step,
+                    str(event.get("step_yaw_mode") or "unknown"),
+                    str(event.get("step_camera_pointing_mode") or "unknown"),
+                ))
             elif event_name == "behavior_sequence_step_complete":
                 result.sequence_completed_steps.append(step)
         if isinstance(event_name, str) and event_name in CAMERA_POINTING_EVENTS:
@@ -298,6 +304,25 @@ def validate_sequence_expectations(result: ValidationResult, expected_steps: lis
                 f"observed={observed_prefix} expected={expected_steps}"
             )
 
+def validate_sequence_step_mode_expectations(
+    result: ValidationResult,
+    expected_modes: list[tuple[str, str, str]],
+) -> None:
+    if not expected_modes:
+        return
+    observed = result.sequence_step_modes
+    for expected_step, expected_yaw, expected_camera in expected_modes:
+        if (expected_step, expected_yaw, expected_camera) not in observed:
+            result.failures.append(
+                "expected sequence step mode "
+                f"{expected_step}:{expected_yaw}:{expected_camera}; "
+                f"observed={observed}"
+            )
+    observed_prefix = observed[: len(expected_modes)]
+    if observed_prefix != expected_modes:
+        result.failures.append(
+            f"sequence step mode order mismatch: observed={observed_prefix} expected={expected_modes}"
+        )
 
 def validate_camera_pointing_expectations(
     result: ValidationResult,
@@ -334,6 +359,7 @@ def validate_run_dir(
     expect_behavior: bool,
     expect_sequence: bool,
     expect_sequence_steps: list[str],
+    expect_sequence_step_modes: list[tuple[str, str, str]],
     expect_camera_pointing: bool,
     expect_camera_modes: list[str],
     camera_frames_dir: Path | None,
@@ -374,6 +400,7 @@ def validate_run_dir(
 
     if expect_sequence:
         validate_sequence_expectations(result, expect_sequence_steps)
+        validate_sequence_step_mode_expectations(result, expect_sequence_step_modes)
 
     if expect_camera_pointing:
         validate_camera_pointing_expectations(
@@ -410,6 +437,10 @@ def print_result(result: ValidationResult) -> None:
             print(f"    {name}: {result.sequence_events[name]}")
         print(f"  sequence_started_steps: {','.join(result.sequence_started_steps)}")
         print(f"  sequence_completed_steps: {','.join(result.sequence_completed_steps)}")
+        if result.sequence_step_modes:
+            print("  sequence_step_modes:")
+            for step, yaw, camera in result.sequence_step_modes:
+                print(f"    {step}: yaw={yaw} camera={camera}")
     if result.camera_pointing_events:
         print("  camera_pointing_events:")
         for name in sorted(result.camera_pointing_events):
@@ -432,6 +463,18 @@ def print_result(result: ValidationResult) -> None:
 def parse_csv(value: str) -> list[str]:
     return [item.strip() for item in value.split(",") if item.strip()]
 
+def parse_step_modes(value: str) -> list[tuple[str, str, str]]:
+    out: list[tuple[str, str, str]] = []
+    for item in parse_csv(value):
+        parts = [part.strip() for part in item.split(":")]
+        if len(parts) != 3 or not all(parts):
+            raise ValueError(
+                "--expect-sequence-step-modes entries must be "
+                "step:yaw_mode:camera_pointing_mode, e.g. approach:target:target"
+            )
+        out.append((parts[0], parts[1], parts[2]))
+    return out
+
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
@@ -448,6 +491,11 @@ def main() -> int:
         "--expect-sequence-steps",
         default="",
         help="Comma-separated step_behavior values expected in sequence start order, e.g. approach,circle",
+    )
+    parser.add_argument(
+        "--expect-sequence-step-modes",
+        default="",
+        help="Comma-separated step:yaw_mode:camera_pointing_mode entries, e.g. approach:target:target,circle:target:target",
     )
     parser.add_argument("--expect-camera-pointing", action="store_true", help="Require camera-pointing intent/dispatch/result events")
     parser.add_argument(
@@ -489,6 +537,7 @@ def main() -> int:
         expect_behavior=args.expect_behavior,
         expect_sequence=args.expect_sequence,
         expect_sequence_steps=parse_csv(args.expect_sequence_steps),
+        expect_sequence_step_modes=parse_step_modes(args.expect_sequence_step_modes),
         expect_camera_pointing=args.expect_camera_pointing,
         expect_camera_modes=parse_csv(args.expect_camera_modes),
         camera_frames_dir=args.camera_frames_dir,

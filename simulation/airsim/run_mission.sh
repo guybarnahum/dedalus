@@ -56,6 +56,7 @@ VALIDATION_MAX_RADIUS_ERROR_AFTER_LATCH="3.0"
 VALIDATION_COMPLETE_REASON="orbit_count_elapsed"
 VALIDATION_EXPECT_SEQUENCE=0
 VALIDATION_SEQUENCE_STEPS="approach,circle"
+VALIDATION_SEQUENCE_STEP_MODES=""
 ATTACH=0
 EXIT_ON_COMPLETE=1
 KILL_EXISTING=1
@@ -113,6 +114,8 @@ Options:
                                 Behavior complete reason for circle validator. Default: orbit_count_elapsed
   --expect-sequence            Require behavior sequence step events in artifact validation.
   --expect-sequence-steps CSV  Sequence step order. Default: approach,circle
+  --expect-sequence-step-modes CSV
+                                Step policy modes, e.g. approach:target:target,circle:target:target
   --no-progress               Do not pass --progress to mission-loop
   --attach                    Attach to tmux after starting
   --keep-tools-running        Do not stop camera bridge / overlay on mission runtime_stop
@@ -302,6 +305,10 @@ while [[ $# -gt 0 ]]; do
             VALIDATION_SEQUENCE_STEPS="$2"
             shift 2
             ;;
+        --expect-sequence-step-modes)
+            VALIDATION_SEQUENCE_STEP_MODES="$2"
+            shift 2
+            ;;
         --no-progress)
             PROGRESS_FLAG=""
             shift
@@ -463,6 +470,10 @@ if [[ "$VALIDATION_EXPECT_SEQUENCE" -eq 1 ]]; then
     VALIDATION_SHELL+=$'\n'
     VALIDATION_SHELL+="VALIDATE_MISSION_CMD+=(--expect-sequence --expect-sequence-steps $(printf '%q' "$VALIDATION_SEQUENCE_STEPS"))"
 fi
+if [[ -n "$VALIDATION_SEQUENCE_STEP_MODES" ]]; then
+    VALIDATION_SHELL+=$'\n'
+    VALIDATION_SHELL+="VALIDATE_MISSION_CMD+=(--expect-sequence-step-modes $(printf '%q' "$VALIDATION_SEQUENCE_STEP_MODES"))"
+fi
 if [[ "$WITH_CAMERA" -eq 1 ]]; then
     VALIDATION_SHELL+=$'\n'
     VALIDATION_SHELL+="VALIDATE_MISSION_CMD+=(--expect-camera-pointing --expect-camera-modes neutral,target,home,landing_area --camera-frames-dir $(printf '%q' "$CAMERA_FRAMES_DIR") --expect-camera-proof-frames)"
@@ -543,6 +554,9 @@ if [[ "$WITH_VALIDATION" -eq 1 ]]; then
     echo "  complete reason: $VALIDATION_COMPLETE_REASON"
     if [[ "$VALIDATION_EXPECT_SEQUENCE" -eq 1 ]]; then
         echo "  sequence steps: $VALIDATION_SEQUENCE_STEPS"
+    fi
+    if [[ -n "$VALIDATION_SEQUENCE_STEP_MODES" ]]; then
+        echo "  sequence step modes: $VALIDATION_SEQUENCE_STEP_MODES"
     fi
     echo ""
 fi
