@@ -3,6 +3,7 @@
 #include <optional>
 #include <string>
 #include <vector>
+#include <cstddef>
 
 #include "dedalus/behavior/behavior_spec.hpp"
 #include "dedalus/behavior/mission_controller.hpp"
@@ -89,14 +90,22 @@ private:
         Vec3 velocity_local_mps,
         const EgoState& ego,
         const TargetSelection& selection,
-        double yaw_offset_rad = 0.0) const;
+        double yaw_offset_rad,
+        ObjectBehaviorYawMode yaw_mode) const;
     [[nodiscard]] VelocityCommand command_with_kind(TimePoint timestamp, FlightCommandKind kind) const;
     [[nodiscard]] std::string target_event(const TargetSelection& selection) const;
     [[nodiscard]] std::string behavior_event(const std::string& event, const std::string& reason) const;
+    [[nodiscard]] std::string sequence_step_event(const std::string& event, const BehaviorSpec& behavior, std::size_t index, const std::string& reason) const;
     [[nodiscard]] std::optional<CameraPointingCommand> camera_pointing_command(
         TimePoint timestamp,
         const EgoState& ego,
-        const TargetSelection& selection) const;
+        const TargetSelection& selection,
+        const std::string& mode) const;
+    [[nodiscard]] std::optional<CameraPointingCommand> camera_pointing_command_for_behavior(
+        TimePoint timestamp,
+        const EgoState& ego,
+        const TargetSelection& selection,
+        const BehaviorSpec& behavior) const;
     [[nodiscard]] std::optional<CameraPointingCommand> camera_pointing_command_to_point(
         TimePoint timestamp,
         const EgoState& ego,
@@ -110,7 +119,12 @@ private:
     [[nodiscard]] Vec3 go_home_velocity(const EgoState& ego) const;
     [[nodiscard]] bool completion_elapsed(TimePoint now) const;
     void begin_abort_recovery(TimePoint now, double height_m, const std::string& reason);
+    [[nodiscard]] const BehaviorSpec& active_behavior() const;
+    [[nodiscard]] bool sequence_active() const;
+    [[nodiscard]] bool active_behavior_is_last_sequence_step() const;
+    [[nodiscard]] ObjectBehaviorYawMode yaw_mode_for_behavior(const BehaviorSpec& behavior) const;
     bool update_circle_orbit_progress(const BehaviorSpec& behavior, bool circling, double orbit_angle_rad);
+    void reset_sequence_step(TimePoint now);
     void reset_behavior_run(TimePoint now);
 
     ObjectBehaviorMissionConfig config_;
@@ -146,6 +160,9 @@ private:
     mutable bool last_stable_yaw_valid_{false};
     mutable double last_stable_yaw_rad_{0.0};
     int execute_tick_count_{0};
+    std::size_t sequence_step_index_{0U};
+    TimePoint sequence_step_start_;
+    bool sequence_step_started_{false};
 };
 
 }  // namespace dedalus

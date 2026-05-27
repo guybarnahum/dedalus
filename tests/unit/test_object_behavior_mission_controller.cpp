@@ -583,6 +583,72 @@ void camera_pointing_follows_lifecycle_recovery_and_resets_neutral() {
         "Complete camera_pointing pitch_rad should be 0");
 }
 
+void sequence_steps_execute_with_per_step_yaw_and_camera_modes() {
+    auto config = make_circle_config();
+    config.yaw_mode = dedalus::ObjectBehaviorYawMode::Trajectory;
+    config.vertical_stare_mode = dedalus::ObjectBehaviorVerticalStareMode::Gimbal;
+    config.camera_pointing_cameras = {"front_center", "0"};
+    config.camera_pitch_min_rad = -80.0 * 3.14159265358979323846 / 180.0;
+    config.camera_pitch_max_rad = 80.0 * 3.14159265358979323846 / 180.0;
+    config.behavior_spec.behavior.type = dedalus::BehaviorType::Sequence;
+    config.behavior_spec.behavior.steps.clear();
+
+    dedalus::BehaviorSpec approach;
+    approach.type = dedalus::BehaviorType::Approach;
+    approach.stop_distance_m = 8.0;
+    approach.position_tolerance_m = 0.5;
+    approach.max_speed_mps = 2.0;
+    approach.altitude_offset_m = 2.0;
+    approach.yaw_mode = "target";
+    approach.camera_pointing_mode = "target";
+
+    dedalus::BehaviorSpec circle;
+    circle.type = dedalus::BehaviorType::Circle;
+    circle.radius_m = 10.0;
+    circle.altitude_offset_m = 2.0;
+    circle.angular_speed_deg_s = 10.0;
+    circle.max_speed_mps = 3.0;
+    circle.orbit_count = 0.01;
+    circle.yaw_mode = "trajectory";
+    circle.camera_pointing_mode = "neutral";
+
+    config.behavior_spec.behavior.steps.push_back(approach);
+    config.behavior_spec.behavior.steps.push_back(circle);
+
+    dedalus::ObjectBehaviorMissionController controller{config};
+
+    auto approach_tick = first_execute_tick(
+        controller,
+        make_circle_snapshot(
+            300000000,
+            dedalus::Vec3{20.0, 0.0, -2.0},
+            dedalus::Vec3{0.0, 0.0, 0.0}));
+    require(approach_tick.command.has_value(), "sequence approach should emit command");
+    require(approach_tick.command->yaw_source == "target", "approach step yaw_mode=target should yaw to target");
+    require(approach_tick.camera_pointing.has_value(), "approach step should emit camera pointing");
+    require(approach_tick.camera_pointing->mode == "target", "approach step camera mode should be target");
+
+    dedalus::MissionTickInput input;
+    input.now = dedalus::TimePoint{400000000};
+    input.snapshot = make_circle_snapshot(
+        400000000,
+        dedalus::Vec3{8.1, 0.0, -2.0},
+        dedalus::Vec3{0.0, 0.0, 0.0});
+    const auto transition = controller.tick(input);
+    require(transition.status == "object_behavior_sequence_step_complete", "approach standoff should advance sequence");
+
+    input.now = dedalus::TimePoint{500000000};
+    input.snapshot = make_circle_snapshot(
+        500000000,
+        dedalus::Vec3{10.0, 0.0, -2.0},
+        dedalus::Vec3{0.0, 0.0, 0.0});
+    const auto circle_tick = controller.tick(input);
+    require(circle_tick.command.has_value(), "sequence circle should emit command");
+    require(circle_tick.command->yaw_source == "trajectory", "circle step yaw_mode=trajectory should yaw from motion");
+    require(circle_tick.camera_pointing.has_value(), "circle step should emit camera pointing");
+    require(circle_tick.camera_pointing->mode == "neutral", "circle step camera mode override should be neutral");
+}
+
 }  // namespace
 
 int main() {
@@ -599,6 +665,7 @@ int main() {
         circle_target_yaw_points_at_selected_target_not_velocity();
         vertical_stare_gimbal_emits_camera_pointing_intent();
         camera_pointing_follows_lifecycle_recovery_and_resets_neutral();
+        sequence_steps_execute_with_per_step_yaw_and_camera_modes();
     } catch (const std::exception& exc) {
         std::cerr << "test_object_behavior_mission_controller failed: " << exc.what() << '\n';
         return 1;

@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstddef>
 #include <optional>
 #include <stdexcept>
 #include <string>
@@ -41,6 +42,7 @@ struct FollowGeometry {
     double relative_speed_xy_mps{0.0};
     std::string arrival_mode{"none"};
     std::string circle_phase{"none"};
+    bool behavior_step_complete{false};
     double orbit_radius_m{0.0};
     double actual_radius_m{0.0};
     double radius_error_m{0.0};
@@ -445,6 +447,24 @@ Vec3 circle_tangent_velocity(const Vec3& radial_unit, const BehaviorSpec& behavi
         0.0};
 }
 
+FollowGeometry approach_geometry(
+    const EgoState& ego,
+    const TargetSelection& selection,
+    const BehaviorSpec& behavior) {
+    FollowGeometry geometry;
+    geometry.target_velocity = selection.velocity_local;
+    const Vec3 target_to_ego{
+        ego.local_T_body.position.x - selection.position_local.x,
+        ego.local_T_body.position.y - selection.position_local.y,
+        0.0};
+    geometry.actual_r_m = norm_xy(target_to_ego);
+    geometry.required_r_m = behavior.stop_distance_m;
+    geometry.behavior_step_complete =
+        geometry.actual_r_m <= behavior.stop_distance_m + behavior.position_tolerance_m;
+    geometry.arrival_mode = geometry.behavior_step_complete ? "hold" : "cruise";
+    return geometry;
+}
+
 FollowGeometry circle_geometry(
     const EgoState& ego,
     const TargetSelection& selection,
@@ -558,6 +578,48 @@ FollowGeometry circle_geometry(
     return geometry;
 }
 
+Vec3 approach_velocity(
+    const EgoState& ego,
+    const TargetSelection& selection,
+    const BehaviorSpec& behavior,
+    FollowGeometry& geometry) {
+    geometry = approach_geometry(ego, selection, behavior);
+    geometry.target_speed_xy_mps = norm_xy(selection.velocity_local);
+    if (geometry.behavior_step_complete) {
+        geometry.desired_position = ego.local_T_body.position;
+        geometry.desired_error_xy_m = 0.0;
+        geometry.desired_velocity = Vec3{0.0, 0.0, 0.0};
+        return Vec3{0.0, 0.0, 0.0};
+    }
+
+    const Vec3 ego_to_target{
+        selection.position_local.x - ego.local_T_body.position.x,
+        selection.position_local.y - ego.local_T_body.position.y,
+        0.0};
+    const double range_xy = std::max(norm_xy(ego_to_target), 1e-6);
+    const Vec3 unit_to_target{
+        ego_to_target.x / range_xy,
+        ego_to_target.y / range_xy,
+        0.0};
+
+    geometry.desired_position = Vec3{
+        selection.position_local.x - unit_to_target.x * behavior.stop_distance_m,
+        selection.position_local.y - unit_to_target.y * behavior.stop_distance_m,
+        selection.position_local.z - behavior.altitude_offset_m};
+    const Vec3 error{
+        geometry.desired_position.x - ego.local_T_body.position.x,
+        geometry.desired_position.y - ego.local_T_body.position.y,
+        geometry.desired_position.z - ego.local_T_body.position.z};
+    geometry.desired_error_xy_m = norm_xy(error);
+    geometry.desired_velocity = error;
+    Vec3 velocity = clamp_velocity(error, behavior.max_speed_mps, behavior.max_vertical_speed_mps);
+    geometry.desired_velocity_mps = norm_xy(geometry.desired_velocity);
+    geometry.closing_velocity = velocity;
+    geometry.closing_speed_mps = norm_xy(velocity);
+    geometry.relative_speed_xy_mps = norm_xy(velocity);
+    return velocity;
+}
+
 Vec3 behavior_velocity(
     const EgoState& ego,
     const TargetSelection& selection,
@@ -570,6 +632,12 @@ Vec3 behavior_velocity(
         if (geometry_out != nullptr) {
             *geometry_out = geometry;
         }
+        return velocity;
+    }
+    if (behavior.type == BehaviorType::Approach) {
+        FollowGeometry geometry;
+        const Vec3 velocity = approach_velocity(ego, selection, behavior, geometry);
+        if (geometry_out != nullptr) *geometry_out = geometry;
         return velocity;
     }
     if (behavior.type == BehaviorType::Circle) {
@@ -764,8 +832,9 @@ VelocityCommand ObjectBehaviorMissionController::command_from_behavior_velocity(
     Vec3 velocity_local_mps,
     const EgoState& ego,
     const TargetSelection& selection,
-    double yaw_offset_rad) const {
-    if (config_.yaw_mode == ObjectBehaviorYawMode::Trajectory) {
+    double yaw_offset_rad,
+    ObjectBehaviorYawMode yaw_mode) const {
+    if (yaw_mode == ObjectBehaviorYawMode::Trajectory) {
         return command_from_velocity(timestamp, velocity_local_mps, yaw_offset_rad);
     }
 
@@ -778,11 +847,11 @@ VelocityCommand ObjectBehaviorMissionController::command_from_behavior_velocity(
     command.yaw_valid = false;
     command.yaw_source = "disabled";
 
-    if (config_.yaw_mode == ObjectBehaviorYawMode::None) {
+    if (yaw_mode == ObjectBehaviorYawMode::None) {
         return command;
     }
 
-    if (config_.yaw_mode == ObjectBehaviorYawMode::Hold) {
+    if (yaw_mode == ObjectBehaviorYawMode::Hold) {
         if (last_stable_yaw_valid_) {
             command.yaw_valid = true;
             command.yaw_rad = last_stable_yaw_rad_;
@@ -791,7 +860,7 @@ VelocityCommand ObjectBehaviorMissionController::command_from_behavior_velocity(
         return command;
     }
 
-    if (config_.yaw_mode == ObjectBehaviorYawMode::Target) {
+    if (yaw_mode == ObjectBehaviorYawMode::Target) {
         const Vec3 target_delta{
             selection.position_local.x - ego.local_T_body.position.x,
             selection.position_local.y - ego.local_T_body.position.y,
@@ -885,6 +954,20 @@ std::string ObjectBehaviorMissionController::behavior_event(
             ",\"identity_id\":" + q(previous_selection_->identity_id.value);
     }
     return fields;
+}
+
+std::string ObjectBehaviorMissionController::sequence_step_event(
+    const std::string& event,
+    const BehaviorSpec& behavior,
+    std::size_t index,
+    const std::string& reason) const {
+    return "\"event\":" + q(event) +
+        ",\"behavior\":\"sequence\"" +
+        ",\"step_index\":" + std::to_string(index) +
+        ",\"step_behavior\":" + q(to_string(behavior.type)) +
+        ",\"mission\":" + q(config_.behavior_spec.mission_name) +
+        ",\"reason\":" + q(reason) +
+        behavior_display_fields(behavior_detail_for_event(event));
 }
 
 std::string behavior_tick_event(
@@ -1020,16 +1103,20 @@ bool ObjectBehaviorMissionController::completion_elapsed(TimePoint now) const {
 std::optional<CameraPointingCommand> ObjectBehaviorMissionController::camera_pointing_command(
     TimePoint timestamp,
     const EgoState& ego,
-    const TargetSelection& selection) const {
-    if (config_.vertical_stare_mode == ObjectBehaviorVerticalStareMode::None) {
-        return std::nullopt;
+    const TargetSelection& selection,
+    const std::string& mode) const {
+    const std::string effective_mode = mode.empty() ? "target" : mode;
+    if (effective_mode == "neutral" || effective_mode == "reset") {
+        return neutral_camera_pointing_command(timestamp, effective_mode);
     }
-
+    if ((effective_mode == "home" || effective_mode == "landing_area") && home_initialized_) {
+        return camera_pointing_command_to_point(timestamp, ego, home_pose_.position, effective_mode);
+    }
     auto command = camera_pointing_command_to_point(
         timestamp,
         ego,
         selection.position_local,
-        "target");
+        effective_mode);
     if (!command) {
         return std::nullopt;
     }
@@ -1037,6 +1124,17 @@ std::optional<CameraPointingCommand> ObjectBehaviorMissionController::camera_poi
     command->agent_id = selection.agent_id.value;
     command->identity_id = selection.identity_id.value;
     return command;
+}
+
+std::optional<CameraPointingCommand> ObjectBehaviorMissionController::camera_pointing_command_for_behavior(
+    TimePoint timestamp,
+    const EgoState& ego,
+    const TargetSelection& selection,
+    const BehaviorSpec& behavior) const {
+    const std::string mode = behavior.camera_pointing_mode.empty()
+        ? "target"
+        : behavior.camera_pointing_mode;
+    return camera_pointing_command(timestamp, ego, selection, mode);
 }
 
 std::optional<CameraPointingCommand> ObjectBehaviorMissionController::camera_pointing_command_to_point(
@@ -1200,6 +1298,46 @@ bool ObjectBehaviorMissionController::update_circle_orbit_progress(
     return circle_completed_orbits_ >= behavior.orbit_count;
 }
 
+bool ObjectBehaviorMissionController::sequence_active() const {
+    return config_.behavior_spec.behavior.type == BehaviorType::Sequence;
+}
+
+const BehaviorSpec& ObjectBehaviorMissionController::active_behavior() const {
+    if (!sequence_active()) {
+        return config_.behavior_spec.behavior;
+    }
+    const auto& steps = config_.behavior_spec.behavior.steps;
+    if (steps.empty()) {
+        return config_.behavior_spec.behavior;
+    }
+    const std::size_t index = std::min(sequence_step_index_, steps.size() - 1U);
+    return steps[index];
+}
+
+bool ObjectBehaviorMissionController::active_behavior_is_last_sequence_step() const {
+    if (!sequence_active()) {
+        return true;
+    }
+    const auto& steps = config_.behavior_spec.behavior.steps;
+    return steps.empty() || sequence_step_index_ + 1U >= steps.size();
+}
+
+ObjectBehaviorYawMode ObjectBehaviorMissionController::yaw_mode_for_behavior(const BehaviorSpec& behavior) const {
+    if (behavior.yaw_mode.empty()) {
+        return config_.yaw_mode;
+    }
+    return parse_yaw_mode(behavior.yaw_mode);
+}
+
+void ObjectBehaviorMissionController::reset_sequence_step(TimePoint now) {
+    sequence_step_start_ = now;
+    sequence_step_started_ = true;
+    circle_in_orbit_mode_ = false;
+    circle_orbit_tracking_ = false;
+    circle_previous_angle_rad_ = 0.0;
+    circle_completed_orbits_ = 0.0;
+    last_behavior_display_detail_.clear();
+}
 
 void ObjectBehaviorMissionController::reset_behavior_run(TimePoint now) {
     behavior_start_ = now;
@@ -1214,6 +1352,9 @@ void ObjectBehaviorMissionController::reset_behavior_run(TimePoint now) {
     circle_orbit_tracking_ = false;
     circle_previous_angle_rad_ = 0.0;
     circle_completed_orbits_ = 0.0;
+    sequence_step_index_ = 0U;
+    sequence_step_started_ = false;
+    reset_sequence_step(now);
 }
 
 MissionTickOutput ObjectBehaviorMissionController::tick(const MissionTickInput& input) {
@@ -1314,6 +1455,9 @@ MissionTickOutput ObjectBehaviorMissionController::tick(const MissionTickInput& 
                 if (!behavior_start_emitted_) {
                     behavior_start_emitted_ = true;
                     behavior_start_ = input.now;
+                    if (sequence_active()) {
+                        output.events.push_back(sequence_step_event("behavior_sequence_step_start", active_behavior(), sequence_step_index_, "sequence_start"));
+                    }
                     output.events.push_back(behavior_event("behavior_start", "target_selected"));
                 }
                 const bool duration_complete = completion_elapsed(input.now);
@@ -1323,18 +1467,19 @@ MissionTickOutput ObjectBehaviorMissionController::tick(const MissionTickInput& 
                     control_selection.velocity_local = Vec3{0.0, 0.0, 0.0};
                 }
 
-                if (auto camera_pointing = camera_pointing_command(input.now, ego, control_selection)) {
+                const BehaviorSpec& behavior = active_behavior();
+                if (auto camera_pointing = camera_pointing_command_for_behavior(input.now, ego, control_selection, behavior)) {
                     emit_camera_pointing(output, *camera_pointing);
                 }
 
                 FollowGeometry geometry;
                 Vec3 raw_velocity{0.0, 0.0, 0.0};
                 if (!input.finish_requested && !duration_complete) {
-                    if (config_.behavior_spec.behavior.type == BehaviorType::Circle) {
+                    if (behavior.type == BehaviorType::Circle) {
                         geometry = circle_geometry(
                             ego,
                             control_selection,
-                            config_.behavior_spec.behavior,
+                            behavior,
                             config_,
                             circle_in_orbit_mode_);
                         const bool circling = geometry.circle_phase == "circling";
@@ -1343,27 +1488,63 @@ MissionTickOutput ObjectBehaviorMissionController::tick(const MissionTickInput& 
                         }
                         raw_velocity = clamp_velocity(
                             geometry.desired_velocity,
-                            config_.behavior_spec.behavior.max_speed_mps,
-                            config_.behavior_spec.behavior.max_vertical_speed_mps);
-                        orbit_count_complete = update_circle_orbit_progress(config_.behavior_spec.behavior, circling, geometry.orbit_angle_rad);
+                            behavior.max_speed_mps,
+                            behavior.max_vertical_speed_mps);
+                        orbit_count_complete = update_circle_orbit_progress(behavior, circling, geometry.orbit_angle_rad);
                     } else {
                         raw_velocity = behavior_velocity(
                             ego,
                             control_selection,
-                            config_.behavior_spec.behavior,
+                            behavior,
                             config_,
                             &geometry);
-                        orbit_count_complete = update_circle_orbit_progress(config_.behavior_spec.behavior, geometry.circle_phase == "circling", geometry.orbit_angle_rad);
+                        orbit_count_complete = update_circle_orbit_progress(behavior, geometry.circle_phase == "circling", geometry.orbit_angle_rad);
                     }
                     geometry.circle_completed_orbits = circle_completed_orbits_;
-                    geometry.orbit_count_target = config_.behavior_spec.behavior.orbit_count;
+                    geometry.orbit_count_target = behavior.orbit_count;
                 }
-                if (input.finish_requested || duration_complete || orbit_count_complete) {
+
+                const bool step_duration_complete =
+                    sequence_active() && behavior.duration_s > 0.0 &&
+                    elapsed_at_least(sequence_step_start_, input.now, behavior.duration_s);
+                const bool approach_complete =
+                    sequence_active() && behavior.type == BehaviorType::Approach &&
+                    geometry.behavior_step_complete;
+                const bool terminal_step =
+                    sequence_active() && (
+                        behavior.type == BehaviorType::GoHome ||
+                        behavior.type == BehaviorType::GoHomeLand ||
+                        behavior.type == BehaviorType::Land);
+                const bool step_complete =
+                    sequence_active() && (step_duration_complete || orbit_count_complete || approach_complete || terminal_step);
+
+                if (step_complete && !active_behavior_is_last_sequence_step()) {
+                    output.events.push_back(sequence_step_event(
+                        "behavior_sequence_step_complete",
+                        behavior,
+                        sequence_step_index_,
+                        terminal_step ? "terminal_step" : (orbit_count_complete ? "orbit_count_elapsed" : (approach_complete ? "approach_standoff_reached" : "duration_elapsed"))));
+                    ++sequence_step_index_;
+                    reset_sequence_step(input.now);
+                    output.events.push_back(sequence_step_event(
+                        "behavior_sequence_step_start",
+                        active_behavior(),
+                        sequence_step_index_,
+                        "previous_step_complete"));
+                    output.status = "object_behavior_sequence_step_complete";
+                    break;
+                }
+
+                const bool sequence_complete =
+                    step_complete && active_behavior_is_last_sequence_step();
+                if (input.finish_requested || duration_complete || orbit_count_complete || sequence_complete) {
                     if (!behavior_complete_emitted_) {
                         behavior_complete_emitted_ = true;
                         output.events.push_back(behavior_event(
                             "behavior_complete",
-                            input.finish_requested ? "finish_requested" : (orbit_count_complete ? "orbit_count_elapsed" : "duration_elapsed")));
+                            input.finish_requested ? "finish_requested" :
+                                (sequence_complete ? "sequence_complete" :
+                                    (orbit_count_complete ? "orbit_count_elapsed" : "duration_elapsed"))));
                     }
                     state_ = MissionLifecycleState::GoHome;
                     state_start_ = input.now;
@@ -1372,16 +1553,17 @@ MissionTickOutput ObjectBehaviorMissionController::tick(const MissionTickInput& 
                     const Vec3 velocity = apply_altitude_policy(
                         raw_velocity,
                         config_,
-                        config_.behavior_spec.behavior,
+                        behavior,
                         height_m);
                     output.command = command_from_behavior_velocity(
                         input.now,
                         velocity,
                         ego,
                         control_selection,
-                        config_.yaw_offset_rad + config_.behavior_spec.behavior.yaw_offset_rad);
+                        config_.yaw_offset_rad + behavior.yaw_offset_rad,
+                        yaw_mode_for_behavior(behavior));
                     const std::string behavior_detail =
-                        behavior_detail_for_tick(config_.behavior_spec.behavior, geometry);
+                        behavior_detail_for_tick(behavior, geometry);
                     if (!behavior_tick_sample_emitted_ || behavior_detail != last_behavior_display_detail_) {
                         behavior_tick_sample_emitted_ = true;
                         last_behavior_display_detail_ = behavior_detail;
@@ -1399,7 +1581,7 @@ MissionTickOutput ObjectBehaviorMissionController::tick(const MissionTickInput& 
                             geometry,
                             config_.yaw_min_speed_mps));
                     }
-                    output.status = object_behavior_status(config_.behavior_spec.behavior, geometry);
+                    output.status = object_behavior_status(behavior, geometry);
                 }
             } else if (input.finish_requested) {
                 state_ = MissionLifecycleState::GoHome;
