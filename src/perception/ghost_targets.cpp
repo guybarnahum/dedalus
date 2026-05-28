@@ -66,6 +66,7 @@ Observation3D observation_from_state(
     observation.timestamp = timestamp;
     observation.position_local = state.position_local_m;
     observation.position_body = state.position_local_m;
+    observation.velocity_local = state.velocity_local_mps;
     observation.map_frame_id = map_frame_id;
     observation.class_label = state.class_label;
     observation.faction = FactionLabel::Unknown;

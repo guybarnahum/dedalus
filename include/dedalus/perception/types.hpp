@@ -57,6 +57,7 @@ struct Observation3D {
     TimePoint timestamp;
     Vec3 position_body;
     Vec3 position_local;
+    Vec3 velocity_local;
     MapFrameId map_frame_id{"map_unknown"};
     Covariance3 covariance{};
     ClassLabel class_label{ClassLabel::Unknown};

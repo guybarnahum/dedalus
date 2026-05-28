@@ -135,7 +135,7 @@ void InMemoryWorldModel::ingest(const PerceptionPipelineOutput& perception_outpu
         }
         agent.last_seen = observation.timestamp;
         agent.position_local = observation.position_local;
-        agent.velocity_local = Vec3{2.0, 0.4, 0.0};
+        agent.velocity_local = observation.velocity_local;
         agent.map_frame_id = observation.map_frame_id;
         agent.class_label = observation.class_label;
         agent.faction = observation.faction;
