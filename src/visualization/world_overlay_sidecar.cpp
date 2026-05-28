@@ -23,6 +23,8 @@ std::string class_label_to_string(const ClassLabel label) {
             return "car";
         case ClassLabel::Boat:
             return "boat";
+        case ClassLabel::Animal:
+            return "animal";
         case ClassLabel::House:
             return "house";
         case ClassLabel::Building:

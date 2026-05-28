@@ -20,8 +20,11 @@ ClassLabel parse_class_label(const std::string& value) {
     if (value == "car" || value == "vehicle") {
         return ClassLabel::Car;
     }
-    if (value == "boat") {
+ if (value == "boat") {
         return ClassLabel::Boat;
+    }
+    if (value == "animal") {
+        return ClassLabel::Animal;
     }
     if (value == "house") {
         return ClassLabel::House;

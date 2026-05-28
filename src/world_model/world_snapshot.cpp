@@ -43,6 +43,8 @@ const char* to_string(ClassLabel value) {
             return "car";
         case ClassLabel::Boat:
             return "boat";
+        case ClassLabel::Animal:
+            return "animal";
         case ClassLabel::House:
             return "house";
         case ClassLabel::Building:

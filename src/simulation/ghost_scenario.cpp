@@ -253,6 +253,8 @@ std::string to_string(ClassLabel label) {
             return "car";
         case ClassLabel::Boat:
             return "boat";
+        case ClassLabel::Animal:
+            return "animal";
         case ClassLabel::House:
             return "house";
         case ClassLabel::Building:
@@ -282,8 +284,11 @@ ClassLabel class_label_from_string(const std::string& value) {
     if (lower == "car") {
         return ClassLabel::Car;
     }
-    if (lower == "boat") {
+ if (lower == "boat") {
         return ClassLabel::Boat;
+    }
+    if (lower == "animal") {
+        return ClassLabel::Animal;
     }
     if (lower == "house") {
         return ClassLabel::House;

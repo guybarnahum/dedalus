@@ -70,6 +70,26 @@ void evaluates_static_and_dynamic_positions() {
     require_near(car.position_local_m.y, 0.0, 1.0e-9, "static car y should not move");
 }
 
+void loads_far_animal_slow_json() {
+    const auto scenario = dedalus::GhostScenario::load_from_file("config/behaviors/ghost_detections/far_animal_slow.json");
+    require(scenario.name() == "far_animal_slow", "animal scenario name should parse");
+    require(scenario.detections().size() == 1U, "expected one animal detection");
+    require(scenario.detections()[0].class_label == dedalus::ClassLabel::Animal, "animal class should parse");
+    require(!scenario.detections()[0].trajectory.empty(), "animal should load trajectory");
+
+    const auto start = scenario.evaluate(0.0);
+    require(start.size() == 1U, "animal evaluate(0) should return one detection");
+    const auto& animal_start = find_state(start, "ghost_far_animal_001");
+    require(animal_start.class_label == dedalus::ClassLabel::Animal, "animal state class should be animal");
+    require_near(animal_start.position_local_m.x, 58.0, 1.0e-9, "animal start x");
+    require_near(animal_start.position_local_m.y, -22.0, 1.0e-9, "animal start y");
+
+    const auto later = scenario.evaluate(10.0);
+    const auto& animal_later = find_state(later, "ghost_far_animal_001");
+    require_near(animal_later.position_local_m.x, 60.0, 1.0e-6, "animal should integrate +0.2 mps for 10s");
+    require_near(animal_later.velocity_local_mps.x, 0.2, 1.0e-9, "animal vx should come from trajectory");
+}
+
 void rejects_invalid_specs() {
     bool rejected_missing_track = false;
     try {
@@ -102,6 +122,7 @@ int main() {
     try {
         loads_json_and_referenced_trajectories();
         evaluates_static_and_dynamic_positions();
+        loads_far_animal_slow_json();
         rejects_invalid_specs();
     } catch (const std::exception& exc) {
         std::cerr << "test_ghost_scenario failed: " << exc.what() << '\n';

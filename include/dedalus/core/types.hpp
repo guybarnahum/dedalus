@@ -100,6 +100,7 @@ enum class ClassLabel {
     Drone,
     Car,
     Boat,
+    Animal,
     House,
     Building,
     Tree,
