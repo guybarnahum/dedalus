@@ -198,6 +198,11 @@ behavior:
       yaw_mode: target
       camera_pointing_mode: target
       altitude_offset_m: 4.0
+      altitude_profile:
+        start_height_m: 28.0
+        end_height_m: 22.0
+        duration_s: 8.0
+        easing: smoothstep
       max_speed_mps: 2.0
     - type: circle
       radius_m: 10.0
@@ -205,6 +210,11 @@ behavior:
       yaw_mode: trajectory
       camera_pointing_mode: target
       angular_speed_deg_s: 10.0
+      altitude_profile:
+        start_height_m: 22.0
+        end_height_m: 14.0
+        duration_s: 10.0
+        easing: linear
       duration_s: 20.0
     - type: go_home_land
 )YAML";
@@ -216,10 +226,19 @@ behavior:
     require_near(spec.behavior.steps[0].stop_distance_m, 8.0, "approach stop distance should parse");
     require(spec.behavior.steps[0].yaw_mode == "target", "approach yaw_mode should parse");
     require(spec.behavior.steps[0].camera_pointing_mode == "target", "approach camera_pointing_mode should parse");
+    require(spec.behavior.steps[0].altitude_profile.enabled, "approach altitude_profile should parse");
+    require_near(spec.behavior.steps[0].altitude_profile.start_height_m, 28.0, "approach altitude start should parse");
+    require_near(spec.behavior.steps[0].altitude_profile.end_height_m, 22.0, "approach altitude end should parse");
+    require_near(spec.behavior.steps[0].altitude_profile.duration_s, 8.0, "approach altitude duration should parse");
+    require(spec.behavior.steps[0].altitude_profile.easing == "smoothstep", "approach altitude easing should parse");
     require(spec.behavior.steps[1].type == dedalus::BehaviorType::Circle, "second step should be circle");
     require_near(spec.behavior.steps[1].duration_s, 20.0, "circle duration should parse");
     require(spec.behavior.steps[1].yaw_mode == "trajectory", "circle yaw_mode should parse");
     require(spec.behavior.steps[1].camera_pointing_mode == "target", "circle camera_pointing_mode should parse");
+    require(spec.behavior.steps[1].altitude_profile.enabled, "circle altitude_profile should parse");
+    require_near(spec.behavior.steps[1].altitude_profile.start_height_m, 22.0, "circle altitude start should parse");
+    require_near(spec.behavior.steps[1].altitude_profile.end_height_m, 14.0, "circle altitude end should parse");
+    require(spec.behavior.steps[1].altitude_profile.easing == "linear", "circle altitude easing should parse");
     require(spec.behavior.steps[2].type == dedalus::BehaviorType::GoHomeLand, "third step should go home and land");
     require(spec.behavior.steps[2].yaw_mode.empty(), "omitted yaw_mode should inherit default");
     require(spec.behavior.steps[2].camera_pointing_mode.empty(), "omitted camera_pointing_mode should inherit default");
@@ -298,6 +317,19 @@ behavior:
   stop_distance_m: 0.0
 )YAML");
     }, "stop_distance_m must be positive");
+
+    require_throws([] {
+        (void)dedalus::parse_behavior_spec_text(R"YAML(
+target:
+  selector:
+    class: person
+behavior:
+  type: approach
+  stop_distance_m: 8.0
+  altitude_profile:
+    start_height_m: 10.0
+)YAML");
+    }, "start_height_m and end_height_m");
 
     require_throws([] {
         (void)dedalus::parse_behavior_spec_text(R"YAML(

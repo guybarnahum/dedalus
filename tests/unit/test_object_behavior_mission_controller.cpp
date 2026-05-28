@@ -355,6 +355,55 @@ void circle_moving_target_preserves_relative_orbit_authority_under_speed_limit()
         "circle event should expose true moving target velocity");
 }
 
+void altitude_profile_is_opt_in_and_bounds_vertical_speed() {
+    auto config = make_circle_config();
+    config.behavior_spec.behavior.max_vertical_speed_mps = 0.75;
+    config.behavior_spec.behavior.altitude_profile.enabled = true;
+    config.behavior_spec.behavior.altitude_profile.start_height_m = 22.0;
+    config.behavior_spec.behavior.altitude_profile.end_height_m = 14.0;
+    config.behavior_spec.behavior.altitude_profile.duration_s = 10.0;
+    config.behavior_spec.behavior.altitude_profile.easing = "smoothstep";
+
+    dedalus::ObjectBehaviorMissionController controller{config};
+    const auto behavior = first_execute_tick(
+        controller,
+        make_circle_snapshot(
+            300000000,
+            dedalus::Vec3{10.0, 0.0, -20.0},
+            dedalus::Vec3{0.0, 0.0, 0.0}));
+
+    require(behavior.command.has_value(), "altitude profile circle should emit velocity");
+    require_near(
+        behavior.command->velocity_local_mps.z,
+        -0.75,
+        1.0e-9,
+        "altitude profile should command bounded climb when current height is below start profile height");
+    require(
+        behavior.events.back().find("\"altitude_profile_active\":true") != std::string::npos,
+        "altitude profile should be observable in behavior tick");
+}
+
+void missing_altitude_profile_keeps_legacy_altitude_offset() {
+    auto config = make_circle_config();
+    config.behavior_spec.behavior.altitude_offset_m = 2.0;
+    config.behavior_spec.behavior.max_vertical_speed_mps = 5.0;
+
+    dedalus::ObjectBehaviorMissionController controller{config};
+    const auto behavior = first_execute_tick(
+        controller,
+        make_circle_snapshot(
+            300000000,
+            dedalus::Vec3{10.0, 0.0, -2.0},
+            dedalus::Vec3{0.0, 0.0, 0.0}));
+
+    require(behavior.command.has_value(), "legacy altitude-offset circle should emit velocity");
+    require_near(
+        behavior.command->velocity_local_mps.z,
+        0.0,
+        1.0e-9,
+        "missing altitude_profile should preserve legacy altitude_offset behavior");
+}
+
 void circle_tangent_velocity_has_correct_direction() {
     auto clockwise = make_circle_config();
     dedalus::ObjectBehaviorMissionController clockwise_controller{clockwise};
@@ -713,6 +762,8 @@ int main() {
         circle_static_target_uses_continuous_orbit_capture();
         circle_moving_target_command_includes_target_velocity();
         circle_moving_target_preserves_relative_orbit_authority_under_speed_limit();
+        altitude_profile_is_opt_in_and_bounds_vertical_speed();
+        missing_altitude_profile_keeps_legacy_altitude_offset();
         circle_tangent_velocity_has_correct_direction();
         circle_radial_correction_pushes_inward_and_outward();
         circle_command_speed_is_clamped();

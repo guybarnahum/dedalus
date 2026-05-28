@@ -23,6 +23,7 @@ constexpr double kMinObservationAngleDeg = 5.0;
 constexpr double kMaxObservationAngleDeg = 85.0;
 constexpr double kCircleDefaultEntryToleranceM = 1.0;
 constexpr double kCircleRadialCorrectionGain = 0.6;
+constexpr double kDefaultAltitudeProfileDurationS = 8.0;
 constexpr double kCircleMaxRadialCorrectionMps = 2.0;
 
 struct FollowGeometry {
@@ -58,6 +59,12 @@ struct FollowGeometry {
     Vec3 tangent_velocity;
     Vec3 radial_correction_velocity;
     Vec3 desired_velocity;
+    bool altitude_profile_active{false};
+    std::string altitude_profile_easing{"none"};
+    double altitude_profile_t{0.0};
+    double desired_height_m{0.0};
+    double current_height_m{0.0};
+    double height_error_m{0.0};
 };
 
 std::string json_escape(const std::string& value) {
@@ -450,6 +457,63 @@ Vec3 follow_arrival_velocity(
 
 double circle_direction_sign(CircleDirection direction) {
     return direction == CircleDirection::Clockwise ? -1.0 : 1.0;
+}
+
+double smoothstep(double t) {
+    t = std::clamp(t, 0.0, 1.0);
+    return t * t * (3.0 - 2.0 * t);
+}
+
+double altitude_profile_duration_s(const BehaviorSpec& behavior) {
+    if (behavior.altitude_profile.duration_s > 0.0) {
+        return behavior.altitude_profile.duration_s;
+    }
+    if (behavior.duration_s > 0.0) {
+        return behavior.duration_s;
+    }
+    return kDefaultAltitudeProfileDurationS;
+}
+
+double altitude_profile_fraction(const BehaviorSpec& behavior, double elapsed_s) {
+    const double duration_s = altitude_profile_duration_s(behavior);
+    if (duration_s <= 0.0) {
+        return 1.0;
+    }
+    return std::clamp(elapsed_s / duration_s, 0.0, 1.0);
+}
+
+double altitude_profile_eased_fraction(const BehaviorSpec& behavior, double elapsed_s) {
+    const double t = altitude_profile_fraction(behavior, elapsed_s);
+    if (behavior.altitude_profile.easing == "linear") {
+        return t;
+    }
+    return smoothstep(t);
+}
+
+Vec3 apply_altitude_profile(
+    Vec3 velocity,
+    const EgoState& ego,
+    const BehaviorSpec& behavior,
+    double elapsed_s,
+    FollowGeometry& geometry) {
+    if (!behavior.altitude_profile.enabled) {
+        return velocity;
+    }
+    const double t = altitude_profile_fraction(behavior, elapsed_s);
+    const double eased_t = altitude_profile_eased_fraction(behavior, elapsed_s);
+    const double desired_height_m =
+        behavior.altitude_profile.start_height_m +
+        (behavior.altitude_profile.end_height_m - behavior.altitude_profile.start_height_m) * eased_t;
+    const double current_height_m = ego.height_valid ? ego.height_m : -ego.local_T_body.position.z;
+    const double height_error_m = desired_height_m - current_height_m;
+    velocity.z = clamp_abs(-height_error_m, behavior.max_vertical_speed_mps);
+    geometry.altitude_profile_active = true;
+    geometry.altitude_profile_easing = behavior.altitude_profile.easing;
+    geometry.altitude_profile_t = t;
+    geometry.desired_height_m = desired_height_m;
+    geometry.current_height_m = current_height_m;
+    geometry.height_error_m = height_error_m;
+    return velocity;
 }
 
 Vec3 circle_tangent_velocity(const Vec3& radial_unit, const BehaviorSpec& behavior) {
@@ -1048,6 +1112,12 @@ std::string behavior_tick_event(
         ",\"orbit_count_target\":" + std::to_string(geometry.orbit_count_target) +
         ",\"circle_completed_orbits\":" + std::to_string(geometry.circle_completed_orbits) +
         ",\"orbit_angle_rad\":" + std::to_string(geometry.orbit_angle_rad) +
+        ",\"altitude_profile_active\":" + std::string(geometry.altitude_profile_active ? "true" : "false") +
+        ",\"altitude_profile_easing\":" + q(geometry.altitude_profile_easing) +
+        ",\"altitude_profile_t\":" + std::to_string(geometry.altitude_profile_t) +
+        ",\"desired_height_m\":" + std::to_string(geometry.desired_height_m) +
+        ",\"current_height_m\":" + std::to_string(geometry.current_height_m) +
+        ",\"height_error_m\":" + std::to_string(geometry.height_error_m) +
         ",\"orbit_mode_latched\":" + std::string(geometry.orbit_mode_latched ? "true" : "false") +
         ",\"active_yaw_mode\":" + q(yaw_mode_event_string(yaw_mode)) +
         ",\"active_camera_pointing_mode\":" + q(camera_pointing_mode);
@@ -1102,6 +1172,12 @@ std::string behavior_debug_event(
         ",\"orbit_count_target\":" + std::to_string(geometry.orbit_count_target) +
         ",\"circle_completed_orbits\":" + std::to_string(geometry.circle_completed_orbits) +
         ",\"orbit_angle_rad\":" + std::to_string(geometry.orbit_angle_rad) +
+        ",\"altitude_profile_active\":" + std::string(geometry.altitude_profile_active ? "true" : "false") +
+        ",\"altitude_profile_easing\":" + q(geometry.altitude_profile_easing) +
+        ",\"altitude_profile_t\":" + std::to_string(geometry.altitude_profile_t) +
+        ",\"desired_height_m\":" + std::to_string(geometry.desired_height_m) +
+        ",\"current_height_m\":" + std::to_string(geometry.current_height_m) +
+        ",\"height_error_m\":" + std::to_string(geometry.height_error_m) +
         ",\"orbit_mode_latched\":" + std::string(geometry.orbit_mode_latched ? "true" : "false");
 
     if (debug_level >= 2) {
@@ -1554,6 +1630,10 @@ MissionTickOutput ObjectBehaviorMissionController::tick(const MissionTickInput& 
                     }
                     geometry.circle_completed_orbits = circle_completed_orbits_;
                     geometry.orbit_count_target = behavior.orbit_count;
+                }
+
+                if (!input.finish_requested && !duration_complete) {
+                    raw_velocity = apply_altitude_profile(raw_velocity, ego, behavior, seconds_between(sequence_step_start_, input.now), geometry);
                 }
 
                 const bool step_duration_complete =

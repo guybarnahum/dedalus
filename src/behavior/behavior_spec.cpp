@@ -524,6 +524,43 @@ TargetSelectorSpec parse_target_selector(const ConfigNode& root) {
     return spec;
 }
 
+AltitudeProfileSpec parse_altitude_profile(const ConfigNode& node, const std::string& context) {
+    AltitudeProfileSpec profile;
+    profile.enabled = true;
+    profile.easing = optional_string(node, "easing", profile.easing);
+    profile.duration_s = optional_double(node, "duration_s", profile.duration_s);
+
+    const bool has_hold = child(node, "hold_height_m") != nullptr;
+    const bool has_start = child(node, "start_height_m") != nullptr;
+    const bool has_end = child(node, "end_height_m") != nullptr;
+
+    if (has_hold) {
+        const double hold_height_m = required_double(node, "hold_height_m", context);
+        profile.start_height_m = hold_height_m;
+        profile.end_height_m = hold_height_m;
+    } else {
+        if (!has_start || !has_end) {
+            throw std::runtime_error(context + " must define start_height_m and end_height_m, or hold_height_m");
+        }
+        profile.start_height_m = required_double(node, "start_height_m", context);
+        profile.end_height_m = required_double(node, "end_height_m", context);
+    }
+
+    if (profile.start_height_m < 0.0) {
+        throw std::runtime_error(context + ".start_height_m must be non-negative");
+    }
+    if (profile.end_height_m < 0.0) {
+        throw std::runtime_error(context + ".end_height_m must be non-negative");
+    }
+    if (profile.duration_s < 0.0) {
+        throw std::runtime_error(context + ".duration_s must be non-negative");
+    }
+    if (profile.easing != "smoothstep" && profile.easing != "linear") {
+        throw std::runtime_error(context + ".easing must be smoothstep or linear");
+    }
+    return profile;
+}
+
 BehaviorSpec parse_behavior(const ConfigNode& node, const std::string& context) {
     BehaviorSpec spec;
     spec.type = parse_behavior_type(scalar_string(required_child(node, "type", context), context + ".type"));
@@ -539,6 +576,9 @@ BehaviorSpec parse_behavior(const ConfigNode& node, const std::string& context) 
     spec.camera_pointing_mode = optional_string(node, "camera_pointing_mode", spec.camera_pointing_mode);
     spec.radius_m = optional_double(node, "radius_m", spec.radius_m);
     spec.altitude_offset_m = optional_double(node, "altitude_offset_m", spec.altitude_offset_m);
+    if (const auto* altitude_profile = child(node, "altitude_profile")) {
+        spec.altitude_profile = parse_altitude_profile(*altitude_profile, context + ".altitude_profile");
+    }
     spec.angular_speed_deg_s = optional_double(node, "angular_speed_deg_s", spec.angular_speed_deg_s);
     spec.direction = parse_circle_direction(optional_string(node, "direction", to_string(spec.direction)));
     spec.orbit_count = optional_double(node, "orbit_count", spec.orbit_count);

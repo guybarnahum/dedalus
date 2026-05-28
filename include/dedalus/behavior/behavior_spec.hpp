@@ -82,6 +82,14 @@ struct FallbackSpec {
     double search_s{10.0};
 };
 
+struct AltitudeProfileSpec {
+    bool enabled{false};
+    double start_height_m{0.0};
+    double end_height_m{0.0};
+    double duration_s{0.0};
+    std::string easing{"smoothstep"};
+};
+
 struct BehaviorSpec {
     BehaviorType type{BehaviorType::Hold};
     ReferenceFrame target_frame{ReferenceFrame::WorldLocalFrame};
@@ -101,6 +109,7 @@ struct BehaviorSpec {
 
     double radius_m{0.0};
     double altitude_offset_m{0.0};
+    AltitudeProfileSpec altitude_profile;
     double angular_speed_deg_s{0.0};
     CircleDirection direction{CircleDirection::Clockwise};
     double orbit_count{0.0};
