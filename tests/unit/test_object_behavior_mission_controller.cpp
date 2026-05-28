@@ -267,6 +267,34 @@ void finish_requested_completes_behavior() {
     require(finish.events[0].find("finish_requested") != std::string::npos, "finish event should explain reason");
 }
 
+void approach_moving_target_velocity_matches_standoff_center() {
+    auto config = make_config();
+    config.behavior_spec.behavior.type = dedalus::BehaviorType::Approach;
+    config.behavior_spec.behavior.stop_distance_m = 12.0;
+    config.behavior_spec.behavior.max_speed_mps = 3.0;
+    config.behavior_spec.behavior.max_vertical_speed_mps = 1.0;
+    config.behavior_spec.completion.after_s = 30.0;
+
+    dedalus::ObjectBehaviorMissionController controller{config};
+    auto snapshot = make_snapshot(300000000, 2.0, true);
+    snapshot.agents.clear();
+    snapshot.agents.push_back(make_agent(
+        "ghost_person_001",
+        dedalus::ClassLabel::Person,
+        0.91F,
+        dedalus::Vec3{20.0, 0.0, 0.0},
+        dedalus::Vec3{0.2, 0.0, 0.0}));
+
+    const auto behavior = first_execute_tick(controller, snapshot);
+    require(behavior.command.has_value(), "moving-target approach should emit velocity");
+    require(
+        behavior.command->velocity_local_mps.x > 0.2,
+        "approach command should include target velocity plus closing velocity");
+    require(
+        behavior.events.back().find("\"target_velocity_mps\":0.200000") != std::string::npos,
+        "approach debug event should expose moving target velocity");
+}
+
 void circle_static_target_uses_continuous_orbit_capture() {
     auto config = make_circle_config();
     dedalus::ObjectBehaviorMissionController controller{config};
@@ -300,6 +328,31 @@ void circle_moving_target_command_includes_target_velocity() {
     require_near(behavior.command->velocity_local_mps.x, 1.0, 1.0e-6, "circling vx should include target velocity");
     require_near(behavior.command->velocity_local_mps.y, -10.0 * 10.0 * 3.14159265358979323846 / 180.0, 1.0e-6, "circling vy should include clockwise tangent velocity");
     require(behavior.status == "object_behavior_circling", "at entry should report circling");
+}
+
+void circle_moving_target_preserves_relative_orbit_authority_under_speed_limit() {
+    auto config = make_circle_config();
+    config.behavior_spec.behavior.max_speed_mps = 2.0;
+    config.behavior_spec.behavior.radius_m = 10.0;
+    config.behavior_spec.behavior.angular_speed_deg_s = 8.0;
+    config.behavior_spec.behavior.position_tolerance_m = 5.0;
+
+    dedalus::ObjectBehaviorMissionController controller{config};
+    const auto behavior = first_execute_tick(
+        controller,
+        make_circle_snapshot(
+            300000000,
+            dedalus::Vec3{13.0, 0.0, -2.0},
+            dedalus::Vec3{0.0, 0.0, 0.0},
+            dedalus::Vec3{0.2, 0.0, 0.0}));
+
+    require(behavior.command.has_value(), "moving-target circle should emit velocity");
+    require(
+        behavior.command->velocity_local_mps.y < -0.5,
+        "moving-target circle should preserve tangent orbit authority under speed limit");
+    require(
+        behavior.events.back().find("\"target_velocity_mps\":0.200000") != std::string::npos,
+        "circle event should expose true moving target velocity");
 }
 
 void circle_tangent_velocity_has_correct_direction() {
@@ -656,8 +709,10 @@ int main() {
         lifecycle_gates_before_behavior_and_emits_events();
         landing_and_disarm_reach_complete_status();
         finish_requested_completes_behavior();
+        approach_moving_target_velocity_matches_standoff_center();
         circle_static_target_uses_continuous_orbit_capture();
         circle_moving_target_command_includes_target_velocity();
+        circle_moving_target_preserves_relative_orbit_authority_under_speed_limit();
         circle_tangent_velocity_has_correct_direction();
         circle_radial_correction_pushes_inward_and_outward();
         circle_command_speed_is_clamped();

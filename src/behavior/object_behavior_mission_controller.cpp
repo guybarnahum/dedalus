@@ -573,10 +573,22 @@ FollowGeometry circle_geometry(
         0.0};
 
     const double altitude_error = geometry.desired_position.z - ego.local_T_body.position.z;
+    Vec3 relative_orbit_velocity{
+        geometry.tangent_velocity.x + geometry.radial_correction_velocity.x,
+        geometry.tangent_velocity.y + geometry.radial_correction_velocity.y,
+        0.0};
+    relative_orbit_velocity = clamp_xy_norm(relative_orbit_velocity, behavior.max_speed_mps);
+
     geometry.desired_velocity = Vec3{
-        selection.velocity_local.x + geometry.tangent_velocity.x + geometry.radial_correction_velocity.x,
-        selection.velocity_local.y + geometry.tangent_velocity.y + geometry.radial_correction_velocity.y,
+        selection.velocity_local.x + relative_orbit_velocity.x,
+        selection.velocity_local.y + relative_orbit_velocity.y,
         altitude_error};
+
+    geometry.tangent_velocity_mps = norm_xy(geometry.tangent_velocity);
+    geometry.radial_correction_velocity = Vec3{
+        relative_orbit_velocity.x - geometry.tangent_velocity.x,
+        relative_orbit_velocity.y - geometry.tangent_velocity.y,
+        0.0};
 
     const Vec3 velocity = clamp_velocity(
         geometry.desired_velocity,
@@ -625,12 +637,18 @@ Vec3 approach_velocity(
         geometry.desired_position.y - ego.local_T_body.position.y,
         geometry.desired_position.z - ego.local_T_body.position.z};
     geometry.desired_error_xy_m = norm_xy(error);
-    geometry.desired_velocity = error;
-    Vec3 velocity = clamp_velocity(error, behavior.max_speed_mps, behavior.max_vertical_speed_mps);
+    geometry.closing_velocity = clamp_velocity(error, behavior.max_speed_mps, behavior.max_vertical_speed_mps);
+    geometry.desired_velocity = Vec3{
+        selection.velocity_local.x + geometry.closing_velocity.x,
+        selection.velocity_local.y + geometry.closing_velocity.y,
+        geometry.closing_velocity.z};
+    Vec3 velocity = clamp_velocity(
+        geometry.desired_velocity,
+        behavior.max_speed_mps,
+        behavior.max_vertical_speed_mps);
     geometry.desired_velocity_mps = norm_xy(geometry.desired_velocity);
-    geometry.closing_velocity = velocity;
     geometry.closing_speed_mps = norm_xy(velocity);
-    geometry.relative_speed_xy_mps = norm_xy(velocity);
+    geometry.relative_speed_xy_mps = norm_xy(Vec3{velocity.x - selection.velocity_local.x, velocity.y - selection.velocity_local.y, 0.0});
     return velocity;
 }
 
@@ -678,6 +696,8 @@ std::string class_label_event_string(ClassLabel label) {
             return "car";
         case ClassLabel::Boat:
             return "boat";
+        case ClassLabel::Animal:
+            return "animal";
         case ClassLabel::House:
             return "house";
         case ClassLabel::Building:
