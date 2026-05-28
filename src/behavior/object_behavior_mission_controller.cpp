@@ -276,13 +276,24 @@ Vec3 enforce_safe_height_floor(
     if (safe_height_m <= 0.0 || max_vertical_speed_mps <= 0.0) {
         return velocity;
     }
+
+    // AirSim/PX4 local NED convention:
+    //   velocity.z < 0 climbs up and increases height above ground.
+    //   velocity.z > 0 descends and decreases height above ground.
+    //
+    // Safe-height floor means "do not go below this height"; it must not mean
+    // "never descend while above this height". 2.31A altitude profiles rely on
+    // bounded descent from takeoff/safe height down to a lower circling height.
+    // If already below the floor, force a climb. If at the floor, block further
+    // descent. If safely above the floor, preserve the requested vertical
+    // velocity and let the profile/controller descend toward its target.
     if (height_m < safe_height_m) {
         const double climb = std::clamp(
             (safe_height_m - height_m) * kSafeHeightCorrectionGain,
             kMinSafeHeightClimbMps,
             max_vertical_speed_mps);
         velocity.z = std::min(velocity.z, -climb);
-    } else if (velocity.z > 0.0) {
+    } else if (height_m <= safe_height_m && velocity.z > 0.0) {
         velocity.z = 0.0;
     }
     return velocity;
