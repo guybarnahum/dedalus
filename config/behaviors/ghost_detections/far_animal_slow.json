@@ -6,10 +6,10 @@
     {
       "source_track_id": "ghost_far_animal_001",
       "class": "animal",
-      "confidence": 0.75,
+      "confidence": 0.86,
       "initial_position_local_m": [58.0, -22.0, 0.0],
-      "size_m": [0.5, 0.3, 0.8],
-      "trajectory_path": "../trajectories/ghost_far_animal_001_slow.json"
+      "size_m": [1.2, 0.4, 0.8],
+     "trajectory_path": "../trajectories/ghost_far_animal_001_slow.json"
     }
   ]
 }

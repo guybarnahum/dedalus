@@ -1,0 +1,91 @@
+# AirSim existing-object far-person mixed-mode approach->circle sequence behavior run config.
+#
+# 2.29E target:
+#   source_track_id: ghost_far_person_001
+#   airsim_object_name: BRPlayer_36
+#   class: person
+#   approximate scene distance from origin: 60.90m
+#
+# Mixed-mode validation intent:
+#   approach: yaw_mode=target, camera_pointing_mode=target
+#   circle:   yaw_mode=trajectory, camera_pointing_mode=target
+
+frame_source: airsim
+ego_provider: frame_hint
+detector: scripted
+camera_stabilizer: null
+tracker: simple_centroid
+identity_resolver: appearance_only
+projector: flat_ground
+world_model: in_memory
+frame_annotator: ppm_sequence
+annotation_output_path: out/object_behavior_airsim_existing_object_sequence_far_person_mixed_mode_annotation
+annotation_output_fps: 5
+fallback_map_frame_id: map_airsim_mission_0001
+
+source_host: 127.0.0.1
+source_rpc_port: 41451
+vehicle_name: PX4
+vehicle_camera_name: front_center
+bridge_transport: pipe
+bridge_mode: stream_binary_ego
+bridge_command: python3 simulation/airsim/scripts/airsim-stream-frames-binary.py --include-ego --rate-hz 5 --mavlink-armed-endpoints udpin:127.0.0.1:14540
+
+ghost_targets_enabled: true
+ghost_targets_source: airsim_objects
+ghost_targets_airsim.objects.0.source_track_id: ghost_far_person_001
+ghost_targets_airsim.objects.0.airsim_object_name: BRPlayer_36
+ghost_targets_airsim.objects.0.class: person
+ghost_targets_airsim.objects.0.confidence: 0.82
+ghost_targets_airsim.objects.0.size_m: [0.6, 0.6, 1.8]
+
+mission_controller: object_behavior
+mission_tick_hz: 10
+flight_command_sink: px4_bridge
+
+mission_options.behavior_spec_path: config/behaviors/sequence_approach_circle_far_person_mixed_mode.yaml
+mission_options.object_behavior_hold_velocity_mps: 0.0
+mission_options.object_behavior_altitude_policy: safe_height_floor
+mission_options.object_behavior_zero_target_velocity: true
+
+mission_options.object_behavior_follow_observation_geometry_enabled: false
+mission_options.object_behavior_follow_arrival_slow_radius_m: 10.0
+mission_options.object_behavior_follow_arrival_hold_radius_m: 3.0
+mission_options.object_behavior_follow_arrival_kp: 0.30
+
+mission_options.object_behavior_yaw_mode: target
+mission_options.object_behavior_yaw_offset_rad: 0.0
+mission_options.object_behavior_yaw_min_speed_mps: 0.35
+mission_options.object_behavior_yaw_hold_last_when_unstable: true
+
+mission_options.object_behavior_vertical_stare_mode: gimbal
+mission_options.object_behavior_vertical_stare_warn_if_unavailable: true
+mission_options.object_behavior_camera_pointing_cameras: front_center,0
+mission_options.object_behavior_camera_pitch_min_deg: -80
+mission_options.object_behavior_camera_pitch_max_deg: 35
+mission_options.object_behavior_camera_pitch_sign: -1
+mission_options.object_behavior_camera_pitch_offset_deg: 0
+mission_options.object_behavior_camera_pointing_prepare_mode: neutral
+mission_options.object_behavior_camera_pointing_takeoff_mode: neutral
+mission_options.object_behavior_camera_pointing_go_home_mode: home
+mission_options.object_behavior_camera_pointing_land_mode: landing_area
+mission_options.object_behavior_camera_pointing_complete_mode: neutral
+
+mission_options.object_behavior_debug_every_n_ticks: 10
+mission_options.object_behavior_debug_level: 2
+mission_options.object_behavior_completion_after_s: 240.0
+
+mission_options.flight_control_mode: px4
+mission_options.flight_prepare_session_command: python3 simulation/airsim/scripts/airsim-prepare-session.py --host 127.0.0.1 --rpc-port 41451 --vehicle-name PX4 --mavlink-endpoints udpin:127.0.0.1:14550,udpin:127.0.0.1:14540,udpin:127.0.0.1:14600
+mission_options.flight_safe_height_m: 16
+mission_options.flight_px4_command_bridge: python3 tools/px4/px4-command-bridge.py --mavlink-endpoints udpin:127.0.0.1:14550 --px4-tmux-target dedalus-sim:px4 --safe-height 16 --safe-height-timeout-s 60
+mission_options.flight_home_policy: initial_ego_pose
+
+mission_options.flight_arm_retry_interval_s: 4.0
+mission_options.flight_arm_timeout_s: 30.0
+mission_options.flight_arm_dispatch_fallback_s: 2.0
+mission_options.flight_takeoff_retry_interval_s: 4.0
+mission_options.flight_land_retry_interval_s: 4.0
+mission_options.flight_land_timeout_s: 90.0
+mission_options.flight_disarm_retry_interval_s: 4.0
+mission_options.flight_disarm_timeout_s: 30.0

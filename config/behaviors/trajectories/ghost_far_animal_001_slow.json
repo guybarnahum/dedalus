@@ -2,9 +2,9 @@
   "segments": [
     {
       "type": "hold",
-      "label": "slow_walk",
+      "label": "slow_animal_walk_far_1",
       "duration_s": 300.0,
-      "vx_mps": 0.2,
+      "vx_mps": 0.20,
       "vy_mps": 0.0,
       "vz_mps": 0.0
     }
