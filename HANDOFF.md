@@ -17,10 +17,11 @@ To generate a current handoff, read `LLM.md` and the current repo state, then fi
 5. Read `docs/mission_scenario_runner.md` for the scenario/campaign harness workflow.
 6. Read `docs/world_model_reprojection_validation_plan.md` before reprojection, annotation, or world-model evidence work.
 7. Read `WHITEPAPER.md` when architectural rationale is needed.
-8. Read `LLM.back.md` only for historical context when needed; `LLM.md` is authoritative.
-9. Run `git log --oneline -1` to get the current commit SHA.
-10. Substitute all `<PLACEHOLDER>` values below with current state.
-11. Emit the filled-in prompt as plain text — no surrounding explanation.
+8. Read `docs/milestone_2_30a_slow_moving_sel_animal_validation.md` and `docs/milestone_2_30b_results.md` when continuing moving-target/object-conditioned behavior work.
+9. Read `LLM.back.md` only for historical context when needed; `LLM.md` is authoritative.
+10. Run `git log --oneline -1` to get the current commit SHA.
+11. Substitute all `<PLACEHOLDER>` values below with current state.
+12. Emit the filled-in prompt as plain text — no surrounding explanation.
 
 ---
 
@@ -70,6 +71,7 @@ Patch policy:
   Apply changes directly to main.
   Do not create branches or PRs unless explicitly requested.
   If GitHub connector patching fails, is ambiguous, is blocked, or would require a risky broad rewrite, stop using the connector for that code change.
+  When generating manual patches for the user, always provide one unified git diff suitable for git apply.
   Generate an exact manual patch and ask the user to apply it locally.
   Do not keep retrying increasingly complex connector paths after a connector failure.
 

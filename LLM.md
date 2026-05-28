@@ -17,11 +17,10 @@ Current handoff state:
 2.28B is complete: no-shim repo layout migration is validated.
 2.28B.1 is complete: generated third-party dependencies are staged under third_party/ and validated from empty-state setup.
 2.28C is complete: camera/gimbal target-stare policy, runtime dispatch, hardware/simulation sinks, and one-command AirSim mission workflow are validated.
-2.29A-D are complete: multi-stage behavior sequence parsing/runtime, AirSim sequence configs, far-person SEL run, active step observability, and canonical per-step yaw/camera mode validation are validated through commit 3cc96a1.
+2.29A-E are complete: multi-stage behavior sequence parsing/runtime, AirSim sequence configs, far-person SEL run, active step observability, canonical per-step yaw/camera mode validation, and mixed-mode yaw/camera validation are complete.
+2.30A-B are complete: slow moving far-animal SEL validation and moving-target stress matrix are validated. See docs/milestone_2_30a_slow_moving_sel_animal_validation.md and docs/milestone_2_30b_results.md.
 
-Active next work: 2.29E — mixed-mode sequence validation, proving yaw_mode and camera_pointing_mode are independent across stages, e.g. approach yaw=target/camera=target and circle yaw=trajectory/camera=target.
-
-Do not jump to moving SEL / animal yet unless explicitly requested. Moving targets should be 2.30 after mixed-mode static validation.
+Active next work: choose the next bounded post-2.30B slice. Recommended options are native moving AirSim actor validation or validator hardening for expected target_velocity_mps / behavior_complete reason.
 
 GitHub status checks may be absent; continue to run local build/tests after code changes.
 ```
@@ -44,7 +43,10 @@ Milestone 2.29A: behavior spec sequence schema foundation. Complete: BehaviorSpe
 Milestone 2.29B: sequence runtime execution. Complete: ObjectBehaviorMissionController executes approach -> circle sequence steps and applies per-step yaw/camera overrides during ExecuteMission.
 Milestone 2.29C: AirSim sequence config and canonical sequence validation. Complete: sequence config/spec plus validate-mission-artifacts --expect-sequence and run_mission.sh sequence validation flags.
 Milestone 2.29D: far static SEL and observability validation. Complete: BRPlayer_36 far-person sequence run validates active step fields and per-step yaw/camera mode assertions.
-Milestone 2.29E: mixed-mode sequence validation. Active next slice.
+Milestone 2.29E: mixed-mode sequence validation. Complete: static far-person approach target/target -> circle trajectory/target validated.
+Milestone 2.30A: slow moving SEL animal sequence validation. Complete: ghost_far_animal_001 at 0.20 m/s validated.
+Milestone 2.30B: moving-target stress matrix. Complete: medium, side-motion, and diagonal far-animal trajectories validated.
+Active next slice: post-2.30B follow-up, preferably native moving AirSim actor validation or validator hardening.
 ```
 
 ---
@@ -233,6 +235,8 @@ Behavior is robust to imperfect insertion geometry:
   - once orbit mode is reached -> orbit_mode_latched remains true until completion/reset
 
 For known static AirSim existing-object bindings, object_behavior_zero_target_velocity may be enabled so the controller does not velocity-match synthetic/static-object velocity noise. This zeroes target_velocity only; tangent velocity remains active.
+
+Moving-target validation through 2.30B shows the orbit law is not direction-specific across +X, +Y, and diagonal target-center motion. Medium, side-motion, and diagonal far-animal trajectories all completed sequence behavior with stable orbit radius and correct target velocity propagation. See `docs/milestone_2_30b_results.md`.
 ```
 
 Sequence behavior:
@@ -398,42 +402,84 @@ Validation log highlights:
   validation: PASS
 ```
 
+2.29E / 2.30A / 2.30B validation result:
+
+```text
+2.29E:
+  Static far-person mixed-mode sequence validated.
+  approach: yaw=target camera=target
+  circle: yaw=trajectory camera=target
+  behavior_complete reason: sequence_complete
+  validation: PASS
+
+2.30A:
+  Slow moving far-animal SEL target validated.
+  source_track_id: ghost_far_animal_001
+  class: animal
+  target_velocity_mps ~= 0.20
+  object_behavior_zero_target_velocity=false
+  behavior_complete reason: sequence_complete
+  validation: PASS
+
+2.30B:
+  Moving-target stress matrix validated.
+  Common sequence:
+    approach: yaw=target camera=target
+    circle: yaw=trajectory camera=target
+
+  Results:
+    medium speed:
+      target_velocity_mps=0.75
+      completed_orbits=0.992
+      avg_abs_radius_error=0.301
+      max_radius_error_after_latch=2.125
+      PASS
+    side motion:
+      target_velocity_mps=0.50
+      completed_orbits=0.991
+      avg_abs_radius_error=0.280
+      max_radius_error_after_latch=2.166
+      PASS
+    diagonal:
+      target_velocity_mps=0.494975
+      completed_orbits=0.984
+      avg_abs_radius_error=0.313
+      max_radius_error_after_latch=2.381
+      PASS
+
+  Conclusion: moving-center orbit behavior is not direction-specific across +X, +Y, and diagonal target motion.
+```
+
 ---
 
-## 4. Active Next Work: 2.29E Mixed-Mode Sequence Validation
+## 4. Active Next Work: Post-2.30B Follow-up
 
 Goal:
 
 ```text
-Prove stage-level yaw and camera pointing are independent by validating a sequence where yaw changes mode between stages while camera target-stare remains active.
+Choose the next bounded validation slice after moving-target stress matrix completion.
 ```
 
-Recommended 2.29E scope:
+Recommended next options:
 
 ```text
-1. Add a mixed-mode sequence behavior spec or config variant:
-     approach:
-       yaw_mode: target
-       camera_pointing_mode: target
-     circle:
-       yaw_mode: trajectory
-       camera_pointing_mode: target
+1. Native moving AirSim actor validation:
+     - find a live AirSim animal/actor object whose pose changes smoothly
+     - bind through AirSim existing-object source only if pose is stable and moving
+     - keep object_behavior_zero_target_velocity=false for true moving targets
 
-2. Use the same far static person target first:
-     BRPlayer_36 / ghost_far_person_001
+2. Validator hardening:
+     - add expected target_velocity_mps checks to validation tools
+     - add explicit behavior_complete reason validation to validate-mission-artifacts.py if desired
+     - keep composed validation through mission-events-summary.py, validate-mission-artifacts.py, and validate-circle-trajectory.py
 
-3. Validate with canonical step-mode checks:
-     --expect-sequence-step-modes approach:target:target,circle:trajectory:target
-
-4. Confirm behavior_tick_sample shows:
-     active_behavior: approach -> circle
-     active_yaw_mode: target -> trajectory
-     active_camera_pointing_mode: target -> target
-
-5. Keep object_behavior_zero_target_velocity=true for static existing-object targets.
+3. Moving-target edge cases:
+     - faster target speed
+     - start-inside-radius and start-outside-radius variants
+     - target stop/start trajectory
 ```
 
-Non-goals for 2.29E:
+Non-goals for immediate post-2.30B work:
 
 ```text
 No obstacle avoidance.
@@ -441,13 +487,11 @@ No new planner.
 No AirSim C++ RPC rewrite.
 No mission DSL explosion.
 No direct overlay-side behavior inference.
-No moving SEL / animal yet.
 ```
 
-Moving SEL / animal target guidance:
+Moving native AirSim actor guidance:
 
 ```text
-Defer to 2.30 unless explicitly requested.
 Before flying relative to an animal, prove pose is live and stable:
 
   python3 simulation/airsim/scripts/airsim-object-poses.py \
@@ -717,6 +761,7 @@ docs/world_model_reprojection_validation_plan.md reprojection and world-model ev
 docs/mission_pipeline_current_state.md      mission loop architecture
 docs/core_stack_current_state.md            broader core-stack status
 docs/llm_connector_patch_policy.md         connector/manual patch safety policy
+docs/milestone_2_30b_results.md            validated moving-target stress matrix evidence
 WHITEPAPER.md                               architectural rationale
 HANDOFF.md                                  handoff prompt template
 LLM.back.md                                 historical context only
