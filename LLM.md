@@ -661,6 +661,7 @@ Do not create branches or PRs unless explicitly requested.
 Do not leave completed work sitting on a feature branch.
 Prefer GitHub connector file updates directly on main when available.
 If connector patching fails, is ambiguous, is blocked, or would require a risky broad rewrite, stop using the connector for that code change.
+When generating manual patches for the user, always provide them in unified git diff format, suitable for `git apply`.
 Generate an exact manual patch and ask the user to apply it locally.
 Do not keep retrying increasingly complex connector paths after a connector failure.
 ```
