@@ -268,12 +268,12 @@ Vec3 clamp_velocity(const Vec3& desired, double max_horizontal_mps, double max_v
     return velocity;
 }
 
-Vec3 enforce_safe_height_floor(
+Vec3 enforce_min_height_floor(
     Vec3 velocity,
     double height_m,
-    double safe_height_m,
+    double min_height_m,
     double max_vertical_speed_mps) {
-    if (safe_height_m <= 0.0 || max_vertical_speed_mps <= 0.0) {
+    if (min_height_m <= 0.0 || max_vertical_speed_mps <= 0.0) {
         return velocity;
     }
 
@@ -281,19 +281,19 @@ Vec3 enforce_safe_height_floor(
     //   velocity.z < 0 climbs up and increases height above ground.
     //   velocity.z > 0 descends and decreases height above ground.
     //
-    // Safe-height floor means "do not go below this height"; it must not mean
+    // Minimum-height floor means "do not go below this height"; it must not mean
     // "never descend while above this height". 2.31A altitude profiles rely on
     // bounded descent from takeoff/safe height down to a lower circling height.
     // If already below the floor, force a climb. If at the floor, block further
     // descent. If safely above the floor, preserve the requested vertical
     // velocity and let the profile/controller descend toward its target.
-    if (height_m < safe_height_m) {
+    if (height_m < min_height_m) {
         const double climb = std::clamp(
-            (safe_height_m - height_m) * kSafeHeightCorrectionGain,
+            (min_height_m - height_m) * kSafeHeightCorrectionGain,
             kMinSafeHeightClimbMps,
             max_vertical_speed_mps);
         velocity.z = std::min(velocity.z, -climb);
-    } else if (height_m <= safe_height_m && velocity.z > 0.0) {
+    } else if (height_m <= min_height_m && velocity.z > 0.0) {
         velocity.z = 0.0;
     }
     return velocity;
@@ -305,13 +305,25 @@ Vec3 apply_altitude_policy(
     const BehaviorSpec& behavior,
     double height_m) {
     if (config.altitude_policy == ObjectBehaviorAltitudePolicy::SafeHeightFloor) {
-        return enforce_safe_height_floor(
+        return enforce_min_height_floor(
             velocity,
             height_m,
-            config.safe_height_m,
+            config.behavior_min_height_m,
             behavior.max_vertical_speed_mps);
     }
     return velocity;
+}
+
+Vec3 enforce_takeoff_height_floor(
+    Vec3 velocity,
+    double height_m,
+    double takeoff_height_m,
+    double max_vertical_speed_mps) {
+    return enforce_min_height_floor(
+        velocity,
+        height_m,
+        takeoff_height_m,
+        max_vertical_speed_mps);
 }
 
 Vec3 target_frame_follow_offset(const EgoState& ego, const TargetSelection& selection, const BehaviorSpec& behavior) {
@@ -890,7 +902,20 @@ ObjectBehaviorMissionConfig load_object_behavior_mission_config(const MissionOpt
     if (!completion_after_override.empty()) {
         config.behavior_spec.completion.after_s = std::stod(completion_after_override);
     }
-    config.safe_height_m = std::stod(options.get_or("flight_safe_height_m", "8"));
+    // Backward compatibility:
+    // - flight_safe_height_m remains the legacy single value.
+    // - flight_takeoff_height_m controls the Takeoff -> ExecuteMission gate and
+    //   the return-to-home transit floor before landing.
+    // - object_behavior_min_height_m controls ExecuteMission behavior altitude
+    //   floor, allowing lower circling/inspection after a higher takeoff.
+    const std::string legacy_safe_height = options.get_or("flight_safe_height_m", "8");
+    config.takeoff_height_m = std::stod(options.get_or(
+        "flight_takeoff_height_m",
+        legacy_safe_height));
+    config.behavior_min_height_m = std::stod(options.get_or(
+        "object_behavior_min_height_m",
+        legacy_safe_height));
+
     config.takeoff_velocity_mps = std::stod(options.get_or("flight_takeoff_velocity_mps", "1.0"));
     config.go_home_velocity_mps = std::stod(options.get_or("flight_go_home_velocity_mps", "1.0"));
     config.arm_retry_interval_s = std::stod(options.get_or("flight_arm_retry_interval_s", "1.0"));
@@ -1563,7 +1588,7 @@ MissionTickOutput ObjectBehaviorMissionController::tick(const MissionTickInput& 
                 state_ = height_m > kLandHeightM ? MissionLifecycleState::Land : MissionLifecycleState::Complete;
                 state_start_ = input.now;
                 output.status = height_m > kLandHeightM ? "finish_requested_land" : "finish_requested_complete";
-            } else if (height_m >= config_.safe_height_m) {
+            } else if (height_m >= config_.takeoff_height_m) {
                 state_ = MissionLifecycleState::ExecuteMission;
                 state_start_ = input.now;
                 reset_behavior_run(input.now);
@@ -1752,6 +1777,9 @@ MissionTickOutput ObjectBehaviorMissionController::tick(const MissionTickInput& 
             break;
         }
         case MissionLifecycleState::GoHome: {
+            BehaviorSpec transit_behavior = config_.behavior_spec.behavior;
+            transit_behavior.max_vertical_speed_mps = std::max(0.1, transit_behavior.max_vertical_speed_mps);
+
             if (home_initialized_) {
                 if (auto camera_pointing = camera_pointing_command_to_point(
                         input.now,
@@ -1766,14 +1794,15 @@ MissionTickOutput ObjectBehaviorMissionController::tick(const MissionTickInput& 
                 emit_camera_pointing(output, *camera_pointing);
             }
 
-            const Vec3 raw_velocity = go_home_velocity(ego);
-            const Vec3 velocity = apply_altitude_policy(
+            Vec3 raw_velocity = go_home_velocity(ego);
+            Vec3 velocity = enforce_takeoff_height_floor(
                 raw_velocity,
-                config_,
-                config_.behavior_spec.behavior,
-                height_m);
+                height_m,
+                config_.takeoff_height_m,
+                transit_behavior.max_vertical_speed_mps);
+
             if (norm_xy(velocity) <= 0.0 &&
-                (config_.altitude_policy != ObjectBehaviorAltitudePolicy::SafeHeightFloor || height_m >= config_.safe_height_m)) {
+                height_m >= config_.takeoff_height_m) {
                 state_ = MissionLifecycleState::Land;
                 state_start_ = input.now;
                 output.status = aborting_ ? "abort_recovery_home_reached" : "home_reached";

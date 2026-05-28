@@ -67,7 +67,9 @@ struct Args {
     std::string world_snapshot_stream_host{"127.0.0.1"};
     int world_snapshot_stream_port{0};
     double safe_height_override_m{-1.0};
+    double behavior_min_height_override_m{-1.0};
     double behavior_duration_override_s{-1.0};
+    bool safe_height_override_explicit{false};
 };
 
 struct CommandCounts {
@@ -379,7 +381,7 @@ bool replace_option_value(std::string& command, const std::string& option, const
     return true;
 }
 
-void apply_safe_height_override(dedalus::CoreStackProviderConfig& config, double safe_height_m) {
+void apply_takeoff_height_override(dedalus::CoreStackProviderConfig& config, double safe_height_m) {
     if (safe_height_m <= 0.0) {
         throw std::invalid_argument("--safe-height must be > 0");
     }
@@ -396,6 +398,13 @@ void apply_safe_height_override(dedalus::CoreStackProviderConfig& config, double
     }
 }
 
+void apply_behavior_min_height_override(dedalus::CoreStackProviderConfig& config, double min_height_m) {
+    if (min_height_m <= 0.0) {
+        throw std::invalid_argument("--behavior-min-height must be > 0");
+    }
+    config.mission_options.values["object_behavior_min_height_m"] = format_double_for_cli(min_height_m);
+}
+
 void apply_behavior_duration_override(dedalus::CoreStackProviderConfig& config, double duration_s) {
     if (duration_s <= 0.0) {
         throw std::invalid_argument("--behavior-duration-s must be > 0");
@@ -404,8 +413,11 @@ void apply_behavior_duration_override(dedalus::CoreStackProviderConfig& config, 
 }
 
 void apply_cli_overrides(dedalus::CoreStackProviderConfig& config, const Args& args) {
-    if (args.safe_height_override_m > 0.0) {
-        apply_safe_height_override(config, args.safe_height_override_m);
+    if (args.safe_height_override_explicit && args.safe_height_override_m > 0.0) {
+        apply_takeoff_height_override(config, args.safe_height_override_m);
+    }
+    if (args.behavior_min_height_override_m > 0.0) {
+        apply_behavior_min_height_override(config, args.behavior_min_height_override_m);
     }
     if (args.behavior_duration_override_s > 0.0) {
         apply_behavior_duration_override(config, args.behavior_duration_override_s);
@@ -461,6 +473,7 @@ Args parse_args(int argc, char** argv) {
             if (args.safe_height_override_m <= 0.0) {
                 throw std::invalid_argument("--safe-height must be > 0");
             }
+            args.safe_height_override_explicit = true;
         } else if (arg == "--behavior-duration-s") {
             if (i + 1 >= argc) {
                 throw std::invalid_argument("--behavior-duration-s requires a value in seconds");
@@ -468,6 +481,14 @@ Args parse_args(int argc, char** argv) {
             args.behavior_duration_override_s = std::stod(argv[++i]);
             if (args.behavior_duration_override_s <= 0.0) {
                 throw std::invalid_argument("--behavior-duration-s must be > 0");
+            }
+        } else if (arg == "--behavior-min-height") {
+            if (i + 1 >= argc) {
+                throw std::invalid_argument("--behavior-min-height requires a value in meters");
+            }
+            args.behavior_min_height_override_m = std::stod(argv[++i]);
+            if (args.behavior_min_height_override_m <= 0.0) {
+                throw std::invalid_argument("--behavior-min-height must be > 0");
             }
         } else if (arg == "--progress") {
             args.progress_mode = ProgressMode::On;

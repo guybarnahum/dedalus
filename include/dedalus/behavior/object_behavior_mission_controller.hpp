@@ -32,7 +32,8 @@ enum class ObjectBehaviorVerticalStareMode {
 struct ObjectBehaviorMissionConfig {
     BehaviorMissionSpec behavior_spec;
     double hold_velocity_mps{0.0};
-    double safe_height_m{8.0};
+    double takeoff_height_m{8.0};
+    double behavior_min_height_m{8.0};
     double takeoff_velocity_mps{1.0};
     double go_home_velocity_mps{1.0};
     double yaw_offset_rad{0.0};

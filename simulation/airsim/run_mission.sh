@@ -33,7 +33,8 @@ STREAM_HOST="127.0.0.1"
 STREAM_PORT="47770"
 MAX_FRAMES="5400"
 SHUTDOWN_MAX_FRAMES="1800"
-SAFE_HEIGHT="40"
+SAFE_HEIGHT=""
+BEHAVIOR_MIN_HEIGHT=""
 BEHAVIOR_DURATION_S="360"
 VEHICLE_NAME="PX4"
 AIRSIM_HOST="127.0.0.1"
@@ -95,7 +96,9 @@ Options:
   --stream-port PORT          runtime stream port. Default: 47770
   --max-frames N              mission-loop --max-frames. Default: 5400
   --shutdown-max-frames N     mission-loop --shutdown-max-frames. Default: 1800
-  --safe-height M             mission-loop --safe-height and artifact validator safe-height gate. Default: 40
+  --safe-height M             Override takeoff/return transit height and bridge takeoff height.
+                               If omitted, use config values.
+  --behavior-min-height M     Override ExecuteMission minimum behavior height. If omitted, use config values.
   --behavior-duration-s S     mission-loop --behavior-duration-s. Default: 360
   --vehicle-name NAME         AirSim vehicle name. Default: PX4
   --airsim-host HOST          AirSim RPC host. Default: 127.0.0.1
@@ -232,6 +235,10 @@ while [[ $# -gt 0 ]]; do
             ;;
         --safe-height)
             SAFE_HEIGHT="$2"
+            shift 2
+            ;;
+        --behavior-min-height)
+            BEHAVIOR_MIN_HEIGHT="$2"
             shift 2
             ;;
         --behavior-duration-s)
@@ -376,9 +383,14 @@ MISSION_CMD=(
     --max-frames "$MAX_FRAMES"
     --shutdown-max-frames "$SHUTDOWN_MAX_FRAMES"
     --world-snapshot-stream-port "$STREAM_PORT"
-    --safe-height "$SAFE_HEIGHT"
     --behavior-duration-s "$BEHAVIOR_DURATION_S"
 )
+if [[ -n "$SAFE_HEIGHT" ]]; then
+    MISSION_CMD+=(--safe-height "$SAFE_HEIGHT")
+fi
+if [[ -n "$BEHAVIOR_MIN_HEIGHT" ]]; then
+    MISSION_CMD+=(--behavior-min-height "$BEHAVIOR_MIN_HEIGHT")
+fi
 if [[ -n "$PROGRESS_FLAG" ]]; then
     MISSION_CMD+=("$PROGRESS_FLAG")
 fi
@@ -463,12 +475,19 @@ while True:
     time.sleep(2.0)
 PY
 python3 tools/mission/mission-events-summary.py "\$EVENTS" --expect-complete
-VALIDATE_MISSION_CMD=(python3 tools/mission/validate-mission-artifacts.py $(printf '%q' "$OUTPUT_DIR") --expect-complete --expect-behavior --safe-height-m $(printf '%q' "$SAFE_HEIGHT") --landed-height-m 1.0)
+VALIDATE_MISSION_CMD=(python3 tools/mission/validate-mission-artifacts.py $(printf '%q' "$OUTPUT_DIR") --expect-complete --expect-behavior --safe-height-m $(printf '%q' "$VALIDATION_SAFE_HEIGHT") --landed-height-m 1.0)
 EOF
 )
 if [[ "$VALIDATION_EXPECT_SEQUENCE" -eq 1 ]]; then
     VALIDATION_SHELL+=$'\n'
     VALIDATION_SHELL+="VALIDATE_MISSION_CMD+=(--expect-sequence --expect-sequence-steps $(printf '%q' "$VALIDATION_SEQUENCE_STEPS"))"
+fi
+if [[ -n "$SAFE_HEIGHT" ]]; then
+    VALIDATION_SAFE_HEIGHT="$SAFE_HEIGHT"
+else
+    VALIDATION_SAFE_HEIGHT="$(grep -E '^mission_options\.flight_takeoff_height_m:' "$CONFIG_PATH" | awk '{print $2}' | tail -1)"
+    VALIDATION_SAFE_HEIGHT="${VALIDATION_SAFE_HEIGHT:-$(grep -E '^mission_options\.flight_safe_height_m:' "$CONFIG_PATH" | awk '{print $2}' | tail -1)}"
+    VALIDATION_SAFE_HEIGHT="${VALIDATION_SAFE_HEIGHT:-40}"
 fi
 if [[ -n "$VALIDATION_SEQUENCE_STEP_MODES" ]]; then
     VALIDATION_SHELL+=$'\n'

@@ -79,7 +79,8 @@ dedalus::ObjectBehaviorMissionConfig make_config() {
     config.behavior_spec.behavior.max_vertical_speed_mps = 1.0;
     config.behavior_spec.behavior.position_tolerance_m = 1.5;
     config.behavior_spec.completion.after_s = 0.2;
-    config.safe_height_m = 2.0;
+    config.takeoff_height_m = 2.0;
+    config.behavior_min_height_m = 2.0;
     config.arm_timeout_s = 5.0;
     config.disarm_timeout_s = 5.0;
     return config;
