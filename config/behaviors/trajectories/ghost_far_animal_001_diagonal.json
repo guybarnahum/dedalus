@@ -1,0 +1,12 @@
+{
+  "segments": [
+    {
+      "type": "hold",
+      "label": "diagonal_animal_motion_1",
+      "duration_s": 300.0,
+      "vx_mps": 0.35,
+      "vy_mps": 0.35,
+      "vz_mps": 0.0
+    }
+  ]
+}
