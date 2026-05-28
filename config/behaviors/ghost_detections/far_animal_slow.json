@@ -1,0 +1,15 @@
+{
+  "schema_version": 1,
+  "name": "far_animal_slow",
+  "map_frame_id": "map_airsim_mission_0001",
+  "detections": [
+    {
+      "source_track_id": "ghost_far_animal_001",
+      "class": "animal",
+      "confidence": 0.86,
+      "initial_position_local_m": [58.0, -22.0, 0.0],
+      "size_m": [1.2, 0.4, 0.8],
+      "trajectory_path": "../trajectories/ghost_far_animal_001_slow.json"
+    }
+  ]
+}
