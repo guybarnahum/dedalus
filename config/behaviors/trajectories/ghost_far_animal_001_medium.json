@@ -1,0 +1,12 @@
+{
+  "segments": [
+    {
+      "type": "hold",
+      "label": "medium_animal_walk_far_1",
+      "duration_s": 300.0,
+      "vx_mps": 0.75,
+      "vy_mps": 0.0,
+      "vz_mps": 0.0
+    }
+  ]
+}
