@@ -17,8 +17,11 @@ Current handoff state:
 2.28B is complete: no-shim repo layout migration is validated.
 2.28B.1 is complete: generated third-party dependencies are staged under third_party/ and validated from empty-state setup.
 2.28C is complete: camera/gimbal target-stare policy, runtime dispatch, hardware/simulation sinks, and one-command AirSim mission workflow are validated.
+2.29A-D are complete: multi-stage behavior sequence parsing/runtime, AirSim sequence configs, far-person SEL run, active step observability, and canonical per-step yaw/camera mode validation are validated through commit 3cc96a1.
 
-Active next work: 2.29 — multi-stage object-conditioned behavior missions with mixed yaw/camera modes, reusing the existing behavior/trajectory parser and syntax.
+Active next work: 2.29E — mixed-mode sequence validation, proving yaw_mode and camera_pointing_mode are independent across stages, e.g. approach yaw=target/camera=target and circle yaw=trajectory/camera=target.
+
+Do not jump to moving SEL / animal yet unless explicitly requested. Moving targets should be 2.30 after mixed-mode static validation.
 
 GitHub status checks may be absent; continue to run local build/tests after code changes.
 ```
@@ -37,7 +40,11 @@ Milestone 2.27B: validation hardening for circle/orbit behavior. Complete after 
 Milestone 2.28B: no-shim target/tool/dependency layout migration. Complete after empty-state setup and live AirSim validation.
 Milestone 2.28B.1: generated dependency staging under third_party/. Complete after PX4 SITL, iceoryx, and Colosseum assets staged under third_party and no stale generated dirs under root/simulation.
 Milestone 2.28C: camera/gimbal pointing foundation. Complete after typed C++ CameraPointingCommand, lifecycle camera policy, runtime CameraPointingSink dispatch, native C++ MAVLink gimbal sink, AirSim camera bridge, one-command run_mission.sh, and canonical post-run validation.
-Milestone 2.29: multi-stage behavior mission with mixed yaw/camera modes. Active next slice.
+Milestone 2.29A: behavior spec sequence schema foundation. Complete: BehaviorSpec carries optional yaw_mode and camera_pointing_mode per behavior node / sequence step.
+Milestone 2.29B: sequence runtime execution. Complete: ObjectBehaviorMissionController executes approach -> circle sequence steps and applies per-step yaw/camera overrides during ExecuteMission.
+Milestone 2.29C: AirSim sequence config and canonical sequence validation. Complete: sequence config/spec plus validate-mission-artifacts --expect-sequence and run_mission.sh sequence validation flags.
+Milestone 2.29D: far static SEL and observability validation. Complete: BRPlayer_36 far-person sequence run validates active step fields and per-step yaw/camera mode assertions.
+Milestone 2.29E: mixed-mode sequence validation. Active next slice.
 ```
 
 ---
@@ -61,6 +68,12 @@ AirSim live frame + ego sidecar
   -> MissionRuntime async loop
        -> MissionEventPublisher
   -> ObjectBehaviorMissionController
+       -> BehaviorSpec sequence runtime
+            -> active_behavior() step selection
+            -> approach standoff step
+            -> robust circle/orbit step
+            -> behavior_sequence_step_start / behavior_sequence_step_complete
+            -> behavior_tick_sample active step observability
        -> VelocityCommand policy for vehicle translation/yaw
        -> CameraPointingCommand policy for target/home/landing/neutral camera pitch
   -> Px4BridgeCommandSink
@@ -106,6 +119,12 @@ simulation/airsim/run.sh
 
 simulation/airsim/run_mission.sh
   Starts mission-loop + AirSim camera bridge + overlay + post-run validation in tmux.
+  It now has a friendly AirSim RPC preflight so running it before run.sh exits with useful instructions.
+  It supports sequence validation flags:
+    --expect-sequence
+    --expect-sequence-steps approach,circle
+    --expect-sequence-step-modes approach:target:target,circle:target:target
+    --validation-complete-reason sequence_complete
 
 simulation/airsim/stop.sh
   Normal way to stop AirSim / PX4 SITL runtime.
@@ -144,7 +163,7 @@ Overlay is a subscriber/renderer only.
 
 ---
 
-## 3. Completed Capabilities Through 2.28C
+## 3. Completed Capabilities Through 2.29D
 
 AirSim existing-object binding:
 
@@ -155,8 +174,23 @@ config/core_stack_object_behavior_airsim_existing_object.yaml
 config/core_stack_object_behavior_airsim_existing_object_circle.yml
   -> circle validation config using explicit existing-object binding
 
+config/core_stack_object_behavior_airsim_existing_object_sequence.yml
+  -> approach -> circle sequence config for BRPlayer_01_96 / ghost_person_001
+
+config/core_stack_object_behavior_airsim_existing_object_sequence_far_person.yml
+  -> approach -> circle sequence config for BRPlayer_36 / ghost_far_person_001
+
 config/behaviors/circle_existing_object_person.yaml
   -> circle behavior spec for the validated existing-object path
+
+config/behaviors/sequence_approach_circle_existing_object.yaml
+  -> sequence behavior spec for ghost_person_001
+
+config/behaviors/sequence_approach_circle_far_person.yaml
+  -> sequence behavior spec for ghost_far_person_001 / BRPlayer_36
+
+simulation/airsim/scripts/airsim-list-objects.py
+  -> lists selectable scene objects by class/distance; used to pick BRPlayer_36 as a farther static person target
 
 simulation/airsim/scripts/airsim-object-poses.py
   -> calls AirSim simGetObjectPose(object_name)
@@ -201,6 +235,31 @@ Behavior is robust to imperfect insertion geometry:
 For known static AirSim existing-object bindings, object_behavior_zero_target_velocity may be enabled so the controller does not velocity-match synthetic/static-object velocity noise. This zeroes target_velocity only; tangent velocity remains active.
 ```
 
+Sequence behavior:
+
+```text
+behavior.type: sequence is implemented in ObjectBehaviorMissionController.
+The controller tracks sequence_step_index_ and active_behavior().
+Approach steps complete when standoff is reached:
+  range <= stop_distance_m + position_tolerance_m
+Circle steps complete by orbit_count or duration_s.
+Intermediate step completion emits:
+  behavior_sequence_step_complete
+  behavior_sequence_step_start for next step
+Final step completion emits:
+  behavior_complete reason=sequence_complete
+
+Sequence step observability is present in behavior_tick_sample:
+  active_behavior
+  active_yaw_mode
+  active_camera_pointing_mode
+  sequence_step_index
+  sequence_step_count
+  sequence_step_behavior
+  sequence_step_yaw_mode
+  sequence_step_camera_pointing_mode
+```
+
 Target-stare yaw and camera/gimbal pitch:
 
 ```text
@@ -216,7 +275,7 @@ Vertical camera stare:
 Default lifecycle policy:
   Prepare        -> neutral, pitch 0
   Takeoff        -> neutral, pitch 0
-  ExecuteMission -> target
+  ExecuteMission -> target, unless active sequence step overrides camera_pointing_mode
   GoHome         -> home / recovery location
   Land           -> landing_area
   Complete       -> neutral, pitch 0
@@ -296,53 +355,85 @@ run_mission.sh starts mission-loop, AirSim camera bridge, overlay, and canonical
 Validation log now captures full validator output, not just final PASS.
 ```
 
+2.29D far-person validation result at commit 3cc96a1:
+
+```text
+Target:
+  BRPlayer_36 / ghost_far_person_001 / class person
+  Selected because AirSim object list showed it as a farther static person target than BRPlayer_01_96.
+
+Run command:
+  cd ~/dedalus/simulation/airsim
+  ./run_mission.sh \
+    --config ../../config/core_stack_object_behavior_airsim_existing_object_sequence_far_person.yml \
+    --output-dir ../../out/object_behavior_airsim_existing_object_sequence_far_person \
+    --expect-sequence \
+    --expect-sequence-steps approach,circle \
+    --expect-sequence-step-modes approach:target:target,circle:target:target \
+    --validation-complete-reason sequence_complete \
+    --attach
+
+Validation log highlights:
+  final_state: Complete
+  state_path: Idle -> Prepare -> Takeoff -> ExecuteMission -> GoHome -> Land -> Complete
+  commands: Arm ok=1, Takeoff ok=1, Velocity ok=1133, Land ok=1, Disarm ok=2
+  behavior_sequence_step_start: 2
+  behavior_sequence_step_complete: 1
+  sequence_started_steps: approach,circle
+  sequence_completed_steps: approach
+  sequence_step_modes:
+    approach: yaw=target camera=target
+    circle: yaw=target camera=target
+  camera_pointing_events:
+    camera_pointing_dispatch: 1447
+    camera_pointing_intent: 1447
+    camera_pointing_result: 1447
+  camera_pointing_modes: home=516, landing_area=257, neutral=55, target=619
+  camera_proof_frames: 0=113, front_center=113
+  circle avg_abs_radius_error: 0.375m
+  max_radius_error_after_latch: 1.805m
+  completed_orbits: 0.986, required >= 0.950
+  behavior_complete reason: sequence_complete
+  runtime_stop terminal_settled: True
+  validation: PASS
+```
+
 ---
 
-## 4. Active Next Work: 2.29 Multi-stage Behavior with Mixed Yaw/Camera Modes
+## 4. Active Next Work: 2.29E Mixed-Mode Sequence Validation
 
 Goal:
 
 ```text
-Allow a behavior mission sequence to express stage-specific yaw and camera pointing modes while reusing the existing behavior/trajectory parser and syntax.
+Prove stage-level yaw and camera pointing are independent by validating a sequence where yaw changes mode between stages while camera target-stare remains active.
 ```
 
-Motivation:
+Recommended 2.29E scope:
 
 ```text
-Yaw and camera pitch are now independent typed policy dimensions.
-The next useful capability is staged behavior where approach/follow/circle/return/land can mix:
-  yaw: trajectory | target | hold | none
-  camera: neutral | target | home | landing_area | disabled
+1. Add a mixed-mode sequence behavior spec or config variant:
+     approach:
+       yaw_mode: target
+       camera_pointing_mode: target
+     circle:
+       yaw_mode: trajectory
+       camera_pointing_mode: target
+
+2. Use the same far static person target first:
+     BRPlayer_36 / ghost_far_person_001
+
+3. Validate with canonical step-mode checks:
+     --expect-sequence-step-modes approach:target:target,circle:trajectory:target
+
+4. Confirm behavior_tick_sample shows:
+     active_behavior: approach -> circle
+     active_yaw_mode: target -> trajectory
+     active_camera_pointing_mode: target -> target
+
+5. Keep object_behavior_zero_target_velocity=true for static existing-object targets.
 ```
 
-Proposed 2.29 implementation order:
-
-```text
-1. Locate and reuse the existing behavior/trajectory parser and stage syntax.
-   Do not duplicate parser logic for multi-stage flight.
-
-2. Add optional per-stage yaw_mode override.
-   Fallback remains mission_options.object_behavior_yaw_mode.
-
-3. Add optional per-stage camera_pointing_mode override.
-   Fallback remains lifecycle default policy:
-     Prepare/Takeoff neutral
-     ExecuteMission target
-     GoHome home
-     Land landing_area
-     Complete neutral
-
-4. Add one AirSim config/spec that demonstrates:
-     approach target  -> yaw target, camera target
-     circle target    -> yaw target, camera target
-     go home / land   -> lifecycle camera defaults
-
-5. Validate via:
-     simulation/airsim/run.sh AirSimNH
-     simulation/airsim/run_mission.sh --attach
-```
-
-Non-goals for 2.29:
+Non-goals for 2.29E:
 
 ```text
 No obstacle avoidance.
@@ -350,6 +441,23 @@ No new planner.
 No AirSim C++ RPC rewrite.
 No mission DSL explosion.
 No direct overlay-side behavior inference.
+No moving SEL / animal yet.
+```
+
+Moving SEL / animal target guidance:
+
+```text
+Defer to 2.30 unless explicitly requested.
+Before flying relative to an animal, prove pose is live and stable:
+
+  python3 simulation/airsim/scripts/airsim-object-poses.py \
+    --host 127.0.0.1 \
+    --rpc-port 41451 \
+    --objects <AnimalAIController_C_...>
+
+Run repeatedly and verify x/y changes smoothly.
+For moving targets, set:
+  mission_options.object_behavior_zero_target_velocity: false
 ```
 
 ---
@@ -413,7 +521,7 @@ simulation/airsim/stop.sh
 # Use cleanup.sh only for reset/rebuild cleanup, not normal runtime stop.
 ```
 
-Canonical AirSim mission validation:
+Canonical circle AirSim mission validation:
 
 ```bash
 tools/mission/mission-events-summary.py \
@@ -440,6 +548,38 @@ python3 tools/validation/validate-circle-trajectory.py \
   --expect-complete-reason orbit_count_elapsed \
   --require-terminal-settled \
   --require-lifecycle
+```
+
+Canonical far-person sequence AirSim validation:
+
+```bash
+cd ~/dedalus/simulation/airsim
+
+./run_mission.sh \
+  --config ../../config/core_stack_object_behavior_airsim_existing_object_sequence_far_person.yml \
+  --output-dir ../../out/object_behavior_airsim_existing_object_sequence_far_person \
+  --expect-sequence \
+  --expect-sequence-steps approach,circle \
+  --expect-sequence-step-modes approach:target:target,circle:target:target \
+  --validation-complete-reason sequence_complete \
+  --attach
+```
+
+Expected far-person validation evidence:
+
+```text
+sequence_started_steps: approach,circle
+sequence_completed_steps: approach
+sequence_step_modes:
+  approach: yaw=target camera=target
+  circle: yaw=target camera=target
+camera_pointing_modes:
+  neutral
+  target
+  home
+  landing_area
+Circle trajectory checks PASS
+validation: PASS
 ```
 
 Manual camera bridge validation:
@@ -556,6 +696,7 @@ Do not keep retrying increasingly complex connector paths after a connector fail
 - Do not pretend AirSim camera pitch is a PX4/MAVLink gimbal unless the simulator exposes an actual MAVLink gimbal component.
 - Do not create duplicate mission validators. Extend tools/mission/validate-mission-artifacts.py and compose existing tools.
 - Do not add shims to preserve stale pre-refactor APIs unless there is a current user and an explicit removal plan.
+- Do not jump to moving SEL / animal before mixed-mode static sequence validation unless explicitly requested.
 - Do not create branches or PRs unless explicitly requested.
 ```
 
