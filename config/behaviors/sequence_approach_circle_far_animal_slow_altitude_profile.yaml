@@ -42,7 +42,7 @@ behavior:
       position_tolerance_m: 1.5
       lost_target_timeout_s: 5.0
       orbit_count: 1.0
-      yaw_mode: trajectory
+      yaw_mode: target
       camera_pointing_mode: target
 
 completion:
