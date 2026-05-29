@@ -31,7 +31,7 @@ behavior:
       max_vertical_speed_mps: 1.0
       position_tolerance_m: 1.5
       lost_target_timeout_s: 5.0
-      orbit_count: 1.0
+      orbit_count: 3.0
       yaw_mode: target
       camera_pointing_mode: target
 
