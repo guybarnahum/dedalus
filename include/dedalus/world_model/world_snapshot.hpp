@@ -204,6 +204,8 @@ struct WorldSnapshot {
 
     bool has_ego_occupancy{false};
     EgoOccupancyMapSnapshot ego_occupancy;
+    bool has_latest_swept_volume{false};
+    SweptVolumeDebug latest_swept_volume;
 };
 
 std::string to_json(const WorldSnapshot& snapshot);
