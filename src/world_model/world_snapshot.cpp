@@ -201,6 +201,34 @@ const char* to_string(FlightControlArmState value) {
     }
 }
 
+const char* to_string(OccupancyCellState value) {
+    switch (value) {
+        case OccupancyCellState::Free:
+            return "free";
+        case OccupancyCellState::Occupied:
+            return "occupied";
+        case OccupancyCellState::Unknown:
+        default:
+            return "unknown";
+    }
+}
+
+const char* to_string(OccupancySourceKind value) {
+    switch (value) {
+        case OccupancySourceKind::AirSimGroundTruth:
+            return "airsim_ground_truth";
+        case OccupancySourceKind::VisualObstacleDetector:
+            return "visual_obstacle_detector";
+        case OccupancySourceKind::DepthProvider:
+            return "depth_provider";
+        case OccupancySourceKind::Fused:
+            return "fused";
+        case OccupancySourceKind::SyntheticFixture:
+        default:
+            return "synthetic_fixture";
+    }
+}
+
 const char* bool_string(bool value) {
     return value ? "true" : "false";
 }
@@ -255,6 +283,54 @@ void write_agent_view_evidence(std::ostringstream& out, const AgentViewEvidence&
         out << ",\n        \"camera_name\": \"" << escape_json(evidence.camera_name) << "\"";
     }
     out << "\n      }";
+}
+
+void write_ego_occupancy(std::ostringstream& out, const EgoOccupancyMapSnapshot& occupancy) {
+    out << "  \"ego_occupancy\": {\n";
+    out << "    \"timestamp_ns\": " << occupancy.timestamp.timestamp_ns << ",\n";
+    out << "    \"map_frame_id\": \"" << escape_json(occupancy.map_frame_id.value) << "\",\n";
+    out << "    \"source_kind\": \"" << to_string(occupancy.source_kind) << "\",\n";
+    out << "    \"source_provider\": \"" << escape_json(occupancy.source_provider) << "\",\n";
+    out << "    \"resolution_m\": " << occupancy.resolution_m << ",\n";
+    out << "    \"size_m\": ";
+    write_vec3(out, occupancy.size_m);
+    out << ",\n";
+    out << "    \"occupied_count\": " << occupancy.occupied_count << ",\n";
+    out << "    \"free_count\": " << occupancy.free_count << ",\n";
+    out << "    \"unknown_count\": " << occupancy.unknown_count << ",\n";
+    out << "    \"stale_count\": " << occupancy.stale_count << ",\n";
+    out << "    \"nearest_obstacle_distance_m\": " << occupancy.nearest_obstacle_distance_m << ",\n";
+    out << "    \"forward_corridor_clearance_m\": " << occupancy.forward_corridor_clearance_m << ",\n";
+    out << "    \"has_valid_occupancy\": " << bool_string(occupancy.has_valid_occupancy) << ",\n";
+    out << "    \"debug_cells\": [";
+    for (std::size_t i = 0; i < occupancy.debug_cells.size(); ++i) {
+        const auto& cell = occupancy.debug_cells[i];
+        if (i != 0) {
+            out << ",";
+        }
+        out << "\n";
+        out << "      {\n";
+        out << "        \"center_local\": ";
+        write_vec3(out, cell.center_local);
+        out << ",\n        \"size_m\": ";
+        write_vec3(out, cell.size_m);
+        out << ",\n        \"state\": \"" << to_string(cell.state) << "\",\n";
+        out << "        \"confidence\": " << cell.confidence << ",\n";
+        out << "        \"age_s\": " << cell.age_s << ",\n";
+        out << "        \"distance_to_nearest_occupied_m\": " << cell.distance_to_nearest_occupied_m;
+        if (!cell.source_provider.empty()) {
+            out << ",\n        \"source_provider\": \"" << escape_json(cell.source_provider) << "\"";
+        }
+        if (!cell.source_object_name.empty()) {
+            out << ",\n        \"source_object_name\": \"" << escape_json(cell.source_object_name) << "\"";
+        }
+        out << "\n      }";
+    }
+    if (!occupancy.debug_cells.empty()) {
+        out << "\n    ";
+    }
+    out << "]\n";
+    out << "  },\n";
 }
 
 }  // namespace
@@ -314,6 +390,10 @@ std::string to_json(const WorldSnapshot& snapshot) {
     out << "    \"last_disarm_request_at_ns\": " << snapshot.flight_control.last_disarm_request_at.timestamp_ns << ",\n";
     out << "    \"status\": \"" << escape_json(snapshot.flight_control.status) << "\"\n";
     out << "  },\n";
+
+    if (snapshot.has_ego_occupancy) {
+        write_ego_occupancy(out, snapshot.ego_occupancy);
+    }
 
     out << "  \"agents\": [";
     for (std::size_t i = 0; i < snapshot.agents.size(); ++i) {
