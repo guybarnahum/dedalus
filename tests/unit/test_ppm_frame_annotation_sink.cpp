@@ -52,6 +52,7 @@ int main() {
 
     const auto frame_path = output_dir / "frame_000001.ppm";
     const auto manifest_path = output_dir / "manifest.txt";
+    const auto sidecar_path = output_dir / "frame_000001.world_overlay.json";
 
     if (!std::filesystem::exists(frame_path)) {
         std::cerr << "ppm annotation sink did not create frame artifact\n";
@@ -59,6 +60,10 @@ int main() {
     }
     if (!std::filesystem::exists(manifest_path)) {
         std::cerr << "ppm annotation sink did not create manifest artifact\n";
+        return 1;
+    }
+    if (!std::filesystem::exists(sidecar_path)) {
+        std::cerr << "ppm annotation sink did not create world overlay sidecar\n";
         return 1;
     }
 
@@ -81,6 +86,23 @@ int main() {
         manifest.find("frame_000001.ppm") == std::string::npos) {
         std::cerr << "ppm annotation manifest missing expected frame metadata\n";
         return 1;
+    }
+
+    const auto sidecar = read_text_file(sidecar_path);
+    const std::string required_sidecar_tokens[] = {
+        "\"occupancy\"",
+        "\"source_kind\": \"synthetic_fixture\"",
+        "\"source_provider\": \"synthetic_track4_fixture\"",
+        "\"occupied_count\": 1",
+        "\"projected_cells\"",
+        "\"state\": \"occupied\"",
+        "\"source_object_name\": \"synthetic_forward_obstacle\""};
+    for (const auto& token : required_sidecar_tokens) {
+        if (sidecar.find(token) == std::string::npos) {
+            std::cerr << "world overlay sidecar missing occupancy token: " << token << "\n";
+            std::cerr << sidecar << "\n";
+            return 1;
+        }
     }
 
     std::filesystem::remove_all(output_dir);
