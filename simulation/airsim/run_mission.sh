@@ -46,9 +46,11 @@ CAMERA_RESEND_S="0.25"
 CAMERA_CAPTURE_EVERY_S="1.0"
 WITH_CAMERA=1
 WITH_OVERLAY=1
+WITH_OCCUPANCY_OVERLAY=1
 WITH_VALIDATION=1
 OVERLAY_RATE_HZ="5"
 OVERLAY_DURATION_S="0"
+OVERLAY_MAX_OCCUPANCY_CELLS="32"
 VALIDATION_MIN_ORBITS="2.95"
 VALIDATION_RADIUS="10.0"
 VALIDATION_TIMEOUT_S="0"
@@ -81,6 +83,8 @@ Examples:
   ./run_mission.sh
   ./run_mission.sh --attach
   ./run_mission.sh --no-overlay
+  ./run_mission.sh --no-occupancy-overlay
+  ./run_mission.sh --max-occupancy-cells 8
   ./run_mission.sh --no-validation
   ./run_mission.sh --camera 0 --camera front_center
   ./run_mission.sh --config ../../config/core_stack_object_behavior_airsim_existing_object_circle.yml
@@ -107,6 +111,8 @@ Options:
   --camera CAMERA             AirSim camera to command. May repeat. Default: front_center and 0
   --no-camera                 Do not start camera-pointing bridge
   --no-overlay                Do not start overlay
+  --no-occupancy-overlay      Do not pass Track 4 occupancy render flags to overlay
+  --max-occupancy-cells N     Max occupancy cells for overlay. Default: 32
   --no-validation             Do not start post-run validators
   --overlay-rate-hz HZ        overlay update rate. Default: 5
   --overlay-duration-s S      overlay duration; 0 means run until session stops. Default: 0
@@ -276,6 +282,14 @@ while [[ $# -gt 0 ]]; do
             WITH_OVERLAY=0
             shift
             ;;
+        --no-occupancy-overlay)
+            WITH_OCCUPANCY_OVERLAY=0
+            shift
+            ;;
+        --max-occupancy-cells)
+            OVERLAY_MAX_OCCUPANCY_CELLS="$2"
+            shift 2
+            ;;
         --no-validation)
             WITH_VALIDATION=0
             shift
@@ -429,6 +443,13 @@ OVERLAY_CMD=(
     --debug
     --debug-json "$OVERLAY_DEBUG_JSON"
 )
+if [[ "$WITH_OCCUPANCY_OVERLAY" -eq 1 ]]; then
+    OVERLAY_CMD+=(
+        --show-occupancy-summary
+        --show-occupancy-cells
+        --max-occupancy-cells "$OVERLAY_MAX_OCCUPANCY_CELLS"
+    )
+fi
 if [[ "$EXIT_ON_COMPLETE" -eq 1 ]]; then
     OVERLAY_CMD+=(--exit-on-runtime-stop)
 fi
@@ -563,6 +584,10 @@ if [[ "$WITH_OVERLAY" -eq 1 ]]; then
     echo "Overlay:"
     echo "  log:        $OVERLAY_LOG"
     echo "  debug json: $OVERLAY_DEBUG_JSON"
+    echo "  occupancy:  $([[ "$WITH_OCCUPANCY_OVERLAY" -eq 1 ]] && echo enabled || echo disabled)"
+    if [[ "$WITH_OCCUPANCY_OVERLAY" -eq 1 ]]; then
+        echo "  max cells:  $OVERLAY_MAX_OCCUPANCY_CELLS"
+    fi
     echo ""
 fi
 if [[ "$WITH_VALIDATION" -eq 1 ]]; then
@@ -588,6 +613,10 @@ echo "  stop simulator/PX4: ./stop.sh"
 echo ""
 echo "Mission command:"
 echo "  $(quote_cmd "${MISSION_CMD[@]}")"
+if [[ "$WITH_OVERLAY" -eq 1 ]]; then
+    echo "Overlay command:"
+    echo "  $(quote_cmd "${OVERLAY_CMD[@]}")"
+fi
 
 if [[ "$ATTACH" -eq 1 ]]; then
     tmux attach -t "$SESSION_NAME"
