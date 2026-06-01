@@ -15,31 +15,39 @@ namespace {
 
 std::string class_label_to_string(const ClassLabel label) {
     switch (label) {
-        case ClassLabel::Person:
-            return "person";
-        case ClassLabel::Drone:
-            return "drone";
-        case ClassLabel::Car:
-            return "car";
-        case ClassLabel::Boat:
-            return "boat";
-        case ClassLabel::Animal:
-            return "animal";
-        case ClassLabel::House:
-            return "house";
-        case ClassLabel::Building:
-            return "building";
-        case ClassLabel::Tree:
-            return "tree";
-        case ClassLabel::Road:
-            return "road";
-        case ClassLabel::River:
-            return "river";
-        case ClassLabel::Terrain:
-            return "terrain";
+        case ClassLabel::Person: return "person";
+        case ClassLabel::Drone: return "drone";
+        case ClassLabel::Car: return "car";
+        case ClassLabel::Boat: return "boat";
+        case ClassLabel::Animal: return "animal";
+        case ClassLabel::House: return "house";
+        case ClassLabel::Building: return "building";
+        case ClassLabel::Tree: return "tree";
+        case ClassLabel::Road: return "road";
+        case ClassLabel::River: return "river";
+        case ClassLabel::Terrain: return "terrain";
         case ClassLabel::Unknown:
-        default:
-            return "unknown";
+        default: return "unknown";
+    }
+}
+
+std::string occupancy_state_to_string(const OccupancyCellState state) {
+    switch (state) {
+        case OccupancyCellState::Free: return "free";
+        case OccupancyCellState::Occupied: return "occupied";
+        case OccupancyCellState::Unknown:
+        default: return "unknown";
+    }
+}
+
+std::string occupancy_source_to_string(const OccupancySourceKind source) {
+    switch (source) {
+        case OccupancySourceKind::AirSimGroundTruth: return "airsim_ground_truth";
+        case OccupancySourceKind::VisualObstacleDetector: return "visual_obstacle_detector";
+        case OccupancySourceKind::DepthProvider: return "depth_provider";
+        case OccupancySourceKind::Fused: return "fused";
+        case OccupancySourceKind::SyntheticFixture:
+        default: return "synthetic_fixture";
     }
 }
 
@@ -81,24 +89,12 @@ void write_json_string(std::ostream& output, const std::string& value) {
     output << '"';
     for (const char ch : value) {
         switch (ch) {
-            case '"':
-                output << "\\\"";
-                break;
-            case '\\':
-                output << "\\\\";
-                break;
-            case '\n':
-                output << "\\n";
-                break;
-            case '\r':
-                output << "\\r";
-                break;
-            case '\t':
-                output << "\\t";
-                break;
-            default:
-                output << ch;
-                break;
+            case '"': output << "\\\""; break;
+            case '\\': output << "\\\\"; break;
+            case '\n': output << "\\n"; break;
+            case '\r': output << "\\r"; break;
+            case '\t': output << "\\t"; break;
+            default: output << ch; break;
         }
     }
     output << '"';
@@ -110,6 +106,86 @@ WorldToImageProjectionConfig projection_config_for(const ImageView& image, const
     config.extrinsics.body_T_camera.position = Vec3{0.0, 0.0, 0.0};
     config.extrinsics.body_T_camera.rotation_rpy = Vec3{0.0, 0.0, 0.0};
     return config;
+}
+
+void write_projected_occupancy(
+    std::ostream& output,
+    const WorldSnapshot& snapshot,
+    const WorldToImageProjectionConfig& config) {
+    output << "  \"occupancy\": {\n";
+    output << "    \"present\": " << (snapshot.has_ego_occupancy ? "true" : "false");
+    if (!snapshot.has_ego_occupancy) {
+        output << "\n  }";
+        return;
+    }
+
+    const auto& occupancy = snapshot.ego_occupancy;
+    output << ",\n";
+    output << "    \"timestamp_ns\": " << occupancy.timestamp.timestamp_ns << ",\n";
+    output << "    \"map_frame_id\": ";
+    write_json_string(output, occupancy.map_frame_id.value);
+    output << ",\n";
+    output << "    \"source_kind\": ";
+    write_json_string(output, occupancy_source_to_string(occupancy.source_kind));
+    output << ",\n";
+    output << "    \"source_provider\": ";
+    write_json_string(output, occupancy.source_provider);
+    output << ",\n";
+    output << "    \"summary\": {\n";
+    output << "      \"resolution_m\": " << occupancy.resolution_m << ",\n";
+    output << "      \"size_m\": ";
+    write_vec3_json(output, occupancy.size_m);
+    output << ",\n";
+    output << "      \"occupied_count\": " << occupancy.occupied_count << ",\n";
+    output << "      \"free_count\": " << occupancy.free_count << ",\n";
+    output << "      \"unknown_count\": " << occupancy.unknown_count << ",\n";
+    output << "      \"stale_count\": " << occupancy.stale_count << ",\n";
+    output << "      \"nearest_obstacle_distance_m\": " << occupancy.nearest_obstacle_distance_m << ",\n";
+    output << "      \"forward_corridor_clearance_m\": " << occupancy.forward_corridor_clearance_m << ",\n";
+    output << "      \"has_valid_occupancy\": " << (occupancy.has_valid_occupancy ? "true" : "false") << "\n";
+    output << "    },\n";
+    output << "    \"projected_cells\": [";
+    for (std::size_t i = 0; i < occupancy.debug_cells.size(); ++i) {
+        const auto& cell = occupancy.debug_cells[i];
+        const auto projected = project_local_point_to_image(cell.center_local, snapshot.ego, config);
+        if (i != 0) {
+            output << ",";
+        }
+        output << "\n";
+        output << "      {\n";
+        output << "        \"state\": ";
+        write_json_string(output, occupancy_state_to_string(cell.state));
+        output << ",\n";
+        output << "        \"center_local\": ";
+        write_vec3_json(output, cell.center_local);
+        output << ",\n";
+        output << "        \"size_m\": ";
+        write_vec3_json(output, cell.size_m);
+        output << ",\n";
+        output << "        \"confidence\": " << cell.confidence << ",\n";
+        output << "        \"age_s\": " << cell.age_s << ",\n";
+        output << "        \"distance_to_nearest_occupied_m\": " << cell.distance_to_nearest_occupied_m << ",\n";
+        output << "        \"source_provider\": ";
+        write_json_string(output, cell.source_provider);
+        output << ",\n";
+        output << "        \"source_object_name\": ";
+        write_json_string(output, cell.source_object_name);
+        output << ",\n";
+        output << "        \"visible\": " << (projected.visible ? "true" : "false") << ",\n";
+        output << "        \"u_px\": " << projected.u_px << ",\n";
+        output << "        \"v_px\": " << projected.v_px << ",\n";
+        output << "        \"depth_m\": " << projected.depth_m << ",\n";
+        output << "        \"range_m\": " << projected.range_m << ",\n";
+        output << "        \"reason\": ";
+        write_json_string(output, projected.reason);
+        output << "\n";
+        output << "      }";
+    }
+    if (!occupancy.debug_cells.empty()) {
+        output << "\n    ";
+    }
+    output << "]\n";
+    output << "  }";
 }
 
 }  // namespace
@@ -231,7 +307,9 @@ void write_world_overlay_sidecar(
         output << "    }" << (i + 1U < context.world_snapshot.agents.size() ? "," : "") << "\n";
     }
 
-    output << "  ]\n";
+    output << "  ],\n";
+    write_projected_occupancy(output, context.world_snapshot, config);
+    output << "\n";
     output << "}\n";
 }
 
