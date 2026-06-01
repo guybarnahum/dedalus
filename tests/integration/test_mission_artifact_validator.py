@@ -16,6 +16,95 @@ def write_jsonl(path: Path, records: list[dict[str, object]]) -> None:
             output.write(json.dumps(record, separators=(",", ":")) + "\n")
 
 
+def write_occupancy_snapshot(path: Path) -> None:
+    path.write_text(
+        json.dumps(
+            {
+                "timestamp_ns": 123,
+                "ego_occupancy": {
+                    "timestamp_ns": 123,
+                    "map_frame_id": "map_local_0001",
+                    "source_kind": "synthetic_fixture",
+                    "source_provider": "synthetic_track4_fixture",
+                    "resolution_m": 1.0,
+                    "size_m": [12.0, 8.0, 4.0],
+                    "occupied_count": 1,
+                    "free_count": 1,
+                    "unknown_count": 1,
+                    "stale_count": 0,
+                    "nearest_obstacle_distance_m": 5.0,
+                    "forward_corridor_clearance_m": 4.0,
+                    "has_valid_occupancy": True,
+                    "debug_cells": [
+                        {
+                            "center_local": [5.0, 0.0, 0.0],
+                            "size_m": [1.0, 1.0, 1.0],
+                            "state": "occupied",
+                            "confidence": 0.85,
+                            "age_s": 0.0,
+                            "distance_to_nearest_occupied_m": 0.0,
+                            "source_provider": "synthetic_track4_fixture",
+                            "source_object_name": "synthetic_forward_obstacle",
+                        }
+                    ],
+                },
+            },
+            separators=(",", ":"),
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+
+def write_occupancy_sidecar(path: Path) -> None:
+    path.write_text(
+        json.dumps(
+            {
+                "frame_index": 1,
+                "occupancy": {
+                    "present": True,
+                    "timestamp_ns": 123,
+                    "map_frame_id": "map_local_0001",
+                    "source_kind": "synthetic_fixture",
+                    "source_provider": "synthetic_track4_fixture",
+                    "summary": {
+                        "resolution_m": 1.0,
+                        "size_m": [12.0, 8.0, 4.0],
+                        "occupied_count": 1,
+                        "free_count": 1,
+                        "unknown_count": 1,
+                        "stale_count": 0,
+                        "nearest_obstacle_distance_m": 5.0,
+                        "forward_corridor_clearance_m": 4.0,
+                        "has_valid_occupancy": True,
+                    },
+                    "projected_cells": [
+                        {
+                            "state": "occupied",
+                            "center_local": [5.0, 0.0, 0.0],
+                            "size_m": [1.0, 1.0, 1.0],
+                            "confidence": 0.85,
+                            "age_s": 0.0,
+                            "distance_to_nearest_occupied_m": 0.0,
+                            "source_provider": "synthetic_track4_fixture",
+                            "source_object_name": "synthetic_forward_obstacle",
+                            "visible": True,
+                            "u_px": 320.0,
+                            "v_px": 240.0,
+                            "depth_m": 5.0,
+                            "range_m": 5.0,
+                            "reason": "visible",
+                        }
+                    ],
+                },
+            },
+            separators=(",", ":"),
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+
 def valid_records() -> list[dict[str, object]]:
     return [
         {"event": "runtime_start", "tick_hz": 10.0},
@@ -41,8 +130,7 @@ def valid_records() -> list[dict[str, object]]:
 
 def sequence_records() -> list[dict[str, object]]:
     records = valid_records()
-    insert_at = 9
-    records[insert_at:insert_at] = [
+    records[9:9] = [
         {"event": "target_selected", "tick": 43, "agent_id": "agent_ghost_person_001", "source_track_id": "ghost_person_001"},
         {"event": "behavior_start", "tick": 43, "behavior": "sequence", "mission": "sequence_test", "reason": "target_selected"},
         {"event": "behavior_sequence_step_start", "tick": 43, "behavior": "sequence", "step_index": 0, "step_behavior": "approach", "step_yaw_mode": "target", "step_camera_pointing_mode": "target", "mission": "sequence_test", "reason": "sequence_start"},
@@ -64,15 +152,19 @@ def run_validator(repo_root: Path, run_dir: Path, *args: str) -> subprocess.Comp
     )
 
 
+def seed_basic_run(run_dir: Path) -> None:
+    run_dir.mkdir()
+    write_jsonl(run_dir / "mission_events.jsonl", valid_records())
+    (run_dir / "snapshot_manifest.txt").write_text("snapshot_0001.json\n", encoding="utf-8")
+    (run_dir / "snapshot_0001.json").write_text("{}\n", encoding="utf-8")
+
+
 def main() -> int:
     repo_root = Path(sys.argv[1]) if len(sys.argv) > 1 else Path(__file__).resolve().parents[2]
 
     with tempfile.TemporaryDirectory() as tmp:
         run_dir = Path(tmp) / "valid_run"
-        run_dir.mkdir()
-        write_jsonl(run_dir / "mission_events.jsonl", valid_records())
-        (run_dir / "snapshot_manifest.txt").write_text("snapshot_0001.json\n", encoding="utf-8")
-        (run_dir / "snapshot_0001.json").write_text("{}\n", encoding="utf-8")
+        seed_basic_run(run_dir)
 
         ok = run_validator(repo_root, run_dir, "--expect-complete", "--safe-height-m", "16", "--landed-height-m", "0.5")
         if ok.returncode != 0:
@@ -82,6 +174,33 @@ def main() -> int:
         if "final_state: Complete" not in ok.stdout or "failures: 0" not in ok.stdout:
             print(ok.stdout)
             print("validator did not report expected success summary", file=sys.stderr)
+            return 1
+
+        occupancy_dir = Path(tmp) / "occupancy_run"
+        occupancy_dir.mkdir()
+        write_jsonl(occupancy_dir / "mission_events.jsonl", valid_records())
+        (occupancy_dir / "snapshot_manifest.txt").write_text("snapshot_0001.json\n", encoding="utf-8")
+        write_occupancy_snapshot(occupancy_dir / "snapshot_0001.json")
+        write_occupancy_sidecar(occupancy_dir / "frame_000001.world_overlay.json")
+        occupancy = run_validator(repo_root, occupancy_dir, "--expect-complete", "--expect-occupancy", "--expect-occupancy-sidecars", "--safe-height-m", "16", "--landed-height-m", "0.5")
+        if occupancy.returncode != 0:
+            print(occupancy.stdout)
+            print(occupancy.stderr, file=sys.stderr)
+            return 1
+        for token in ("occupancy_artifacts:", "snapshots_checked: 1", "sidecars_checked: 1", "projected_cells_checked: 1", "source_kind synthetic_fixture: 1", "failures: 0"):
+            if token not in occupancy.stdout:
+                print(occupancy.stdout)
+                print(f"validator did not report expected occupancy token: {token}", file=sys.stderr)
+                return 1
+
+        missing_occupancy = run_validator(repo_root, run_dir, "--expect-complete", "--expect-occupancy", "--safe-height-m", "16", "--landed-height-m", "0.5")
+        if missing_occupancy.returncode == 0:
+            print(missing_occupancy.stdout)
+            print("validator accepted missing ego_occupancy", file=sys.stderr)
+            return 1
+        if "missing ego_occupancy" not in missing_occupancy.stdout:
+            print(missing_occupancy.stdout)
+            print("validator did not explain missing ego_occupancy", file=sys.stderr)
             return 1
 
         sequence_dir = Path(tmp) / "sequence_run"
