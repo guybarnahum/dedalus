@@ -22,6 +22,14 @@ enum class OccupancySourceKind {
     Fused,
 };
 
+enum class SweptVolumeStatus {
+    Unknown,
+    Clear,
+    OccupiedBlocked,
+    UnknownRisk,
+    StaleMap,
+};
+
 struct OccupancyCellSummary {
     Vec3 center_local;
     Vec3 size_m;
@@ -52,6 +60,25 @@ struct EgoOccupancyMapSnapshot {
     bool has_valid_occupancy{false};
 
     std::vector<OccupancyCellSummary> debug_cells;
+};
+
+struct SweptVolumeDebug {
+    MapFrameId map_frame_id{"map_unknown"};
+    TimePoint timestamp;
+    SweptVolumeStatus status{SweptVolumeStatus::Unknown};
+    std::string source_provider{"none"};
+    std::string reason;
+
+    Vec3 start_local;
+    Vec3 end_local;
+    float radius_m{0.0F};
+    float horizon_s{0.0F};
+    float nominal_speed_mps{0.0F};
+    float min_clearance_m{0.0F};
+    float time_to_collision_s{0.0F};
+    bool has_valid_query{false};
+
+    std::vector<Vec3> blocking_cell_centers;
 };
 
 }  // namespace dedalus
