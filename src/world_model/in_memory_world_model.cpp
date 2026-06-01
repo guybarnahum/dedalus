@@ -1,5 +1,6 @@
 #include "dedalus/world_model/in_memory_world_model.hpp"
 
+#include <cctype>
 #include <cmath>
 #include <iomanip>
 #include <sstream>
