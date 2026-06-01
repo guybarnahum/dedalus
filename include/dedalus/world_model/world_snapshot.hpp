@@ -5,6 +5,7 @@
 #include <vector>
 
 #include "dedalus/core/types.hpp"
+#include "dedalus/occupancy/occupancy_types.hpp"
 
 namespace dedalus {
 
@@ -200,6 +201,9 @@ struct WorldSnapshot {
     std::vector<Landmark> landmarks;
     std::vector<UncertainRegion> uncertain_regions;
     std::vector<MapFrame> map_frames;
+
+    bool has_ego_occupancy{false};
+    EgoOccupancyMapSnapshot ego_occupancy;
 };
 
 std::string to_json(const WorldSnapshot& snapshot);
