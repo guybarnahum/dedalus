@@ -120,16 +120,29 @@ def read_events(path: Path, result: ValidationResult) -> list[dict[str, Any]]:
     return events
 
 
+def snapshot_path_from_manifest_line(line: str) -> Path | None:
+    stripped = line.strip()
+    if not stripped or stripped.startswith("#"):
+        return None
+    parts = stripped.split()
+    if not parts:
+        return None
+    # Current manifest rows are: index path timestamp_ns active_map_frame_id.
+    # Legacy/unit fixtures may contain only the snapshot path.
+    candidate = parts[1] if len(parts) >= 2 and parts[0].isdigit() else parts[0]
+    return Path(candidate)
+
+
 def snapshot_paths(run_dir: Path) -> list[Path]:
     manifest = run_dir / "snapshot_manifest.txt"
     if manifest.exists():
         paths: list[Path] = []
         try:
             for raw in manifest.read_text(encoding="utf-8").splitlines():
-                entry = raw.strip()
-                if not entry:
+                entry = snapshot_path_from_manifest_line(raw)
+                if entry is None:
                     continue
-                paths.append((run_dir / entry).resolve() if not Path(entry).is_absolute() else Path(entry))
+                paths.append(entry if entry.is_absolute() else run_dir / entry)
         except OSError:
             return []
         return paths
