@@ -207,66 +207,21 @@ EOF
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
-        --session)
-            SESSION_NAME="$2"
-            shift 2
-            ;;
-        --build-dir)
-            BUILD_DIR="$(abs_path "$2")"
-            shift 2
-            ;;
-        --config)
-            CONFIG_PATH="$(abs_path "$2")"
-            shift 2
-            ;;
-        --output-dir)
-            OUTPUT_DIR="$(abs_path "$2")"
-            shift 2
-            ;;
-        --stream-host)
-            STREAM_HOST="$2"
-            shift 2
-            ;;
-        --stream-port)
-            STREAM_PORT="$2"
-            shift 2
-            ;;
-        --max-frames)
-            MAX_FRAMES="$2"
-            shift 2
-            ;;
-        --shutdown-max-frames)
-            SHUTDOWN_MAX_FRAMES="$2"
-            shift 2
-            ;;
-        --safe-height)
-            SAFE_HEIGHT="$2"
-            shift 2
-            ;;
-        --behavior-min-height)
-            BEHAVIOR_MIN_HEIGHT="$2"
-            shift 2
-            ;;
-        --behavior-duration-s)
-            BEHAVIOR_DURATION_S="$2"
-            shift 2
-            ;;
-        --vehicle-name)
-            VEHICLE_NAME="$2"
-            shift 2
-            ;;
-        --airsim-host)
-            AIRSIM_HOST="$2"
-            shift 2
-            ;;
-        --airsim-rpc-port)
-            AIRSIM_RPC_PORT="$2"
-            shift 2
-            ;;
-        --no-airsim-preflight)
-            AIRSIM_PREFLIGHT=0
-            shift
-            ;;
+        --session) SESSION_NAME="$2"; shift 2 ;;
+        --build-dir) BUILD_DIR="$(abs_path "$2")"; shift 2 ;;
+        --config) CONFIG_PATH="$(abs_path "$2")"; shift 2 ;;
+        --output-dir) OUTPUT_DIR="$(abs_path "$2")"; shift 2 ;;
+        --stream-host) STREAM_HOST="$2"; shift 2 ;;
+        --stream-port) STREAM_PORT="$2"; shift 2 ;;
+        --max-frames) MAX_FRAMES="$2"; shift 2 ;;
+        --shutdown-max-frames) SHUTDOWN_MAX_FRAMES="$2"; shift 2 ;;
+        --safe-height) SAFE_HEIGHT="$2"; shift 2 ;;
+        --behavior-min-height) BEHAVIOR_MIN_HEIGHT="$2"; shift 2 ;;
+        --behavior-duration-s) BEHAVIOR_DURATION_S="$2"; shift 2 ;;
+        --vehicle-name) VEHICLE_NAME="$2"; shift 2 ;;
+        --airsim-host) AIRSIM_HOST="$2"; shift 2 ;;
+        --airsim-rpc-port) AIRSIM_RPC_PORT="$2"; shift 2 ;;
+        --no-airsim-preflight) AIRSIM_PREFLIGHT=0; shift ;;
         --camera)
             if [[ "${CAMERAS[*]}" == "front_center 0" ]]; then
                 CAMERAS=()
@@ -274,87 +229,26 @@ while [[ $# -gt 0 ]]; do
             CAMERAS+=("$2")
             shift 2
             ;;
-        --no-camera)
-            WITH_CAMERA=0
-            shift
-            ;;
-        --no-overlay)
-            WITH_OVERLAY=0
-            shift
-            ;;
-        --no-occupancy-overlay)
-            WITH_OCCUPANCY_OVERLAY=0
-            shift
-            ;;
-        --max-occupancy-cells)
-            OVERLAY_MAX_OCCUPANCY_CELLS="$2"
-            shift 2
-            ;;
-        --no-validation)
-            WITH_VALIDATION=0
-            shift
-            ;;
-        --overlay-rate-hz)
-            OVERLAY_RATE_HZ="$2"
-            shift 2
-            ;;
-        --overlay-duration-s)
-            OVERLAY_DURATION_S="$2"
-            shift 2
-            ;;
-        --validation-min-orbits)
-            VALIDATION_MIN_ORBITS="$2"
-            shift 2
-            ;;
-        --validation-radius)
-            VALIDATION_RADIUS="$2"
-            shift 2
-            ;;
-        --validation-timeout-s)
-            VALIDATION_TIMEOUT_S="$2"
-            shift 2
-            ;;
-        --validation-complete-reason)
-            VALIDATION_COMPLETE_REASON="$2"
-            shift 2
-            ;;
-        --expect-sequence)
-            VALIDATION_EXPECT_SEQUENCE=1
-            shift
-            ;;
-        --expect-sequence-steps)
-            VALIDATION_SEQUENCE_STEPS="$2"
-            shift 2
-            ;;
-        --expect-sequence-step-modes)
-            VALIDATION_SEQUENCE_STEP_MODES="$2"
-            shift 2
-            ;;
-        --no-progress)
-            PROGRESS_FLAG=""
-            shift
-            ;;
-        --attach)
-            ATTACH=1
-            shift
-            ;;
-        --keep-tools-running)
-            EXIT_ON_COMPLETE=0
-            shift
-            ;;
-        --no-kill-existing)
-            KILL_EXISTING=0
-            shift
-            ;;
-        -h|--help)
-            usage
-            exit 0
-            ;;
-        *)
-            echo "❌ Unknown option: $1" >&2
-            usage
-            exit 1
-            ;;
+        --no-camera) WITH_CAMERA=0; shift ;;
+        --no-overlay) WITH_OVERLAY=0; shift ;;
+        --no-occupancy-overlay) WITH_OCCUPANCY_OVERLAY=0; shift ;;
+        --max-occupancy-cells) OVERLAY_MAX_OCCUPANCY_CELLS="$2"; shift 2 ;;
+        --no-validation) WITH_VALIDATION=0; shift ;;
+        --overlay-rate-hz) OVERLAY_RATE_HZ="$2"; shift 2 ;;
+        --overlay-duration-s) OVERLAY_DURATION_S="$2"; shift 2 ;;
+        --validation-min-orbits) VALIDATION_MIN_ORBITS="$2"; shift 2 ;;
+        --validation-radius) VALIDATION_RADIUS="$2"; shift 2 ;;
+        --validation-timeout-s) VALIDATION_TIMEOUT_S="$2"; shift 2 ;;
+        --validation-complete-reason) VALIDATION_COMPLETE_REASON="$2"; shift 2 ;;
+        --expect-sequence) VALIDATION_EXPECT_SEQUENCE=1; shift ;;
+        --expect-sequence-steps) VALIDATION_SEQUENCE_STEPS="$2"; shift 2 ;;
+        --expect-sequence-step-modes) VALIDATION_SEQUENCE_STEP_MODES="$2"; shift 2 ;;
+        --no-progress) PROGRESS_FLAG=""; shift ;;
+        --attach) ATTACH=1; shift ;;
+        --keep-tools-running) EXIT_ON_COMPLETE=0; shift ;;
+        --no-kill-existing) KILL_EXISTING=0; shift ;;
+        -h|--help) usage; exit 0 ;;
+        *) echo "❌ Unknown option: $1" >&2; usage; exit 1 ;;
     esac
 done
 
@@ -457,6 +351,14 @@ if [[ "$OVERLAY_DURATION_S" != "0" ]]; then
     OVERLAY_CMD+=(--duration-s "$OVERLAY_DURATION_S")
 fi
 
+if [[ -n "$SAFE_HEIGHT" ]]; then
+    VALIDATION_SAFE_HEIGHT="$SAFE_HEIGHT"
+else
+    VALIDATION_SAFE_HEIGHT="$(grep -E '^mission_options\.flight_takeoff_height_m:' "$CONFIG_PATH" | awk '{print $2}' | tail -1)"
+    VALIDATION_SAFE_HEIGHT="${VALIDATION_SAFE_HEIGHT:-$(grep -E '^mission_options\.flight_safe_height_m:' "$CONFIG_PATH" | awk '{print $2}' | tail -1)}"
+    VALIDATION_SAFE_HEIGHT="${VALIDATION_SAFE_HEIGHT:-40}"
+fi
+
 VALIDATION_SHELL=$(cat <<EOF
 set -euo pipefail
 cd $(printf '%q' "$REPO_ROOT_ABS")
@@ -502,13 +404,6 @@ EOF
 if [[ "$VALIDATION_EXPECT_SEQUENCE" -eq 1 ]]; then
     VALIDATION_SHELL+=$'\n'
     VALIDATION_SHELL+="VALIDATE_MISSION_CMD+=(--expect-sequence --expect-sequence-steps $(printf '%q' "$VALIDATION_SEQUENCE_STEPS"))"
-fi
-if [[ -n "$SAFE_HEIGHT" ]]; then
-    VALIDATION_SAFE_HEIGHT="$SAFE_HEIGHT"
-else
-    VALIDATION_SAFE_HEIGHT="$(grep -E '^mission_options\.flight_takeoff_height_m:' "$CONFIG_PATH" | awk '{print $2}' | tail -1)"
-    VALIDATION_SAFE_HEIGHT="${VALIDATION_SAFE_HEIGHT:-$(grep -E '^mission_options\.flight_safe_height_m:' "$CONFIG_PATH" | awk '{print $2}' | tail -1)}"
-    VALIDATION_SAFE_HEIGHT="${VALIDATION_SAFE_HEIGHT:-40}"
 fi
 if [[ -n "$VALIDATION_SEQUENCE_STEP_MODES" ]]; then
     VALIDATION_SHELL+=$'\n'
