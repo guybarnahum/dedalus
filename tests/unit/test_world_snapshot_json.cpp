@@ -27,6 +27,28 @@ int main() {
     snapshot.ego.home_T_body = dedalus::Pose3{};
     snapshot.ego.home_timestamp = dedalus::TimePoint{123456789};
 
+    snapshot.has_ego_occupancy = true;
+    snapshot.ego_occupancy.timestamp = snapshot.timestamp;
+    snapshot.ego_occupancy.map_frame_id = snapshot.active_map_frame_id;
+    snapshot.ego_occupancy.source_kind = dedalus::OccupancySourceKind::SyntheticFixture;
+    snapshot.ego_occupancy.source_provider = "synthetic_track4_fixture";
+    snapshot.ego_occupancy.resolution_m = 1.0F;
+    snapshot.ego_occupancy.size_m = dedalus::Vec3{12.0, 8.0, 4.0};
+    snapshot.ego_occupancy.occupied_count = 1U;
+    snapshot.ego_occupancy.free_count = 1U;
+    snapshot.ego_occupancy.unknown_count = 1U;
+    snapshot.ego_occupancy.nearest_obstacle_distance_m = 5.0F;
+    snapshot.ego_occupancy.forward_corridor_clearance_m = 4.0F;
+    snapshot.ego_occupancy.has_valid_occupancy = true;
+    dedalus::OccupancyCellSummary occupied_cell;
+    occupied_cell.center_local = dedalus::Vec3{6.0, 2.0, -8.0};
+    occupied_cell.size_m = dedalus::Vec3{1.0, 1.0, 1.0};
+    occupied_cell.state = dedalus::OccupancyCellState::Occupied;
+    occupied_cell.confidence = 0.85F;
+    occupied_cell.source_provider = "synthetic_track4_fixture";
+    occupied_cell.source_object_name = "synthetic_forward_obstacle";
+    snapshot.ego_occupancy.debug_cells.push_back(occupied_cell);
+
     dedalus::AgentState agent;
     agent.agent_id = dedalus::AgentId{"agent_track_0007"};
     agent.identity_id = dedalus::IdentityId{"identity_track_0007"};
@@ -72,6 +94,31 @@ int main() {
     for (const auto& token : required_ego_tokens) {
         if (!contains(json, token)) {
             std::cerr << "missing serialized ego token: " << token << "\n";
+            std::cerr << json << "\n";
+            return 1;
+        }
+    }
+
+    const std::string required_occupancy_tokens[] = {
+        "\"ego_occupancy\"",
+        "\"source_kind\": \"synthetic_fixture\"",
+        "\"source_provider\": \"synthetic_track4_fixture\"",
+        "\"resolution_m\": 1",
+        "\"size_m\": [12,8,4]",
+        "\"occupied_count\": 1",
+        "\"free_count\": 1",
+        "\"unknown_count\": 1",
+        "\"nearest_obstacle_distance_m\": 5",
+        "\"forward_corridor_clearance_m\": 4",
+        "\"has_valid_occupancy\": true",
+        "\"debug_cells\"",
+        "\"center_local\": [6,2,-8]",
+        "\"state\": \"occupied\"",
+        "\"source_object_name\": \"synthetic_forward_obstacle\""};
+
+    for (const auto& token : required_occupancy_tokens) {
+        if (!contains(json, token)) {
+            std::cerr << "missing serialized occupancy token: " << token << "\n";
             std::cerr << json << "\n";
             return 1;
         }
