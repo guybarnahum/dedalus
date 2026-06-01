@@ -7,12 +7,10 @@
 #include <fstream>
 #include <iomanip>
 #include <iostream>
-#include <map>
 #include <memory>
 #include <sstream>
 #include <string>
 #include <thread>
-#include <vector>
 
 #include <unistd.h>
 
@@ -70,22 +68,6 @@ struct Args {
     double behavior_min_height_override_m{-1.0};
     double behavior_duration_override_s{-1.0};
     bool safe_height_override_explicit{false};
-};
-
-struct CommandCounts {
-    int ok{0};
-    int failed{0};
-};
-
-struct MissionEventSummary {
-    bool valid{false};
-    int event_count{0};
-    int tick_count{0};
-    int failure_count{0};
-    std::string final_state{"unknown"};
-    std::vector<std::string> state_path;
-    std::map<std::string, CommandCounts> commands;
-    std::vector<std::string> failures;
 };
 
 class ProgressReporter {
@@ -162,190 +144,6 @@ private:
     bool finished_{false};
 };
 
-std::string json_string_field(const std::string& line, const std::string& key) {
-    const std::string marker = "\"" + key + "\":";
-    const auto marker_pos = line.find(marker);
-    if (marker_pos == std::string::npos) {
-        return {};
-    }
-    const auto open = line.find('"', marker_pos + marker.size());
-    if (open == std::string::npos) {
-        return {};
-    }
-    std::string value;
-    bool escaped = false;
-    for (std::size_t i = open + 1U; i < line.size(); ++i) {
-        const char ch = line[i];
-        if (escaped) {
-            switch (ch) {
-                case 'n':
-                    value.push_back('\n');
-                    break;
-                case 'r':
-                    value.push_back('\r');
-                    break;
-                case 't':
-                    value.push_back('\t');
-                    break;
-                default:
-                    value.push_back(ch);
-                    break;
-            }
-            escaped = false;
-            continue;
-        }
-        if (ch == '\\') {
-            escaped = true;
-            continue;
-        }
-        if (ch == '"') {
-            return value;
-        }
-        value.push_back(ch);
-    }
-    return {};
-}
-
-int json_int_field(const std::string& line, const std::string& key, int fallback = 0) {
-    const std::string marker = "\"" + key + "\":";
-    const auto marker_pos = line.find(marker);
-    if (marker_pos == std::string::npos) {
-        return fallback;
-    }
-    const auto start = marker_pos + marker.size();
-    std::size_t end = start;
-    while (end < line.size() && (line[end] == '-' || (line[end] >= '0' && line[end] <= '9'))) {
-        ++end;
-    }
-    if (end == start) {
-        return fallback;
-    }
-    try {
-        return std::stoi(line.substr(start, end - start));
-    } catch (...) {
-        return fallback;
-    }
-}
-
-bool json_bool_field(const std::string& line, const std::string& key, bool fallback = false) {
-    const std::string marker = "\"" + key + "\":";
-    const auto marker_pos = line.find(marker);
-    if (marker_pos == std::string::npos) {
-        return fallback;
-    }
-    const auto start = marker_pos + marker.size();
-    if (line.compare(start, 4U, "true") == 0) {
-        return true;
-    }
-    if (line.compare(start, 5U, "false") == 0) {
-        return false;
-    }
-    return fallback;
-}
-
-void append_state_if_new(std::vector<std::string>& states, const std::string& state) {
-    if (state.empty()) {
-        return;
-    }
-    if (states.empty() || states.back() != state) {
-        states.push_back(state);
-    }
-}
-
-std::string join_states(const std::vector<std::string>& states) {
-    std::ostringstream out;
-    for (std::size_t i = 0; i < states.size(); ++i) {
-        if (i > 0U) {
-            out << " -> ";
-        }
-        out << states[i];
-    }
-    return out.str();
-}
-
-MissionEventSummary read_mission_event_summary(const std::filesystem::path& path) {
-    MissionEventSummary summary;
-    std::ifstream input{path};
-    if (!input) {
-        return summary;
-    }
-
-    std::string line;
-    while (std::getline(input, line)) {
-        if (line.empty()) {
-            continue;
-        }
-        summary.valid = true;
-        ++summary.event_count;
-        const auto event = json_string_field(line, "event");
-        if (event == "state_transition") {
-            append_state_if_new(summary.state_path, json_string_field(line, "from"));
-            const auto to = json_string_field(line, "to");
-            append_state_if_new(summary.state_path, to);
-            summary.final_state = to.empty() ? summary.final_state : to;
-            summary.tick_count = std::max(summary.tick_count, json_int_field(line, "tick", summary.tick_count));
-        } else if (event == "command_result") {
-            const auto command = json_string_field(line, "command");
-            if (!command.empty()) {
-                auto& counts = summary.commands[command];
-                if (json_bool_field(line, "success", false)) {
-                    ++counts.ok;
-                } else {
-                    ++counts.failed;
-                    ++summary.failure_count;
-                    summary.failures.push_back(command + ": " + json_string_field(line, "status"));
-                }
-            }
-            summary.tick_count = std::max(summary.tick_count, json_int_field(line, "tick", summary.tick_count));
-        } else if (event == "command_exception") {
-            ++summary.failure_count;
-            const auto command = json_string_field(line, "command");
-            const auto error = json_string_field(line, "error");
-            summary.failures.push_back((command.empty() ? std::string{"command"} : command) + ": " + error);
-            summary.tick_count = std::max(summary.tick_count, json_int_field(line, "tick", summary.tick_count));
-        } else if (event == "runtime_stop") {
-            const auto state = json_string_field(line, "state");
-            if (!state.empty()) {
-                summary.final_state = state;
-                append_state_if_new(summary.state_path, state);
-            }
-            summary.tick_count = std::max(summary.tick_count, json_int_field(line, "tick_count", summary.tick_count));
-        } else if (event == "finish_requested") {
-            summary.tick_count = std::max(summary.tick_count, json_int_field(line, "tick", summary.tick_count));
-        } else if (event == "target_selected" || event == "behavior_start" || event == "behavior_complete") {
-            summary.tick_count = std::max(summary.tick_count, json_int_field(line, "tick", summary.tick_count));
-        }
-    }
-
-    return summary;
-}
-
-void print_mission_event_summary(const std::filesystem::path& path) {
-    const auto summary = read_mission_event_summary(path);
-    if (!summary.valid) {
-        std::cout << "Mission summary: unavailable; no event records found\n";
-        return;
-    }
-
-    std::cout << "Mission summary:\n";
-    std::cout << "  final_state: " << summary.final_state << "\n";
-    std::cout << "  ticks: " << summary.tick_count << "\n";
-    std::cout << "  events: " << summary.event_count << "\n";
-    if (!summary.state_path.empty()) {
-        std::cout << "  state_path: " << join_states(summary.state_path) << "\n";
-    }
-    if (!summary.commands.empty()) {
-        std::cout << "  commands:\n";
-        for (const auto& [command, counts] : summary.commands) {
-            std::cout << "    " << command << ": ok=" << counts.ok << " failed=" << counts.failed << "\n";
-        }
-    }
-    std::cout << "  failures: " << summary.failure_count << "\n";
-    for (const auto& failure : summary.failures) {
-        std::cout << "    - " << failure << "\n";
-    }
-}
-
 int run_shell_command(const std::string& command, int verbosity) {
     if (command.empty() || command == "disabled") {
         return 0;
@@ -377,7 +175,10 @@ bool replace_option_value(std::string& command, const std::string& option, const
         return true;
     }
     const auto value_end = command.find_first_of(" \t", value_start);
-    command.replace(value_start, value_end == std::string::npos ? std::string::npos : value_end - value_start, value);
+    command.replace(
+        value_start,
+        value_end == std::string::npos ? std::string::npos : value_end - value_start,
+        value);
     return true;
 }
 
@@ -436,7 +237,6 @@ int verbosity_from_flag(const std::string& arg) {
 
 Args parse_args(int argc, char** argv) {
     Args args;
-
     for (int i = 1; i < argc; ++i) {
         const std::string arg = argv[i];
         if (arg == "--config") {
@@ -516,7 +316,6 @@ Args parse_args(int argc, char** argv) {
             }
         }
     }
-
     return args;
 }
 
@@ -638,6 +437,20 @@ std::unique_ptr<dedalus::CameraPointingSink> create_camera_pointing_sink(
     throw std::invalid_argument("unknown object_behavior_camera_pointing_sink: " + sink);
 }
 
+void wait_for_graceful_runtime_settle(
+    dedalus::MissionRuntime& runtime,
+    double tick_hz,
+    int max_ticks,
+    int& consumed_ticks) {
+    consumed_ticks = 0;
+    const auto sleep_ms = std::chrono::milliseconds{
+        std::max<int>(1, static_cast<int>(1000.0 / std::max(1.0, tick_hz)))};
+    while (!runtime.terminal_settled() && consumed_ticks < max_ticks && interrupt_count() < 2) {
+        std::this_thread::sleep_for(sleep_ms);
+        ++consumed_ticks;
+    }
+}
+
 }  // namespace
 
 int main(int argc, char** argv) {
@@ -728,8 +541,9 @@ int main(int argc, char** argv) {
 
         ProgressReporter progress{args.progress_mode, args.max_frames};
 
-        int shutdown_frame_count = 0;
+        int shutdown_wait_ticks = 0;
         bool finish_requested = false;
+        bool frame_source_ended = false;
         while (true) {
             const int signals = interrupt_count();
             if (signals >= 2) {
@@ -765,15 +579,38 @@ int main(int argc, char** argv) {
                 if (!mission_runtime || mission_runtime->terminal_settled()) {
                     break;
                 }
-                if (shutdown_frame_count >= args.shutdown_max_frames) {
+                if (shutdown_wait_ticks >= args.shutdown_max_frames) {
                     std::cerr << "dedalus_mission_loop: graceful shutdown frame budget exhausted; stopping at mission state="
                               << dedalus::to_string(mission_runtime->last_state()) << "\n";
                     break;
                 }
-                ++shutdown_frame_count;
+                ++shutdown_wait_ticks;
             }
 
             if (!runner.run_once()) {
+                frame_source_ended = true;
+                const int frames = artifact_snapshot_writer->frame_count();
+                std::cerr << "dedalus_mission_loop: frame source ended after " << frames << " frame(s)";
+                if (mission_runtime && !mission_runtime->terminal_settled()) {
+                    std::cerr << "; requesting graceful mission finish before runtime_stop\n";
+                    if (!finish_requested) {
+                        finish_requested = true;
+                        mission_runtime->request_finish();
+                    }
+                    int consumed = 0;
+                    wait_for_graceful_runtime_settle(
+                        *mission_runtime,
+                        config.mission_tick_hz,
+                        args.shutdown_max_frames,
+                        consumed);
+                    shutdown_wait_ticks += consumed;
+                    if (!mission_runtime->terminal_settled()) {
+                        std::cerr << "dedalus_mission_loop: frame source ended; graceful shutdown wait exhausted at mission state="
+                                  << dedalus::to_string(mission_runtime->last_state()) << "\n";
+                    }
+                } else {
+                    std::cerr << "\n";
+                }
                 break;
             }
 
@@ -796,7 +633,7 @@ int main(int argc, char** argv) {
         if (mission_runtime) {
             std::this_thread::sleep_for(std::chrono::milliseconds{100});
             mission_runtime->stop();
-            print_mission_event_summary(mission_events_path);
+            std::cout << "Mission events: " << mission_events_path << "\n";
         }
 
         if (runtime_event_stream_server) {
@@ -815,11 +652,11 @@ int main(int argc, char** argv) {
 
         std::cout << "Wrote " << frame_count << " snapshot(s) to " << artifact_snapshot_writer->output_dir() << "\n";
         std::cout << "Manifest: " << artifact_snapshot_writer->manifest_path() << "\n";
-        if (mission_runtime) {
-            std::cout << "Mission events: " << mission_events_path << "\n";
-        }
         if (finish_requested) {
-            std::cout << "Graceful shutdown frames: " << shutdown_frame_count << "\n";
+            std::cout << "Graceful shutdown ticks: " << shutdown_wait_ticks << "\n";
+        }
+        if (frame_source_ended) {
+            std::cout << "Frame source ended before max frame limit\n";
         }
         if (config.pipeline_timing_enabled) {
             std::cout << "Pipeline timing: " << config.pipeline_timing_output_path << "\n";
