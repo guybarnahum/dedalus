@@ -47,13 +47,14 @@ CAMERA_CAPTURE_EVERY_S="1.0"
 WITH_CAMERA=1
 WITH_OVERLAY=1
 WITH_OCCUPANCY_OVERLAY=1
+WITH_OVERLAY_DEBUG=0
 WITH_VALIDATION=1
 OVERLAY_RATE_HZ="5"
 OVERLAY_DURATION_S="0"
 OVERLAY_MAX_OCCUPANCY_CELLS="32"
 VALIDATION_MIN_ORBITS="2.95"
 VALIDATION_RADIUS="10.0"
-VALIDATION_TIMEOUT_S="0"
+VALIDATION_TIMEOUT_S="300"
 VALIDATION_AVG_RADIUS_ERROR_MAX="1.0"
 VALIDATION_MAX_RADIUS_ERROR_AFTER_LATCH="3.0"
 VALIDATION_COMPLETE_REASON="orbit_count_elapsed"
@@ -83,6 +84,7 @@ Examples:
   ./run_mission.sh
   ./run_mission.sh --attach
   ./run_mission.sh --no-overlay
+  ./run_mission.sh --overlay-debug
   ./run_mission.sh --no-occupancy-overlay
   ./run_mission.sh --max-occupancy-cells 8
   ./run_mission.sh --no-validation
@@ -111,14 +113,15 @@ Options:
   --camera CAMERA             AirSim camera to command. May repeat. Default: front_center and 0
   --no-camera                 Do not start camera-pointing bridge
   --no-overlay                Do not start overlay
+  --overlay-debug             Enable verbose overlay debug logs/debug JSON. Default: off
   --no-occupancy-overlay      Do not pass Track 4 occupancy render flags to overlay
   --max-occupancy-cells N     Max occupancy cells for overlay. Default: 32
   --no-validation             Do not start post-run validators
   --overlay-rate-hz HZ        overlay update rate. Default: 5
   --overlay-duration-s S      overlay duration; 0 means run until session stops. Default: 0
-  --validation-min-orbits N   Circle validator --min-orbits. Default: 1.0
+  --validation-min-orbits N   Circle validator --min-orbits. Default: 2.95
   --validation-radius M       Circle validator --radius. Default: 10.0
-  --validation-timeout-s S    Wait timeout for runtime_stop; 0 means wait forever. Default: 0
+  --validation-timeout-s S    Wait timeout for runtime_stop. Default: 300; use 0 to wait forever.
   --validation-complete-reason REASON
                                 Behavior complete reason for circle validator. Default: orbit_count_elapsed
   --expect-sequence            Require behavior sequence step events in artifact validation.
@@ -157,6 +160,22 @@ quote_cmd() {
 config_value() {
     local key="$1"
     (grep -E "^${key}:" "$CONFIG_PATH" | awk '{print $2}' | tail -1) || true
+}
+
+tmux_shell_with_failure_hold() {
+    local command="$1"
+    cat <<EOF
+set +e
+${command}
+status=\$?
+if [[ \$status -ne 0 ]]; then
+  echo
+  echo "❌ tmux pane command failed with status \$status"
+  echo "   Inspect the log above, then press Enter to close this pane."
+  read -r _
+fi
+exit \$status
+EOF
 }
 
 airsim_rpc_reachable() {
@@ -236,6 +255,7 @@ while [[ $# -gt 0 ]]; do
             ;;
         --no-camera) WITH_CAMERA=0; shift ;;
         --no-overlay) WITH_OVERLAY=0; shift ;;
+        --overlay-debug) WITH_OVERLAY_DEBUG=1; shift ;;
         --no-occupancy-overlay) WITH_OCCUPANCY_OVERLAY=0; shift ;;
         --max-occupancy-cells) OVERLAY_MAX_OCCUPANCY_CELLS="$2"; shift 2 ;;
         --no-validation) WITH_VALIDATION=0; shift ;;
@@ -339,9 +359,10 @@ OVERLAY_CMD=(
     --clear
     --label
     --osd
-    --debug
-    --debug-json "$OVERLAY_DEBUG_JSON"
 )
+if [[ "$WITH_OVERLAY_DEBUG" -eq 1 ]]; then
+    OVERLAY_CMD+=(--debug --debug-json "$OVERLAY_DEBUG_JSON")
+fi
 if [[ "$WITH_OCCUPANCY_OVERLAY" -eq 1 ]]; then
     OVERLAY_CMD+=(
         --show-occupancy-summary
@@ -448,23 +469,23 @@ fi
 
 if [[ "$WITH_CAMERA" -eq 1 ]]; then
     CAMERA_SHELL="cd $(printf '%q' "$REPO_ROOT_ABS") && $(quote_cmd "${CAMERA_CMD[@]}") 2>&1 | tee $(printf '%q' "$CAMERA_LOG")"
-    tmux new-session -d -s "$SESSION_NAME" -n camera-pointing "bash -lc $(printf '%q' "$CAMERA_SHELL")"
+    tmux new-session -d -s "$SESSION_NAME" -n camera-pointing "bash -lc $(printf '%q' "$(tmux_shell_with_failure_hold "$CAMERA_SHELL")")"
 else
     tmux new-session -d -s "$SESSION_NAME" -n launcher "bash -lc 'sleep infinity'"
 fi
 
 if [[ "$WITH_OVERLAY" -eq 1 ]]; then
     OVERLAY_SHELL="cd $(printf '%q' "$REPO_ROOT_ABS") && $(quote_cmd "${OVERLAY_CMD[@]}") 2>&1 | tee $(printf '%q' "$OVERLAY_LOG")"
-    tmux new-window -t "$SESSION_NAME" -n overlay "bash -lc $(printf '%q' "$OVERLAY_SHELL")"
+    tmux new-window -t "$SESSION_NAME" -n overlay "bash -lc $(printf '%q' "$(tmux_shell_with_failure_hold "$OVERLAY_SHELL")")"
 fi
 
 if [[ "$WITH_VALIDATION" -eq 1 ]]; then
     VALIDATION_RUN_SHELL="bash $(printf '%q' "$VALIDATION_SCRIPT") 2>&1 | tee $(printf '%q' "$VALIDATION_LOG")"
-    tmux new-window -t "$SESSION_NAME" -n validation "bash -lc $(printf '%q' "$VALIDATION_RUN_SHELL")"
+    tmux new-window -t "$SESSION_NAME" -n validation "bash -lc $(printf '%q' "$(tmux_shell_with_failure_hold "$VALIDATION_RUN_SHELL")")"
 fi
 
 MISSION_SHELL="cd $(printf '%q' "$REPO_ROOT_ABS") && $(quote_cmd "${MISSION_CMD[@]}") 2>&1 | tee $(printf '%q' "$MISSION_LOG")"
-tmux new-window -t "$SESSION_NAME" -n mission-loop "bash -lc $(printf '%q' "$MISSION_SHELL")"
+tmux new-window -t "$SESSION_NAME" -n mission-loop "bash -lc $(printf '%q' "$(tmux_shell_with_failure_hold "$MISSION_SHELL")")"
 tmux select-window -t "$SESSION_NAME:mission-loop"
 
 echo "✅ AirSim mission stack started in tmux session '$SESSION_NAME'"
@@ -485,7 +506,12 @@ fi
 if [[ "$WITH_OVERLAY" -eq 1 ]]; then
     echo "Overlay:"
     echo "  log:        $OVERLAY_LOG"
-    echo "  debug json: $OVERLAY_DEBUG_JSON"
+    if [[ "$WITH_OVERLAY_DEBUG" -eq 1 ]]; then
+        echo "  debug json: $OVERLAY_DEBUG_JSON"
+    else
+        echo "  debug json: disabled; pass --overlay-debug to enable"
+    fi
+    echo "  debug:      $([[ "$WITH_OVERLAY_DEBUG" -eq 1 ]] && echo enabled || echo disabled)"
     echo "  occupancy:  $([[ "$WITH_OCCUPANCY_OVERLAY" -eq 1 ]] && echo enabled || echo disabled)"
     if [[ "$WITH_OCCUPANCY_OVERLAY" -eq 1 ]]; then
         echo "  max cells:  $OVERLAY_MAX_OCCUPANCY_CELLS"
@@ -496,6 +522,7 @@ if [[ "$WITH_VALIDATION" -eq 1 ]]; then
     echo "Validation:"
     echo "  log:        $VALIDATION_LOG"
     echo "  script:     $VALIDATION_SCRIPT"
+    echo "  timeout:    $VALIDATION_TIMEOUT_S s"
     echo "  validators: mission-events-summary, validate-mission-artifacts, validate-circle-trajectory"
     echo "  complete reason: $VALIDATION_COMPLETE_REASON"
     if [[ "$VALIDATION_EXPECT_SEQUENCE" -eq 1 ]]; then
