@@ -54,6 +54,71 @@ Vec2 bbox_center(const Rect2& bbox) {
     return Vec2{bbox.x + bbox.width * 0.5, bbox.y + bbox.height * 0.5};
 }
 
+OccupancyCellSummary synthetic_cell(
+    Vec3 center,
+    Vec3 size,
+    OccupancyCellState state,
+    float confidence,
+    float distance_to_nearest_occupied_m) {
+    OccupancyCellSummary cell;
+    cell.center_local = center;
+    cell.size_m = size;
+    cell.state = state;
+    cell.confidence = confidence;
+    cell.age_s = 0.0F;
+    cell.distance_to_nearest_occupied_m = distance_to_nearest_occupied_m;
+    cell.source_provider = "synthetic_track4_fixture";
+    return cell;
+}
+
+EgoOccupancyMapSnapshot build_synthetic_ego_occupancy(
+    const EgoState& ego,
+    TimePoint timestamp,
+    const MapFrameId& map_frame_id) {
+    EgoOccupancyMapSnapshot occupancy;
+    occupancy.map_frame_id = map_frame_id;
+    occupancy.timestamp = timestamp;
+    occupancy.source_kind = OccupancySourceKind::SyntheticFixture;
+    occupancy.source_provider = "synthetic_track4_fixture";
+    occupancy.resolution_m = 1.0F;
+    occupancy.size_m = Vec3{12.0, 8.0, 4.0};
+    occupancy.has_valid_occupancy = true;
+
+    const auto& p = ego.local_T_body.position;
+    const Vec3 cell_size{1.0, 1.0, 1.0};
+
+    occupancy.debug_cells.push_back(synthetic_cell(
+        Vec3{p.x + 5.0, p.y, p.z},
+        cell_size,
+        OccupancyCellState::Occupied,
+        0.85F,
+        0.0F));
+    occupancy.debug_cells.back().source_object_name = "synthetic_forward_obstacle";
+
+    occupancy.debug_cells.push_back(synthetic_cell(
+        Vec3{p.x + 3.0, p.y + 2.0, p.z},
+        cell_size,
+        OccupancyCellState::Free,
+        0.70F,
+        2.8F));
+
+    occupancy.debug_cells.push_back(synthetic_cell(
+        Vec3{p.x + 7.0, p.y - 2.5, p.z},
+        Vec3{2.0, 2.0, 1.5},
+        OccupancyCellState::Unknown,
+        0.55F,
+        2.5F));
+    occupancy.debug_cells.back().source_object_name = "synthetic_unknown_sector";
+
+    occupancy.occupied_count = 1U;
+    occupancy.free_count = 1U;
+    occupancy.unknown_count = 1U;
+    occupancy.stale_count = 0U;
+    occupancy.nearest_obstacle_distance_m = 5.0F;
+    occupancy.forward_corridor_clearance_m = 4.0F;
+    return occupancy;
+}
+
 }  // namespace
 
 InMemoryWorldModel::InMemoryWorldModel(MapFrameId map_frame_id) {
@@ -65,6 +130,8 @@ InMemoryWorldModel::InMemoryWorldModel(MapFrameId map_frame_id) {
     snapshot_.ego.height_m = 0.0;
     snapshot_.ego.height_valid = true;
     snapshot_.ego.flight_status = EgoFlightStatus::Landed;
+    snapshot_.has_ego_occupancy = true;
+    snapshot_.ego_occupancy = build_synthetic_ego_occupancy(snapshot_.ego, snapshot_.timestamp, map_frame_id);
 
     MapFrame frame;
     frame.map_frame_id = map_frame_id;
@@ -91,6 +158,11 @@ void InMemoryWorldModel::update_ego(const EgoState& ego) {
 
     snapshot_.ego = updated_ego;
     snapshot_.active_map_frame_id = updated_ego.map_frame_id;
+    snapshot_.has_ego_occupancy = true;
+    snapshot_.ego_occupancy = build_synthetic_ego_occupancy(
+        snapshot_.ego,
+        snapshot_.timestamp,
+        snapshot_.active_map_frame_id);
 
     if (!snapshot_.map_frames.empty()) {
         snapshot_.map_frames.front().map_frame_id = updated_ego.map_frame_id;
@@ -158,6 +230,11 @@ void InMemoryWorldModel::ingest(const PerceptionPipelineOutput& perception_outpu
     snapshot_.static_structures = flight_map_update.static_structures;
     snapshot_.flight_corridors = flight_map_update.flight_corridors;
     snapshot_.landmarks = flight_map_update.landmarks;
+    snapshot_.has_ego_occupancy = true;
+    snapshot_.ego_occupancy = build_synthetic_ego_occupancy(
+        snapshot_.ego,
+        snapshot_.timestamp,
+        snapshot_.active_map_frame_id);
 
     snapshot_.containers.clear();
     ContainerState car;
