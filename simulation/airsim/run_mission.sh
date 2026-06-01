@@ -154,6 +154,11 @@ quote_cmd() {
     printf '%s\n' "${out# }"
 }
 
+config_value() {
+    local key="$1"
+    (grep -E "^${key}:" "$CONFIG_PATH" | awk '{print $2}' | tail -1) || true
+}
+
 airsim_rpc_reachable() {
     python3 - "$AIRSIM_HOST" "$AIRSIM_RPC_PORT" <<'PY'
 import socket
@@ -354,8 +359,10 @@ fi
 if [[ -n "$SAFE_HEIGHT" ]]; then
     VALIDATION_SAFE_HEIGHT="$SAFE_HEIGHT"
 else
-    VALIDATION_SAFE_HEIGHT="$(grep -E '^mission_options\.flight_takeoff_height_m:' "$CONFIG_PATH" | awk '{print $2}' | tail -1)"
-    VALIDATION_SAFE_HEIGHT="${VALIDATION_SAFE_HEIGHT:-$(grep -E '^mission_options\.flight_safe_height_m:' "$CONFIG_PATH" | awk '{print $2}' | tail -1)}"
+    VALIDATION_SAFE_HEIGHT="$(config_value 'mission_options\.flight_takeoff_height_m')"
+    if [[ -z "$VALIDATION_SAFE_HEIGHT" ]]; then
+        VALIDATION_SAFE_HEIGHT="$(config_value 'mission_options\.flight_safe_height_m')"
+    fi
     VALIDATION_SAFE_HEIGHT="${VALIDATION_SAFE_HEIGHT:-40}"
 fi
 
