@@ -41,6 +41,14 @@ SEQUENCE_EVENTS = {
     "behavior_sequence_step_start",
     "behavior_sequence_step_complete",
 }
+VALID_OCCUPANCY_CELL_STATES = {"free", "occupied", "unknown"}
+VALID_OCCUPANCY_SOURCE_KINDS = {
+    "synthetic_fixture",
+    "airsim_ground_truth",
+    "visual_obstacle_detector",
+    "depth_provider",
+    "fused",
+}
 
 
 @dataclass
@@ -63,6 +71,11 @@ class ValidationResult:
     safe_height_gate_height_m: float | None = None
     landed_gate_height_m: float | None = None
     abort_height_m: float | None = None
+    occupancy_snapshots_checked: int = 0
+    occupancy_debug_cells_checked: int = 0
+    occupancy_sidecars_checked: int = 0
+    occupancy_projected_cells_checked: int = 0
+    occupancy_source_kinds: dict[str, int] = field(default_factory=dict)
 
     @property
     def valid(self) -> bool:
@@ -107,14 +120,24 @@ def read_events(path: Path, result: ValidationResult) -> list[dict[str, Any]]:
     return events
 
 
-def count_snapshots(run_dir: Path) -> int:
+def snapshot_paths(run_dir: Path) -> list[Path]:
     manifest = run_dir / "snapshot_manifest.txt"
     if manifest.exists():
+        paths: list[Path] = []
         try:
-            return sum(1 for line in manifest.read_text(encoding="utf-8").splitlines() if line.strip())
+            for raw in manifest.read_text(encoding="utf-8").splitlines():
+                entry = raw.strip()
+                if not entry:
+                    continue
+                paths.append((run_dir / entry).resolve() if not Path(entry).is_absolute() else Path(entry))
         except OSError:
-            return 0
-    return len(list(run_dir.glob("snapshot_*.json")))
+            return []
+        return paths
+    return sorted(run_dir.glob("snapshot_*.json"))
+
+
+def count_snapshots(run_dir: Path) -> int:
+    return len(snapshot_paths(run_dir))
 
 
 def camera_frame_counts(path: Path) -> Counter[str]:
@@ -124,13 +147,178 @@ def camera_frame_counts(path: Path) -> Counter[str]:
     for file in path.glob("camera_pointing_*.png"):
         stem = file.stem
         parts = stem.split("_")
-        # Expected: camera_pointing_00042_front_center_-074.95
         if len(parts) >= 5:
             camera = "_".join(parts[3:-1]) or "unknown"
         else:
             camera = "legacy_or_unknown"
         counts[camera] += 1
     return counts
+
+
+def read_json_object(path: Path, result: ValidationResult, label: str) -> dict[str, Any] | None:
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except OSError as exc:
+        result.failures.append(f"failed to read {label} {path}: {exc}")
+        return None
+    except json.JSONDecodeError as exc:
+        result.failures.append(f"invalid JSON in {label} {path}: {exc}")
+        return None
+    if not isinstance(data, dict):
+        result.failures.append(f"{label} {path} is not a JSON object")
+        return None
+    return data
+
+
+def is_number(value: Any) -> bool:
+    return isinstance(value, (int, float)) and not isinstance(value, bool)
+
+
+def is_vec3(value: Any) -> bool:
+    return isinstance(value, list) and len(value) == 3 and all(is_number(item) for item in value)
+
+
+def validate_occupancy_debug_cell(cell: Any, result: ValidationResult, *, path: Path, index: int) -> None:
+    prefix = f"snapshot occupancy debug_cells[{index}] in {path}"
+    if not isinstance(cell, dict):
+        result.failures.append(f"{prefix} is not an object")
+        return
+    state = cell.get("state")
+    if state not in VALID_OCCUPANCY_CELL_STATES:
+        result.failures.append(f"{prefix} has invalid state: {state!r}")
+    if not is_vec3(cell.get("center_local")):
+        result.failures.append(f"{prefix} missing vec3 center_local")
+    if not is_vec3(cell.get("size_m")):
+        result.failures.append(f"{prefix} missing vec3 size_m")
+    if not is_number(cell.get("confidence")):
+        result.failures.append(f"{prefix} missing numeric confidence")
+    if not is_number(cell.get("distance_to_nearest_occupied_m")):
+        result.failures.append(f"{prefix} missing numeric distance_to_nearest_occupied_m")
+    result.occupancy_debug_cells_checked += 1
+
+
+def validate_snapshot_occupancy(snapshot: dict[str, Any], result: ValidationResult, *, path: Path) -> None:
+    occupancy = snapshot.get("ego_occupancy")
+    if not isinstance(occupancy, dict):
+        result.failures.append(f"snapshot {path} missing ego_occupancy object")
+        return
+
+    source_kind = occupancy.get("source_kind")
+    if source_kind not in VALID_OCCUPANCY_SOURCE_KINDS:
+        result.failures.append(f"snapshot {path} has invalid occupancy source_kind: {source_kind!r}")
+    else:
+        result.occupancy_source_kinds[source_kind] = result.occupancy_source_kinds.get(source_kind, 0) + 1
+
+    if not occupancy.get("has_valid_occupancy"):
+        result.failures.append(f"snapshot {path} occupancy has_valid_occupancy is not true")
+    if not isinstance(occupancy.get("source_provider"), str) or not occupancy.get("source_provider"):
+        result.failures.append(f"snapshot {path} occupancy missing source_provider")
+    if not isinstance(occupancy.get("map_frame_id"), str) or not occupancy.get("map_frame_id"):
+        result.failures.append(f"snapshot {path} occupancy missing map_frame_id")
+    if not is_number(occupancy.get("resolution_m")):
+        result.failures.append(f"snapshot {path} occupancy missing numeric resolution_m")
+    if not is_vec3(occupancy.get("size_m")):
+        result.failures.append(f"snapshot {path} occupancy missing vec3 size_m")
+
+    for key in ("occupied_count", "free_count", "unknown_count", "stale_count"):
+        if not isinstance(occupancy.get(key), int) or occupancy.get(key) < 0:
+            result.failures.append(f"snapshot {path} occupancy missing nonnegative integer {key}")
+    for key in ("nearest_obstacle_distance_m", "forward_corridor_clearance_m"):
+        if not is_number(occupancy.get(key)):
+            result.failures.append(f"snapshot {path} occupancy missing numeric {key}")
+
+    debug_cells = occupancy.get("debug_cells")
+    if not isinstance(debug_cells, list) or not debug_cells:
+        result.failures.append(f"snapshot {path} occupancy missing non-empty debug_cells")
+    else:
+        for index, cell in enumerate(debug_cells[:32]):
+            validate_occupancy_debug_cell(cell, result, path=path, index=index)
+
+    result.occupancy_snapshots_checked += 1
+
+
+def validate_projected_cell(cell: Any, result: ValidationResult, *, path: Path, index: int) -> None:
+    prefix = f"sidecar occupancy projected_cells[{index}] in {path}"
+    if not isinstance(cell, dict):
+        result.failures.append(f"{prefix} is not an object")
+        return
+    if cell.get("state") not in VALID_OCCUPANCY_CELL_STATES:
+        result.failures.append(f"{prefix} has invalid state: {cell.get('state')!r}")
+    if not is_vec3(cell.get("center_local")):
+        result.failures.append(f"{prefix} missing vec3 center_local")
+    if not is_vec3(cell.get("size_m")):
+        result.failures.append(f"{prefix} missing vec3 size_m")
+    for key in ("confidence", "u_px", "v_px", "depth_m", "range_m"):
+        if not is_number(cell.get(key)):
+            result.failures.append(f"{prefix} missing numeric {key}")
+    if not isinstance(cell.get("visible"), bool):
+        result.failures.append(f"{prefix} missing bool visible")
+    if not isinstance(cell.get("reason"), str):
+        result.failures.append(f"{prefix} missing string reason")
+    result.occupancy_projected_cells_checked += 1
+
+
+def validate_occupancy_sidecar(sidecar: dict[str, Any], result: ValidationResult, *, path: Path) -> None:
+    occupancy = sidecar.get("occupancy")
+    if not isinstance(occupancy, dict):
+        result.failures.append(f"sidecar {path} missing occupancy object")
+        return
+    if occupancy.get("present") is not True:
+        result.failures.append(f"sidecar {path} occupancy.present is not true")
+    summary = occupancy.get("summary")
+    if not isinstance(summary, dict):
+        result.failures.append(f"sidecar {path} occupancy missing summary object")
+    else:
+        for key in ("occupied_count", "free_count", "unknown_count", "stale_count"):
+            if not isinstance(summary.get(key), int) or summary.get(key) < 0:
+                result.failures.append(f"sidecar {path} occupancy.summary missing nonnegative integer {key}")
+        for key in ("nearest_obstacle_distance_m", "forward_corridor_clearance_m"):
+            if not is_number(summary.get(key)):
+                result.failures.append(f"sidecar {path} occupancy.summary missing numeric {key}")
+    projected_cells = occupancy.get("projected_cells")
+    if not isinstance(projected_cells, list) or not projected_cells:
+        result.failures.append(f"sidecar {path} occupancy missing non-empty projected_cells")
+    else:
+        for index, cell in enumerate(projected_cells[:32]):
+            validate_projected_cell(cell, result, path=path, index=index)
+    result.occupancy_sidecars_checked += 1
+
+
+def validate_occupancy_artifacts(
+    run_dir: Path,
+    result: ValidationResult,
+    *,
+    expect_sidecars: bool,
+) -> None:
+    snapshots = snapshot_paths(run_dir)
+    if not snapshots:
+        result.failures.append("expected occupancy snapshots but no snapshot artifacts were found")
+        return
+
+    checked_any_snapshot = False
+    for path in snapshots[: min(len(snapshots), 10)]:
+        data = read_json_object(path, result, "snapshot")
+        if data is None:
+            continue
+        validate_snapshot_occupancy(data, result, path=path)
+        checked_any_snapshot = True
+    if not checked_any_snapshot:
+        result.failures.append("expected occupancy snapshots but no readable snapshot JSON was found")
+
+    sidecar_paths = sorted(run_dir.rglob("frame_*.world_overlay.json"))
+    if not sidecar_paths:
+        message = "no world overlay sidecar JSON found for occupancy projection validation"
+        if expect_sidecars:
+            result.failures.append(message)
+        else:
+            result.warnings.append(message)
+        return
+
+    for path in sidecar_paths[: min(len(sidecar_paths), 10)]:
+        data = read_json_object(path, result, "world overlay sidecar")
+        if data is None:
+            continue
+        validate_occupancy_sidecar(data, result, path=path)
 
 
 def collect_timeline(events: list[dict[str, Any]], result: ValidationResult) -> None:
@@ -185,7 +373,6 @@ def validate_state_order(result: ValidationResult, expected_order: list[str]) ->
     if not result.state_path:
         result.failures.append("no mission state transitions found")
         return
-
     search_from = 0
     for expected in expected_order:
         try:
@@ -304,6 +491,7 @@ def validate_sequence_expectations(result: ValidationResult, expected_steps: lis
                 f"observed={observed_prefix} expected={expected_steps}"
             )
 
+
 def validate_sequence_step_mode_expectations(
     result: ValidationResult,
     expected_modes: list[tuple[str, str, str]],
@@ -315,14 +503,14 @@ def validate_sequence_step_mode_expectations(
         if (expected_step, expected_yaw, expected_camera) not in observed:
             result.failures.append(
                 "expected sequence step mode "
-                f"{expected_step}:{expected_yaw}:{expected_camera}; "
-                f"observed={observed}"
+                f"{expected_step}:{expected_yaw}:{expected_camera}; observed={observed}"
             )
     observed_prefix = observed[: len(expected_modes)]
     if observed_prefix != expected_modes:
         result.failures.append(
             f"sequence step mode order mismatch: observed={observed_prefix} expected={expected_modes}"
         )
+
 
 def validate_camera_pointing_expectations(
     result: ValidationResult,
@@ -364,6 +552,8 @@ def validate_run_dir(
     expect_camera_modes: list[str],
     camera_frames_dir: Path | None,
     expect_camera_proof_frames: bool,
+    expect_occupancy: bool,
+    expect_occupancy_sidecars: bool,
     safe_height_m: float,
     landed_height_m: float,
     allow_missing_snapshots: bool,
@@ -410,6 +600,13 @@ def validate_run_dir(
             expect_camera_proof_frames=expect_camera_proof_frames,
         )
 
+    if expect_occupancy:
+        validate_occupancy_artifacts(
+            run_dir,
+            result,
+            expect_sidecars=expect_occupancy_sidecars,
+        )
+
     return result
 
 
@@ -453,6 +650,15 @@ def print_result(result: ValidationResult) -> None:
         print("  camera_proof_frames:")
         for camera in sorted(result.camera_proof_frames):
             print(f"    {camera}: {result.camera_proof_frames[camera]}")
+    if result.occupancy_snapshots_checked or result.occupancy_sidecars_checked:
+        print("  occupancy_artifacts:")
+        print(f"    snapshots_checked: {result.occupancy_snapshots_checked}")
+        print(f"    debug_cells_checked: {result.occupancy_debug_cells_checked}")
+        print(f"    sidecars_checked: {result.occupancy_sidecars_checked}")
+        print(f"    projected_cells_checked: {result.occupancy_projected_cells_checked}")
+        if result.occupancy_source_kinds:
+            for source_kind in sorted(result.occupancy_source_kinds):
+                print(f"    source_kind {source_kind}: {result.occupancy_source_kinds[source_kind]}")
     print(f"  failures: {len(result.failures)}")
     for failure in result.failures:
         print(f"    - {failure}")
@@ -462,6 +668,7 @@ def print_result(result: ValidationResult) -> None:
 
 def parse_csv(value: str) -> list[str]:
     return [item.strip() for item in value.split(",") if item.strip()]
+
 
 def parse_step_modes(value: str) -> list[tuple[str, str, str]]:
     out: list[tuple[str, str, str]] = []
@@ -505,6 +712,12 @@ def main() -> int:
     )
     parser.add_argument("--camera-frames-dir", type=Path, default=None, help="Directory containing camera_pointing_*.png proof frames")
     parser.add_argument("--expect-camera-proof-frames", action="store_true", help="Require at least one AirSim camera proof frame")
+    parser.add_argument("--expect-occupancy", action="store_true", help="Require Track 4 ego_occupancy in snapshot artifacts")
+    parser.add_argument(
+        "--expect-occupancy-sidecars",
+        action="store_true",
+        help="Require frame_*.world_overlay.json occupancy projection sidecars as well as snapshots",
+    )
     parser.add_argument(
         "--safe-height-m",
         type=float,
@@ -531,6 +744,10 @@ def main() -> int:
             return 2
         expected_final_state = "Complete"
 
+    if args.expect_occupancy_sidecars and not args.expect_occupancy:
+        print("--expect-occupancy-sidecars requires --expect-occupancy", file=sys.stderr)
+        return 2
+
     result = validate_run_dir(
         args.run_dir,
         expected_final_state=expected_final_state,
@@ -542,6 +759,8 @@ def main() -> int:
         expect_camera_modes=parse_csv(args.expect_camera_modes),
         camera_frames_dir=args.camera_frames_dir,
         expect_camera_proof_frames=args.expect_camera_proof_frames,
+        expect_occupancy=args.expect_occupancy,
+        expect_occupancy_sidecars=args.expect_occupancy_sidecars,
         safe_height_m=args.safe_height_m,
         landed_height_m=args.landed_height_m,
         allow_missing_snapshots=args.allow_missing_snapshots,
