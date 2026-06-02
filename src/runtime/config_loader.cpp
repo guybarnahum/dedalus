@@ -143,6 +143,8 @@ void apply_config_value(CoreStackProviderConfig& config, const std::string& key,
         config.ghost_targets_scenario_path = value;
     } else if (key == "world_model") {
         config.world_model = value;
+    } else if (key == "track4_occupancy_source") {
+        config.track4_occupancy_source = value;
     } else if (key == "frame_annotator") {
         config.frame_annotator = value;
     } else if (key == "annotation_output_path") {
@@ -228,6 +230,12 @@ void validate_config(const CoreStackProviderConfig& config) {
     }
     if (config.ghost_targets_source != "airsim_objects" && !config.ghost_targets_airsim_objects.empty()) {
         throw std::invalid_argument("ghost_targets_airsim.objects.* requires ghost_targets_source=airsim_objects");
+    }
+    if (config.track4_occupancy_source != "synthetic_fixture" && config.track4_occupancy_source != "airsim_ground_truth") {
+        throw std::invalid_argument("unknown track4_occupancy_source: " + config.track4_occupancy_source);
+    }
+    if (config.track4_occupancy_source == "airsim_ground_truth" && config.ghost_targets_source != "airsim_objects") {
+        throw std::invalid_argument("track4_occupancy_source=airsim_ground_truth requires ghost_targets_source=airsim_objects for the 4.0F-GT named-object provider");
     }
     validate_airsim_object_bindings(config);
 }
