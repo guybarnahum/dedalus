@@ -31,6 +31,16 @@ AirSimProviderConfig airsim_config_from(const CoreStackProviderConfig& config) {
     return airsim;
 }
 
+OccupancySourceKind occupancy_source_from(const CoreStackProviderConfig& config) {
+    if (config.occupancy_source == "synthetic_fixture") {
+        return OccupancySourceKind::SyntheticFixture;
+    }
+    if (config.occupancy_source == "airsim_ground_truth") {
+        return OccupancySourceKind::AirSimGroundTruth;
+    }
+    throw std::invalid_argument("unknown occupancy_source: " + config.occupancy_source);
+}
+
 std::string ghost_scenario_path_from(const CoreStackProviderConfig& config) {
     if (!config.ghost_targets_scenario_path.empty()) {
         return config.ghost_targets_scenario_path;
@@ -47,9 +57,9 @@ std::unique_ptr<GhostTargetProvider> make_ghost_target_provider(const CoreStackP
             GhostScenario::load_from_file(ghost_scenario_path_from(config)));
     }
     if (config.ghost_targets_source == "airsim_objects") {
-        if (config.ghost_targets_airsim_objects.empty()) {
+        if (config.ghost_targets_airsim_objects.empty() && config.ghost_targets_airsim_patterns.empty()) {
             throw std::invalid_argument(
-                "ghost_targets_source: airsim_objects requires a non-empty ghost_targets_airsim_objects list");
+                "ghost_targets_source: airsim_objects requires exact object or pattern bindings");
         }
         return std::make_unique<GhostTargetProvider>(
             AirSimGhostObjectSourceConfig{
@@ -57,13 +67,12 @@ std::unique_ptr<GhostTargetProvider> make_ghost_target_provider(const CoreStackP
                 .rpc_port = config.source_rpc_port,
                 .bridge_command = "python3 simulation/airsim/scripts/airsim-object-poses.py",
                 .bridge_transport = config.bridge_transport,
-                .objects = config.ghost_targets_airsim_objects});
+                .objects = config.ghost_targets_airsim_objects,
+                .patterns = config.ghost_targets_airsim_patterns});
     }
     throw std::invalid_argument("unknown ghost_targets_source: " + config.ghost_targets_source);
 }
 
-// Table-driven provider resolution. Each entry maps a key string to a factory
-// lambda. resolve() walks the table and throws unknown_provider on no match.
 template <typename T>
 struct FactoryEntry {
     std::string_view key;
@@ -133,7 +142,9 @@ CoreStackProviders ProviderRegistry::create(const CoreStackProviderConfig& confi
     }
 
     providers.world_model = resolve<InMemoryWorldModel>("world_model", config.world_model, {
-        {"in_memory", [&]() { return std::make_unique<InMemoryWorldModel>(config.fallback_map_frame_id); }},
+        {"in_memory", [&]() { return std::make_unique<InMemoryWorldModel>(InMemoryWorldModelConfig{
+                              .map_frame_id = config.fallback_map_frame_id,
+                              .occupancy_source_kind = occupancy_source_from(config)}); }},
     });
 
     providers.frame_annotator = resolve<FrameAnnotationSink>("frame_annotator", config.frame_annotator, {
@@ -149,48 +160,16 @@ CoreStackProviders ProviderRegistry::create(const CoreStackProviderConfig& confi
     return providers;
 }
 
-std::vector<std::string> ProviderRegistry::frame_sources() const {
-    return {"synthetic", "synthetic_mission", "video_only", "recorded_frames", "airsim"};
-}
-
-std::vector<std::string> ProviderRegistry::ego_providers() const {
-    return {"frame_hint", "no_telemetry", "airsim"};
-}
-
-std::vector<std::string> ProviderRegistry::detectors() const {
-    return {"scripted", "airsim_ground_truth"};
-}
-
-std::vector<std::string> ProviderRegistry::camera_stabilizers() const {
-    return {"null"};
-}
-
-std::vector<std::string> ProviderRegistry::trackers() const {
-    return {"simple_centroid"};
-}
-
-std::vector<std::string> ProviderRegistry::identity_resolvers() const {
-    return {"appearance_only"};
-}
-
-std::vector<std::string> ProviderRegistry::projectors() const {
-    return {"flat_ground", "airsim_depth"};
-}
-
-std::vector<std::string> ProviderRegistry::world_models() const {
-    return {"in_memory"};
-}
-
-std::vector<std::string> ProviderRegistry::frame_annotators() const {
-    return {"null", "ppm_sequence", "mp4"};
-}
-
-std::vector<std::string> ProviderRegistry::mission_controllers() const {
-    return {"disabled", "trajectory_mission", "object_behavior"};
-}
-
-std::vector<std::string> ProviderRegistry::flight_command_sinks() const {
-    return {"disabled", "airsim_velocity"};
-}
+std::vector<std::string> ProviderRegistry::frame_sources() const { return {"synthetic", "synthetic_mission", "video_only", "recorded_frames", "airsim"}; }
+std::vector<std::string> ProviderRegistry::ego_providers() const { return {"frame_hint", "no_telemetry", "airsim"}; }
+std::vector<std::string> ProviderRegistry::detectors() const { return {"scripted", "airsim_ground_truth"}; }
+std::vector<std::string> ProviderRegistry::camera_stabilizers() const { return {"null"}; }
+std::vector<std::string> ProviderRegistry::trackers() const { return {"simple_centroid"}; }
+std::vector<std::string> ProviderRegistry::identity_resolvers() const { return {"appearance_only"}; }
+std::vector<std::string> ProviderRegistry::projectors() const { return {"flat_ground", "airsim_depth"}; }
+std::vector<std::string> ProviderRegistry::world_models() const { return {"in_memory"}; }
+std::vector<std::string> ProviderRegistry::frame_annotators() const { return {"null", "ppm_sequence", "mp4"}; }
+std::vector<std::string> ProviderRegistry::mission_controllers() const { return {"disabled", "trajectory_mission", "object_behavior"}; }
+std::vector<std::string> ProviderRegistry::flight_command_sinks() const { return {"disabled", "airsim_velocity"}; }
 
 }  // namespace dedalus
