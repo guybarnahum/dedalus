@@ -164,39 +164,13 @@ std::string format_double_for_cli(double value) {
     return out.str();
 }
 
-bool replace_option_value(std::string& command, const std::string& option, const std::string& value) {
-    const auto option_pos = command.find(option);
-    if (option_pos == std::string::npos) {
-        return false;
-    }
-    const auto value_start = command.find_first_not_of(" \t", option_pos + option.size());
-    if (value_start == std::string::npos) {
-        command += " " + value;
-        return true;
-    }
-    const auto value_end = command.find_first_of(" \t", value_start);
-    command.replace(
-        value_start,
-        value_end == std::string::npos ? std::string::npos : value_end - value_start,
-        value);
-    return true;
-}
-
 void apply_takeoff_height_override(dedalus::CoreStackProviderConfig& config, double safe_height_m) {
     if (safe_height_m <= 0.0) {
         throw std::invalid_argument("--safe-height must be > 0");
     }
-    const auto value = format_double_for_cli(safe_height_m);
-    config.mission_options.values["flight_safe_height_m"] = value;
-
-    auto bridge_it = config.mission_options.values.find("flight_px4_command_bridge");
-    if (bridge_it != config.mission_options.values.end() && !bridge_it->second.empty()) {
-        auto& command = bridge_it->second;
-        if (!replace_option_value(command, "--safe-height", value) &&
-            !replace_option_value(command, "--safe-height-m", value)) {
-            command += " --safe-height " + value;
-        }
-    }
+    // The px4_bridge sink reads flight_safe_height_m and appends --safe-height to
+    // the bridge command at construction time, so no string surgery is needed here.
+    config.mission_options.values["flight_safe_height_m"] = format_double_for_cli(safe_height_m);
 }
 
 void apply_behavior_min_height_override(dedalus::CoreStackProviderConfig& config, double min_height_m) {
@@ -362,6 +336,13 @@ std::unique_ptr<dedalus::FlightCommandSink> create_flight_command_sink(
         sink_config.bridge_command = config.mission_options.get_or(
             "flight_px4_command_bridge",
             sink_config.bridge_command);
+        // flight_safe_height_m is the canonical safe-height value.  Append it
+        // as --safe-height so a CLI override propagates to the bridge script
+        // without string surgery; argparse takes the last occurrence.
+        const auto safe_height = config.mission_options.get_or("flight_safe_height_m", "");
+        if (!safe_height.empty()) {
+            sink_config.bridge_command += " --safe-height " + safe_height;
+        }
         sink_config.verbosity = verbosity;
         sink_config.debug_logging = sink_debug_logging;
         return std::make_unique<dedalus::Px4BridgeCommandSink>(sink_config);
