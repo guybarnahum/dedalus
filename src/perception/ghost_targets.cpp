@@ -1,5 +1,7 @@
 #include "dedalus/perception/ghost_targets.hpp"
 
+#include "dedalus/core/json_utils.hpp"
+
 #include <algorithm>
 #include <cctype>
 #include <iomanip>
@@ -21,34 +23,6 @@ double elapsed_seconds(TimePoint timestamp, TimePoint scenario_start) {
         return 0.0;
     }
     return static_cast<double>(delta_ns) / kNsPerSecond;
-}
-
-std::string json_string(const std::string& value) {
-    std::string escaped;
-    escaped.reserve(value.size() + 8U);
-    for (const char ch : value) {
-        switch (ch) {
-            case '"':
-                escaped += "\\\"";
-                break;
-            case '\\':
-                escaped += "\\\\";
-                break;
-            case '\n':
-                escaped += "\\n";
-                break;
-            case '\r':
-                escaped += "\\r";
-                break;
-            case '\t':
-                escaped += "\\t";
-                break;
-            default:
-                escaped.push_back(ch);
-                break;
-        }
-    }
-    return "\"" + escaped + "\"";
 }
 
 std::string vec3_json(const Vec3& value) {
@@ -306,7 +280,7 @@ std::string to_json(const GhostDetectionsFrame& frame) {
     std::ostringstream out;
     out << std::setprecision(9);
     out << "{\"timestamp_ns\":" << frame.timestamp.timestamp_ns;
-    out << ",\"map_frame_id\":" << json_string(frame.map_frame_id.value);
+    out << ",\"map_frame_id\":" << q(frame.map_frame_id.value);
     out << ",\"scenario_elapsed_s\":" << frame.scenario_elapsed_s;
     out << ",\"detections\":[";
     for (std::size_t index = 0; index < frame.detections.size(); ++index) {
@@ -315,8 +289,8 @@ std::string to_json(const GhostDetectionsFrame& frame) {
         }
         const auto& detection = frame.detections[index];
         out << '{';
-        out << "\"source_track_id\":" << json_string(detection.source_track_id.value);
-        out << ",\"class\":" << json_string(to_string(detection.class_label));
+        out << "\"source_track_id\":" << q(detection.source_track_id.value);
+        out << ",\"class\":" << q(to_string(detection.class_label));
         out << ",\"confidence\":" << detection.confidence;
         out << ",\"position_local_m\":" << vec3_json(detection.position_local_m);
         out << ",\"velocity_local_mps\":" << vec3_json(detection.velocity_local_mps);

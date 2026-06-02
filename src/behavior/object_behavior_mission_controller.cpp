@@ -1,5 +1,7 @@
 #include "dedalus/behavior/object_behavior_mission_controller.hpp"
 
+#include "dedalus/core/json_utils.hpp"
+
 #include <algorithm>
 #include <cmath>
 #include <cstddef>
@@ -69,38 +71,6 @@ struct FollowGeometry {
     double current_height_m{0.0};
     double height_error_m{0.0};
 };
-
-std::string json_escape(const std::string& value) {
-    std::string escaped;
-    escaped.reserve(value.size());
-    for (const char ch : value) {
-        switch (ch) {
-            case '\\':
-                escaped += "\\\\";
-                break;
-            case '"':
-                escaped += "\\\"";
-                break;
-            case '\n':
-                escaped += "\\n";
-                break;
-            case '\r':
-                escaped += "\\r";
-                break;
-            case '\t':
-                escaped += "\\t";
-                break;
-            default:
-                escaped.push_back(ch);
-                break;
-        }
-    }
-    return escaped;
-}
-
-std::string q(const std::string& value) {
-    return "\"" + json_escape(value) + "\"";
-}
 
 double seconds_between(TimePoint start, TimePoint end) {
     return static_cast<double>(end.timestamp_ns - start.timestamp_ns) / 1'000'000'000.0;
@@ -1073,30 +1043,6 @@ std::string ObjectBehaviorMissionController::target_event(const TargetSelection&
         ",\"confidence\":" + std::to_string(selection.confidence) +
         ",\"reason\":" + q(selection.reason);
 }
-
-// Accumulates comma-prefixed JSON key:value pairs. The caller writes the
-// leading field (e.g. "\"event\":\"foo\""); all further fields use kv().
-// Output format for doubles matches std::to_string (6 decimal places).
-class JsonFields {
-    std::string buf_;
-public:
-    JsonFields& kv(const char* key, const std::string& val) {
-        buf_ += ",\""; buf_ += key; buf_ += "\":"; buf_ += q(val); return *this;
-    }
-    JsonFields& kv(const char* key, double val) {
-        buf_ += ",\""; buf_ += key; buf_ += "\":"; buf_ += std::to_string(val); return *this;
-    }
-    JsonFields& kv(const char* key, int val) {
-        buf_ += ",\""; buf_ += key; buf_ += "\":"; buf_ += std::to_string(val); return *this;
-    }
-    JsonFields& kv(const char* key, std::size_t val) {
-        buf_ += ",\""; buf_ += key; buf_ += "\":"; buf_ += std::to_string(val); return *this;
-    }
-    JsonFields& kv(const char* key, bool val) {
-        buf_ += ",\""; buf_ += key; buf_ += "\":"; buf_ += val ? "true" : "false"; return *this;
-    }
-    std::string str() const { return buf_; }
-};
 
 std::string behavior_display_fields(const std::string& detail) {
     return ",\"display_state\":\"Mission\",\"display_detail\":" + q(detail);

@@ -1,5 +1,7 @@
 #include "dedalus/runtime/world_snapshot_stream_server.hpp"
 
+#include "dedalus/core/json_utils.hpp"
+
 #include <algorithm>
 #include <cctype>
 #include <cerrno>
@@ -34,34 +36,6 @@ void set_nonblocking(int fd) {
     if (::fcntl(fd, F_SETFL, flags | O_NONBLOCK) < 0) {
         throw std::runtime_error("fcntl(F_SETFL, O_NONBLOCK) failed: " + std::string(std::strerror(errno)));
     }
-}
-
-std::string json_escape(const std::string& value) {
-    std::string escaped;
-    escaped.reserve(value.size() + 8U);
-    for (const char ch : value) {
-        switch (ch) {
-            case '"':
-                escaped += "\\\"";
-                break;
-            case '\\':
-                escaped += "\\\\";
-                break;
-            case '\n':
-                escaped += "\\n";
-                break;
-            case '\r':
-                escaped += "\\r";
-                break;
-            case '\t':
-                escaped += "\\t";
-                break;
-            default:
-                escaped.push_back(ch);
-                break;
-        }
-    }
-    return escaped;
 }
 
 std::string compact_json_object(const std::string& pretty_json) {

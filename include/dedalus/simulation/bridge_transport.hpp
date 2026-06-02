@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstdint>
+#include <memory>
 #include <optional>
 #include <string>
 #include <vector>
@@ -22,7 +23,7 @@ public:
 
 class PipeBridgeTransport final : public BridgeTransport {
 public:
-    PipeBridgeTransport() = default;
+    PipeBridgeTransport();
     ~PipeBridgeTransport() override;
 
     PipeBridgeTransport(const PipeBridgeTransport&) = delete;
@@ -38,7 +39,7 @@ public:
 
 private:
     struct Impl;
-    Impl* impl_{nullptr};
+    std::unique_ptr<Impl> impl_;
 };
 
 class SharedMemoryBridgeTransport final : public BridgeTransport {

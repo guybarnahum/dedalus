@@ -1,5 +1,7 @@
 #include "dedalus/behavior/mission_runtime.hpp"
 
+#include "dedalus/core/json_utils.hpp"
+
 #include <iostream>
 #include <sstream>
 #include <stdexcept>
@@ -7,38 +9,6 @@
 
 namespace dedalus {
 namespace {
-
-std::string json_escape(const std::string& value) {
-    std::string escaped;
-    escaped.reserve(value.size());
-    for (const char ch : value) {
-        switch (ch) {
-            case '\\':
-                escaped += "\\\\";
-                break;
-            case '"':
-                escaped += "\\\"";
-                break;
-            case '\n':
-                escaped += "\\n";
-                break;
-            case '\r':
-                escaped += "\\r";
-                break;
-            case '\t':
-                escaped += "\\t";
-                break;
-            default:
-                escaped.push_back(ch);
-                break;
-        }
-    }
-    return escaped;
-}
-
-std::string q(const std::string& value) {
-    return "\"" + json_escape(value) + "\"";
-}
 
 bool output_is_terminal_settled(const MissionTickOutput& output) {
     return (output.state == MissionLifecycleState::Complete && output.status == "complete") ||

@@ -43,10 +43,10 @@ struct PipeBridgeTransport::Impl {
     std::unique_ptr<FILE, int(*)(FILE*)> stream_pipe{nullptr, pclose};
 };
 
+PipeBridgeTransport::PipeBridgeTransport() = default;
+
 PipeBridgeTransport::~PipeBridgeTransport() {
     close_stream();
-    delete impl_;
-    impl_ = nullptr;
 }
 
 std::string PipeBridgeTransport::request_once(const std::string& command) {
@@ -76,8 +76,8 @@ std::string PipeBridgeTransport::request_once(const std::string& command) {
 }
 
 std::optional<std::string> PipeBridgeTransport::read_stream_line(const std::string& command) {
-    if (impl_ == nullptr) {
-        impl_ = new Impl{};
+    if (!impl_) {
+        impl_ = std::make_unique<Impl>();
     }
 
     if (!impl_->stream_pipe) {
@@ -113,8 +113,8 @@ std::optional<std::string> PipeBridgeTransport::read_stream_bytes(const std::str
 std::optional<std::vector<std::uint8_t>> PipeBridgeTransport::read_stream_byte_vector(
     const std::string& command,
     std::size_t byte_count) {
-    if (impl_ == nullptr) {
-        impl_ = new Impl{};
+    if (!impl_) {
+        impl_ = std::make_unique<Impl>();
     }
 
     if (!impl_->stream_pipe) {
