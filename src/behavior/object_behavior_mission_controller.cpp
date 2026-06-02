@@ -829,28 +829,7 @@ std::string yaw_source_for(const VelocityCommand& command) {
 
 }  // namespace
 
-ObjectBehaviorMissionConfig load_object_behavior_mission_config(const MissionOptions& options) {
-    ObjectBehaviorMissionConfig config;
-    const auto behavior_spec_path = options.get_or("behavior_spec_path", "");
-    if (behavior_spec_path.empty()) {
-        throw std::invalid_argument("object_behavior mission_controller requires mission_options.behavior_spec_path");
-    }
-    config.behavior_spec = parse_behavior_spec_file(behavior_spec_path);
-    config.hold_velocity_mps = parse_double(options.get_or("object_behavior_hold_velocity_mps", "0.0"), "object_behavior_hold_velocity_mps");
-    config.yaw_offset_rad = parse_double(options.get_or(
-        "object_behavior_yaw_offset_rad",
-        options.get_or("flight_yaw_offset_rad", "0.0")),
-        "object_behavior_yaw_offset_rad");
-    config.yaw_min_speed_mps = parse_double(options.get_or("object_behavior_yaw_min_speed_mps", "0.35"), "object_behavior_yaw_min_speed_mps");
-    config.yaw_hold_last_when_unstable = parse_bool(
-        options.get_or("object_behavior_yaw_hold_last_when_unstable", "true"),
-        true);
-    config.yaw_mode = parse_yaw_mode(options.get_or("object_behavior_yaw_mode", "trajectory"));
-    config.vertical_stare_mode = parse_vertical_stare_mode(
-        options.get_or("object_behavior_vertical_stare_mode", "none"));
-    config.vertical_stare_warn_if_unavailable = parse_bool(
-        options.get_or("object_behavior_vertical_stare_warn_if_unavailable", "true"),
-        true);
+void parse_camera_pointing_config(const MissionOptions& options, ObjectBehaviorMissionConfig& config) {
     config.camera_pointing_cameras = split_csv(
         options.get_or("object_behavior_camera_pointing_cameras", ""),
         {});
@@ -891,14 +870,9 @@ ObjectBehaviorMissionConfig load_object_behavior_mission_config(const MissionOpt
     if (config.camera_pitch_min_rad > config.camera_pitch_max_rad) {
         std::swap(config.camera_pitch_min_rad, config.camera_pitch_max_rad);
     }
+}
 
-    config.debug_every_n_ticks = parse_int(options.get_or("object_behavior_debug_every_n_ticks", "0"), "object_behavior_debug_every_n_ticks");
-    config.debug_level = parse_int(options.get_or(
-        "object_behavior_debug_level",
-        "1"), "object_behavior_debug_level");
-    config.altitude_policy = parse_altitude_policy(options.get_or(
-        "object_behavior_altitude_policy",
-        "target_relative"));
+void parse_follow_config(const MissionOptions& options, ObjectBehaviorMissionConfig& config) {
     config.follow_observation_geometry_enabled = parse_bool(
         options.get_or("object_behavior_follow_observation_geometry_enabled", "false"),
         false);
@@ -922,6 +896,9 @@ ObjectBehaviorMissionConfig load_object_behavior_mission_config(const MissionOpt
     if (!completion_after_override.empty()) {
         config.behavior_spec.completion.after_s = parse_double(completion_after_override, "object_behavior_completion_after_s");
     }
+}
+
+void parse_height_config(const MissionOptions& options, ObjectBehaviorMissionConfig& config) {
     // Backward compatibility:
     // - flight_safe_height_m remains the legacy single value.
     // - flight_takeoff_height_m controls the Takeoff -> ExecuteMission gate and
@@ -937,7 +914,9 @@ ObjectBehaviorMissionConfig load_object_behavior_mission_config(const MissionOpt
         "object_behavior_min_height_m",
         legacy_safe_height),
         "object_behavior_min_height_m");
+}
 
+void parse_flight_ops_config(const MissionOptions& options, ObjectBehaviorMissionConfig& config) {
     config.takeoff_velocity_mps = parse_double(options.get_or("flight_takeoff_velocity_mps", "1.0"), "flight_takeoff_velocity_mps");
     config.go_home_velocity_mps = parse_double(options.get_or("flight_go_home_velocity_mps", "1.0"), "flight_go_home_velocity_mps");
     config.arm_retry_interval_s = parse_double(options.get_or("flight_arm_retry_interval_s", "1.0"), "flight_arm_retry_interval_s");
@@ -949,6 +928,41 @@ ObjectBehaviorMissionConfig load_object_behavior_mission_config(const MissionOpt
     config.disarm_retry_interval_s = parse_double(options.get_or("flight_disarm_retry_interval_s", "1.0"), "flight_disarm_retry_interval_s");
     config.disarm_timeout_s = parse_double(options.get_or("flight_disarm_timeout_s", "10.0"), "flight_disarm_timeout_s");
     config.home_policy = options.get_or("flight_home_policy", "initial_ego_pose");
+}
+
+ObjectBehaviorMissionConfig load_object_behavior_mission_config(const MissionOptions& options) {
+    ObjectBehaviorMissionConfig config;
+    const auto behavior_spec_path = options.get_or("behavior_spec_path", "");
+    if (behavior_spec_path.empty()) {
+        throw std::invalid_argument("object_behavior mission_controller requires mission_options.behavior_spec_path");
+    }
+    config.behavior_spec = parse_behavior_spec_file(behavior_spec_path);
+    config.hold_velocity_mps = parse_double(options.get_or("object_behavior_hold_velocity_mps", "0.0"), "object_behavior_hold_velocity_mps");
+    config.yaw_offset_rad = parse_double(options.get_or(
+        "object_behavior_yaw_offset_rad",
+        options.get_or("flight_yaw_offset_rad", "0.0")),
+        "object_behavior_yaw_offset_rad");
+    config.yaw_min_speed_mps = parse_double(options.get_or("object_behavior_yaw_min_speed_mps", "0.35"), "object_behavior_yaw_min_speed_mps");
+    config.yaw_hold_last_when_unstable = parse_bool(
+        options.get_or("object_behavior_yaw_hold_last_when_unstable", "true"),
+        true);
+    config.yaw_mode = parse_yaw_mode(options.get_or("object_behavior_yaw_mode", "trajectory"));
+    config.vertical_stare_mode = parse_vertical_stare_mode(
+        options.get_or("object_behavior_vertical_stare_mode", "none"));
+    config.vertical_stare_warn_if_unavailable = parse_bool(
+        options.get_or("object_behavior_vertical_stare_warn_if_unavailable", "true"),
+        true);
+    parse_camera_pointing_config(options, config);
+    config.debug_every_n_ticks = parse_int(options.get_or("object_behavior_debug_every_n_ticks", "0"), "object_behavior_debug_every_n_ticks");
+    config.debug_level = parse_int(options.get_or(
+        "object_behavior_debug_level",
+        "1"), "object_behavior_debug_level");
+    config.altitude_policy = parse_altitude_policy(options.get_or(
+        "object_behavior_altitude_policy",
+        "target_relative"));
+    parse_follow_config(options, config);
+    parse_height_config(options, config);
+    parse_flight_ops_config(options, config);
     return config;
 }
 
