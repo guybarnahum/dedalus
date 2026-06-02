@@ -19,12 +19,22 @@ struct AirSimGhostObjectBinding {
     Vec3 size_m{1.0, 1.0, 1.0};
 };
 
+struct AirSimGhostObjectPatternBinding {
+    std::string source_track_prefix{"gt_obstacle"};
+    std::string airsim_object_pattern;
+    std::string class_label{"obstacle"};
+    double confidence{0.70};
+    Vec3 size_m{1.0, 1.0, 1.0};
+    int max_matches{64};
+};
+
 struct AirSimGhostObjectSourceConfig {
     std::string host{"127.0.0.1"};
     int rpc_port{41451};
     std::string bridge_command{"python3 simulation/airsim/scripts/airsim-object-poses.py"};
     std::string bridge_transport{"pipe"};
     std::vector<AirSimGhostObjectBinding> objects;
+    std::vector<AirSimGhostObjectPatternBinding> patterns;
 };
 
 struct GhostDetectionsFrame {
