@@ -1,7 +1,9 @@
 #pragma once
 
 #include <atomic>
+#include <condition_variable>
 #include <cstdint>
+#include <deque>
 #include <mutex>
 #include <string>
 #include <thread>
@@ -48,15 +50,19 @@ public:
 private:
     void publish_json_line(const std::string& line);
     void accept_loop();
+    void writer_loop();
     void close_listen_socket();
     void close_all_clients();
 
     RuntimeEventStreamServerConfig config_;
     int listen_fd_{-1};
     std::thread accept_thread_;
+    std::thread writer_thread_;
     std::atomic<bool> running_{false};
 
     mutable std::mutex mutex_;
+    std::condition_variable queue_cv_;
+    std::deque<std::string> send_queue_;
     std::vector<int> client_fds_;
     std::uint64_t published_seq_{0};
     std::uint64_t accepted_clients_{0};

@@ -188,6 +188,7 @@ void RuntimeEventStreamServer::start() {
     }
 
     accept_thread_ = std::thread([this]() { accept_loop(); });
+    writer_thread_ = std::thread([this]() { writer_loop(); });
 }
 
 void RuntimeEventStreamServer::stop() {
@@ -195,8 +196,12 @@ void RuntimeEventStreamServer::stop() {
         return;
     }
     close_listen_socket();
+    queue_cv_.notify_all();
     if (accept_thread_.joinable()) {
         accept_thread_.join();
+    }
+    if (writer_thread_.joinable()) {
+        writer_thread_.join();
     }
     close_all_clients();
 }
@@ -207,7 +212,12 @@ void RuntimeEventStreamServer::on_snapshot(const WorldSnapshot& snapshot) {
         std::lock_guard<std::mutex> lock{mutex_};
         seq = ++published_seq_;
     }
-    publish_json_line(stream_line_for(seq, snapshot));
+    auto line = stream_line_for(seq, snapshot);
+    {
+        std::lock_guard<std::mutex> lock{mutex_};
+        send_queue_.push_back(std::move(line));
+    }
+    queue_cv_.notify_one();
 }
 
 void RuntimeEventStreamServer::on_ghost_detections(const GhostDetectionsFrame& frame) {
@@ -216,7 +226,12 @@ void RuntimeEventStreamServer::on_ghost_detections(const GhostDetectionsFrame& f
         std::lock_guard<std::mutex> lock{mutex_};
         seq = ++published_seq_;
     }
-    publish_json_line(stream_line_for(seq, frame));
+    auto line = stream_line_for(seq, frame);
+    {
+        std::lock_guard<std::mutex> lock{mutex_};
+        send_queue_.push_back(std::move(line));
+    }
+    queue_cv_.notify_one();
 }
 
 void RuntimeEventStreamServer::on_mission_event(const MissionEvent& event) {
@@ -225,7 +240,12 @@ void RuntimeEventStreamServer::on_mission_event(const MissionEvent& event) {
         std::lock_guard<std::mutex> lock{mutex_};
         seq = ++published_seq_;
     }
-    publish_json_line(stream_line_for(seq, event));
+    auto line = stream_line_for(seq, event);
+    {
+        std::lock_guard<std::mutex> lock{mutex_};
+        send_queue_.push_back(std::move(line));
+    }
+    queue_cv_.notify_one();
 }
 
 void RuntimeEventStreamServer::publish_json_line(const std::string& line) {
@@ -272,6 +292,24 @@ RuntimeEventStreamServerStats RuntimeEventStreamServer::stats() const {
         .connected_clients = client_fds_.size(),
         .accepted_clients = accepted_clients_,
         .dropped_clients = dropped_clients_};
+}
+
+void RuntimeEventStreamServer::writer_loop() {
+    while (true) {
+        std::string line;
+        {
+            std::unique_lock<std::mutex> lock{mutex_};
+            queue_cv_.wait(lock, [this] {
+                return !send_queue_.empty() || !running_;
+            });
+            if (send_queue_.empty()) {
+                break;
+            }
+            line = std::move(send_queue_.front());
+            send_queue_.pop_front();
+        }
+        publish_json_line(line);
+    }
 }
 
 void RuntimeEventStreamServer::accept_loop() {
