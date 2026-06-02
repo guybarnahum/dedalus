@@ -197,7 +197,7 @@ void MissionRuntime::request_finish() {
 
 bool MissionRuntime::tick_once() {
     const auto snapshot = snapshots_->latest();
-    if (!snapshot.has_value()) {
+    if (!snapshot) {
         if (config_.verbosity >= 3 && tick_count_ == 0U) {
             std::cerr << "dedalus_mission: waiting for first WorldSnapshot\n";
         }
