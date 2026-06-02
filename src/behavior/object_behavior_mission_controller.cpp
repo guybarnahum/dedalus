@@ -1074,6 +1074,30 @@ std::string ObjectBehaviorMissionController::target_event(const TargetSelection&
         ",\"reason\":" + q(selection.reason);
 }
 
+// Accumulates comma-prefixed JSON key:value pairs. The caller writes the
+// leading field (e.g. "\"event\":\"foo\""); all further fields use kv().
+// Output format for doubles matches std::to_string (6 decimal places).
+class JsonFields {
+    std::string buf_;
+public:
+    JsonFields& kv(const char* key, const std::string& val) {
+        buf_ += ",\""; buf_ += key; buf_ += "\":"; buf_ += q(val); return *this;
+    }
+    JsonFields& kv(const char* key, double val) {
+        buf_ += ",\""; buf_ += key; buf_ += "\":"; buf_ += std::to_string(val); return *this;
+    }
+    JsonFields& kv(const char* key, int val) {
+        buf_ += ",\""; buf_ += key; buf_ += "\":"; buf_ += std::to_string(val); return *this;
+    }
+    JsonFields& kv(const char* key, std::size_t val) {
+        buf_ += ",\""; buf_ += key; buf_ += "\":"; buf_ += std::to_string(val); return *this;
+    }
+    JsonFields& kv(const char* key, bool val) {
+        buf_ += ",\""; buf_ += key; buf_ += "\":"; buf_ += val ? "true" : "false"; return *this;
+    }
+    std::string str() const { return buf_; }
+};
+
 std::string behavior_display_fields(const std::string& detail) {
     return ",\"display_state\":\"Mission\",\"display_detail\":" + q(detail);
 }
@@ -1152,54 +1176,55 @@ std::string behavior_tick_event(
     std::size_t sequence_step_count,
     ObjectBehaviorYawMode yaw_mode,
     const std::string& camera_pointing_mode) {
-    std::string event = "\"event\":\"behavior_tick_sample\""
-        ",\"behavior\":" + q(to_string(spec.behavior.type)) +
-        ",\"active_behavior\":" + q(to_string(active_behavior.type)) +
-        ",\"mission\":" + q(spec.mission_name) +
-        ",\"agent_id\":" + q(selection.agent_id.value) +
-        ",\"source_track_id\":" + q(selection.source_track_id.value) +
-        ",\"vx\":" + std::to_string(velocity.x) +
-        ",\"vy\":" + std::to_string(velocity.y) +
-        ",\"vz\":" + std::to_string(velocity.z) +
-        ",\"arrival_mode\":" + q(geometry.arrival_mode) +
-        ",\"desired_error_xy_m\":" + std::to_string(geometry.desired_error_xy_m) +
-        ",\"target_speed_xy_mps\":" + std::to_string(geometry.target_speed_xy_mps) +
-        ",\"relative_speed_xy_mps\":" + std::to_string(geometry.relative_speed_xy_mps) +
-        ",\"follow_bearing_source\":" + q(geometry.bearing_source) +
-        ",\"follow_bearing_x\":" + std::to_string(geometry.bearing_x) +
-        ",\"follow_bearing_y\":" + std::to_string(geometry.bearing_y) +
-        ",\"follow_dh_m\":" + std::to_string(geometry.dh_m) +
-        ",\"follow_required_r_m\":" + std::to_string(geometry.required_r_m) +
-        ",\"follow_actual_r_m\":" + std::to_string(geometry.actual_r_m) +
-        ",\"follow_elevation_deg\":" + std::to_string(geometry.elevation_deg) +
-        ",\"circle_phase\":" + q(geometry.circle_phase) +
-        ",\"orbit_radius_m\":" + std::to_string(geometry.orbit_radius_m) +
-        ",\"actual_radius_m\":" + std::to_string(geometry.actual_radius_m) +
-        ",\"radius_error_m\":" + std::to_string(geometry.radius_error_m) +
-        ",\"radial_correction_mps\":" + std::to_string(geometry.radial_correction_mps) +
-        ",\"tangent_velocity_mps\":" + std::to_string(geometry.tangent_velocity_mps) +
-        ",\"target_velocity_mps\":" + std::to_string(norm_xy(geometry.target_velocity)) +
-        ",\"desired_velocity_mps\":" + std::to_string(geometry.desired_velocity_mps) +
-        ",\"tangent_blend\":" + std::to_string(geometry.tangent_blend) +
-        ",\"orbit_count_target\":" + std::to_string(geometry.orbit_count_target) +
-        ",\"circle_completed_orbits\":" + std::to_string(geometry.circle_completed_orbits) +
-        ",\"orbit_angle_rad\":" + std::to_string(geometry.orbit_angle_rad) +
-        ",\"altitude_profile_active\":" + std::string(geometry.altitude_profile_active ? "true" : "false") +
-        ",\"altitude_profile_easing\":" + q(geometry.altitude_profile_easing) +
-        ",\"altitude_profile_t\":" + std::to_string(geometry.altitude_profile_t) +
-        ",\"desired_height_m\":" + std::to_string(geometry.desired_height_m) +
-        ",\"current_height_m\":" + std::to_string(geometry.current_height_m) +
-        ",\"height_error_m\":" + std::to_string(geometry.height_error_m) +
-        ",\"orbit_mode_latched\":" + std::string(geometry.orbit_mode_latched ? "true" : "false") +
-        ",\"active_yaw_mode\":" + q(yaw_mode_event_string(yaw_mode)) +
-        ",\"active_camera_pointing_mode\":" + q(camera_pointing_mode);
+    JsonFields f;
+    f.kv("behavior", to_string(spec.behavior.type))
+     .kv("active_behavior", to_string(active_behavior.type))
+     .kv("mission", spec.mission_name)
+     .kv("agent_id", selection.agent_id.value)
+     .kv("source_track_id", selection.source_track_id.value)
+     .kv("vx", velocity.x)
+     .kv("vy", velocity.y)
+     .kv("vz", velocity.z)
+     .kv("arrival_mode", geometry.arrival_mode)
+     .kv("desired_error_xy_m", geometry.desired_error_xy_m)
+     .kv("target_speed_xy_mps", geometry.target_speed_xy_mps)
+     .kv("relative_speed_xy_mps", geometry.relative_speed_xy_mps)
+     .kv("follow_bearing_source", geometry.bearing_source)
+     .kv("follow_bearing_x", geometry.bearing_x)
+     .kv("follow_bearing_y", geometry.bearing_y)
+     .kv("follow_dh_m", geometry.dh_m)
+     .kv("follow_required_r_m", geometry.required_r_m)
+     .kv("follow_actual_r_m", geometry.actual_r_m)
+     .kv("follow_elevation_deg", geometry.elevation_deg)
+     .kv("circle_phase", geometry.circle_phase)
+     .kv("orbit_radius_m", geometry.orbit_radius_m)
+     .kv("actual_radius_m", geometry.actual_radius_m)
+     .kv("radius_error_m", geometry.radius_error_m)
+     .kv("radial_correction_mps", geometry.radial_correction_mps)
+     .kv("tangent_velocity_mps", geometry.tangent_velocity_mps)
+     .kv("target_velocity_mps", norm_xy(geometry.target_velocity))
+     .kv("desired_velocity_mps", geometry.desired_velocity_mps)
+     .kv("tangent_blend", geometry.tangent_blend)
+     .kv("orbit_count_target", geometry.orbit_count_target)
+     .kv("circle_completed_orbits", geometry.circle_completed_orbits)
+     .kv("orbit_angle_rad", geometry.orbit_angle_rad)
+     .kv("altitude_profile_active", geometry.altitude_profile_active)
+     .kv("altitude_profile_easing", geometry.altitude_profile_easing)
+     .kv("altitude_profile_t", geometry.altitude_profile_t)
+     .kv("desired_height_m", geometry.desired_height_m)
+     .kv("current_height_m", geometry.current_height_m)
+     .kv("height_error_m", geometry.height_error_m)
+     .kv("orbit_mode_latched", geometry.orbit_mode_latched)
+     .kv("active_yaw_mode", yaw_mode_event_string(yaw_mode))
+     .kv("active_camera_pointing_mode", camera_pointing_mode);
     if (sequence_step_index.has_value()) {
-        event += ",\"sequence_step_index\":" + std::to_string(*sequence_step_index) +
-            ",\"sequence_step_count\":" + std::to_string(sequence_step_count) +
-            ",\"sequence_step_behavior\":" + q(to_string(active_behavior.type)) +
-            ",\"sequence_step_yaw_mode\":" + q(active_behavior.yaw_mode.empty() ? "inherit" : active_behavior.yaw_mode) +
-            ",\"sequence_step_camera_pointing_mode\":" + q(active_behavior.camera_pointing_mode.empty() ? "inherit" : active_behavior.camera_pointing_mode);
+        f.kv("sequence_step_index", *sequence_step_index)
+         .kv("sequence_step_count", sequence_step_count)
+         .kv("sequence_step_behavior", to_string(active_behavior.type))
+         .kv("sequence_step_yaw_mode", active_behavior.yaw_mode.empty() ? "inherit" : active_behavior.yaw_mode)
+         .kv("sequence_step_camera_pointing_mode", active_behavior.camera_pointing_mode.empty() ? "inherit" : active_behavior.camera_pointing_mode);
     }
+    std::string event = "\"event\":\"behavior_tick_sample\"" + f.str();
     event += behavior_display_fields(behavior_detail_for_tick(active_behavior, geometry));
     return event;
 }
@@ -1215,80 +1240,79 @@ std::string behavior_debug_event(
     const FollowGeometry& geometry) {
     const double velocity_xy = norm_xy(final_velocity);
     const double yaw_deg = command.yaw_valid ? rad_to_deg(command.yaw_rad) : 0.0;
-    std::string event = "\"event\":\"behavior_debug\""
-        ",\"debug_level\":" + std::to_string(debug_level) +
-        ",\"execute_tick\":" + std::to_string(execute_tick) +
-        ",\"source_track_id\":" + q(selection.source_track_id.value) +
-        ",\"arrival_mode\":" + q(geometry.arrival_mode) +
-        ",\"desired_error_xy_m\":" + std::to_string(geometry.desired_error_xy_m) +
-        ",\"target_speed_xy_mps\":" + std::to_string(geometry.target_speed_xy_mps) +
-        ",\"closing_speed_mps\":" + std::to_string(geometry.closing_speed_mps) +
-        ",\"relative_speed_xy_mps\":" + std::to_string(geometry.relative_speed_xy_mps) +
-        ",\"velocity_xy_mps\":" + std::to_string(velocity_xy) +
-        ",\"yaw_valid\":" + std::string(command.yaw_valid ? "true" : "false") +
-        ",\"yaw_source\":" + q(yaw_source_for(command)) +
-        ",\"yaw_deg\":" + std::to_string(yaw_deg) +
-        ",\"follow_bearing_source\":" + q(geometry.bearing_source) +
-        ",\"follow_required_r_m\":" + std::to_string(geometry.required_r_m) +
-        ",\"follow_actual_r_m\":" + std::to_string(geometry.actual_r_m) +
-        ",\"circle_phase\":" + q(geometry.circle_phase) +
-        ",\"orbit_radius_m\":" + std::to_string(geometry.orbit_radius_m) +
-        ",\"actual_radius_m\":" + std::to_string(geometry.actual_radius_m) +
-        ",\"radius_error_m\":" + std::to_string(geometry.radius_error_m) +
-        ",\"radial_correction_mps\":" + std::to_string(geometry.radial_correction_mps) +
-        ",\"tangent_velocity_mps\":" + std::to_string(geometry.tangent_velocity_mps) +
-        ",\"target_velocity_mps\":" + std::to_string(norm_xy(geometry.target_velocity)) +
-        ",\"desired_velocity_mps\":" + std::to_string(geometry.desired_velocity_mps) +
-        ",\"tangent_blend\":" + std::to_string(geometry.tangent_blend) +
-        ",\"orbit_count_target\":" + std::to_string(geometry.orbit_count_target) +
-        ",\"circle_completed_orbits\":" + std::to_string(geometry.circle_completed_orbits) +
-        ",\"orbit_angle_rad\":" + std::to_string(geometry.orbit_angle_rad) +
-        ",\"altitude_profile_active\":" + std::string(geometry.altitude_profile_active ? "true" : "false") +
-        ",\"altitude_profile_easing\":" + q(geometry.altitude_profile_easing) +
-        ",\"altitude_profile_t\":" + std::to_string(geometry.altitude_profile_t) +
-        ",\"desired_height_m\":" + std::to_string(geometry.desired_height_m) +
-        ",\"current_height_m\":" + std::to_string(geometry.current_height_m) +
-        ",\"height_error_m\":" + std::to_string(geometry.height_error_m) +
-        ",\"orbit_mode_latched\":" + std::string(geometry.orbit_mode_latched ? "true" : "false");
-
+    JsonFields f;
+    f.kv("debug_level", debug_level)
+     .kv("execute_tick", execute_tick)
+     .kv("source_track_id", selection.source_track_id.value)
+     .kv("arrival_mode", geometry.arrival_mode)
+     .kv("desired_error_xy_m", geometry.desired_error_xy_m)
+     .kv("target_speed_xy_mps", geometry.target_speed_xy_mps)
+     .kv("closing_speed_mps", geometry.closing_speed_mps)
+     .kv("relative_speed_xy_mps", geometry.relative_speed_xy_mps)
+     .kv("velocity_xy_mps", velocity_xy)
+     .kv("yaw_valid", command.yaw_valid)
+     .kv("yaw_source", yaw_source_for(command))
+     .kv("yaw_deg", yaw_deg)
+     .kv("follow_bearing_source", geometry.bearing_source)
+     .kv("follow_required_r_m", geometry.required_r_m)
+     .kv("follow_actual_r_m", geometry.actual_r_m)
+     .kv("circle_phase", geometry.circle_phase)
+     .kv("orbit_radius_m", geometry.orbit_radius_m)
+     .kv("actual_radius_m", geometry.actual_radius_m)
+     .kv("radius_error_m", geometry.radius_error_m)
+     .kv("radial_correction_mps", geometry.radial_correction_mps)
+     .kv("tangent_velocity_mps", geometry.tangent_velocity_mps)
+     .kv("target_velocity_mps", norm_xy(geometry.target_velocity))
+     .kv("desired_velocity_mps", geometry.desired_velocity_mps)
+     .kv("tangent_blend", geometry.tangent_blend)
+     .kv("orbit_count_target", geometry.orbit_count_target)
+     .kv("circle_completed_orbits", geometry.circle_completed_orbits)
+     .kv("orbit_angle_rad", geometry.orbit_angle_rad)
+     .kv("altitude_profile_active", geometry.altitude_profile_active)
+     .kv("altitude_profile_easing", geometry.altitude_profile_easing)
+     .kv("altitude_profile_t", geometry.altitude_profile_t)
+     .kv("desired_height_m", geometry.desired_height_m)
+     .kv("current_height_m", geometry.current_height_m)
+     .kv("height_error_m", geometry.height_error_m)
+     .kv("orbit_mode_latched", geometry.orbit_mode_latched);
     if (debug_level >= 2) {
         const double yaw_delta_deg = command.yaw_valid ? rad_to_deg(command.yaw_rad - ego.local_T_body.rotation_rpy.z) : 0.0;
-        event += ",\"agent_id\":" + q(selection.agent_id.value) +
-            ",\"ego_x\":" + std::to_string(ego.local_T_body.position.x) +
-            ",\"ego_y\":" + std::to_string(ego.local_T_body.position.y) +
-            ",\"ego_z\":" + std::to_string(ego.local_T_body.position.z) +
-            ",\"ego_yaw_rad\":" + std::to_string(ego.local_T_body.rotation_rpy.z) +
-            ",\"ego_height_m\":" + std::to_string(ego.height_m) +
-            ",\"sel_x\":" + std::to_string(selection.position_local.x) +
-            ",\"sel_y\":" + std::to_string(selection.position_local.y) +
-            ",\"sel_z\":" + std::to_string(selection.position_local.z) +
-            ",\"desired_x\":" + std::to_string(geometry.desired_position.x) +
-            ",\"desired_y\":" + std::to_string(geometry.desired_position.y) +
-            ",\"desired_z\":" + std::to_string(geometry.desired_position.z) +
-            ",\"target_vx\":" + std::to_string(geometry.target_velocity.x) +
-            ",\"target_vy\":" + std::to_string(geometry.target_velocity.y) +
-            ",\"closing_vx\":" + std::to_string(geometry.closing_velocity.x) +
-            ",\"closing_vy\":" + std::to_string(geometry.closing_velocity.y) +
-            ",\"raw_vx\":" + std::to_string(raw_velocity.x) +
-            ",\"desired_vx\":" + std::to_string(geometry.desired_velocity.x) +
-            ",\"desired_vy\":" + std::to_string(geometry.desired_velocity.y) +
-            ",\"tangent_vx\":" + std::to_string(geometry.tangent_velocity.x) +
-            ",\"tangent_vy\":" + std::to_string(geometry.tangent_velocity.y) +
-            ",\"radial_correction_vx\":" + std::to_string(geometry.radial_correction_velocity.x) +
-            ",\"radial_correction_vy\":" + std::to_string(geometry.radial_correction_velocity.y) +
-            ",\"raw_vy\":" + std::to_string(raw_velocity.y) +
-            ",\"raw_vz\":" + std::to_string(raw_velocity.z) +
-            ",\"vx\":" + std::to_string(final_velocity.x) +
-            ",\"vy\":" + std::to_string(final_velocity.y) +
-            ",\"vz\":" + std::to_string(final_velocity.z) +
-            ",\"yaw_rad\":" + std::to_string(command.yaw_valid ? command.yaw_rad : 0.0) +
-            ",\"yaw_delta_from_ego_deg\":" + std::to_string(yaw_delta_deg) +
-            ",\"follow_bearing_x\":" + std::to_string(geometry.bearing_x) +
-            ",\"follow_bearing_y\":" + std::to_string(geometry.bearing_y) +
-            ",\"follow_dh_m\":" + std::to_string(geometry.dh_m) +
-            ",\"follow_elevation_deg\":" + std::to_string(geometry.elevation_deg);
+        f.kv("agent_id", selection.agent_id.value)
+         .kv("ego_x", ego.local_T_body.position.x)
+         .kv("ego_y", ego.local_T_body.position.y)
+         .kv("ego_z", ego.local_T_body.position.z)
+         .kv("ego_yaw_rad", ego.local_T_body.rotation_rpy.z)
+         .kv("ego_height_m", ego.height_m)
+         .kv("sel_x", selection.position_local.x)
+         .kv("sel_y", selection.position_local.y)
+         .kv("sel_z", selection.position_local.z)
+         .kv("desired_x", geometry.desired_position.x)
+         .kv("desired_y", geometry.desired_position.y)
+         .kv("desired_z", geometry.desired_position.z)
+         .kv("target_vx", geometry.target_velocity.x)
+         .kv("target_vy", geometry.target_velocity.y)
+         .kv("closing_vx", geometry.closing_velocity.x)
+         .kv("closing_vy", geometry.closing_velocity.y)
+         .kv("raw_vx", raw_velocity.x)
+         .kv("desired_vx", geometry.desired_velocity.x)
+         .kv("desired_vy", geometry.desired_velocity.y)
+         .kv("tangent_vx", geometry.tangent_velocity.x)
+         .kv("tangent_vy", geometry.tangent_velocity.y)
+         .kv("radial_correction_vx", geometry.radial_correction_velocity.x)
+         .kv("radial_correction_vy", geometry.radial_correction_velocity.y)
+         .kv("raw_vy", raw_velocity.y)
+         .kv("raw_vz", raw_velocity.z)
+         .kv("vx", final_velocity.x)
+         .kv("vy", final_velocity.y)
+         .kv("vz", final_velocity.z)
+         .kv("yaw_rad", command.yaw_valid ? command.yaw_rad : 0.0)
+         .kv("yaw_delta_from_ego_deg", yaw_delta_deg)
+         .kv("follow_bearing_x", geometry.bearing_x)
+         .kv("follow_bearing_y", geometry.bearing_y)
+         .kv("follow_dh_m", geometry.dh_m)
+         .kv("follow_elevation_deg", geometry.elevation_deg);
     }
-    return event;
+    return "\"event\":\"behavior_debug\"" + f.str();
 }
 
 bool ObjectBehaviorMissionController::completion_elapsed(TimePoint now) const {
