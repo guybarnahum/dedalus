@@ -1,7 +1,7 @@
 #pragma once
 
+#include <memory>
 #include <mutex>
-#include <optional>
 #include <string>
 
 #include "dedalus/behavior/mission_controller.hpp"
@@ -13,12 +13,12 @@ class LatestWorldSnapshot {
 public:
     void publish(WorldSnapshot snapshot) {
         std::lock_guard<std::mutex> lock{mutex_};
-        if (snapshot_.has_value()) {
+        if (snapshot_) {
             snapshot.flight_control = snapshot_->flight_control;
             snapshot.flight_control.updated_at = snapshot.timestamp;
             apply_ego_confirmation(snapshot);
         }
-        snapshot_ = std::move(snapshot);
+        snapshot_ = std::make_shared<const WorldSnapshot>(std::move(snapshot));
     }
 
     void mark_command_dispatched(
@@ -26,25 +26,24 @@ public:
         TimePoint timestamp,
         const std::string& status) {
         std::lock_guard<std::mutex> lock{mutex_};
-        if (!snapshot_.has_value()) {
-            snapshot_ = WorldSnapshot{};
-        }
-        snapshot_->timestamp = timestamp;
-        snapshot_->flight_control.updated_at = timestamp;
-        snapshot_->flight_control.status = status;
+        WorldSnapshot s = snapshot_ ? *snapshot_ : WorldSnapshot{};
+        s.timestamp = timestamp;
+        s.flight_control.updated_at = timestamp;
+        s.flight_control.status = status;
         switch (kind) {
             case FlightCommandKind::Arm:
-                snapshot_->flight_control.arm_state = FlightControlArmState::ArmRequested;
-                snapshot_->flight_control.last_arm_request_at = timestamp;
+                s.flight_control.arm_state = FlightControlArmState::ArmRequested;
+                s.flight_control.last_arm_request_at = timestamp;
                 break;
             case FlightCommandKind::Disarm:
-                snapshot_->flight_control.arm_state = FlightControlArmState::DisarmRequested;
-                snapshot_->flight_control.last_disarm_request_at = timestamp;
+                s.flight_control.arm_state = FlightControlArmState::DisarmRequested;
+                s.flight_control.last_disarm_request_at = timestamp;
                 break;
             case FlightCommandKind::Velocity:
             default:
                 break;
         }
+        snapshot_ = std::make_shared<const WorldSnapshot>(std::move(s));
     }
 
     void mark_command_failed(
@@ -52,26 +51,25 @@ public:
         TimePoint timestamp,
         const std::string& status) {
         std::lock_guard<std::mutex> lock{mutex_};
-        if (!snapshot_.has_value()) {
-            snapshot_ = WorldSnapshot{};
-        }
-        snapshot_->timestamp = timestamp;
-        snapshot_->flight_control.updated_at = timestamp;
-        snapshot_->flight_control.status = status;
+        WorldSnapshot s = snapshot_ ? *snapshot_ : WorldSnapshot{};
+        s.timestamp = timestamp;
+        s.flight_control.updated_at = timestamp;
+        s.flight_control.status = status;
         switch (kind) {
             case FlightCommandKind::Arm:
-                snapshot_->flight_control.arm_state = FlightControlArmState::ArmFailed;
+                s.flight_control.arm_state = FlightControlArmState::ArmFailed;
                 break;
             case FlightCommandKind::Disarm:
-                snapshot_->flight_control.arm_state = FlightControlArmState::DisarmFailed;
+                s.flight_control.arm_state = FlightControlArmState::DisarmFailed;
                 break;
             case FlightCommandKind::Velocity:
             default:
                 break;
         }
+        snapshot_ = std::make_shared<const WorldSnapshot>(std::move(s));
     }
 
-    [[nodiscard]] std::optional<WorldSnapshot> latest() const {
+    [[nodiscard]] std::shared_ptr<const WorldSnapshot> latest() const {
         std::lock_guard<std::mutex> lock{mutex_};
         return snapshot_;
     }
@@ -94,7 +92,7 @@ private:
     }
 
     mutable std::mutex mutex_;
-    std::optional<WorldSnapshot> snapshot_;
+    std::shared_ptr<const WorldSnapshot> snapshot_;
 };
 
 }  // namespace dedalus

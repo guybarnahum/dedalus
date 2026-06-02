@@ -10,7 +10,7 @@ bool expect_arm_state(
     dedalus::FlightControlArmState expected,
     const std::string& context) {
     const auto snapshot = latest_snapshot.latest();
-    if (!snapshot.has_value()) {
+    if (!snapshot) {
         std::cerr << context << ": expected a latest snapshot\n";
         return false;
     }

@@ -617,7 +617,7 @@ int main(int argc, char** argv) {
             const int updated_frame_count = artifact_snapshot_writer->frame_count();
             if (args.verbosity >= 2 && (updated_frame_count <= 3 || updated_frame_count % 30 == 0)) {
                 const auto latest = latest_snapshot->latest();
-                if (latest.has_value()) {
+                if (latest) {
                     std::cerr << "dedalus_mission_loop: world_snapshot frame=" << updated_frame_count
                               << " ts=" << latest->timestamp.timestamp_ns
                               << " ego_height_m=" << latest->ego.height_m
