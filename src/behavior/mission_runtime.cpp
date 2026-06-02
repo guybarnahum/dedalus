@@ -285,131 +285,143 @@ bool MissionRuntime::tick_once() {
     }
 
     if (output.camera_pointing.has_value()) {
-        const auto& camera_pointing = *output.camera_pointing;
-        write_event(
-            "\"event\":\"camera_pointing_dispatch\",\"tick\":" + std::to_string(tick_count_) +
-            ",\"state\":" + q(to_string(output.state)) +
-            ",\"timestamp_ns\":" + std::to_string(camera_pointing.timestamp.timestamp_ns) +
-            ",\"camera_pointing_mode\":" + q(camera_pointing.mode) +
-            ",\"pitch_valid\":" + (camera_pointing.pitch_valid ? std::string{"true"} : std::string{"false"}) +
-            ",\"pitch_rad\":" + std::to_string(camera_pointing.pitch_rad) +
-            ",\"pitch_deg\":" + std::to_string(camera_pointing.pitch_rad * 180.0 / 3.14159265358979323846) +
-            ",\"pitch_clamped\":" + (camera_pointing.pitch_clamped ? std::string{"true"} : std::string{"false"}) +
-            ",\"source_track_id\":" + q(camera_pointing.source_track_id) +
-            ",\"agent_id\":" + q(camera_pointing.agent_id) +
-            ",\"identity_id\":" + q(camera_pointing.identity_id) +
-            display_fields("Camera", camera_pointing.mode.empty() ? "pointing" : camera_pointing.mode));
-        if (config_.verbosity >= 2) {
-            std::cerr << "dedalus_mission: send_camera_pointing mode=" << camera_pointing.mode
-                      << " pitch_deg=" << camera_pointing.pitch_rad * 180.0 / 3.14159265358979323846
-                      << " cameras=" << camera_pointing.cameras.size()
-                      << "\n";
-        }
-        try {
-            last_camera_pointing_result_ = camera_pointing_sink_->send(camera_pointing);
-        } catch (const std::exception& ex) {
-            last_camera_pointing_result_ = CameraPointingResult{false, ex.what()};
-            write_event(
-                "\"event\":\"camera_pointing_exception\",\"tick\":" + std::to_string(tick_count_) +
-                ",\"state\":" + q(to_string(output.state)) +
-                ",\"camera_pointing_mode\":" + q(camera_pointing.mode) +
-                ",\"error\":" + q(ex.what()) +
-                display_fields("Failed", "camera"));
-            std::cerr << "dedalus_mission: camera_pointing_exception mode=" << camera_pointing.mode
-                      << " status=" << ex.what() << "\n";
-        }
-        if (!last_camera_pointing_result_.has_value()) {
-            last_camera_pointing_result_ = CameraPointingResult{false, "camera_pointing_sink_missing_result"};
-        }
-        write_event(
-            "\"event\":\"camera_pointing_result\",\"tick\":" + std::to_string(tick_count_) +
-            ",\"state\":" + q(to_string(output.state)) +
-            ",\"camera_pointing_mode\":" + q(camera_pointing.mode) +
-            ",\"success\":" + (last_camera_pointing_result_->success ? std::string{"true"} : std::string{"false"}) +
-            ",\"status\":" + q(last_camera_pointing_result_->status) +
-            display_fields(
-                last_camera_pointing_result_->success ? "Camera" : "Failed",
-                last_camera_pointing_result_->success ? camera_pointing.mode : "camera"));
-        if (config_.verbosity >= 2) {
-            std::cerr << "dedalus_mission: camera_pointing_result success="
-                      << (last_camera_pointing_result_->success ? "true" : "false")
-                      << " status=" << last_camera_pointing_result_->status;
-            if (last_camera_pointing_result_->status.empty() || last_camera_pointing_result_->status.back() != '\n') {
-                std::cerr << "\n";
-            }
-        }
+        dispatch_camera_pointing(output, input);
     }
 
     if (output.command.has_value()) {
-        const auto& command = *output.command;
-        write_event(
-            "\"event\":\"command_dispatch\",\"tick\":" + std::to_string(tick_count_) +
-            ",\"state\":" + q(to_string(output.state)) +
-            ",\"command\":" + q(to_string(command.kind)) +
-            ",\"timestamp_ns\":" + std::to_string(command.timestamp.timestamp_ns) +
-            ",\"vx\":" + std::to_string(command.velocity_local_mps.x) +
-            ",\"vy\":" + std::to_string(command.velocity_local_mps.y) +
-            ",\"vz\":" + std::to_string(command.velocity_local_mps.z) +
-            ",\"yaw_rate\":" + std::to_string(command.yaw_rate_radps) +
-            display_fields(
-                display_primary_for_command(command.kind),
-                command.kind == FlightCommandKind::Velocity ? compact_display_detail(output.status) : "send"));
-        if (config_.verbosity >= 2) {
-            const auto& v = output.command->velocity_local_mps;
-            std::cerr << "dedalus_mission: send_command kind=" << to_string(output.command->kind)
-                      << " vx=" << v.x
-                      << " vy=" << v.y
-                      << " vz=" << v.z
-                      << " yaw_rate=" << output.command->yaw_rate_radps
-                      << "\n";
-        }
-        try {
-            last_command_result_ = sink_->send(*output.command);
-            if (last_command_result_->success) {
-                snapshots_->mark_command_dispatched(
-                    output.command->kind,
-                    input.now,
-                    last_command_result_->status);
-            } else {
-                snapshots_->mark_command_failed(
-                    output.command->kind,
-                    input.now,
-                    last_command_result_->status);
-            }
-        } catch (const std::exception& ex) {
-            last_command_result_ = FlightCommandResult{output.command->kind, false, ex.what()};
-            snapshots_->mark_command_failed(output.command->kind, input.now, ex.what());
-            write_event(
-                "\"event\":\"command_exception\",\"tick\":" + std::to_string(tick_count_) +
-                ",\"state\":" + q(to_string(output.state)) +
-                ",\"command\":" + q(to_string(output.command->kind)) +
-                ",\"error\":" + q(ex.what()) +
-                display_fields("Failed", display_primary_for_command(output.command->kind)));
-            std::cerr << "dedalus_mission: command_exception kind=" << to_string(output.command->kind)
-                      << " status=" << ex.what() << "\n";
-        }
-        write_event(
-            "\"event\":\"command_result\",\"tick\":" + std::to_string(tick_count_) +
-            ",\"state\":" + q(to_string(output.state)) +
-            ",\"command\":" + q(to_string(last_command_result_->kind)) +
-            ",\"success\":" + (last_command_result_->success ? std::string{"true"} : std::string{"false"}) +
-            ",\"status\":" + q(last_command_result_->status) +
-            display_fields(
-                last_command_result_->success ? display_primary_for_command(last_command_result_->kind) : "Failed",
-                last_command_result_->success
-                    ? (last_command_result_->kind == FlightCommandKind::Velocity ? compact_display_detail(output.status) : "ok")
-                    : display_primary_for_command(last_command_result_->kind)));
-        if (config_.verbosity >= 2) {
-            std::cerr << "dedalus_mission: command_result kind=" << to_string(last_command_result_->kind)
-                      << " success=" << (last_command_result_->success ? "true" : "false")
-                      << " status=" << last_command_result_->status;
-            if (last_command_result_->status.empty() || last_command_result_->status.back() != '\n') {
-                std::cerr << "\n";
-            }
-        }
+        dispatch_command(output, input);
     }
 
     return true;
+}
+
+void MissionRuntime::dispatch_camera_pointing(
+    const MissionTickOutput& output,
+    const MissionTickInput& /*input*/) {
+    const auto& camera_pointing = *output.camera_pointing;
+    write_event(
+        "\"event\":\"camera_pointing_dispatch\",\"tick\":" + std::to_string(tick_count_) +
+        ",\"state\":" + q(to_string(output.state)) +
+        ",\"timestamp_ns\":" + std::to_string(camera_pointing.timestamp.timestamp_ns) +
+        ",\"camera_pointing_mode\":" + q(camera_pointing.mode) +
+        ",\"pitch_valid\":" + (camera_pointing.pitch_valid ? std::string{"true"} : std::string{"false"}) +
+        ",\"pitch_rad\":" + std::to_string(camera_pointing.pitch_rad) +
+        ",\"pitch_deg\":" + std::to_string(camera_pointing.pitch_rad * 180.0 / 3.14159265358979323846) +
+        ",\"pitch_clamped\":" + (camera_pointing.pitch_clamped ? std::string{"true"} : std::string{"false"}) +
+        ",\"source_track_id\":" + q(camera_pointing.source_track_id) +
+        ",\"agent_id\":" + q(camera_pointing.agent_id) +
+        ",\"identity_id\":" + q(camera_pointing.identity_id) +
+        display_fields("Camera", camera_pointing.mode.empty() ? "pointing" : camera_pointing.mode));
+    if (config_.verbosity >= 2) {
+        std::cerr << "dedalus_mission: send_camera_pointing mode=" << camera_pointing.mode
+                  << " pitch_deg=" << camera_pointing.pitch_rad * 180.0 / 3.14159265358979323846
+                  << " cameras=" << camera_pointing.cameras.size()
+                  << "\n";
+    }
+    try {
+        last_camera_pointing_result_ = camera_pointing_sink_->send(camera_pointing);
+    } catch (const std::exception& ex) {
+        last_camera_pointing_result_ = CameraPointingResult{false, ex.what()};
+        write_event(
+            "\"event\":\"camera_pointing_exception\",\"tick\":" + std::to_string(tick_count_) +
+            ",\"state\":" + q(to_string(output.state)) +
+            ",\"camera_pointing_mode\":" + q(camera_pointing.mode) +
+            ",\"error\":" + q(ex.what()) +
+            display_fields("Failed", "camera"));
+        std::cerr << "dedalus_mission: camera_pointing_exception mode=" << camera_pointing.mode
+                  << " status=" << ex.what() << "\n";
+    }
+    if (!last_camera_pointing_result_.has_value()) {
+        last_camera_pointing_result_ = CameraPointingResult{false, "camera_pointing_sink_missing_result"};
+    }
+    write_event(
+        "\"event\":\"camera_pointing_result\",\"tick\":" + std::to_string(tick_count_) +
+        ",\"state\":" + q(to_string(output.state)) +
+        ",\"camera_pointing_mode\":" + q(camera_pointing.mode) +
+        ",\"success\":" + (last_camera_pointing_result_->success ? std::string{"true"} : std::string{"false"}) +
+        ",\"status\":" + q(last_camera_pointing_result_->status) +
+        display_fields(
+            last_camera_pointing_result_->success ? "Camera" : "Failed",
+            last_camera_pointing_result_->success ? camera_pointing.mode : "camera"));
+    if (config_.verbosity >= 2) {
+        std::cerr << "dedalus_mission: camera_pointing_result success="
+                  << (last_camera_pointing_result_->success ? "true" : "false")
+                  << " status=" << last_camera_pointing_result_->status;
+        if (last_camera_pointing_result_->status.empty() || last_camera_pointing_result_->status.back() != '\n') {
+            std::cerr << "\n";
+        }
+    }
+}
+
+void MissionRuntime::dispatch_command(
+    const MissionTickOutput& output,
+    const MissionTickInput& input) {
+    const auto& command = *output.command;
+    write_event(
+        "\"event\":\"command_dispatch\",\"tick\":" + std::to_string(tick_count_) +
+        ",\"state\":" + q(to_string(output.state)) +
+        ",\"command\":" + q(to_string(command.kind)) +
+        ",\"timestamp_ns\":" + std::to_string(command.timestamp.timestamp_ns) +
+        ",\"vx\":" + std::to_string(command.velocity_local_mps.x) +
+        ",\"vy\":" + std::to_string(command.velocity_local_mps.y) +
+        ",\"vz\":" + std::to_string(command.velocity_local_mps.z) +
+        ",\"yaw_rate\":" + std::to_string(command.yaw_rate_radps) +
+        display_fields(
+            display_primary_for_command(command.kind),
+            command.kind == FlightCommandKind::Velocity ? compact_display_detail(output.status) : "send"));
+    if (config_.verbosity >= 2) {
+        const auto& v = output.command->velocity_local_mps;
+        std::cerr << "dedalus_mission: send_command kind=" << to_string(output.command->kind)
+                  << " vx=" << v.x
+                  << " vy=" << v.y
+                  << " vz=" << v.z
+                  << " yaw_rate=" << output.command->yaw_rate_radps
+                  << "\n";
+    }
+    try {
+        last_command_result_ = sink_->send(*output.command);
+        if (last_command_result_->success) {
+            snapshots_->mark_command_dispatched(
+                output.command->kind,
+                input.now,
+                last_command_result_->status);
+        } else {
+            snapshots_->mark_command_failed(
+                output.command->kind,
+                input.now,
+                last_command_result_->status);
+        }
+    } catch (const std::exception& ex) {
+        last_command_result_ = FlightCommandResult{output.command->kind, false, ex.what()};
+        snapshots_->mark_command_failed(output.command->kind, input.now, ex.what());
+        write_event(
+            "\"event\":\"command_exception\",\"tick\":" + std::to_string(tick_count_) +
+            ",\"state\":" + q(to_string(output.state)) +
+            ",\"command\":" + q(to_string(output.command->kind)) +
+            ",\"error\":" + q(ex.what()) +
+            display_fields("Failed", display_primary_for_command(output.command->kind)));
+        std::cerr << "dedalus_mission: command_exception kind=" << to_string(output.command->kind)
+                  << " status=" << ex.what() << "\n";
+    }
+    write_event(
+        "\"event\":\"command_result\",\"tick\":" + std::to_string(tick_count_) +
+        ",\"state\":" + q(to_string(output.state)) +
+        ",\"command\":" + q(to_string(last_command_result_->kind)) +
+        ",\"success\":" + (last_command_result_->success ? std::string{"true"} : std::string{"false"}) +
+        ",\"status\":" + q(last_command_result_->status) +
+        display_fields(
+            last_command_result_->success ? display_primary_for_command(last_command_result_->kind) : "Failed",
+            last_command_result_->success
+                ? (last_command_result_->kind == FlightCommandKind::Velocity ? compact_display_detail(output.status) : "ok")
+                : display_primary_for_command(last_command_result_->kind)));
+    if (config_.verbosity >= 2) {
+        std::cerr << "dedalus_mission: command_result kind=" << to_string(last_command_result_->kind)
+                  << " success=" << (last_command_result_->success ? "true" : "false")
+                  << " status=" << last_command_result_->status;
+        if (last_command_result_->status.empty() || last_command_result_->status.back() != '\n') {
+            std::cerr << "\n";
+        }
+    }
 }
 
 bool MissionRuntime::running() const {

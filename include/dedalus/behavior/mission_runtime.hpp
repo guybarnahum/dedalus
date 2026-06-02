@@ -70,6 +70,8 @@ private:
     void loop();
     void write_event(std::string json_fields);
     [[nodiscard]] TimePoint now_timepoint() const;
+    void dispatch_camera_pointing(const MissionTickOutput& output, const MissionTickInput& input);
+    void dispatch_command(const MissionTickOutput& output, const MissionTickInput& input);
 
     MissionRuntimeConfig config_;
     std::shared_ptr<LatestWorldSnapshot> snapshots_;
