@@ -821,7 +821,7 @@ std::string class_label_event_string(ClassLabel label) {
     }
 }
 
-std::string yaw_source_for(const VelocityCommand& command, double /*min_speed_mps*/) {
+std::string yaw_source_for(const VelocityCommand& command) {
     return command.yaw_source;
 }
 
@@ -1197,8 +1197,7 @@ std::string behavior_debug_event(
     const Vec3& raw_velocity,
     const Vec3& final_velocity,
     const VelocityCommand& command,
-    const FollowGeometry& geometry,
-    double yaw_min_speed_mps) {
+    const FollowGeometry& geometry) {
     const double velocity_xy = norm_xy(final_velocity);
     const double yaw_deg = command.yaw_valid ? rad_to_deg(command.yaw_rad) : 0.0;
     std::string event = "\"event\":\"behavior_debug\""
@@ -1212,7 +1211,7 @@ std::string behavior_debug_event(
         ",\"relative_speed_xy_mps\":" + std::to_string(geometry.relative_speed_xy_mps) +
         ",\"velocity_xy_mps\":" + std::to_string(velocity_xy) +
         ",\"yaw_valid\":" + std::string(command.yaw_valid ? "true" : "false") +
-        ",\"yaw_source\":" + q(yaw_source_for(command, yaw_min_speed_mps)) +
+        ",\"yaw_source\":" + q(yaw_source_for(command)) +
         ",\"yaw_deg\":" + std::to_string(yaw_deg) +
         ",\"follow_bearing_source\":" + q(geometry.bearing_source) +
         ",\"follow_required_r_m\":" + std::to_string(geometry.required_r_m) +
@@ -1782,8 +1781,7 @@ MissionTickOutput ObjectBehaviorMissionController::tick(const MissionTickInput& 
                             raw_velocity,
                             velocity,
                             *output.command,
-                            geometry,
-                            config_.yaw_min_speed_mps));
+                            geometry));
                     }
                     output.status = object_behavior_status(behavior, geometry);
                 }
