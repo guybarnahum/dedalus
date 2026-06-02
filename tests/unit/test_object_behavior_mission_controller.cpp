@@ -180,19 +180,19 @@ void lifecycle_gates_before_behavior_and_emits_events() {
     require_near(behavior.command->velocity_local_mps.y, expected_vy, 1.0e-6, "follow vy should be vector-clamped by max_speed");
     require_near(behavior.command->velocity_local_mps.z, -1.0, 1.0e-9, "follow vz should be bounded by max_vertical_speed");
     require(behavior.events.size() == 3U, "behavior tick should emit target_selected, behavior_start, behavior_tick_sample");
-    require(behavior.events[0].find("\"event\":\"target_selected\"") != std::string::npos, "missing target_selected event");
-    require(behavior.events[0].find("\"source_track_id\":\"ghost_person_001\"") != std::string::npos, "selected target should be ghost_person_001");
-    require(behavior.events[0].find("ghost_person_002") == std::string::npos, "must not select higher confidence neighbor");
-    require(behavior.events[1].find("\"event\":\"behavior_start\"") != std::string::npos, "missing behavior_start event");
-    require(behavior.events[2].find("\"event\":\"behavior_tick_sample\"") != std::string::npos, "missing behavior_tick_sample event");
+    require(behavior.events[0].kind == dedalus::ControllerEventKind::TargetSelected, "missing target_selected event");
+    require(behavior.events[0].json_fields.find("\"source_track_id\":\"ghost_person_001\"") != std::string::npos, "selected target should be ghost_person_001");
+    require(behavior.events[0].json_fields.find("ghost_person_002") == std::string::npos, "must not select higher confidence neighbor");
+    require(behavior.events[1].kind == dedalus::ControllerEventKind::BehaviorStart, "missing behavior_start event");
+    require(behavior.events[2].kind == dedalus::ControllerEventKind::BehaviorTickSample, "missing behavior_tick_sample event");
 
     input.now = dedalus::TimePoint{600000000};
     input.snapshot = make_snapshot(600000000, 2.0, true);
     const auto complete_behavior = controller.tick(input);
     require(complete_behavior.state == dedalus::MissionLifecycleState::GoHome, "completion should transition to GoHome");
     require(complete_behavior.events.size() == 1U, "completion tick should emit behavior_complete");
-    require(complete_behavior.events[0].find("\"event\":\"behavior_complete\"") != std::string::npos, "missing behavior_complete event");
-    require(complete_behavior.events[0].find("\"source_track_id\":\"ghost_person_001\"") != std::string::npos, "complete event should carry selected target");
+    require(complete_behavior.events[0].kind == dedalus::ControllerEventKind::BehaviorComplete, "missing behavior_complete event");
+    require(complete_behavior.events[0].json_fields.find("\"source_track_id\":\"ghost_person_001\"") != std::string::npos, "complete event should carry selected target");
 }
 
 void landing_and_disarm_reach_complete_status() {
@@ -265,7 +265,7 @@ void finish_requested_completes_behavior() {
     const auto finish = controller.tick(input);
     require(finish.state == dedalus::MissionLifecycleState::GoHome, "finish should transition to GoHome");
     require(finish.events.size() == 1U, "finish should emit behavior_complete");
-    require(finish.events[0].find("finish_requested") != std::string::npos, "finish event should explain reason");
+    require(finish.events[0].json_fields.find("finish_requested") != std::string::npos, "finish event should explain reason");
 }
 
 void approach_moving_target_velocity_matches_standoff_center() {
@@ -292,7 +292,7 @@ void approach_moving_target_velocity_matches_standoff_center() {
         behavior.command->velocity_local_mps.x > 0.2,
         "approach command should include target velocity plus closing velocity");
     require(
-        behavior.events.back().find("\"target_velocity_mps\":0.200000") != std::string::npos,
+        behavior.events.back().json_fields.find("\"target_velocity_mps\":0.200000") != std::string::npos,
         "approach debug event should expose moving target velocity");
 }
 
@@ -308,11 +308,11 @@ void circle_static_target_uses_continuous_orbit_capture() {
     require(behavior.command.has_value(), "circle arriving should emit velocity");
     require(behavior.command->velocity_local_mps.x > 0.0, "outside-left circle capture should push outward/right toward orbit radius");
     require(behavior.command->velocity_local_mps.y > 0.0, "outside-left clockwise circle capture should include current-angle tangent");
-    require(behavior.events.back().find("\"radial_correction_mps\":-2.000000") != std::string::npos,
+    require(behavior.events.back().json_fields.find("\"radial_correction_mps\":-2.000000") != std::string::npos,
             "outside orbit capture should expose inward radial correction");
     require(behavior.status == "object_behavior_arriving", "far entry should report arriving");
-    require(behavior.events.back().find("\"display_detail\":\"arriving\"") != std::string::npos, "arriving tick should publish display detail");
-    require(behavior.events.back().find("\"circle_phase\":\"arriving\"") != std::string::npos, "arriving tick should publish circle phase");
+    require(behavior.events.back().json_fields.find("\"display_detail\":\"arriving\"") != std::string::npos, "arriving tick should publish display detail");
+    require(behavior.events.back().json_fields.find("\"circle_phase\":\"arriving\"") != std::string::npos, "arriving tick should publish circle phase");
 }
 
 void circle_moving_target_command_includes_target_velocity() {
@@ -352,7 +352,7 @@ void circle_moving_target_preserves_relative_orbit_authority_under_speed_limit()
         behavior.command->velocity_local_mps.y < -0.5,
         "moving-target circle should preserve tangent orbit authority under speed limit");
     require(
-        behavior.events.back().find("\"target_velocity_mps\":0.200000") != std::string::npos,
+        behavior.events.back().json_fields.find("\"target_velocity_mps\":0.200000") != std::string::npos,
         "circle event should expose true moving target velocity");
 }
 
@@ -380,7 +380,7 @@ void altitude_profile_is_opt_in_and_bounds_vertical_speed() {
         1.0e-9,
         "altitude profile should command bounded climb when current height is below start profile height");
     require(
-        behavior.events.back().find("\"altitude_profile_active\":true") != std::string::npos,
+        behavior.events.back().json_fields.find("\"altitude_profile_active\":true") != std::string::npos,
         "altitude profile should be observable in behavior tick");
 }
 
@@ -440,7 +440,7 @@ void circle_radial_correction_pushes_inward_and_outward() {
             dedalus::Vec3{8.0, 0.0, -2.0},
             dedalus::Vec3{0.0, 0.0, 0.0}));
     require(inside.command->velocity_local_mps.x > 0.0, "inside orbit should push outward");
-    require(inside.events.back().find("\"radius_error_m\":-2.000000") != std::string::npos, "inside tick should expose negative radius error");
+    require(inside.events.back().json_fields.find("\"radius_error_m\":-2.000000") != std::string::npos, "inside tick should expose negative radius error");
 
     dedalus::ObjectBehaviorMissionController outside_controller{config};
     const auto outside = first_execute_tick(
@@ -450,7 +450,7 @@ void circle_radial_correction_pushes_inward_and_outward() {
             dedalus::Vec3{12.0, 0.0, -2.0},
             dedalus::Vec3{0.0, 0.0, 0.0}));
     require(outside.command->velocity_local_mps.x < 0.0, "outside orbit should push inward");
-    require(outside.events.back().find("\"radius_error_m\":2.000000") != std::string::npos, "outside tick should expose positive radius error");
+    require(outside.events.back().json_fields.find("\"radius_error_m\":2.000000") != std::string::npos, "outside tick should expose positive radius error");
 }
 
 void circle_command_speed_is_clamped() {
@@ -489,8 +489,8 @@ void circle_display_detail_transitions_arriving_to_circling() {
     const auto circling = controller.tick(input);
     require(circling.status == "object_behavior_circling", "entry point should transition to circling");
     require(!circling.events.empty(), "circle phase transition should emit a display event");
-    require(circling.events.back().find("\"display_detail\":\"circling\"") != std::string::npos, "circling tick should publish display detail");
-    require(circling.events.back().find("\"circle_phase\":\"circling\"") != std::string::npos, "circling tick should publish circle phase");
+    require(circling.events.back().json_fields.find("\"display_detail\":\"circling\"") != std::string::npos, "circling tick should publish display detail");
+    require(circling.events.back().json_fields.find("\"circle_phase\":\"circling\"") != std::string::npos, "circling tick should publish circle phase");
 }
 
 void circle_target_yaw_points_at_selected_target_not_velocity() {
@@ -553,15 +553,15 @@ void vertical_stare_gimbal_emits_camera_pointing_intent() {
         first.camera_pointing->pitch_rad < 0.0,
         "target below ego should request negative typed camera pitch (sign=-1, target elevation positive)");
     for (const auto& event : first.events) {
-        if (event.find("\"event\":\"camera_pointing_intent\"") != std::string::npos) {
+        if (event.kind == dedalus::ControllerEventKind::CameraPointingIntent) {
             require(
-                event.find("\"cameras\":[\"front_center\",\"0\"]") != std::string::npos,
+                event.json_fields.find("\"cameras\":[\"front_center\",\"0\"]") != std::string::npos,
                 "camera_pointing_intent should include cameras array");
             require(
-                event.find("\"pitch_valid\":true") != std::string::npos,
+                event.json_fields.find("\"pitch_valid\":true") != std::string::npos,
                 "camera_pointing_intent should have pitch_valid:true");
             require(
-                event.find("\"pitch_deg\":") != std::string::npos,
+                event.json_fields.find("\"pitch_deg\":") != std::string::npos,
                 "camera_pointing_intent should include pitch_deg");
             found_intent = true;
         }
@@ -586,9 +586,9 @@ void vertical_stare_gimbal_emits_camera_pointing_intent() {
 
     bool found_second_intent = false;
     for (const auto& event : second.events) {
-        if (event.find("\"event\":\"camera_pointing_intent\"") != std::string::npos) {
+        if (event.kind == dedalus::ControllerEventKind::CameraPointingIntent) {
             require(
-                event.find("\"pitch_deg\":45.000000") != std::string::npos,
+                event.json_fields.find("\"pitch_deg\":45.000000") != std::string::npos,
                 "second tick camera_pointing_intent pitch_deg should be 45.000000");
             found_second_intent = true;
         }

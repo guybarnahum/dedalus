@@ -947,22 +947,22 @@ VelocityCommand ObjectBehaviorMissionController::command_with_kind(
     return command;
 }
 
-std::string ObjectBehaviorMissionController::target_event(const TargetSelection& selection) const {
-    return "\"event\":\"target_selected\""
+ControllerEvent ObjectBehaviorMissionController::target_event(const TargetSelection& selection) const {
+    return {ControllerEventKind::TargetSelected,
         ",\"agent_id\":" + q(selection.agent_id.value) +
         ",\"source_track_id\":" + q(selection.source_track_id.value) +
         ",\"identity_id\":" + q(selection.identity_id.value) +
         ",\"class\":" + q(class_label_event_string(selection.class_label)) +
         ",\"confidence\":" + std::to_string(selection.confidence) +
-        ",\"reason\":" + q(selection.reason);
+        ",\"reason\":" + q(selection.reason)};
 }
 
 std::string behavior_display_fields(const std::string& detail) {
     return ",\"display_state\":\"Mission\",\"display_detail\":" + q(detail);
 }
 
-std::string behavior_detail_for_event(const std::string& event) {
-    if (event == "behavior_complete") {
+std::string behavior_detail_for_event(ControllerEventKind kind) {
+    if (kind == ControllerEventKind::BehaviorComplete) {
         return "done";
     }
     return "arriving";
@@ -993,39 +993,39 @@ std::string object_behavior_status(const BehaviorSpec& behavior, const FollowGeo
     return "object_behavior_" + behavior_detail_for_tick(behavior, geometry);
 }
 
-std::string ObjectBehaviorMissionController::behavior_event(
-    const std::string& event,
+ControllerEvent ObjectBehaviorMissionController::behavior_event(
+    ControllerEventKind kind,
     const std::string& reason) const {
-    std::string fields = "\"event\":" + q(event) +
+    std::string fields =
         ",\"behavior\":" + q(to_string(config_.behavior_spec.behavior.type)) +
         ",\"mission\":" + q(config_.behavior_spec.mission_name) +
         ",\"reason\":" + q(reason);
-    fields += behavior_display_fields(behavior_detail_for_event(event));
+    fields += behavior_display_fields(behavior_detail_for_event(kind));
     if (previous_selection_.has_value()) {
         fields += ",\"agent_id\":" + q(previous_selection_->agent_id.value) +
             ",\"source_track_id\":" + q(previous_selection_->source_track_id.value) +
             ",\"identity_id\":" + q(previous_selection_->identity_id.value);
     }
-    return fields;
+    return {kind, std::move(fields)};
 }
 
-std::string ObjectBehaviorMissionController::sequence_step_event(
-    const std::string& event,
+ControllerEvent ObjectBehaviorMissionController::sequence_step_event(
+    ControllerEventKind kind,
     const BehaviorSpec& behavior,
     std::size_t index,
     const std::string& reason) const {
-    return "\"event\":" + q(event) +
+    return {kind,
         ",\"behavior\":\"sequence\"" +
-        ",\"step_index\":" + std::to_string(index) +
+        std::string{",\"step_index\":"} + std::to_string(index) +
         ",\"step_behavior\":" + q(to_string(behavior.type)) +
         ",\"step_yaw_mode\":" + q(behavior.yaw_mode.empty() ? "inherit" : behavior.yaw_mode) +
         ",\"step_camera_pointing_mode\":" + q(behavior.camera_pointing_mode.empty() ? "inherit" : behavior.camera_pointing_mode) +
         ",\"mission\":" + q(config_.behavior_spec.mission_name) +
         ",\"reason\":" + q(reason) +
-        behavior_display_fields(behavior_detail_for_event(event));
+        behavior_display_fields(behavior_detail_for_event(kind))};
 }
 
-std::string behavior_tick_event(
+ControllerEvent behavior_tick_event(
     const BehaviorMissionSpec& spec,
     const BehaviorSpec& active_behavior,
     const TargetSelection& selection,
@@ -1083,12 +1083,11 @@ std::string behavior_tick_event(
          .kv("sequence_step_yaw_mode", active_behavior.yaw_mode.empty() ? "inherit" : active_behavior.yaw_mode)
          .kv("sequence_step_camera_pointing_mode", active_behavior.camera_pointing_mode.empty() ? "inherit" : active_behavior.camera_pointing_mode);
     }
-    std::string event = "\"event\":\"behavior_tick_sample\"" + f.str();
-    event += behavior_display_fields(behavior_detail_for_tick(active_behavior, geometry));
-    return event;
+    return {ControllerEventKind::BehaviorTickSample,
+        f.str() + behavior_display_fields(behavior_detail_for_tick(active_behavior, geometry))};
 }
 
-std::string behavior_debug_event(
+ControllerEvent behavior_debug_event(
     int execute_tick,
     int debug_level,
     const EgoState& ego,
@@ -1171,7 +1170,7 @@ std::string behavior_debug_event(
          .kv("follow_dh_m", geometry.dh_m)
          .kv("follow_elevation_deg", geometry.elevation_deg);
     }
-    return "\"event\":\"behavior_debug\"" + f.str();
+    return {ControllerEventKind::BehaviorDebug, f.str()};
 }
 
 bool ObjectBehaviorMissionController::completion_elapsed(TimePoint now) const {
@@ -1289,9 +1288,9 @@ std::optional<CameraPointingCommand> ObjectBehaviorMissionController::neutral_ca
     return command;
 }
 
-std::string ObjectBehaviorMissionController::camera_pointing_intent_event(
+ControllerEvent ObjectBehaviorMissionController::camera_pointing_intent_event(
     const CameraPointingCommand& command) const {
-    return "\"event\":\"camera_pointing_intent\""
+    return {ControllerEventKind::CameraPointingIntent,
         ",\"camera_pointing_mode\":" + q(command.mode) +
         ",\"vertical_stare_mode\":" + q(config_.vertical_stare_mode == ObjectBehaviorVerticalStareMode::Gimbal ? "gimbal" : "debug_only") +
         ",\"cameras\":" + json_string_array(command.cameras) +
@@ -1312,7 +1311,7 @@ std::string ObjectBehaviorMissionController::camera_pointing_intent_event(
         ",\"agent_id\":" + q(command.agent_id) +
         ",\"source_track_id\":" + q(command.source_track_id) +
         ",\"identity_id\":" + q(command.identity_id) +
-        behavior_display_fields("arriving");
+        behavior_display_fields("arriving")};
 }
 
 void ObjectBehaviorMissionController::emit_camera_pointing(
@@ -1538,9 +1537,9 @@ MissionTickOutput ObjectBehaviorMissionController::tick(const MissionTickInput& 
                     behavior_start_emitted_ = true;
                     behavior_start_ = input.now;
                     if (sequence_active()) {
-                        output.events.push_back(sequence_step_event("behavior_sequence_step_start", active_behavior(), sequence_step_index_, "sequence_start"));
+                        output.events.push_back(sequence_step_event(ControllerEventKind::SequenceStepStart, active_behavior(), sequence_step_index_, "sequence_start"));
                     }
-                    output.events.push_back(behavior_event("behavior_start", "target_selected"));
+                    output.events.push_back(behavior_event(ControllerEventKind::BehaviorStart, "target_selected"));
                 }
                 const bool duration_complete = completion_elapsed(input.now);
                 bool orbit_count_complete = false;
@@ -1606,14 +1605,14 @@ MissionTickOutput ObjectBehaviorMissionController::tick(const MissionTickInput& 
 
                 if (step_complete && !active_behavior_is_last_sequence_step()) {
                     output.events.push_back(sequence_step_event(
-                        "behavior_sequence_step_complete",
+                        ControllerEventKind::SequenceStepComplete,
                         behavior,
                         sequence_step_index_,
                         terminal_step ? "terminal_step" : (orbit_count_complete ? "orbit_count_elapsed" : (approach_complete ? "approach_standoff_reached" : "duration_elapsed"))));
                     ++sequence_step_index_;
                     reset_sequence_step(input.now);
                     output.events.push_back(sequence_step_event(
-                        "behavior_sequence_step_start",
+                        ControllerEventKind::SequenceStepStart,
                         active_behavior(),
                         sequence_step_index_,
                         "previous_step_complete"));
@@ -1631,7 +1630,7 @@ MissionTickOutput ObjectBehaviorMissionController::tick(const MissionTickInput& 
                     if (!behavior_complete_emitted_) {
                         behavior_complete_emitted_ = true;
                         output.events.push_back(behavior_event(
-                            "behavior_complete",
+                            ControllerEventKind::BehaviorComplete,
                             input.finish_requested ? "finish_requested" :
                                 (sequence_complete ? "sequence_complete" :
                                     (orbit_count_complete ? "orbit_count_elapsed" : "duration_elapsed"))));

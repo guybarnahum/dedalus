@@ -200,6 +200,52 @@ inline const char* to_string(MissionLifecycleState state) {
     }
 }
 
+// Typed enumeration of all event kinds a MissionController may emit.
+// Consumers can branch on ControllerEvent::kind without parsing JSON.
+enum class ControllerEventKind {
+    TargetSelected,
+    TargetReacquired,
+    TargetLost,
+    BehaviorStart,
+    BehaviorComplete,
+    BehaviorFailed,
+    FallbackStart,
+    FallbackComplete,
+    SequenceStepStart,
+    SequenceStepComplete,
+    BehaviorTickSample,
+    BehaviorDebug,
+    CameraPointingIntent,
+};
+
+inline const char* to_string(ControllerEventKind kind) {
+    switch (kind) {
+        case ControllerEventKind::TargetSelected:       return "target_selected";
+        case ControllerEventKind::TargetReacquired:     return "target_reacquired";
+        case ControllerEventKind::TargetLost:           return "target_lost";
+        case ControllerEventKind::BehaviorStart:        return "behavior_start";
+        case ControllerEventKind::BehaviorComplete:     return "behavior_complete";
+        case ControllerEventKind::BehaviorFailed:       return "behavior_failed";
+        case ControllerEventKind::FallbackStart:        return "fallback_start";
+        case ControllerEventKind::FallbackComplete:     return "fallback_complete";
+        case ControllerEventKind::SequenceStepStart:    return "behavior_sequence_step_start";
+        case ControllerEventKind::SequenceStepComplete: return "behavior_sequence_step_complete";
+        case ControllerEventKind::BehaviorTickSample:   return "behavior_tick_sample";
+        case ControllerEventKind::BehaviorDebug:        return "behavior_debug";
+        case ControllerEventKind::CameraPointingIntent: return "camera_pointing_intent";
+        default:                                        return "unknown";
+    }
+}
+
+// A typed event emitted by a MissionController during a tick.
+// `kind` identifies the event type without requiring JSON parsing.
+// `json_fields` holds the comma-prefixed payload fields (e.g. ",\"agent_id\":\"x\",...").
+// Serialization to a complete JSON object happens at the MissionRuntime boundary.
+struct ControllerEvent {
+    ControllerEventKind kind;
+    std::string json_fields;
+};
+
 struct MissionTickInput {
     TimePoint now;
     WorldSnapshot snapshot;
@@ -212,7 +258,7 @@ struct MissionTickOutput {
     std::optional<VelocityCommand> command;
     std::optional<CameraPointingCommand> camera_pointing;
     std::string status;
-    std::vector<std::string> events;
+    std::vector<ControllerEvent> events;
 };
 
 class MissionController {

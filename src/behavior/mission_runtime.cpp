@@ -234,8 +234,12 @@ bool MissionRuntime::tick_once() {
             ",\"finish_requested\":" + (input.finish_requested ? std::string{"true"} : std::string{"false"}) +
             display_fields(display_primary_for_state(output.state), compact_display_detail(output.status)));
     }
-    for (const auto& event_fields : output.events) {
-        write_event("\"tick\":" + std::to_string(tick_count_) + ",\"state\":" + q(to_string(output.state)) + "," + event_fields);
+    for (const auto& event : output.events) {
+        write_event(
+            "\"event\":" + q(to_string(event.kind)) +
+            ",\"tick\":" + std::to_string(tick_count_) +
+            ",\"state\":" + q(to_string(output.state)) +
+            event.json_fields);
     }
     if (state_changed || detailed_tick) {
         std::cerr << "dedalus_mission: tick=" << tick_count_

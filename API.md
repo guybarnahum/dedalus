@@ -771,9 +771,9 @@ The issues below are ordered roughly by impact and grouped by concern. All are e
 Every consumer called `get_or(key, fallback)` and then `std::stod` / `std::stoi` inline. There was no central schema, no type validation at load time, and no IDE-visible contract for what keys exist and what their ranges are. A typo in a YAML value silently fell back or threw at runtime.  
 *Resolution:* `MissionOptions` is now a typed struct with 90+ named fields and in-struct defaults. Parsing happens once in `config_loader.cpp::apply_mission_option()` with range validation. All consumers (`object_behavior_mission_controller.cpp`, `trajectory_mission_controller.cpp`, `dedalus_mission_loop.cpp`) use direct struct member access. The `values` map and `get_or()`/`known_keys()` methods have been removed.
 
-**2. `MissionEvent::json` is an untyped raw JSON string**  
+**2. `MissionEvent::json` is an untyped raw JSON string** ✅ **FIXED**  
 `MissionTickOutput::events` is a `vector<string>` where each element is a pre-serialized compact JSON fragment. There is no typed `MissionEvent` variant enum or schema — the only contract is the informal `"event"` key. Consumers must parse JSON to branch on event type.  
-*Suggested fix:* Define a `MissionEventPayload` variant (std::variant or a typed union) and serialize only at the `MissionRuntime` boundary.
+*Resolution:* `ControllerEventKind` enum and `ControllerEvent{kind, json_fields}` struct added to `mission_controller.hpp`. `MissionTickOutput::events` is now `vector<ControllerEvent>`. The `"event"` key is extracted from each payload string and typed as an enum value; `MissionRuntime` serializes it by prepending `"event":q(to_string(event.kind))` at write time. JSON output is byte-identical to before. Consumers can branch on `event.kind` without parsing JSON.
 
 **3. `AgentState` identity fields are not strongly typed**  
 `AgentState::identity_id` and `AgentState::class_label` are carried as raw strings in some code paths. Mixing `ClassLabel` enum and string in different layers creates silent mismatch risk.

@@ -94,9 +94,9 @@ private:
         double yaw_offset_rad,
         ObjectBehaviorYawMode yaw_mode) const;
     [[nodiscard]] VelocityCommand command_with_kind(TimePoint timestamp, FlightCommandKind kind) const;
-    [[nodiscard]] std::string target_event(const TargetSelection& selection) const;
-    [[nodiscard]] std::string behavior_event(const std::string& event, const std::string& reason) const;
-    [[nodiscard]] std::string sequence_step_event(const std::string& event, const BehaviorSpec& behavior, std::size_t index, const std::string& reason) const;
+    [[nodiscard]] ControllerEvent target_event(const TargetSelection& selection) const;
+    [[nodiscard]] ControllerEvent behavior_event(ControllerEventKind kind, const std::string& reason) const;
+    [[nodiscard]] ControllerEvent sequence_step_event(ControllerEventKind kind, const BehaviorSpec& behavior, std::size_t index, const std::string& reason) const;
     [[nodiscard]] std::optional<CameraPointingCommand> camera_pointing_command(
         TimePoint timestamp,
         const EgoState& ego,
@@ -115,7 +115,7 @@ private:
     [[nodiscard]] std::optional<CameraPointingCommand> neutral_camera_pointing_command(
         TimePoint timestamp,
         const std::string& mode) const;
-    [[nodiscard]] std::string camera_pointing_intent_event(const CameraPointingCommand& command) const;
+    [[nodiscard]] ControllerEvent camera_pointing_intent_event(const CameraPointingCommand& command) const;
     void emit_camera_pointing(MissionTickOutput& output, const CameraPointingCommand& command) const;
     [[nodiscard]] Vec3 go_home_velocity(const EgoState& ego) const;
     [[nodiscard]] bool completion_elapsed(TimePoint now) const;
