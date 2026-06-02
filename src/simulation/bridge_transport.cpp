@@ -1,6 +1,7 @@
 #include "dedalus/simulation/bridge_transport.hpp"
 
 #include <array>
+#include <cctype>
 #include <cstdio>
 #include <cstdint>
 #include <memory>
@@ -33,6 +34,24 @@ std::string read_pipe_to_end(FILE* pipe) {
     return output;
 }
 
+// Allowlist: characters permitted in a bridge_command string that is passed to
+// popen() via the shell.  The set covers all real command lines in config/;
+// anything outside it indicates a mis-configured or malicious value.
+void validate_bridge_command(const std::string& command) {
+    if (command.empty()) {
+        throw std::invalid_argument("bridge_command must not be empty");
+    }
+    for (const unsigned char ch : command) {
+        if (std::isalnum(ch) || ch == ' ' || ch == '/' || ch == '.' ||
+            ch == '_'        || ch == '-' || ch == ':') {
+            continue;
+        }
+        throw std::invalid_argument(
+            std::string("bridge_command contains disallowed character '") +
+            static_cast<char>(ch) + "': " + command);
+    }
+}
+
 std::string ignore_sigint_command(const std::string& command) {
     return "trap '' INT; exec " + command;
 }
@@ -50,6 +69,7 @@ PipeBridgeTransport::~PipeBridgeTransport() {
 }
 
 std::string PipeBridgeTransport::request_once(const std::string& command) {
+    validate_bridge_command(command);
     const auto child_command = ignore_sigint_command(command);
     FILE* pipe = popen(child_command.c_str(), "r");
     if (pipe == nullptr) {
@@ -81,6 +101,7 @@ std::optional<std::string> PipeBridgeTransport::read_stream_line(const std::stri
     }
 
     if (!impl_->stream_pipe) {
+        validate_bridge_command(command);
         const auto child_command = ignore_sigint_command(command);
         impl_->stream_pipe.reset(popen(child_command.c_str(), "r"));
         if (!impl_->stream_pipe) {
@@ -118,6 +139,7 @@ std::optional<std::vector<std::uint8_t>> PipeBridgeTransport::read_stream_byte_v
     }
 
     if (!impl_->stream_pipe) {
+        validate_bridge_command(command);
         const auto child_command = ignore_sigint_command(command);
         impl_->stream_pipe.reset(popen(child_command.c_str(), "r"));
         if (!impl_->stream_pipe) {

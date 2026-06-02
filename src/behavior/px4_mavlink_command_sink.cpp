@@ -6,6 +6,7 @@
 #include <sys/socket.h>
 #include <unistd.h>
 
+#include <cctype>
 #include <cerrno>
 #include <chrono>
 #include <cmath>
@@ -49,6 +50,23 @@ struct Endpoint {
     bool bind_and_learn{false};
     bool has_learned_peer{false};
 };
+
+// Allowlist for the tmux session:window target passed to `tmux send-keys -t`.
+// Typical value: "dedalus-sim:px4".  Rejects shell metacharacters that could
+// escape the shell_quote() wrapping or manipulate the tmux command.
+void validate_tmux_target(const std::string& target) {
+    if (target.empty()) {
+        throw std::invalid_argument("px4_tmux_target must not be empty");
+    }
+    for (const unsigned char ch : target) {
+        if (std::isalnum(ch) || ch == '-' || ch == '_' || ch == '.' || ch == ':') {
+            continue;
+        }
+        throw std::invalid_argument(
+            std::string("px4_tmux_target contains disallowed character '") +
+            static_cast<char>(ch) + "': " + target);
+    }
+}
 
 std::string shell_quote(const std::string& value) {
     std::string quoted = "'";
@@ -378,6 +396,7 @@ struct Px4MavlinkCommandSink::Impl {
     }
 
     void run_px4_shell(const std::string& command) const {
+        validate_tmux_target(config.px4_tmux_target);
         const std::string rendered =
             "tmux send-keys -t " + shell_quote(config.px4_tmux_target) + " " + shell_quote(command) + " C-m";
         const int rc = std::system(rendered.c_str());
