@@ -14,6 +14,7 @@
 #include <arpa/inet.h>
 #include <fcntl.h>
 #include <netinet/in.h>
+#include <sys/select.h>
 #include <sys/socket.h>
 #include <unistd.h>
 
@@ -314,9 +315,28 @@ void RuntimeEventStreamServer::writer_loop() {
 
 void RuntimeEventStreamServer::accept_loop() {
     while (running_) {
+        const int fd = listen_fd_;
+        if (fd < 0) {
+            break;
+        }
+        fd_set read_fds;
+        FD_ZERO(&read_fds);
+        FD_SET(fd, &read_fds);
+        struct timeval tv{};
+        tv.tv_usec = 100000;  // 100 ms
+        const int ready = ::select(fd + 1, &read_fds, nullptr, nullptr, &tv);
+        if (ready < 0) {
+            if (errno == EINTR) {
+                continue;  // interrupted by signal, re-check running_
+            }
+            break;  // EBADF: stop() closed the socket — exit cleanly
+        }
+        if (ready == 0) {
+            continue;  // timeout — re-check running_
+        }
         sockaddr_in client_addr{};
         socklen_t client_len = sizeof(client_addr);
-        const int client_fd = ::accept(listen_fd_, reinterpret_cast<sockaddr*>(&client_addr), &client_len);
+        const int client_fd = ::accept(fd, reinterpret_cast<sockaddr*>(&client_addr), &client_len);
         if (client_fd >= 0) {
             try {
                 set_nonblocking(client_fd);
@@ -328,11 +348,10 @@ void RuntimeEventStreamServer::accept_loop() {
             }
             continue;
         }
-        if (errno == EAGAIN || errno == EWOULDBLOCK || errno == EINTR || errno == EBADF) {
-            std::this_thread::sleep_for(std::chrono::milliseconds{20});
-            continue;
+        if (errno == EAGAIN || errno == EWOULDBLOCK || errno == EINTR) {
+            continue;  // spurious wakeup from select()
         }
-        std::this_thread::sleep_for(std::chrono::milliseconds{20});
+        break;  // unexpected accept() error
     }
 }
 
