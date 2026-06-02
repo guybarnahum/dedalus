@@ -47,7 +47,7 @@ The source switch should live in Track 4 occupancy/provider configuration, not i
 
 ## Stage 4.0A-Viz — World-model occupancy contract
 
-Status: started.
+Status: complete.
 
 Goal: make occupancy a first-class `WorldSnapshot` product before adding swept-volume query or command correction.
 
@@ -95,6 +95,8 @@ existing tests still pass
 
 ## Stage 4.0B — Synthetic ego occupancy visualization
 
+Status: complete.
+
 Goal: render deterministic synthetic occupancy from `WorldSnapshot.ego_occupancy`.
 
 AirSim overlay:
@@ -130,41 +132,27 @@ Use existing `WorldToImageProjector`. Do not add another projection implementati
 
 ## Stage 4.0C — World-overlay sidecar extension
 
+Status: complete.
+
 Goal: make offline MP4/debug artifacts useful without overloading pixels.
 
-Extend each `frame_XXXXXX.world_overlay.json` with:
+Each `frame_XXXXXX.world_overlay.json` now carries occupancy summary and projected occupancy cells. The frame image should show only selected readable markers. The sidecar carries richer structured debug details.
 
-```json
-{
-  "occupancy": {
-    "map_frame_id": "map_local_0001",
-    "source_kind": "synthetic_fixture",
-    "summary": {
-      "occupied_count": 1,
-      "free_count": 1,
-      "unknown_count": 1,
-      "nearest_obstacle_distance_m": 5.0,
-      "forward_corridor_clearance_m": 4.0
-    },
-    "projected_cells": []
-  }
-}
+Validator support:
+
+```text
+tools/mission/validate-mission-artifacts.py
+  --expect-occupancy
+  --expect-occupancy-sidecars
 ```
-
-The frame image should show only selected readable markers. The sidecar should carry richer structured debug details.
 
 ## Stage 4.0D — Swept-volume query visualization, dry-run only
 
+Status: complete.
+
 Goal: visualize the query before it changes flight.
 
-Add:
-
-```text
-include/dedalus/occupancy/swept_volume_query.hpp
-src/occupancy/swept_volume_query.cpp
-```
-
-Expose in snapshot/artifacts:
+Snapshot/artifact contract:
 
 ```text
 latest_swept_volume.status
@@ -179,34 +167,99 @@ latest_swept_volume.blocking_cell_centers
 Visualization:
 
 ```text
-AirSim: centerline + sparse radius rings; green/yellow/red by status
-MP4: projected centerline + status text
+AirSim: swept segment, status OSD, blocker markers
+MP4/sidecar: projected start/end and projected blocker cells
 ```
 
 No command correction in this stage.
 
-## Stage 4.0E — Avoidance policy dry-run
+Validation:
 
-Goal: compute what the avoidance layer would do, but still send nominal commands.
+```bash
+python3 tools/mission/validate-mission-artifacts.py \
+  out/object_behavior_airsim_existing_object_circle \
+  --expect-complete \
+  --expect-behavior \
+  --expect-camera-pointing \
+  --expect-camera-modes neutral,target,home,landing_area \
+  --camera-frames-dir out/object_behavior_airsim_existing_object_circle/camera_pointing_frames \
+  --expect-camera-proof-frames \
+  --expect-occupancy \
+  --expect-swept-volume \
+  --safe-height-m 16 \
+  --landed-height-m 1.0
+```
 
-Add:
+Overlay evidence:
+
+```bash
+OVERLAY_LOG="$(ls -t simulation/airsim/logs/overlay_*.log | head -1)"
+grep -nE "connected|SWEEP|swept_volume|Traceback|error|exception" -i "$OVERLAY_LOG" | tail -80
+```
+
+## Stage 4.0E — Swept-volume sidecar-only validation cleanup
+
+Status: complete.
+
+Goal: validate PPM/world-overlay sidecars without requiring a mission event log or snapshot JSON.
+
+This supports deterministic offline validation of:
 
 ```text
-AvoidancePolicy
-AvoidanceCorrection
-avoidance_query / avoidance_would_correct / avoidance_clear events
+PPM annotation -> frame_*.world_overlay.json -> validator
+```
+
+Validator command:
+
+```bash
+python3 tools/mission/validate-mission-artifacts.py \
+  /tmp/dedalus_ppm_frame_annotation_sink_test \
+  --expect-occupancy-sidecars \
+  --expect-swept-volume-sidecars \
+  --allow-missing-snapshots
+```
+
+Expected summary shape:
+
+```text
+snapshots: 0
+occupancy_artifacts:
+  sidecars_checked: 1
+  projected_cells_checked: 1
+swept_volume_artifacts:
+  sidecars_checked: 1
+  blocking_cells_checked: 1
+failures: 0
+```
+
+Targeted tests:
+
+```bash
+ctest --test-dir build-staging --output-on-failure -R \
+  'world_snapshot_json|ppm_frame_annotation_sink|mission_artifact_validator|replay_mission_smoke'
+```
+
+## Stage 4.1A — Avoidance advisory dry-run
+
+Goal: compute what the avoidance layer would recommend, but still send nominal commands.
+
+Add advisory-only events such as:
+
+```text
+avoidance_query
+avoidance_would_correct
+avoidance_clear
 ```
 
 Visualization:
 
 ```text
 nominal velocity arrow
-would-correct velocity arrow
-optional repulsion hint vector
+advisory velocity arrow
 reason and clearance in OSD/MP4 HUD
 ```
 
-The runtime event stream already carries mission events, so dry-run avoidance events should use that existing path.
+The runtime event stream already carries mission events, so dry-run advisory events should use that existing path.
 
 ## Stage 4.0F-GT — AirSim ground-truth obstacle provider
 
@@ -247,200 +300,4 @@ track4_occupancy:
     max_range_m: 60.0
 ```
 
-The first pass may use object pose plus approximate bounding boxes/dimensions. If exact dimensions are unavailable, allow explicit overrides:
-
-```yaml
-object_overrides:
-  UtilityPole_01:
-    shape: capsule
-    radius_m: 0.25
-    height_m: 8.0
-
-  Cable_01:
-    shape: line_segment
-    radius_m: 0.05
-    inflation_radius_m: 0.75
-```
-
-Ground truth cells/primitives must be marked with:
-
-```text
-source_kind = airsim_ground_truth
-source_provider = AirSimGroundTruthObstacleProvider
-source_object_name = <AirSim object name>
-```
-
-## Stage 4.0F-GT.2 — Detector versus ground-truth comparison
-
-Goal: compare visual/depth obstacle detection against AirSim ground truth.
-
-Run sources in parallel:
-
-```text
-AirSimGroundTruthObstacleProvider
-VisualObstacleDetector / DepthProvider
-```
-
-Emit an evaluation product into `WorldSnapshot`/artifacts later:
-
-```text
-gt_obstacle_count
-detector_obstacle_count
-matched_count
-missed_gt_count
-false_positive_count
-mean_center_error_m
-mean_depth_error_m
-occupancy_iou_3d
-forward_corridor_recall
-forward_corridor_precision
-```
-
-For avoidance, the key metric is not generic IoU. The key metric is:
-
-```text
-Did detector evidence identify obstacles that intersect the drone's swept path?
-```
-
-Visualization:
-
-```text
-GT obstacle: cyan/blue
-Detector obstacle: yellow/orange
-Matched: green
-Missed GT: red
-False positive: purple
-```
-
-## Stage 4.0G — AirSim/depth-derived visual obstacle detector
-
-Goal: generate occupancy from real frame-derived evidence while preserving the same world-model contract.
-
-Sources:
-
-```text
-AirSim depth
-monocular depth
-stereo depth
-freespace masks
-optical-flow / looming cues
-```
-
-All providers feed the same occupancy contract. Avoidance should not know which detector generated the evidence except through provenance/confidence fields.
-
-## Stage 4.0H — Thin obstacle primitives
-
-Goal: represent cables/wires/poles without requiring a dense voxel explosion.
-
-Add primitive support:
-
-```text
-Voxel
-Capsule
-LineSegment
-SurfacePatch
-```
-
-Wire/cable strategy:
-
-```text
-store suspected cable as inflated line/capsule primitive
-rasterize into occupancy only for query/debug
-visualize primitive directly in AirSim/MP4
-```
-
-## Stage 4.0I — Avoidance mission adapter, simulation-only correction
-
-Goal: enable actual correction in simulation without modifying flight sinks.
-
-Preferred first integration:
-
-```text
-AvoidanceFlightCommandSink wrapper
-  reads LatestWorldSnapshot
-  computes correction
-  emits mission events
-  forwards corrected command to inner sink
-```
-
-This preserves the current `MissionRuntime` and command sink interfaces. Later, this can become a cleaner mission adapter.
-
-## Stage 4.0J — Global map promotion and known-free corridors
-
-Goal: promote stable ego-local occupancy into mission/global map products.
-
-Promote only repeated, well-localized, non-dynamic geometry:
-
-```text
-OccupiedVoxel
-SurfacePatch
-LineSegment
-KnownFreeCorridor
-```
-
-Known-free corridors are as important as obstacles because they allow faster flight through previously validated space.
-
-## Stage 4.0K — Map-aware speed and route bias
-
-Goal: use global geometric memory to fly better and faster.
-
-Map-risk query output:
-
-```text
-max_recommended_speed_mps
-known_free_confidence
-obstacle_risk
-unknown_risk
-reason
-```
-
-Policy:
-
-```text
-known-free corridor -> allow higher speed
-unknown corridor -> cap speed
-known clutter -> slow down and inflate safety radius
-wire-risk region -> slow down aggressively
-```
-
-## Stage 4.0L — Ego localization hooks
-
-Goal: expose geometric constraints for future VIO/SLAM/localization modules.
-
-Candidate constraints:
-
-```text
-PointToPlane
-PointToLine
-PlaneToPlane
-LineToLine
-OccupancyAlignment
-```
-
-Do not implement full SLAM in early Track 4.x. Preserve geometric products and confidence so a later localization module can consume them.
-
-## Validation ladder
-
-```text
-1. WorldSnapshot JSON contract tests.
-2. Synthetic occupancy fixtures.
-3. AirSim overlay dry-run rendering from snapshot stream.
-4. PPM annotation + sidecar validation.
-5. MP4 export from PPM sequence.
-6. Swept-volume query unit tests.
-7. Avoidance dry-run event tests.
-8. AirSim ground-truth provider comparison tests.
-9. Visual/depth detector versus ground truth comparison.
-10. Simulation-only avoidance correction.
-```
-
-## Hard boundaries
-
-```text
-- no obstacle logic inside flight sinks
-- no overlay-side occupancy inference
-- no separate occupancy IPC stack
-- no bypass of WorldSnapshot
-- no command correction before dry-run visualization and artifacts are validated
-- no semantic detector dependency for collision safety
-```
+The first pass may use object pose plus approximate bounding boxes/dimensions. If exact dimensions are unavailable, allow explicit overrides.
