@@ -374,6 +374,13 @@ Vec3 target_frame_follow_offset(const EgoState& ego, const TargetSelection& sele
     return delta;
 }
 
+Vec3 target_to_ego_xy(const EgoState& ego, const TargetSelection& selection) {
+    return Vec3{
+        ego.local_T_body.position.x - selection.position_local.x,
+        ego.local_T_body.position.y - selection.position_local.y,
+        0.0};
+}
+
 Vec3 desired_follow_position(const EgoState& ego, const TargetSelection& selection, const BehaviorSpec& behavior) {
     const Vec3 offset = target_frame_follow_offset(ego, selection, behavior);
     return Vec3{
@@ -425,10 +432,7 @@ FollowGeometry follow_observation_geometry(
     geometry.target_velocity = selection.velocity_local;
     geometry.target_speed_xy_mps = norm_xy(selection.velocity_local);
 
-    const Vec3 target_to_ego{
-        ego.local_T_body.position.x - selection.position_local.x,
-        ego.local_T_body.position.y - selection.position_local.y,
-        0.0};
+    const Vec3 target_to_ego = target_to_ego_xy(ego, selection);
     geometry.actual_r_m = norm_xy(target_to_ego);
     geometry.dh_m = std::abs(ego.local_T_body.position.z - selection.position_local.z);
 
@@ -575,10 +579,7 @@ FollowGeometry approach_geometry(
     const BehaviorSpec& behavior) {
     FollowGeometry geometry;
     geometry.target_velocity = selection.velocity_local;
-    const Vec3 target_to_ego{
-        ego.local_T_body.position.x - selection.position_local.x,
-        ego.local_T_body.position.y - selection.position_local.y,
-        0.0};
+    const Vec3 target_to_ego = target_to_ego_xy(ego, selection);
     geometry.actual_r_m = norm_xy(target_to_ego);
     geometry.required_r_m = behavior.stop_distance_m;
     geometry.behavior_step_complete =
@@ -601,10 +602,7 @@ FollowGeometry circle_geometry(
 
     const Vec3 entry_axis{1.0, 0.0, 0.0};
 
-    const Vec3 target_to_ego{
-        ego.local_T_body.position.x - selection.position_local.x,
-        ego.local_T_body.position.y - selection.position_local.y,
-        0.0};
+    const Vec3 target_to_ego = target_to_ego_xy(ego, selection);
 
     geometry.actual_radius_m = norm_xy(target_to_ego);
     geometry.actual_r_m = geometry.actual_radius_m;
