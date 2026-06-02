@@ -184,6 +184,7 @@ enum class SeasonMode {
 enum class SensorMode {
     Unknown,
     RGB,
+    Rgb = RGB,
     Thermal,
     NightVision,
     Synthetic
