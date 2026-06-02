@@ -245,69 +245,45 @@ TrajectoryEval integrate_trajectory(const VelocityTrajectory& trajectory, double
 
 std::string to_string(ClassLabel label) {
     switch (label) {
-        case ClassLabel::Person:
-            return "person";
-        case ClassLabel::Drone:
-            return "drone";
-        case ClassLabel::Car:
-            return "car";
-        case ClassLabel::Boat:
-            return "boat";
-        case ClassLabel::Animal:
-            return "animal";
-        case ClassLabel::House:
-            return "house";
-        case ClassLabel::Building:
-            return "building";
-        case ClassLabel::Tree:
-            return "tree";
-        case ClassLabel::Road:
-            return "road";
-        case ClassLabel::River:
-            return "river";
-        case ClassLabel::Terrain:
-            return "terrain";
+        case ClassLabel::Person: return "person";
+        case ClassLabel::Drone: return "drone";
+        case ClassLabel::Car: return "car";
+        case ClassLabel::Boat: return "boat";
+        case ClassLabel::Animal: return "animal";
+        case ClassLabel::House: return "house";
+        case ClassLabel::Building: return "building";
+        case ClassLabel::Tree: return "tree";
+        case ClassLabel::Road: return "road";
+        case ClassLabel::River: return "river";
+        case ClassLabel::Terrain: return "terrain";
+        case ClassLabel::Pole: return "pole";
+        case ClassLabel::Wall: return "wall";
+        case ClassLabel::Fence: return "fence";
+        case ClassLabel::Cable: return "cable";
+        case ClassLabel::Obstacle: return "obstacle";
         case ClassLabel::Unknown:
-        default:
-            return "unknown";
+        default: return "unknown";
     }
 }
 
 ClassLabel class_label_from_string(const std::string& value) {
     const auto lower = lower_string(value);
-    if (lower == "person") {
-        return ClassLabel::Person;
-    }
-    if (lower == "drone") {
-        return ClassLabel::Drone;
-    }
-    if (lower == "car") {
-        return ClassLabel::Car;
-    }
- if (lower == "boat") {
-        return ClassLabel::Boat;
-    }
-    if (lower == "animal") {
-        return ClassLabel::Animal;
-    }
-    if (lower == "house") {
-        return ClassLabel::House;
-    }
-    if (lower == "building") {
-        return ClassLabel::Building;
-    }
-    if (lower == "tree") {
-        return ClassLabel::Tree;
-    }
-    if (lower == "road") {
-        return ClassLabel::Road;
-    }
-    if (lower == "river") {
-        return ClassLabel::River;
-    }
-    if (lower == "terrain") {
-        return ClassLabel::Terrain;
-    }
+    if (lower == "person") return ClassLabel::Person;
+    if (lower == "drone") return ClassLabel::Drone;
+    if (lower == "car") return ClassLabel::Car;
+    if (lower == "boat") return ClassLabel::Boat;
+    if (lower == "animal") return ClassLabel::Animal;
+    if (lower == "house") return ClassLabel::House;
+    if (lower == "building") return ClassLabel::Building;
+    if (lower == "tree") return ClassLabel::Tree;
+    if (lower == "road") return ClassLabel::Road;
+    if (lower == "river") return ClassLabel::River;
+    if (lower == "terrain") return ClassLabel::Terrain;
+    if (lower == "pole") return ClassLabel::Pole;
+    if (lower == "wall") return ClassLabel::Wall;
+    if (lower == "fence") return ClassLabel::Fence;
+    if (lower == "cable" || lower == "wire") return ClassLabel::Cable;
+    if (lower == "obstacle" || lower == "unknown_obstacle") return ClassLabel::Obstacle;
     return ClassLabel::Unknown;
 }
 
@@ -360,29 +336,21 @@ const MapFrameId& GhostScenario::map_frame_id() const {
     return map_frame_id_;
 }
 
-const std::vector<GhostDetectionSpec>& GhostScenario::detections() const {
-    return detections_;
-}
-
-bool GhostScenario::empty() const {
-    return detections_.empty();
-}
-
 std::vector<GhostDetectionState> GhostScenario::evaluate(double scenario_elapsed_s) const {
-    std::vector<GhostDetectionState> states;
-    states.reserve(detections_.size());
-    for (const auto& spec : detections_) {
-        const auto trajectory_eval = integrate_trajectory(spec.trajectory, scenario_elapsed_s);
+    std::vector<GhostDetectionState> output;
+    output.reserve(detections_.size());
+    for (const auto& detection : detections_) {
         GhostDetectionState state;
-        state.source_track_id = spec.source_track_id;
-        state.class_label = spec.class_label;
-        state.confidence = spec.confidence;
-        state.position_local_m = add(spec.initial_position_local_m, trajectory_eval.position_delta);
+        state.source_track_id = detection.source_track_id;
+        state.class_label = detection.class_label;
+        state.confidence = detection.confidence;
+        const auto trajectory_eval = integrate_trajectory(detection.trajectory, scenario_elapsed_s);
+        state.position_local_m = add(detection.initial_position_local_m, trajectory_eval.position_delta);
         state.velocity_local_mps = trajectory_eval.velocity;
-        state.size_m = spec.size_m;
-        states.push_back(state);
+        state.size_m = detection.size_m;
+        output.push_back(state);
     }
-    return states;
+    return output;
 }
 
 }  // namespace dedalus
