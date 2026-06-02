@@ -8,9 +8,15 @@
 
 namespace dedalus {
 
+struct InMemoryWorldModelConfig {
+    MapFrameId map_frame_id{"map_local_0001"};
+    OccupancySourceKind occupancy_source_kind{OccupancySourceKind::SyntheticFixture};
+};
+
 class InMemoryWorldModel {
 public:
     explicit InMemoryWorldModel(MapFrameId map_frame_id = MapFrameId{"map_local_0001"});
+    explicit InMemoryWorldModel(InMemoryWorldModelConfig config);
 
     void update_ego(const EgoState& ego);
     void update_appearance(const AppearanceCondition& appearance_condition);
@@ -20,6 +26,7 @@ public:
     EffectiveWorldView effective_view() const;
 
 private:
+    InMemoryWorldModelConfig config_;
     WorldSnapshot snapshot_;
     ConeExclusionMapper cone_exclusion_mapper_;
     RoughFlightMapBuilder rough_flight_map_builder_;
