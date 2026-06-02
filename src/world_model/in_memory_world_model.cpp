@@ -1,5 +1,6 @@
 #include "dedalus/world_model/in_memory_world_model.hpp"
 
+#include <algorithm>
 #include <cctype>
 #include <cmath>
 #include <iomanip>
@@ -56,9 +57,26 @@ Vec2 bbox_center(const Rect2& bbox) {
     return Vec2{bbox.x + bbox.width * 0.5, bbox.y + bbox.height * 0.5};
 }
 
-float distance_xy(const Vec3& a, const Vec3& b) {
-    const auto dx = static_cast<float>(a.x - b.x);
-    const auto dy = static_cast<float>(a.y - b.y);
+float swept_path_lateral_distance_m(const Vec3& point, const Vec3& path_start, const Vec3& path_end) {
+    const auto ax = static_cast<float>(path_start.x);
+    const auto ay = static_cast<float>(path_start.y);
+    const auto bx = static_cast<float>(path_end.x);
+    const auto by = static_cast<float>(path_end.y);
+    const auto px = static_cast<float>(point.x);
+    const auto py = static_cast<float>(point.y);
+    const float vx = bx - ax;
+    const float vy = by - ay;
+    const float len2 = vx * vx + vy * vy;
+    if (len2 <= 1.0e-6F) {
+        const float dx = px - ax;
+        const float dy = py - ay;
+        return std::sqrt(dx * dx + dy * dy);
+    }
+    const float t = std::clamp(((px - ax) * vx + (py - ay) * vy) / len2, 0.0F, 1.0F);
+    const float cx = ax + t * vx;
+    const float cy = ay + t * vy;
+    const float dx = px - cx;
+    const float dy = py - cy;
     return std::sqrt(dx * dx + dy * dy);
 }
 
@@ -151,7 +169,7 @@ SweptVolumeDebug build_synthetic_swept_volume(
         if (dx < 0.0F || dx > static_cast<float>(swept.end_local.x - swept.start_local.x)) {
             continue;
         }
-        const float lateral = distance_xy(cell.center_local, swept.start_local);
+        const float lateral = swept_path_lateral_distance_m(cell.center_local, swept.start_local, swept.end_local);
         const float inflated_clearance = lateral - swept.radius_m - static_cast<float>(std::max(cell.size_m.x, cell.size_m.y)) * 0.5F;
         min_clearance = std::min(min_clearance, inflated_clearance);
         if (cell.state == OccupancyCellState::Occupied && inflated_clearance <= 0.0F) {
