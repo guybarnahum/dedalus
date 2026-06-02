@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cctype>
 #include <fstream>
+#include <iostream>
 #include <sstream>
 #include <stdexcept>
 #include <string>
@@ -184,6 +185,10 @@ void apply_config_value(CoreStackProviderConfig& config, const std::string& key,
             throw std::invalid_argument("empty mission_options key");
         }
         config.mission_options.values[option_key] = value;
+        if (MissionOptions::known_keys().find(option_key) == MissionOptions::known_keys().end()) {
+            std::cerr << "WARNING: unrecognized mission_options key: " << option_key
+                      << " (check for typos; value will be ignored)\n";
+        }
     } else {
         throw std::invalid_argument("unknown core-stack config key: " + key);
     }

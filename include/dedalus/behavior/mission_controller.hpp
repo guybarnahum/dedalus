@@ -3,6 +3,7 @@
 #include <optional>
 #include <string>
 #include <unordered_map>
+#include <unordered_set>
 #include <vector>
 
 #include "dedalus/core/types.hpp"
@@ -20,6 +21,89 @@ struct MissionOptions {
     [[nodiscard]] std::string get_or(const std::string& key, const std::string& fallback) const {
         const auto it = values.find(key);
         return it == values.end() ? fallback : it->second;
+    }
+
+    // All recognized mission_options keys. An unrecognized key in a YAML config
+    // produces a warning at load time rather than silently using fallback values.
+    [[nodiscard]] static const std::unordered_set<std::string>& known_keys() {
+        // clang-format off
+        static const std::unordered_set<std::string> s{
+            // behavior spec
+            "behavior_spec_path",
+            // follow behavior
+            "object_behavior_follow_observation_geometry_enabled",
+            "object_behavior_zero_target_velocity",
+            "object_behavior_follow_min_standoff_m",
+            "object_behavior_follow_max_elevation_angle_deg",
+            "object_behavior_follow_arrival_slow_radius_m",
+            "object_behavior_follow_arrival_hold_radius_m",
+            "object_behavior_follow_arrival_kp",
+            "object_behavior_completion_after_s",
+            // object behavior core
+            "object_behavior_hold_velocity_mps",
+            "object_behavior_yaw_mode",
+            "object_behavior_yaw_min_speed_mps",
+            "object_behavior_yaw_hold_last_when_unstable",
+            "object_behavior_vertical_stare_mode",
+            "object_behavior_vertical_stare_warn_if_unavailable",
+            "object_behavior_debug_every_n_ticks",
+            "object_behavior_debug_level",
+            "object_behavior_altitude_policy",
+            "object_behavior_min_height_m",
+            // camera pointing
+            "object_behavior_camera_pointing_cameras",
+            "object_behavior_camera_pitch_min_deg",
+            "object_behavior_camera_pitch_max_deg",
+            "object_behavior_camera_pitch_sign",
+            "object_behavior_camera_pitch_offset_deg",
+            "object_behavior_camera_pointing_prepare_mode",
+            "object_behavior_camera_pointing_takeoff_mode",
+            "object_behavior_camera_pointing_go_home_mode",
+            "object_behavior_camera_pointing_land_mode",
+            "object_behavior_camera_pointing_complete_mode",
+            "object_behavior_camera_pointing_sink",
+            "object_behavior_camera_pointing_mavlink_endpoints",
+            "object_behavior_camera_pointing_mavlink_source_system_id",
+            "object_behavior_camera_pointing_mavlink_source_component_id",
+            "object_behavior_camera_pointing_mavlink_target_system_id",
+            "object_behavior_camera_pointing_mavlink_target_component_id",
+            "object_behavior_camera_pointing_mavlink_gimbal_device_id",
+            "object_behavior_camera_pointing_mavlink_flags",
+            "object_behavior_camera_pointing_deadband_rad",
+            "object_behavior_camera_pointing_resend_s",
+            // flight lifecycle
+            "flight_safe_height_m",
+            "flight_takeoff_height_m",
+            "flight_takeoff_velocity_mps",
+            "flight_go_home_velocity_mps",
+            "flight_land_velocity_mps",
+            "flight_arm_retry_interval_s",
+            "flight_arm_timeout_s",
+            "flight_arm_dispatch_fallback_s",
+            "flight_takeoff_retry_interval_s",
+            "flight_land_retry_interval_s",
+            "flight_land_timeout_s",
+            "flight_disarm_retry_interval_s",
+            "flight_disarm_timeout_s",
+            "flight_home_policy",
+            "flight_yaw_offset_rad",
+            "flight_max_velocity_mps",
+            "flight_prepare_session_command",
+            "flight_trajectory_path",
+            // flight sinks
+            "flight_px4_command_bridge",
+            "flight_velocity_command_bridge",
+            "flight_mavlink_command_endpoints",
+            "flight_px4_tmux_target",
+            "flight_use_px4_shell_lifecycle",
+            "flight_mavlink_target_system_id",
+            "flight_mavlink_target_component_id",
+            "flight_mavlink_source_system_id",
+            "flight_mavlink_source_component_id",
+            "flight_mavlink_set_offboard_on_velocity",
+        };
+        // clang-format on
+        return s;
     }
 };
 
