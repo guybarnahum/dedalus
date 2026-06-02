@@ -106,7 +106,12 @@ enum class ClassLabel {
     Tree,
     Road,
     River,
-    Terrain
+    Terrain,
+    Pole,
+    Wall,
+    Fence,
+    Cable,
+    Obstacle
 };
 
 enum class FactionLabel {
@@ -178,10 +183,10 @@ enum class SeasonMode {
 
 enum class SensorMode {
     Unknown,
-    Rgb,
-    Mono,
-    Infrared,
-    Thermal
+    RGB,
+    Thermal,
+    NightVision,
+    Synthetic
 };
 
 }  // namespace dedalus
