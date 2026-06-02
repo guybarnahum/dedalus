@@ -102,7 +102,7 @@ int main() {
     }
 
     const auto published = latest_snapshot->latest();
-    if (!published.has_value()) {
+    if (!published) {
         std::cerr << "LatestWorldSnapshot did not receive a published snapshot\n";
         return 1;
     }

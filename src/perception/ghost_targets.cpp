@@ -170,10 +170,11 @@ std::vector<AirSimObjectPose> parse_object_pose_json(const std::string& json) {
         if (object_end == std::string::npos) {
             throw std::runtime_error("unterminated AirSim object pose JSON object");
         }
+        const auto object_json = json.substr(name_marker, object_end - name_marker + 1U);
         AirSimObjectPose pose;
-        pose.name = parse_json_string_optional(json, "name", name_marker);
-        pose.source_pattern = parse_json_string_optional(json, "source_pattern", name_marker);
-        pose.position_ned_m = vec3_from_json_array(json, "position_ned_m", name_marker);
+        pose.name = parse_json_string_optional(object_json, "name");
+        pose.source_pattern = parse_json_string_optional(object_json, "source_pattern");
+        pose.position_ned_m = vec3_from_json_array(object_json, "position_ned_m");
         poses.push_back(std::move(pose));
         cursor = object_end + 1U;
     }
