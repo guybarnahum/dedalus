@@ -28,6 +28,7 @@ struct CoreStackProviderConfig {
     std::string ghost_targets_scenario_path;
     std::vector<AirSimGhostObjectBinding> ghost_targets_airsim_objects;
     std::string world_model{"in_memory"};
+    std::string track4_occupancy_source{"synthetic_fixture"};
     std::string frame_annotator{"null"};
     std::string annotation_output_path{"out/annotated.mp4"};
     double annotation_output_fps{5.0};
