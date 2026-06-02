@@ -47,6 +47,10 @@ std::unique_ptr<GhostTargetProvider> make_ghost_target_provider(const CoreStackP
             GhostScenario::load_from_file(ghost_scenario_path_from(config)));
     }
     if (config.ghost_targets_source == "airsim_objects") {
+        if (config.ghost_targets_airsim_objects.empty()) {
+            throw std::invalid_argument(
+                "ghost_targets_source: airsim_objects requires a non-empty ghost_targets_airsim_objects list");
+        }
         return std::make_unique<GhostTargetProvider>(
             AirSimGhostObjectSourceConfig{
                 .host = config.source_host,

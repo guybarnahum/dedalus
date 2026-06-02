@@ -25,6 +25,9 @@ constexpr double kCircleDefaultEntryToleranceM = 1.0;
 constexpr double kCircleRadialCorrectionGain = 0.6;
 constexpr double kDefaultAltitudeProfileDurationS = 8.0;
 constexpr double kCircleMaxRadialCorrectionMps = 2.0;
+constexpr double kCircleRadiusToleranceFraction = 0.25;  // tolerance = 25% of radius
+constexpr double kCircleMinRadiusToleranceM = 1.0;       // floor
+constexpr double kCircleMaxRadiusToleranceM = 3.0;       // cap
 
 struct FollowGeometry {
     Vec3 desired_position;
@@ -646,7 +649,8 @@ FollowGeometry circle_geometry(
     //   not drop the controller back into insertion.
     const double radius_capture_tolerance_m = std::max(
         entry_tolerance_m,
-        std::min(3.0, std::max(1.0, behavior.radius_m * 0.25)));
+        std::min(kCircleMaxRadiusToleranceM,
+                 std::max(kCircleMinRadiusToleranceM, behavior.radius_m * kCircleRadiusToleranceFraction)));
     const bool radius_captured = std::abs(geometry.radius_error_m) <= radius_capture_tolerance_m;
     const bool on_entry = orbit_mode_latched || radius_captured;
 
