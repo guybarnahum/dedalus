@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cctype>
 #include <cstddef>
 #include <string>
 
@@ -53,5 +54,39 @@ public:
     }
     [[nodiscard]] std::string str() const { return buf_; }
 };
+
+// Strips all JSON-insignificant whitespace from a JSON string.
+// Characters inside string literals are preserved verbatim.
+// Use this when a pretty-printed to_json() result must be sent over the wire
+// or stored as a single-line value.
+inline std::string to_compact_json(const std::string& pretty_json) {
+    std::string compact;
+    compact.reserve(pretty_json.size());
+    bool in_string = false;
+    bool escaped   = false;
+    for (const char ch : pretty_json) {
+        if (in_string) {
+            compact.push_back(ch);
+            if (escaped) {
+                escaped = false;
+            } else if (ch == '\\') {
+                escaped = true;
+            } else if (ch == '"') {
+                in_string = false;
+            }
+            continue;
+        }
+        if (ch == '"') {
+            in_string = true;
+            compact.push_back(ch);
+            continue;
+        }
+        if (std::isspace(static_cast<unsigned char>(ch)) != 0) {
+            continue;
+        }
+        compact.push_back(ch);
+    }
+    return compact;
+}
 
 }  // namespace dedalus

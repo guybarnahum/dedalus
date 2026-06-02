@@ -3,7 +3,6 @@
 #include "dedalus/core/json_utils.hpp"
 
 #include <algorithm>
-#include <cctype>
 #include <cerrno>
 #include <chrono>
 #include <cstring>
@@ -39,36 +38,6 @@ void set_nonblocking(int fd) {
     }
 }
 
-std::string compact_json_object(const std::string& pretty_json) {
-    std::string compact;
-    compact.reserve(pretty_json.size());
-    bool in_string = false;
-    bool escaped = false;
-    for (const char ch : pretty_json) {
-        if (in_string) {
-            compact.push_back(ch);
-            if (escaped) {
-                escaped = false;
-            } else if (ch == '\\') {
-                escaped = true;
-            } else if (ch == '"') {
-                in_string = false;
-            }
-            continue;
-        }
-        if (ch == '"') {
-            in_string = true;
-            compact.push_back(ch);
-            continue;
-        }
-        if (std::isspace(static_cast<unsigned char>(ch)) != 0) {
-            continue;
-        }
-        compact.push_back(ch);
-    }
-    return compact;
-}
-
 std::string stream_line_for(std::uint64_t seq, const WorldSnapshot& snapshot) {
     std::string line;
     line.reserve(4096U);
@@ -79,7 +48,7 @@ std::string stream_line_for(std::uint64_t seq, const WorldSnapshot& snapshot) {
     line += ",\"active_map_frame_id\":\"";
     line += json_escape(snapshot.active_map_frame_id.value);
     line += "\",\"snapshot\":";
-    line += compact_json_object(to_json(snapshot));
+    line += to_compact_json(to_json(snapshot));
     line += "}\n";
     return line;
 }
@@ -94,7 +63,7 @@ std::string stream_line_for(std::uint64_t seq, const GhostDetectionsFrame& frame
     line += ",\"map_frame_id\":\"";
     line += json_escape(frame.map_frame_id.value);
     line += "\",\"ghost_detections\":";
-    line += compact_json_object(to_json(frame));
+    line += to_compact_json(to_json(frame));
     line += "}\n";
     return line;
 }
@@ -107,7 +76,7 @@ std::string stream_line_for(std::uint64_t seq, const MissionEvent& event) {
     line += ",\"timestamp_ns\":";
     line += std::to_string(event.timestamp.timestamp_ns);
     line += ",\"mission_event\":";
-    line += compact_json_object(event.json);
+    line += to_compact_json(event.json);
     line += "}\n";
     return line;
 }
