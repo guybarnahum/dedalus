@@ -104,9 +104,13 @@ CoreStackProviders ProviderRegistry::create(const CoreStackProviderConfig& confi
             if (config.recorded_manifest_path.empty()) {
                 throw std::invalid_argument("recorded_frames provider requires recorded_manifest_path");
             }
-            return std::make_unique<RecordedFrameSource>(config.recorded_manifest_path);
+            return std::make_unique<AsyncPrefetchFrameSource>(
+                std::make_unique<RecordedFrameSource>(config.recorded_manifest_path));
         }},
-        {"airsim",            [&]() { return std::make_unique<AirSimFrameSource>(airsim); }},
+        {"airsim",            [&]() -> std::unique_ptr<FrameSource> {
+            return std::make_unique<AsyncPrefetchFrameSource>(
+                std::make_unique<AirSimFrameSource>(airsim));
+        }},
     });
 
     providers.ego_provider = resolve<EgoStateProvider>("ego_provider", config.ego_provider, {

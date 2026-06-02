@@ -9,6 +9,7 @@ add_library(dedalus_core
     behavior/trajectory_mission_controller.cpp
     behavior/velocity_trajectory.cpp
     sensors/ego_state_provider.cpp
+    sensors/async_prefetch_frame_source.cpp
     sensors/recorded_frame_source.cpp
     sensors/replay_frame_source.cpp
     sensors/synthetic_frame_source.cpp

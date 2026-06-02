@@ -1,6 +1,5 @@
 #pragma once
 
-#include <future>
 #include <memory>
 #include <optional>
 
@@ -32,14 +31,10 @@ public:
     [[nodiscard]] WorldSnapshot snapshot() const;
 
 private:
-    std::optional<FramePacket> fetch_next_frame();
-    void start_prefetch();
-
     CoreStackProviders providers_;
     std::unique_ptr<PipelineProfiler> timing_writer_;
     std::shared_ptr<WorldSnapshotPublisher> snapshot_publisher_;
     std::shared_ptr<GhostDetectionsPublisher> ghost_detections_publisher_;
-    std::future<std::optional<FramePacket>> prefetched_frame_;
     std::optional<TimePoint> ghost_scenario_start_;
 };
 

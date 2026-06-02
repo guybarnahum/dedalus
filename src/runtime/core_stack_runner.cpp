@@ -1,7 +1,6 @@
 #include "dedalus/runtime/core_stack_runner.hpp"
 
 #include <chrono>
-#include <future>
 #include <utility>
 
 namespace dedalus {
@@ -19,48 +18,21 @@ CoreStackRunner::CoreStackRunner(CoreStackProviders providers, CoreStackRunnerCo
     : providers_(std::move(providers)),
       timing_writer_(std::move(config.timing_writer)),
       snapshot_publisher_(std::move(config.snapshot_publisher)),
-      ghost_detections_publisher_(std::move(config.ghost_detections_publisher)) {
-    start_prefetch();
-}
+      ghost_detections_publisher_(std::move(config.ghost_detections_publisher)) {}
 
-CoreStackRunner::~CoreStackRunner() {
-    if (prefetched_frame_.valid()) {
-        try {
-            (void)prefetched_frame_.get();
-        } catch (...) {
-            // A one-frame lookahead may still be waiting on the bridge when the
-            // runner is destroyed after a bounded --max-frames run. Shutdown-time
-            // speculative fetch failures should not abort a run that already
-            // produced the requested frames.
-        }
-    }
-}
-
-std::optional<FramePacket> CoreStackRunner::fetch_next_frame() {
-    return providers_.frame_source->next_frame();
-}
-
-void CoreStackRunner::start_prefetch() {
-    prefetched_frame_ = std::async(std::launch::async, [this]() {
-        return fetch_next_frame();
-    });
-}
+CoreStackRunner::~CoreStackRunner() = default;
 
 bool CoreStackRunner::run_once() {
     const auto run_once_start = SteadyClock::now();
 
     auto start = SteadyClock::now();
-    auto frame = prefetched_frame_.get();
+    auto frame = providers_.frame_source->next_frame();
     const auto frame_source_wait_duration_us = duration_us(start);
 
     if (!frame.has_value()) {
         providers_.frame_annotator->finish();
         return false;
     }
-
-    // Start reading the next frame before processing this one. This overlaps the
-    // AirSim/sensor wait with ego/perception/world-model work for the current frame.
-    start_prefetch();
 
     if (timing_writer_) {
         timing_writer_->begin_frame(*frame);
