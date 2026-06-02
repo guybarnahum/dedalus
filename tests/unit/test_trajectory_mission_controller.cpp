@@ -260,8 +260,8 @@ int main() {
     }
 
     dedalus::MissionOptions options;
-    options.values["flight_safe_height_m"] = "2.0";
-    options.values["flight_trajectory_path"] = trajectory_path.string();
+    options.safe_height_m = 2.0;
+    options.trajectory_path = trajectory_path.string();
     auto loaded_config = dedalus::load_trajectory_mission_config(options);
     if (loaded_config.trajectory.size() != 1U || loaded_config.trajectory.segment(0).keyframes.size() != 2U) {
         std::cerr << "loaded trajectory did not preserve keyframes\n";

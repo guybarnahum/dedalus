@@ -52,24 +52,23 @@ bool last_result_matches_success(
 
 TrajectoryMissionConfig load_trajectory_mission_config(const MissionOptions& options) {
     TrajectoryMissionConfig config;
-    config.safe_height_m = std::stod(options.get_or("flight_safe_height_m", "8"));
-    config.takeoff_velocity_mps = std::stod(options.get_or("flight_takeoff_velocity_mps", "1.0"));
-    config.go_home_velocity_mps = std::stod(options.get_or("flight_go_home_velocity_mps", "1.0"));
-    config.land_velocity_mps = std::stod(options.get_or("flight_land_velocity_mps", "0.5"));
-    config.yaw_offset_rad = std::stod(options.get_or("flight_yaw_offset_rad", "0.0"));
-    config.arm_retry_interval_s = std::stod(options.get_or("flight_arm_retry_interval_s", "1.0"));
-    config.arm_timeout_s = std::stod(options.get_or("flight_arm_timeout_s", "10.0"));
-    config.arm_dispatch_fallback_s = std::stod(options.get_or("flight_arm_dispatch_fallback_s", "0.0"));
-    config.takeoff_retry_interval_s = std::stod(options.get_or("flight_takeoff_retry_interval_s", "1.0"));
-    config.land_retry_interval_s = std::stod(options.get_or("flight_land_retry_interval_s", "1.0"));
-    config.land_timeout_s = std::stod(options.get_or("flight_land_timeout_s", "60.0"));
-    config.disarm_retry_interval_s = std::stod(options.get_or("flight_disarm_retry_interval_s", "1.0"));
-    config.disarm_timeout_s = std::stod(options.get_or("flight_disarm_timeout_s", "10.0"));
-    config.home_policy = options.get_or("flight_home_policy", "initial_ego_pose");
+    config.safe_height_m           = options.safe_height_m;
+    config.takeoff_velocity_mps    = options.takeoff_velocity_mps;
+    config.go_home_velocity_mps    = options.go_home_velocity_mps;
+    config.land_velocity_mps       = options.land_velocity_mps;
+    config.yaw_offset_rad          = options.yaw_offset_rad;
+    config.arm_retry_interval_s    = options.arm_retry_interval_s;
+    config.arm_timeout_s           = options.arm_timeout_s;
+    config.arm_dispatch_fallback_s = options.arm_dispatch_fallback_s;
+    config.takeoff_retry_interval_s = options.takeoff_retry_interval_s;
+    config.land_retry_interval_s   = options.land_retry_interval_s;
+    config.land_timeout_s          = options.land_timeout_s;
+    config.disarm_retry_interval_s = options.disarm_retry_interval_s;
+    config.disarm_timeout_s        = options.disarm_timeout_s;
+    config.home_policy             = options.home_policy;
 
-    const auto trajectory_path = options.get_or("flight_trajectory_path", "");
-    if (!trajectory_path.empty()) {
-        config.trajectory = VelocityTrajectory::load_from_file(strip_json_string(trajectory_path));
+    if (!options.trajectory_path.empty()) {
+        config.trajectory = VelocityTrajectory::load_from_file(strip_json_string(options.trajectory_path));
     }
     if (config.trajectory.empty()) {
         config.trajectory = VelocityTrajectory::default_hold();

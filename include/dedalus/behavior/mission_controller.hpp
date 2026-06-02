@@ -1,9 +1,8 @@
 #pragma once
 
+#include <cstdint>
 #include <optional>
 #include <string>
-#include <unordered_map>
-#include <unordered_set>
 #include <vector>
 
 #include "dedalus/core/types.hpp"
@@ -11,100 +10,93 @@
 
 namespace dedalus {
 
+// Typed configuration for the mission runtime, controllers, and flight sinks.
+// Each field maps one-to-one to a YAML key of the form mission_options.<name>.
+// All parsing and range checks happen once in config_loader; consumers read
+// typed fields directly.
 struct MissionOptions {
-    std::unordered_map<std::string, std::string> values;
+    // ── behavior spec ─────────────────────────────────────────────────────────
+    std::string behavior_spec_path;            // required for object_behavior controller
 
-    [[nodiscard]] bool contains(const std::string& key) const {
-        return values.find(key) != values.end();
-    }
+    // ── follow / approach behavior ────────────────────────────────────────────
+    bool follow_observation_geometry_enabled{false};
+    bool zero_target_velocity{false};
+    double follow_min_standoff_m{8.0};
+    double follow_max_elevation_angle_deg{35.0};
+    double follow_arrival_slow_radius_m{8.0};
+    double follow_arrival_hold_radius_m{2.0};
+    double follow_arrival_kp{0.35};
+    std::optional<double> completion_after_s;  // overrides behavior spec when set
 
-    [[nodiscard]] std::string get_or(const std::string& key, const std::string& fallback) const {
-        const auto it = values.find(key);
-        return it == values.end() ? fallback : it->second;
-    }
+    // ── object behavior core ──────────────────────────────────────────────────
+    double hold_velocity_mps{0.0};
+    std::string yaw_mode{"trajectory"};        // trajectory|target|hold|none
+    double yaw_min_speed_mps{0.35};
+    bool yaw_hold_last_when_unstable{true};
+    // object_behavior_yaw_offset_rad takes precedence over yaw_offset_rad when set
+    std::optional<double> object_behavior_yaw_offset_rad;
+    std::string vertical_stare_mode{"none"};   // none|gimbal
+    bool vertical_stare_warn_if_unavailable{true};
+    int debug_every_n_ticks{0};
+    int debug_level{1};
+    std::string altitude_policy{"target_relative"};  // target_relative|safe_height_floor
 
-    // All recognized mission_options keys. An unrecognized key in a YAML config
-    // produces a warning at load time rather than silently using fallback values.
-    [[nodiscard]] static const std::unordered_set<std::string>& known_keys() {
-        // clang-format off
-        static const std::unordered_set<std::string> s{
-            // behavior spec
-            "behavior_spec_path",
-            // follow behavior
-            "object_behavior_follow_observation_geometry_enabled",
-            "object_behavior_zero_target_velocity",
-            "object_behavior_follow_min_standoff_m",
-            "object_behavior_follow_max_elevation_angle_deg",
-            "object_behavior_follow_arrival_slow_radius_m",
-            "object_behavior_follow_arrival_hold_radius_m",
-            "object_behavior_follow_arrival_kp",
-            "object_behavior_completion_after_s",
-            // object behavior core
-            "object_behavior_hold_velocity_mps",
-            "object_behavior_yaw_mode",
-            "object_behavior_yaw_min_speed_mps",
-            "object_behavior_yaw_hold_last_when_unstable",
-            "object_behavior_vertical_stare_mode",
-            "object_behavior_vertical_stare_warn_if_unavailable",
-            "object_behavior_debug_every_n_ticks",
-            "object_behavior_debug_level",
-            "object_behavior_altitude_policy",
-            "object_behavior_min_height_m",
-            // camera pointing
-            "object_behavior_camera_pointing_cameras",
-            "object_behavior_camera_pitch_min_deg",
-            "object_behavior_camera_pitch_max_deg",
-            "object_behavior_camera_pitch_sign",
-            "object_behavior_camera_pitch_offset_deg",
-            "object_behavior_camera_pointing_prepare_mode",
-            "object_behavior_camera_pointing_takeoff_mode",
-            "object_behavior_camera_pointing_go_home_mode",
-            "object_behavior_camera_pointing_land_mode",
-            "object_behavior_camera_pointing_complete_mode",
-            "object_behavior_camera_pointing_sink",
-            "object_behavior_camera_pointing_mavlink_endpoints",
-            "object_behavior_camera_pointing_mavlink_source_system_id",
-            "object_behavior_camera_pointing_mavlink_source_component_id",
-            "object_behavior_camera_pointing_mavlink_target_system_id",
-            "object_behavior_camera_pointing_mavlink_target_component_id",
-            "object_behavior_camera_pointing_mavlink_gimbal_device_id",
-            "object_behavior_camera_pointing_mavlink_flags",
-            "object_behavior_camera_pointing_deadband_rad",
-            "object_behavior_camera_pointing_resend_s",
-            // flight lifecycle
-            "flight_safe_height_m",
-            "flight_takeoff_height_m",
-            "flight_takeoff_velocity_mps",
-            "flight_go_home_velocity_mps",
-            "flight_land_velocity_mps",
-            "flight_arm_retry_interval_s",
-            "flight_arm_timeout_s",
-            "flight_arm_dispatch_fallback_s",
-            "flight_takeoff_retry_interval_s",
-            "flight_land_retry_interval_s",
-            "flight_land_timeout_s",
-            "flight_disarm_retry_interval_s",
-            "flight_disarm_timeout_s",
-            "flight_home_policy",
-            "flight_yaw_offset_rad",
-            "flight_max_velocity_mps",
-            "flight_prepare_session_command",
-            "flight_trajectory_path",
-            // flight sinks
-            "flight_px4_command_bridge",
-            "flight_velocity_command_bridge",
-            "flight_mavlink_command_endpoints",
-            "flight_px4_tmux_target",
-            "flight_use_px4_shell_lifecycle",
-            "flight_mavlink_target_system_id",
-            "flight_mavlink_target_component_id",
-            "flight_mavlink_source_system_id",
-            "flight_mavlink_source_component_id",
-            "flight_mavlink_set_offboard_on_velocity",
-        };
-        // clang-format on
-        return s;
-    }
+    // ── camera pointing ───────────────────────────────────────────────────────
+    std::string camera_pointing_cameras;       // comma-separated camera names
+    std::optional<double> camera_pitch_min_deg;
+    std::optional<double> camera_pitch_max_deg;
+    double camera_pitch_sign{-1.0};
+    std::optional<double> camera_pitch_offset_deg;
+    std::string camera_pointing_prepare_mode{"neutral"};
+    std::string camera_pointing_takeoff_mode{"neutral"};
+    std::string camera_pointing_go_home_mode{"home"};
+    std::string camera_pointing_land_mode{"landing_area"};
+    std::string camera_pointing_complete_mode{"neutral"};
+    std::string camera_pointing_sink{"null"};  // null|mavlink_gimbal|runtime_stream
+    std::string camera_pointing_mavlink_endpoints;
+    std::uint8_t camera_pointing_mavlink_source_system_id{255};
+    std::uint8_t camera_pointing_mavlink_source_component_id{191};
+    std::uint8_t camera_pointing_mavlink_target_system_id{1};
+    std::uint8_t camera_pointing_mavlink_target_component_id{1};
+    std::uint8_t camera_pointing_mavlink_gimbal_device_id{0};
+    std::uint32_t camera_pointing_mavlink_flags{0};
+    double camera_pointing_deadband_rad{0.004363323129985824};
+    double camera_pointing_resend_s{0.25};
+
+    // ── flight lifecycle ──────────────────────────────────────────────────────
+    double safe_height_m{8.0};                // takeoff/transit altitude floor
+    // takeoff_height_m and behavior_min_height_m default to safe_height_m at use site
+    std::optional<double> takeoff_height_m;
+    std::optional<double> behavior_min_height_m;
+    double takeoff_velocity_mps{1.0};
+    double go_home_velocity_mps{1.0};
+    double land_velocity_mps{0.5};
+    double arm_retry_interval_s{1.0};
+    double arm_timeout_s{10.0};
+    double arm_dispatch_fallback_s{0.0};
+    double takeoff_retry_interval_s{1.0};
+    double land_retry_interval_s{1.0};
+    double land_timeout_s{60.0};
+    double disarm_retry_interval_s{1.0};
+    double disarm_timeout_s{10.0};
+    std::string home_policy{"initial_ego_pose"};
+    double yaw_offset_rad{0.0};              // flight_yaw_offset_rad; also trajectory fallback
+    double max_velocity_mps{5.0};
+    std::string prepare_session_command;
+    std::string trajectory_path;
+    std::string flight_control_mode;         // consumed by run.sh, not by C++ runtime
+
+    // ── flight sinks ──────────────────────────────────────────────────────────
+    std::string px4_command_bridge;
+    std::string velocity_command_bridge;
+    std::string mavlink_command_endpoints;
+    std::string px4_tmux_target;
+    bool use_px4_shell_lifecycle{true};
+    std::uint8_t mavlink_target_system_id{1};
+    std::uint8_t mavlink_target_component_id{1};
+    std::uint8_t mavlink_source_system_id{255};
+    std::uint8_t mavlink_source_component_id{190};
+    bool set_offboard_on_velocity{true};
 };
 
 enum class FlightCommandKind {

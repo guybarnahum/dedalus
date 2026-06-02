@@ -115,37 +115,6 @@ Vec3 clamp_xy_norm(Vec3 velocity, double max_horizontal_mps) {
     return velocity;
 }
 
-bool parse_bool(const std::string& value, bool fallback) {
-    if (value.empty()) {
-        return fallback;
-    }
-    if (value == "true" || value == "1" || value == "yes" || value == "on") {
-        return true;
-    }
-    if (value == "false" || value == "0" || value == "no" || value == "off") {
-        return false;
-    }
-    throw std::invalid_argument("invalid boolean value: " + value);
-}
-
-double parse_double(const std::string& value, const char* context) {
-    try {
-        return std::stod(value);
-    } catch (const std::exception&) {
-        throw std::invalid_argument(
-            std::string("invalid double for ") + context + ": '" + value + "'");
-    }
-}
-
-int parse_int(const std::string& value, const char* context) {
-    try {
-        return std::stoi(value);
-    } catch (const std::exception&) {
-        throw std::invalid_argument(
-            std::string("invalid integer for ") + context + ": '" + value + "'");
-    }
-}
-
 std::vector<std::string> split_csv(const std::string& value, const std::vector<std::string>& fallback) {
     if (value.empty()) {
         return fallback;
@@ -800,136 +769,80 @@ std::string yaw_source_for(const VelocityCommand& command) {
 }  // namespace
 
 void parse_camera_pointing_config(const MissionOptions& options, ObjectBehaviorMissionConfig& config) {
-    config.camera_pointing_cameras = split_csv(
-        options.get_or("object_behavior_camera_pointing_cameras", ""),
-        {});
-    {
-        const auto min_deg_str = options.get_or("object_behavior_camera_pitch_min_deg", "");
-        if (!min_deg_str.empty()) {
-            config.camera_pitch_min_rad = deg_to_rad(parse_double(min_deg_str, "object_behavior_camera_pitch_min_deg"));
-        }
+    config.camera_pointing_cameras = split_csv(options.camera_pointing_cameras, {});
+    if (options.camera_pitch_min_deg.has_value()) {
+        config.camera_pitch_min_rad = deg_to_rad(*options.camera_pitch_min_deg);
     }
-    {
-        const auto max_deg_str = options.get_or("object_behavior_camera_pitch_max_deg", "");
-        if (!max_deg_str.empty()) {
-            config.camera_pitch_max_rad = deg_to_rad(parse_double(max_deg_str, "object_behavior_camera_pitch_max_deg"));
-        }
+    if (options.camera_pitch_max_deg.has_value()) {
+        config.camera_pitch_max_rad = deg_to_rad(*options.camera_pitch_max_deg);
     }
-    config.camera_pitch_sign = parse_double(options.get_or("object_behavior_camera_pitch_sign", "-1"), "object_behavior_camera_pitch_sign");
-    {
-        const auto offset_deg_str = options.get_or("object_behavior_camera_pitch_offset_deg", "");
-        if (!offset_deg_str.empty()) {
-            config.camera_pitch_offset_rad = deg_to_rad(parse_double(offset_deg_str, "object_behavior_camera_pitch_offset_deg"));
-        }
+    config.camera_pitch_sign = options.camera_pitch_sign;
+    if (options.camera_pitch_offset_deg.has_value()) {
+        config.camera_pitch_offset_rad = deg_to_rad(*options.camera_pitch_offset_deg);
     }
-    config.camera_pointing_prepare_mode = options.get_or(
-        "object_behavior_camera_pointing_prepare_mode",
-        "neutral");
-    config.camera_pointing_takeoff_mode = options.get_or(
-        "object_behavior_camera_pointing_takeoff_mode",
-        "neutral");
-    config.camera_pointing_go_home_mode = options.get_or(
-        "object_behavior_camera_pointing_go_home_mode",
-        "home");
-    config.camera_pointing_land_mode = options.get_or(
-        "object_behavior_camera_pointing_land_mode",
-        "landing_area");
-    config.camera_pointing_complete_mode = options.get_or(
-        "object_behavior_camera_pointing_complete_mode",
-        "neutral");
+    config.camera_pointing_prepare_mode = options.camera_pointing_prepare_mode;
+    config.camera_pointing_takeoff_mode = options.camera_pointing_takeoff_mode;
+    config.camera_pointing_go_home_mode = options.camera_pointing_go_home_mode;
+    config.camera_pointing_land_mode    = options.camera_pointing_land_mode;
+    config.camera_pointing_complete_mode = options.camera_pointing_complete_mode;
     if (config.camera_pitch_min_rad > config.camera_pitch_max_rad) {
         std::swap(config.camera_pitch_min_rad, config.camera_pitch_max_rad);
     }
 }
 
 void parse_follow_config(const MissionOptions& options, ObjectBehaviorMissionConfig& config) {
-    config.follow_observation_geometry_enabled = parse_bool(
-        options.get_or("object_behavior_follow_observation_geometry_enabled", "false"),
-        false);
-    config.zero_target_velocity = parse_bool(
-        options.get_or("object_behavior_zero_target_velocity", "false"),
-        false);
-    config.follow_min_standoff_m = parse_double(options.get_or("object_behavior_follow_min_standoff_m", "8.0"), "object_behavior_follow_min_standoff_m");
-    config.follow_max_elevation_angle_deg = parse_double(options.get_or(
-        "object_behavior_follow_max_elevation_angle_deg",
-        "35.0"), "object_behavior_follow_max_elevation_angle_deg");
-    config.follow_arrival_slow_radius_m = parse_double(options.get_or(
-        "object_behavior_follow_arrival_slow_radius_m",
-        "8.0"), "object_behavior_follow_arrival_slow_radius_m");
-    config.follow_arrival_hold_radius_m = parse_double(options.get_or(
-        "object_behavior_follow_arrival_hold_radius_m",
-        "2.0"), "object_behavior_follow_arrival_hold_radius_m");
-    config.follow_arrival_kp = parse_double(options.get_or(
-        "object_behavior_follow_arrival_kp",
-        "0.35"), "object_behavior_follow_arrival_kp");
-    const auto completion_after_override = options.get_or("object_behavior_completion_after_s", "");
-    if (!completion_after_override.empty()) {
-        config.behavior_spec.completion.after_s = parse_double(completion_after_override, "object_behavior_completion_after_s");
+    config.follow_observation_geometry_enabled = options.follow_observation_geometry_enabled;
+    config.zero_target_velocity               = options.zero_target_velocity;
+    config.follow_min_standoff_m              = options.follow_min_standoff_m;
+    config.follow_max_elevation_angle_deg     = options.follow_max_elevation_angle_deg;
+    config.follow_arrival_slow_radius_m       = options.follow_arrival_slow_radius_m;
+    config.follow_arrival_hold_radius_m       = options.follow_arrival_hold_radius_m;
+    config.follow_arrival_kp                  = options.follow_arrival_kp;
+    if (options.completion_after_s.has_value()) {
+        config.behavior_spec.completion.after_s = *options.completion_after_s;
     }
 }
 
 void parse_height_config(const MissionOptions& options, ObjectBehaviorMissionConfig& config) {
-    // Backward compatibility:
-    // - flight_safe_height_m remains the legacy single value.
-    // - flight_takeoff_height_m controls the Takeoff -> ExecuteMission gate and
-    //   the return-to-home transit floor before landing.
-    // - object_behavior_min_height_m controls ExecuteMission behavior altitude
-    //   floor, allowing lower circling/inspection after a higher takeoff.
-    const std::string legacy_safe_height = options.get_or("flight_safe_height_m", "8");
-    config.takeoff_height_m = parse_double(options.get_or(
-        "flight_takeoff_height_m",
-        legacy_safe_height),
-        "flight_takeoff_height_m");
-    config.behavior_min_height_m = parse_double(options.get_or(
-        "object_behavior_min_height_m",
-        legacy_safe_height),
-        "object_behavior_min_height_m");
+    // flight_safe_height_m is the legacy single value.
+    // flight_takeoff_height_m overrides the Takeoff -> ExecuteMission altitude gate.
+    // object_behavior_min_height_m overrides the ExecuteMission floor, allowing
+    // lower circling/inspection after a higher takeoff.
+    config.takeoff_height_m    = options.takeoff_height_m.value_or(options.safe_height_m);
+    config.behavior_min_height_m = options.behavior_min_height_m.value_or(options.safe_height_m);
 }
 
 void parse_flight_ops_config(const MissionOptions& options, ObjectBehaviorMissionConfig& config) {
-    config.takeoff_velocity_mps = parse_double(options.get_or("flight_takeoff_velocity_mps", "1.0"), "flight_takeoff_velocity_mps");
-    config.go_home_velocity_mps = parse_double(options.get_or("flight_go_home_velocity_mps", "1.0"), "flight_go_home_velocity_mps");
-    config.arm_retry_interval_s = parse_double(options.get_or("flight_arm_retry_interval_s", "1.0"), "flight_arm_retry_interval_s");
-    config.arm_timeout_s = parse_double(options.get_or("flight_arm_timeout_s", "10.0"), "flight_arm_timeout_s");
-    config.arm_dispatch_fallback_s = parse_double(options.get_or("flight_arm_dispatch_fallback_s", "0.0"), "flight_arm_dispatch_fallback_s");
-    config.takeoff_retry_interval_s = parse_double(options.get_or("flight_takeoff_retry_interval_s", "1.0"), "flight_takeoff_retry_interval_s");
-    config.land_retry_interval_s = parse_double(options.get_or("flight_land_retry_interval_s", "1.0"), "flight_land_retry_interval_s");
-    config.land_timeout_s = parse_double(options.get_or("flight_land_timeout_s", "60.0"), "flight_land_timeout_s");
-    config.disarm_retry_interval_s = parse_double(options.get_or("flight_disarm_retry_interval_s", "1.0"), "flight_disarm_retry_interval_s");
-    config.disarm_timeout_s = parse_double(options.get_or("flight_disarm_timeout_s", "10.0"), "flight_disarm_timeout_s");
-    config.home_policy = options.get_or("flight_home_policy", "initial_ego_pose");
+    config.takeoff_velocity_mps    = options.takeoff_velocity_mps;
+    config.go_home_velocity_mps    = options.go_home_velocity_mps;
+    config.arm_retry_interval_s    = options.arm_retry_interval_s;
+    config.arm_timeout_s           = options.arm_timeout_s;
+    config.arm_dispatch_fallback_s = options.arm_dispatch_fallback_s;
+    config.takeoff_retry_interval_s = options.takeoff_retry_interval_s;
+    config.land_retry_interval_s   = options.land_retry_interval_s;
+    config.land_timeout_s          = options.land_timeout_s;
+    config.disarm_retry_interval_s = options.disarm_retry_interval_s;
+    config.disarm_timeout_s        = options.disarm_timeout_s;
+    config.home_policy             = options.home_policy;
 }
 
 ObjectBehaviorMissionConfig load_object_behavior_mission_config(const MissionOptions& options) {
     ObjectBehaviorMissionConfig config;
-    const auto behavior_spec_path = options.get_or("behavior_spec_path", "");
-    if (behavior_spec_path.empty()) {
+    if (options.behavior_spec_path.empty()) {
         throw std::invalid_argument("object_behavior mission_controller requires mission_options.behavior_spec_path");
     }
-    config.behavior_spec = parse_behavior_spec_file(behavior_spec_path);
-    config.hold_velocity_mps = parse_double(options.get_or("object_behavior_hold_velocity_mps", "0.0"), "object_behavior_hold_velocity_mps");
-    config.yaw_offset_rad = parse_double(options.get_or(
-        "object_behavior_yaw_offset_rad",
-        options.get_or("flight_yaw_offset_rad", "0.0")),
-        "object_behavior_yaw_offset_rad");
-    config.yaw_min_speed_mps = parse_double(options.get_or("object_behavior_yaw_min_speed_mps", "0.35"), "object_behavior_yaw_min_speed_mps");
-    config.yaw_hold_last_when_unstable = parse_bool(
-        options.get_or("object_behavior_yaw_hold_last_when_unstable", "true"),
-        true);
-    config.yaw_mode = parse_yaw_mode(options.get_or("object_behavior_yaw_mode", "trajectory"));
-    config.vertical_stare_mode = parse_vertical_stare_mode(
-        options.get_or("object_behavior_vertical_stare_mode", "none"));
-    config.vertical_stare_warn_if_unavailable = parse_bool(
-        options.get_or("object_behavior_vertical_stare_warn_if_unavailable", "true"),
-        true);
+    config.behavior_spec = parse_behavior_spec_file(options.behavior_spec_path);
+    config.hold_velocity_mps          = options.hold_velocity_mps;
+    config.yaw_offset_rad             = options.object_behavior_yaw_offset_rad.value_or(options.yaw_offset_rad);
+    config.yaw_min_speed_mps          = options.yaw_min_speed_mps;
+    config.yaw_hold_last_when_unstable = options.yaw_hold_last_when_unstable;
+    config.yaw_mode                   = parse_yaw_mode(options.yaw_mode);
+    config.vertical_stare_mode        = parse_vertical_stare_mode(options.vertical_stare_mode);
+    config.vertical_stare_warn_if_unavailable = options.vertical_stare_warn_if_unavailable;
     parse_camera_pointing_config(options, config);
-    config.debug_every_n_ticks = parse_int(options.get_or("object_behavior_debug_every_n_ticks", "0"), "object_behavior_debug_every_n_ticks");
-    config.debug_level = parse_int(options.get_or(
-        "object_behavior_debug_level",
-        "1"), "object_behavior_debug_level");
-    config.altitude_policy = parse_altitude_policy(options.get_or(
-        "object_behavior_altitude_policy",
-        "target_relative"));
+    config.debug_every_n_ticks = options.debug_every_n_ticks;
+    config.debug_level         = options.debug_level;
+    config.altitude_policy     = parse_altitude_policy(options.altitude_policy);
     parse_follow_config(options, config);
     parse_height_config(options, config);
     parse_flight_ops_config(options, config);

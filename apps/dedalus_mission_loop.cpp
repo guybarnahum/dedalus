@@ -168,23 +168,21 @@ void apply_takeoff_height_override(dedalus::CoreStackProviderConfig& config, dou
     if (safe_height_m <= 0.0) {
         throw std::invalid_argument("--safe-height must be > 0");
     }
-    // The px4_bridge sink reads flight_safe_height_m and appends --safe-height to
-    // the bridge command at construction time, so no string surgery is needed here.
-    config.mission_options.values["flight_safe_height_m"] = format_double_for_cli(safe_height_m);
+    config.mission_options.safe_height_m = safe_height_m;
 }
 
 void apply_behavior_min_height_override(dedalus::CoreStackProviderConfig& config, double min_height_m) {
     if (min_height_m <= 0.0) {
         throw std::invalid_argument("--behavior-min-height must be > 0");
     }
-    config.mission_options.values["object_behavior_min_height_m"] = format_double_for_cli(min_height_m);
+    config.mission_options.behavior_min_height_m = min_height_m;
 }
 
 void apply_behavior_duration_override(dedalus::CoreStackProviderConfig& config, double duration_s) {
     if (duration_s <= 0.0) {
         throw std::invalid_argument("--behavior-duration-s must be > 0");
     }
-    config.mission_options.values["object_behavior_completion_after_s"] = format_double_for_cli(duration_s);
+    config.mission_options.completion_after_s = duration_s;
 }
 
 void apply_cli_overrides(dedalus::CoreStackProviderConfig& config, const Args& args) {
@@ -313,6 +311,7 @@ std::unique_ptr<dedalus::FlightCommandSink> create_flight_command_sink(
     const dedalus::CoreStackProviderConfig& config,
     int verbosity) {
     const bool sink_debug_logging = verbosity >= 3;
+    const auto& opts = config.mission_options;
     if (config.flight_command_sink == "disabled") {
         return std::make_unique<dedalus::NullFlightCommandSink>();
     }
@@ -322,27 +321,24 @@ std::unique_ptr<dedalus::FlightCommandSink> create_flight_command_sink(
         sink_config.rpc_port = config.source_rpc_port;
         sink_config.vehicle_name = config.vehicle_name;
         sink_config.command_duration_s = 1.0 / config.mission_tick_hz;
-        sink_config.max_velocity_mps = std::stod(config.mission_options.get_or("flight_max_velocity_mps", "5.0"));
-        sink_config.bridge_command = config.mission_options.get_or(
-            "flight_velocity_command_bridge",
-            sink_config.bridge_command);
+        sink_config.max_velocity_mps = opts.max_velocity_mps;
+        if (!opts.velocity_command_bridge.empty()) {
+            sink_config.bridge_command = opts.velocity_command_bridge;
+        }
         sink_config.debug_logging = sink_debug_logging;
         return std::make_unique<dedalus::AirSimVelocityCommandSink>(sink_config);
     }
     if (config.flight_command_sink == "px4_bridge") {
         dedalus::Px4BridgeCommandSinkConfig sink_config;
         sink_config.command_duration_s = 1.0 / config.mission_tick_hz;
-        sink_config.max_velocity_mps = std::stod(config.mission_options.get_or("flight_max_velocity_mps", "5.0"));
-        sink_config.bridge_command = config.mission_options.get_or(
-            "flight_px4_command_bridge",
-            sink_config.bridge_command);
+        sink_config.max_velocity_mps = opts.max_velocity_mps;
+        if (!opts.px4_command_bridge.empty()) {
+            sink_config.bridge_command = opts.px4_command_bridge;
+        }
         // flight_safe_height_m is the canonical safe-height value.  Append it
         // as --safe-height so a CLI override propagates to the bridge script
         // without string surgery; argparse takes the last occurrence.
-        const auto safe_height = config.mission_options.get_or("flight_safe_height_m", "");
-        if (!safe_height.empty()) {
-            sink_config.bridge_command += " --safe-height " + safe_height;
-        }
+        sink_config.bridge_command += " --safe-height " + format_double_for_cli(opts.safe_height_m);
         sink_config.verbosity = verbosity;
         sink_config.debug_logging = sink_debug_logging;
         return std::make_unique<dedalus::Px4BridgeCommandSink>(sink_config);
@@ -350,30 +346,20 @@ std::unique_ptr<dedalus::FlightCommandSink> create_flight_command_sink(
     if (config.flight_command_sink == "px4_mavlink") {
         dedalus::Px4MavlinkCommandSinkConfig sink_config;
         sink_config.command_duration_s = 1.0 / config.mission_tick_hz;
-        sink_config.max_velocity_mps = std::stod(config.mission_options.get_or("flight_max_velocity_mps", "5.0"));
-        sink_config.endpoints = config.mission_options.get_or(
-            "flight_mavlink_command_endpoints",
-            sink_config.endpoints);
-        sink_config.px4_tmux_target = config.mission_options.get_or(
-            "flight_px4_tmux_target",
-            sink_config.px4_tmux_target);
-        sink_config.use_px4_shell_lifecycle = config.mission_options.get_or(
-            "flight_use_px4_shell_lifecycle",
-            "true") != "false";
-        sink_config.target_system_id = static_cast<std::uint8_t>(std::stoi(
-            config.mission_options.get_or("flight_mavlink_target_system_id", "1")));
-        sink_config.target_component_id = static_cast<std::uint8_t>(std::stoi(
-            config.mission_options.get_or("flight_mavlink_target_component_id", "1")));
-        sink_config.source_system_id = static_cast<std::uint8_t>(std::stoi(
-            config.mission_options.get_or("flight_mavlink_source_system_id", "255")));
-        sink_config.source_component_id = static_cast<std::uint8_t>(std::stoi(
-            config.mission_options.get_or("flight_mavlink_source_component_id", "190")));
-        sink_config.takeoff_altitude_m = std::stod(config.mission_options.get_or(
-            "flight_safe_height_m",
-            "8.0"));
-        sink_config.set_offboard_on_velocity = config.mission_options.get_or(
-            "flight_mavlink_set_offboard_on_velocity",
-            "true") != "false";
+        sink_config.max_velocity_mps      = opts.max_velocity_mps;
+        sink_config.endpoints             = opts.mavlink_command_endpoints.empty()
+                                              ? sink_config.endpoints
+                                              : opts.mavlink_command_endpoints;
+        sink_config.px4_tmux_target       = opts.px4_tmux_target.empty()
+                                              ? sink_config.px4_tmux_target
+                                              : opts.px4_tmux_target;
+        sink_config.use_px4_shell_lifecycle = opts.use_px4_shell_lifecycle;
+        sink_config.target_system_id      = opts.mavlink_target_system_id;
+        sink_config.target_component_id   = opts.mavlink_target_component_id;
+        sink_config.source_system_id      = opts.mavlink_source_system_id;
+        sink_config.source_component_id   = opts.mavlink_source_component_id;
+        sink_config.takeoff_altitude_m    = opts.safe_height_m;
+        sink_config.set_offboard_on_velocity = opts.set_offboard_on_velocity;
         sink_config.debug_logging = sink_debug_logging;
         return std::make_unique<dedalus::Px4MavlinkCommandSink>(sink_config);
     }
@@ -383,35 +369,24 @@ std::unique_ptr<dedalus::FlightCommandSink> create_flight_command_sink(
 std::unique_ptr<dedalus::CameraPointingSink> create_camera_pointing_sink(
     const dedalus::CoreStackProviderConfig& config,
     int verbosity) {
-    const auto sink = config.mission_options.get_or(
-        "object_behavior_camera_pointing_sink",
-        "null");
+    const auto& opts = config.mission_options;
+    const auto& sink = opts.camera_pointing_sink;
     if (sink == "null" || sink == "disabled" || sink == "runtime_stream") {
         return nullptr;
     }
     if (sink == "mavlink_gimbal") {
         dedalus::MavlinkGimbalPointingSinkConfig sink_config;
-        sink_config.endpoints = config.mission_options.get_or(
-            "object_behavior_camera_pointing_mavlink_endpoints",
-            sink_config.endpoints);
-        sink_config.source_system_id = static_cast<std::uint8_t>(std::stoi(
-            config.mission_options.get_or("object_behavior_camera_pointing_mavlink_source_system_id", "255")));
-        sink_config.source_component_id = static_cast<std::uint8_t>(std::stoi(
-            config.mission_options.get_or("object_behavior_camera_pointing_mavlink_source_component_id", "191")));
-        sink_config.target_system_id = static_cast<std::uint8_t>(std::stoi(
-            config.mission_options.get_or("object_behavior_camera_pointing_mavlink_target_system_id", "1")));
-        sink_config.target_component_id = static_cast<std::uint8_t>(std::stoi(
-            config.mission_options.get_or("object_behavior_camera_pointing_mavlink_target_component_id", "1")));
-        sink_config.gimbal_device_id = static_cast<std::uint8_t>(std::stoi(
-            config.mission_options.get_or("object_behavior_camera_pointing_mavlink_gimbal_device_id", "0")));
-        sink_config.gimbal_manager_flags = static_cast<std::uint32_t>(std::stoul(
-            config.mission_options.get_or("object_behavior_camera_pointing_mavlink_flags", "0")));
-        sink_config.deadband_rad = std::stod(config.mission_options.get_or(
-            "object_behavior_camera_pointing_deadband_rad",
-            "0.004363323129985824"));
-        sink_config.resend_interval_s = std::stod(config.mission_options.get_or(
-            "object_behavior_camera_pointing_resend_s",
-            "0.25"));
+        if (!opts.camera_pointing_mavlink_endpoints.empty()) {
+            sink_config.endpoints = opts.camera_pointing_mavlink_endpoints;
+        }
+        sink_config.source_system_id    = opts.camera_pointing_mavlink_source_system_id;
+        sink_config.source_component_id = opts.camera_pointing_mavlink_source_component_id;
+        sink_config.target_system_id    = opts.camera_pointing_mavlink_target_system_id;
+        sink_config.target_component_id = opts.camera_pointing_mavlink_target_component_id;
+        sink_config.gimbal_device_id    = opts.camera_pointing_mavlink_gimbal_device_id;
+        sink_config.gimbal_manager_flags = opts.camera_pointing_mavlink_flags;
+        sink_config.deadband_rad        = opts.camera_pointing_deadband_rad;
+        sink_config.resend_interval_s   = opts.camera_pointing_resend_s;
         sink_config.debug_logging = verbosity >= 2;
         return std::make_unique<dedalus::MavlinkGimbalPointingSink>(sink_config);
     }
@@ -464,7 +439,7 @@ int main(int argc, char** argv) {
             std::cerr << "dedalus_mission_loop: using LIVE AirSim bridge frames; snapshots are debug artifacts, not replay input\n";
         }
 
-        const auto prepare_command = config.mission_options.get_or("flight_prepare_session_command", "");
+        const auto prepare_command = config.mission_options.prepare_session_command;
         if (run_shell_command(prepare_command, args.verbosity) != 0) {
             throw std::runtime_error("flight prepare session command failed");
         }

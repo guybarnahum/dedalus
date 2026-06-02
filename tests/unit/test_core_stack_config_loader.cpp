@@ -91,14 +91,14 @@ int main() {
         std::cerr << "mission placeholder did not parse flight_command_sink\n";
         return 1;
     }
-    if (mission_config.mission_options.get_or("flight_control_mode", "") != "px4" ||
-        mission_config.mission_options.get_or("flight_safe_height_m", "") != "16" ||
-        mission_config.mission_options.get_or("flight_trajectory_path", "") !=
+    if (mission_config.mission_options.flight_control_mode != "px4" ||
+        mission_config.mission_options.safe_height_m != 16.0 ||
+        mission_config.mission_options.trajectory_path !=
             "config/behaviors/trajectories/circle_figure8.json" ||
-        mission_config.mission_options.get_or("flight_home_policy", "") != "initial_ego_pose" ||
-        mission_config.mission_options.get_or("flight_px4_command_bridge", "").find(
+        mission_config.mission_options.home_policy != "initial_ego_pose" ||
+        mission_config.mission_options.px4_command_bridge.find(
             "tools/px4/px4-command-bridge.py") == std::string::npos ||
-        mission_config.mission_options.get_or("flight_prepare_session_command", "").find(
+        mission_config.mission_options.prepare_session_command.find(
             "simulation/airsim/scripts/airsim-prepare-session.py") == std::string::npos) {
         std::cerr << "mission placeholder did not parse expected mission_options.* values\n";
         return 1;
@@ -119,7 +119,7 @@ int main() {
         std::cerr << "object behavior config should enable ghost target trajectory scenario\n";
         return 1;
     }
-    if (object_behavior_config.mission_options.get_or("behavior_spec_path", "") !=
+    if (object_behavior_config.mission_options.behavior_spec_path !=
         "config/behaviors/follow_specific_track.yaml") {
         std::cerr << "object behavior config did not use canonical config/behaviors spec path\n";
         return 1;

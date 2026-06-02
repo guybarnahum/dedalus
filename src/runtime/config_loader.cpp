@@ -2,8 +2,10 @@
 
 #include <algorithm>
 #include <cctype>
+#include <cstdint>
 #include <fstream>
 #include <iostream>
+#include <limits>
 #include <sstream>
 #include <stdexcept>
 #include <string>
@@ -34,6 +36,104 @@ bool parse_bool(const std::string& value) {
     if (value == "false" || value == "0" || value == "no" || value == "off") return false;
     throw std::invalid_argument("invalid boolean config value: " + value);
 }
+
+std::uint8_t parse_uint8(const std::string& value, const char* context) {
+    const int raw = std::stoi(value);
+    if (raw < 0 || raw > 255)
+        throw std::out_of_range(std::string("value out of uint8 range for ") + context + ": " + value);
+    return static_cast<std::uint8_t>(raw);
+}
+
+std::uint32_t parse_uint32(const std::string& value, const char* context) {
+    const unsigned long raw = std::stoul(value);
+    if (raw > std::numeric_limits<std::uint32_t>::max())
+        throw std::out_of_range(std::string("value out of uint32 range for ") + context + ": " + value);
+    return static_cast<std::uint32_t>(raw);
+}
+
+// clang-format off
+void apply_mission_option(MissionOptions& opts, const std::string& key, const std::string& value) {
+    // behavior spec
+    if (key == "behavior_spec_path")                           { opts.behavior_spec_path = value; return; }
+    // follow behavior
+    if (key == "object_behavior_follow_observation_geometry_enabled") { opts.follow_observation_geometry_enabled = parse_bool(value); return; }
+    if (key == "object_behavior_zero_target_velocity")         { opts.zero_target_velocity = parse_bool(value); return; }
+    if (key == "object_behavior_follow_min_standoff_m")        { opts.follow_min_standoff_m = std::stod(value); return; }
+    if (key == "object_behavior_follow_max_elevation_angle_deg") { opts.follow_max_elevation_angle_deg = std::stod(value); return; }
+    if (key == "object_behavior_follow_arrival_slow_radius_m") { opts.follow_arrival_slow_radius_m = std::stod(value); return; }
+    if (key == "object_behavior_follow_arrival_hold_radius_m") { opts.follow_arrival_hold_radius_m = std::stod(value); return; }
+    if (key == "object_behavior_follow_arrival_kp")            { opts.follow_arrival_kp = std::stod(value); return; }
+    if (key == "object_behavior_completion_after_s")           { opts.completion_after_s = std::stod(value); return; }
+    // object behavior core
+    if (key == "object_behavior_hold_velocity_mps")            { opts.hold_velocity_mps = std::stod(value); return; }
+    if (key == "object_behavior_yaw_mode")                     { opts.yaw_mode = value; return; }
+    if (key == "object_behavior_yaw_min_speed_mps")            { opts.yaw_min_speed_mps = std::stod(value); return; }
+    if (key == "object_behavior_yaw_hold_last_when_unstable")  { opts.yaw_hold_last_when_unstable = parse_bool(value); return; }
+    if (key == "object_behavior_yaw_offset_rad")               { opts.object_behavior_yaw_offset_rad = std::stod(value); return; }
+    if (key == "object_behavior_vertical_stare_mode")          { opts.vertical_stare_mode = value; return; }
+    if (key == "object_behavior_vertical_stare_warn_if_unavailable") { opts.vertical_stare_warn_if_unavailable = parse_bool(value); return; }
+    if (key == "object_behavior_debug_every_n_ticks")          { opts.debug_every_n_ticks = std::stoi(value); return; }
+    if (key == "object_behavior_debug_level")                  { opts.debug_level = std::stoi(value); return; }
+    if (key == "object_behavior_altitude_policy")              { opts.altitude_policy = value; return; }
+    if (key == "object_behavior_min_height_m")                 { opts.behavior_min_height_m = std::stod(value); return; }
+    // camera pointing
+    if (key == "object_behavior_camera_pointing_cameras")      { opts.camera_pointing_cameras = value; return; }
+    if (key == "object_behavior_camera_pitch_min_deg")         { opts.camera_pitch_min_deg = std::stod(value); return; }
+    if (key == "object_behavior_camera_pitch_max_deg")         { opts.camera_pitch_max_deg = std::stod(value); return; }
+    if (key == "object_behavior_camera_pitch_sign")            { opts.camera_pitch_sign = std::stod(value); return; }
+    if (key == "object_behavior_camera_pitch_offset_deg")      { opts.camera_pitch_offset_deg = std::stod(value); return; }
+    if (key == "object_behavior_camera_pointing_prepare_mode") { opts.camera_pointing_prepare_mode = value; return; }
+    if (key == "object_behavior_camera_pointing_takeoff_mode") { opts.camera_pointing_takeoff_mode = value; return; }
+    if (key == "object_behavior_camera_pointing_go_home_mode") { opts.camera_pointing_go_home_mode = value; return; }
+    if (key == "object_behavior_camera_pointing_land_mode")    { opts.camera_pointing_land_mode = value; return; }
+    if (key == "object_behavior_camera_pointing_complete_mode"){ opts.camera_pointing_complete_mode = value; return; }
+    if (key == "object_behavior_camera_pointing_sink")         { opts.camera_pointing_sink = value; return; }
+    if (key == "object_behavior_camera_pointing_mavlink_endpoints") { opts.camera_pointing_mavlink_endpoints = value; return; }
+    if (key == "object_behavior_camera_pointing_mavlink_source_system_id")    { opts.camera_pointing_mavlink_source_system_id    = parse_uint8(value, key.c_str()); return; }
+    if (key == "object_behavior_camera_pointing_mavlink_source_component_id") { opts.camera_pointing_mavlink_source_component_id = parse_uint8(value, key.c_str()); return; }
+    if (key == "object_behavior_camera_pointing_mavlink_target_system_id")    { opts.camera_pointing_mavlink_target_system_id    = parse_uint8(value, key.c_str()); return; }
+    if (key == "object_behavior_camera_pointing_mavlink_target_component_id") { opts.camera_pointing_mavlink_target_component_id = parse_uint8(value, key.c_str()); return; }
+    if (key == "object_behavior_camera_pointing_mavlink_gimbal_device_id")    { opts.camera_pointing_mavlink_gimbal_device_id    = parse_uint8(value, key.c_str()); return; }
+    if (key == "object_behavior_camera_pointing_mavlink_flags")               { opts.camera_pointing_mavlink_flags               = parse_uint32(value, key.c_str()); return; }
+    if (key == "object_behavior_camera_pointing_deadband_rad") { opts.camera_pointing_deadband_rad = std::stod(value); return; }
+    if (key == "object_behavior_camera_pointing_resend_s")     { opts.camera_pointing_resend_s = std::stod(value); return; }
+    // flight lifecycle
+    if (key == "flight_safe_height_m")             { opts.safe_height_m = std::stod(value); return; }
+    if (key == "flight_takeoff_height_m")          { opts.takeoff_height_m = std::stod(value); return; }
+    if (key == "flight_takeoff_velocity_mps")      { opts.takeoff_velocity_mps = std::stod(value); return; }
+    if (key == "flight_go_home_velocity_mps")      { opts.go_home_velocity_mps = std::stod(value); return; }
+    if (key == "flight_land_velocity_mps")         { opts.land_velocity_mps = std::stod(value); return; }
+    if (key == "flight_arm_retry_interval_s")      { opts.arm_retry_interval_s = std::stod(value); return; }
+    if (key == "flight_arm_timeout_s")             { opts.arm_timeout_s = std::stod(value); return; }
+    if (key == "flight_arm_dispatch_fallback_s")   { opts.arm_dispatch_fallback_s = std::stod(value); return; }
+    if (key == "flight_takeoff_retry_interval_s")  { opts.takeoff_retry_interval_s = std::stod(value); return; }
+    if (key == "flight_land_retry_interval_s")     { opts.land_retry_interval_s = std::stod(value); return; }
+    if (key == "flight_land_timeout_s")            { opts.land_timeout_s = std::stod(value); return; }
+    if (key == "flight_disarm_retry_interval_s")   { opts.disarm_retry_interval_s = std::stod(value); return; }
+    if (key == "flight_disarm_timeout_s")          { opts.disarm_timeout_s = std::stod(value); return; }
+    if (key == "flight_home_policy")               { opts.home_policy = value; return; }
+    if (key == "flight_yaw_offset_rad")            { opts.yaw_offset_rad = std::stod(value); return; }
+    if (key == "flight_max_velocity_mps")          { opts.max_velocity_mps = std::stod(value); return; }
+    if (key == "flight_prepare_session_command")   { opts.prepare_session_command = value; return; }
+    if (key == "flight_trajectory_path")           { opts.trajectory_path = value; return; }
+    if (key == "flight_control_mode")              { opts.flight_control_mode = value; return; }
+    // flight sinks
+    if (key == "flight_px4_command_bridge")        { opts.px4_command_bridge = value; return; }
+    if (key == "flight_velocity_command_bridge")   { opts.velocity_command_bridge = value; return; }
+    if (key == "flight_mavlink_command_endpoints") { opts.mavlink_command_endpoints = value; return; }
+    if (key == "flight_px4_tmux_target")           { opts.px4_tmux_target = value; return; }
+    if (key == "flight_use_px4_shell_lifecycle")   { opts.use_px4_shell_lifecycle = parse_bool(value); return; }
+    if (key == "flight_mavlink_target_system_id")    { opts.mavlink_target_system_id    = parse_uint8(value, key.c_str()); return; }
+    if (key == "flight_mavlink_target_component_id") { opts.mavlink_target_component_id = parse_uint8(value, key.c_str()); return; }
+    if (key == "flight_mavlink_source_system_id")    { opts.mavlink_source_system_id    = parse_uint8(value, key.c_str()); return; }
+    if (key == "flight_mavlink_source_component_id") { opts.mavlink_source_component_id = parse_uint8(value, key.c_str()); return; }
+    if (key == "flight_mavlink_set_offboard_on_velocity") { opts.set_offboard_on_velocity = parse_bool(value); return; }
+
+    std::cerr << "WARNING: unrecognized mission_options key: " << key
+              << " (check for typos; value will be ignored)\n";
+}
+// clang-format on
+
 
 Vec3 parse_vec3(const std::string& value) {
     std::string normalized;
@@ -143,10 +243,7 @@ void apply_config_value(CoreStackProviderConfig& config, const std::string& key,
     else if (key.rfind("mission_options.", 0U) == 0U) {
         const auto option_key = mission_option_key_from(key);
         if (option_key.empty()) throw std::invalid_argument("empty mission_options key");
-        config.mission_options.values[option_key] = value;
-        if (MissionOptions::known_keys().find(option_key) == MissionOptions::known_keys().end()) {
-            std::cerr << "WARNING: unrecognized mission_options key: " << option_key << " (check for typos; value will be ignored)\n";
-        }
+        apply_mission_option(config.mission_options, option_key, value);
     } else {
         throw std::invalid_argument("unknown core-stack config key: " + key);
     }
