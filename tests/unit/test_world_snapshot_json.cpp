@@ -49,6 +49,22 @@ int main() {
     occupied_cell.source_object_name = "synthetic_forward_obstacle";
     snapshot.ego_occupancy.debug_cells.push_back(occupied_cell);
 
+    snapshot.has_latest_swept_volume = true;
+    snapshot.latest_swept_volume.timestamp = snapshot.timestamp;
+    snapshot.latest_swept_volume.map_frame_id = snapshot.active_map_frame_id;
+    snapshot.latest_swept_volume.status = dedalus::SweptVolumeStatus::OccupiedBlocked;
+    snapshot.latest_swept_volume.source_provider = "synthetic_track4_swept_volume";
+    snapshot.latest_swept_volume.reason = "synthetic_occupied_cell_intersects_forward_swept_volume";
+    snapshot.latest_swept_volume.start_local = dedalus::Vec3{1.0, 2.0, -8.0};
+    snapshot.latest_swept_volume.end_local = dedalus::Vec3{9.0, 2.0, -8.0};
+    snapshot.latest_swept_volume.radius_m = 1.0F;
+    snapshot.latest_swept_volume.horizon_s = 4.0F;
+    snapshot.latest_swept_volume.nominal_speed_mps = 2.0F;
+    snapshot.latest_swept_volume.min_clearance_m = -1.5F;
+    snapshot.latest_swept_volume.time_to_collision_s = 2.5F;
+    snapshot.latest_swept_volume.has_valid_query = true;
+    snapshot.latest_swept_volume.blocking_cell_centers.push_back(dedalus::Vec3{6.0, 2.0, -8.0});
+
     dedalus::AgentState agent;
     agent.agent_id = dedalus::AgentId{"agent_track_0007"};
     agent.identity_id = dedalus::IdentityId{"identity_track_0007"};
@@ -119,6 +135,29 @@ int main() {
     for (const auto& token : required_occupancy_tokens) {
         if (!contains(json, token)) {
             std::cerr << "missing serialized occupancy token: " << token << "\n";
+            std::cerr << json << "\n";
+            return 1;
+        }
+    }
+
+    const std::string required_swept_tokens[] = {
+        "\"latest_swept_volume\"",
+        "\"status\": \"occupied_blocked\"",
+        "\"source_provider\": \"synthetic_track4_swept_volume\"",
+        "\"reason\": \"synthetic_occupied_cell_intersects_forward_swept_volume\"",
+        "\"start_local\": [1,2,-8]",
+        "\"end_local\": [9,2,-8]",
+        "\"radius_m\": 1",
+        "\"horizon_s\": 4",
+        "\"nominal_speed_mps\": 2",
+        "\"min_clearance_m\": -1.5",
+        "\"time_to_collision_s\": 2.5",
+        "\"has_valid_query\": true",
+        "\"blocking_cell_centers\": [[6,2,-8]]"};
+
+    for (const auto& token : required_swept_tokens) {
+        if (!contains(json, token)) {
+            std::cerr << "missing serialized swept-volume token: " << token << "\n";
             std::cerr << json << "\n";
             return 1;
         }
