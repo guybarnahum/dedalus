@@ -77,8 +77,16 @@ std::string build_object_pose_command(const AirSimGhostObjectSourceConfig& confi
             << " --host " << shell_quote(config.host)
             << " --rpc-port " << config.rpc_port
             << " --timestamp-ns " << timestamp.timestamp_ns;
+    int max_pattern_matches = 0;
     for (const auto& object : config.objects) {
         command << " --object " << shell_quote(object.airsim_object_name);
+    }
+    for (const auto& pattern : config.patterns) {
+        command << " --pattern " << shell_quote(pattern.airsim_object_pattern);
+        max_pattern_matches = std::max(max_pattern_matches, pattern.max_matches);
+    }
+    if (max_pattern_matches > 0) {
+        command << " --max-pattern-matches " << max_pattern_matches;
     }
     return command.str();
 }
@@ -146,6 +154,7 @@ Vec3 vec3_from_json_array(const std::string& json, const std::string& key, std::
 
 struct AirSimObjectPose {
     std::string name;
+    std::string source_pattern;
     Vec3 position_ned_m;
 };
 
@@ -163,6 +172,7 @@ std::vector<AirSimObjectPose> parse_object_pose_json(const std::string& json) {
         }
         AirSimObjectPose pose;
         pose.name = parse_json_string_optional(json, "name", name_marker);
+        pose.source_pattern = parse_json_string_optional(json, "source_pattern", name_marker);
         pose.position_ned_m = vec3_from_json_array(json, "position_ned_m", name_marker);
         poses.push_back(std::move(pose));
         cursor = object_end + 1U;
@@ -183,11 +193,52 @@ const AirSimObjectPose& find_pose_for_object(
     return *it;
 }
 
+const AirSimGhostObjectPatternBinding* find_pattern_for_pose(
+    const std::vector<AirSimGhostObjectPatternBinding>& patterns,
+    const AirSimObjectPose& pose) {
+    const auto it = std::find_if(
+        patterns.begin(),
+        patterns.end(),
+        [&](const AirSimGhostObjectPatternBinding& binding) {
+            return binding.airsim_object_pattern == pose.source_pattern;
+        });
+    return it == patterns.end() ? nullptr : &*it;
+}
+
+std::string sanitized_id_suffix(const std::string& value) {
+    std::string out;
+    out.reserve(value.size());
+    for (const char ch : value) {
+        const auto uch = static_cast<unsigned char>(ch);
+        if (std::isalnum(uch) || ch == '_' || ch == '-') {
+            out.push_back(ch);
+        } else {
+            out.push_back('_');
+        }
+    }
+    return out;
+}
+
 GhostDetectionState state_from_binding_and_pose(
     const AirSimGhostObjectBinding& binding,
     const AirSimObjectPose& pose) {
     GhostDetectionState state;
     state.source_track_id = binding.source_track_id;
+    state.class_label = class_label_from_string(binding.class_label);
+    state.confidence = binding.confidence;
+    state.position_local_m = pose.position_ned_m;
+    state.velocity_local_mps = Vec3{0.0, 0.0, 0.0};
+    state.size_m = binding.size_m;
+    return state;
+}
+
+GhostDetectionState state_from_pattern_and_pose(
+    const AirSimGhostObjectPatternBinding& binding,
+    const AirSimObjectPose& pose,
+    std::size_t pattern_index) {
+    GhostDetectionState state;
+    const auto suffix = sanitized_id_suffix(pose.name.empty() ? ("match_" + std::to_string(pattern_index)) : pose.name);
+    state.source_track_id = TrackId{binding.source_track_prefix + "_" + suffix};
     state.class_label = class_label_from_string(binding.class_label);
     state.confidence = binding.confidence;
     state.position_local_m = pose.position_ned_m;
@@ -209,8 +260,8 @@ struct GhostTargetProvider::Impl {
 
     explicit Impl(AirSimGhostObjectSourceConfig source_config)
         : source_type(SourceType::AirSimObjects), airsim_config(std::move(source_config)) {
-        if (airsim_config.objects.empty()) {
-            throw std::invalid_argument("AirSim ghost object source requires at least one object binding");
+        if (airsim_config.objects.empty() && airsim_config.patterns.empty()) {
+            throw std::invalid_argument("AirSim ghost object source requires exact object or pattern bindings");
         }
         transport = make_transport(airsim_config.bridge_transport);
     }
@@ -245,11 +296,23 @@ GhostDetectionsFrame GhostTargetProvider::frame_at(
     } else {
         const auto command = build_object_pose_command(impl_->airsim_config, timestamp);
         const auto poses = parse_object_pose_json(impl_->transport->request_once(command));
-        frame.detections.reserve(impl_->airsim_config.objects.size());
+        frame.detections.reserve(impl_->airsim_config.objects.size() + poses.size());
         for (const auto& binding : impl_->airsim_config.objects) {
             frame.detections.push_back(state_from_binding_and_pose(
                 binding,
                 find_pose_for_object(poses, binding.airsim_object_name)));
+        }
+        std::size_t pattern_index = 0U;
+        for (const auto& pose : poses) {
+            if (pose.source_pattern.empty()) {
+                continue;
+            }
+            const auto* binding = find_pattern_for_pose(impl_->airsim_config.patterns, pose);
+            if (binding == nullptr) {
+                continue;
+            }
+            frame.detections.push_back(state_from_pattern_and_pose(*binding, pose, pattern_index));
+            ++pattern_index;
         }
     }
 
