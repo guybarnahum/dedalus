@@ -415,15 +415,17 @@ MissionLifecycleState MissionRuntime::last_state() const {
 }
 
 void MissionRuntime::loop() {
-    const auto period = std::chrono::duration<double>(1.0 / config_.tick_hz);
+    const auto period = std::chrono::duration_cast<std::chrono::steady_clock::duration>(
+        std::chrono::duration<double>(1.0 / config_.tick_hz));
+    // Track a fixed deadline that advances by exactly one period per tick.
+    // Using sleep_until instead of sleep_for(period - elapsed) prevents
+    // accumulated drift: any OS wakeup overrun from the previous sleep is
+    // automatically absorbed into the next sleep rather than being lost.
+    auto deadline = std::chrono::steady_clock::now();
     while (running_.load()) {
-        const auto tick_start = std::chrono::steady_clock::now();
+        deadline += period;
         (void)tick_once();
-        const auto elapsed = std::chrono::steady_clock::now() - tick_start;
-        const auto sleep_for = period - elapsed;
-        if (sleep_for.count() > 0.0) {
-            std::this_thread::sleep_for(sleep_for);
-        }
+        std::this_thread::sleep_until(deadline);
     }
 }
 
