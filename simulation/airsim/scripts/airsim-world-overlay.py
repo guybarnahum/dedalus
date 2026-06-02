@@ -2,13 +2,13 @@
 """Render live Dedalus runtime events into the AirSim/Unreal viewport.
 
 The overlay is a subscriber/renderer only. It does not evaluate ghost scenarios,
-read snapshot manifests, decide between source modes, or compute occupancy.
-Producers publish typed JSONL events on the runtime event stream; this script
-renders whatever arrives.
+read snapshot manifests, decide between source modes, or compute occupancy or
+swept-volume results. Producers publish typed JSONL events on the runtime event
+stream; this script renders whatever arrives.
 
 Consumed event types today:
   ghost_detections -> PLAN / PLAN* markers
-  world_snapshot   -> AG, EGO, and optional OCC markers
+  world_snapshot   -> AG, EGO, optional OCC, and optional SWEEP markers
   mission_event    -> SEL marker state from target_selected events
 """
 
@@ -40,6 +40,10 @@ OCCUPIED_CELL_COLOR = [1.0, 0.25, 0.05, 0.85]
 FREE_CELL_COLOR = [0.1, 0.8, 1.0, 0.45]
 UNKNOWN_CELL_COLOR = [1.0, 0.8, 0.1, 0.45]
 OCCUPANCY_TEXT_COLOR = [1.0, 0.8, 0.1, 1.0]
+SWEEP_CLEAR_COLOR = [0.2, 1.0, 0.35, 0.85]
+SWEEP_BLOCKED_COLOR = [1.0, 0.05, 0.05, 0.95]
+SWEEP_UNKNOWN_COLOR = [1.0, 0.8, 0.1, 0.85]
+SWEEP_STALE_COLOR = [0.55, 0.55, 0.55, 0.8]
 
 
 class RuntimeEventStreamClient:
@@ -173,6 +177,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--osd-name", default="DEDALUS")
     parser.add_argument("--osd-state-name", default="DEDALUS-STATE")
     parser.add_argument("--osd-occupancy-name", default="DEDALUS-OCC")
+    parser.add_argument("--osd-swept-volume-name", default="DEDALUS-SWEEP")
     parser.add_argument("--osd-severity", type=int, default=0)
     parser.add_argument("--osd-arrow", action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument("--osd-arrow-scale", type=float, default=1.5, help="XY velocity arrow length in meters at 1 m/s.")
@@ -192,6 +197,10 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--show-occupancy-cells", action="store_true")
     parser.add_argument("--max-occupancy-cells", type=int, default=64)
     parser.add_argument("--occupancy-z-lift-m", type=float, default=0.15)
+    parser.add_argument("--show-swept-volume", action="store_true")
+    parser.add_argument("--swept-volume-z-lift-m", type=float, default=0.25)
+    parser.add_argument("--swept-volume-line-thickness", type=float, default=5.0)
+    parser.add_argument("--swept-volume-blocking-size", type=float, default=24.0)
     return parser.parse_args()
 
 
@@ -276,6 +285,13 @@ def occupancy_from_snapshot(snapshot: dict[str, Any] | None) -> dict[str, Any] |
     return occupancy if isinstance(occupancy, dict) and occupancy.get("has_valid_occupancy") else None
 
 
+def swept_volume_from_snapshot(snapshot: dict[str, Any] | None) -> dict[str, Any] | None:
+    if snapshot is None:
+        return None
+    swept = snapshot.get("latest_swept_volume")
+    return swept if isinstance(swept, dict) and swept.get("has_valid_query") else None
+
+
 def occupancy_cells_from_snapshot(snapshot: dict[str, Any] | None, max_cells: int) -> list[dict[str, Any]]:
     occupancy = occupancy_from_snapshot(snapshot)
     if occupancy is None:
@@ -320,6 +336,17 @@ def occupancy_cell_color(cell: dict[str, Any]) -> list[float]:
     if state == "free":
         return FREE_CELL_COLOR
     return UNKNOWN_CELL_COLOR
+
+
+def swept_volume_color(swept: dict[str, Any]) -> list[float]:
+    status = str(swept.get("status", "unknown"))
+    if status == "clear":
+        return SWEEP_CLEAR_COLOR
+    if status == "occupied_blocked":
+        return SWEEP_BLOCKED_COLOR
+    if status == "stale_map":
+        return SWEEP_STALE_COLOR
+    return SWEEP_UNKNOWN_COLOR
 
 
 def label_for(agent: dict[str, Any]) -> str:
@@ -404,6 +431,58 @@ def draw_occupancy(client: Any, snapshot: dict[str, Any] | None, args: argparse.
         if args.label and state == "occupied":
             label = f"OCC {cell.get('source_object_name') or cell.get('source_provider') or state}"
             client.simPlotStrings([label], [airsim.Vector3r(point.x_val, point.y_val, point.z_val - 0.4)], scale=0.85, color_rgba=occupancy_cell_color(cell), duration=duration)
+
+
+def lifted_vector(position: Any, z_lift_m: float) -> airsim.Vector3r | None:
+    pos = vec3(position)
+    if pos is None:
+        return None
+    return airsim.Vector3r(pos[0], pos[1], pos[2] - z_lift_m)
+
+
+def plot_line_segments(client: Any, points: list[Any], color: list[float], thickness: float, duration: float, persistent: bool = False) -> None:
+    try:
+        client.simPlotLineList(points, color_rgba=color, thickness=thickness, duration=duration, is_persistent=persistent)
+    except AttributeError:
+        for index in range(0, len(points), 2):
+            client.simPlotLineStrip(points[index : index + 2], color_rgba=color, thickness=thickness, duration=duration, is_persistent=persistent)
+
+
+def draw_swept_volume(client: Any, snapshot: dict[str, Any] | None, args: argparse.Namespace) -> None:
+    if not args.show_swept_volume:
+        return
+    swept = swept_volume_from_snapshot(snapshot)
+    if swept is None:
+        return
+    if args.dry_run:
+        print("  SWEEP status={status} ttc={ttc} clear={clear} start={start} end={end} blockers={blockers}".format(
+            status=swept.get("status", "unknown"),
+            ttc=swept.get("time_to_collision_s", "n/a"),
+            clear=swept.get("min_clearance_m", "n/a"),
+            start=swept.get("start_local"),
+            end=swept.get("end_local"),
+            blockers=len(swept.get("blocking_cell_centers", []) or []),
+        ))
+        return
+    if client is None:
+        return
+    start = lifted_vector(swept.get("start_local"), args.swept_volume_z_lift_m)
+    end = lifted_vector(swept.get("end_local"), args.swept_volume_z_lift_m)
+    if start is None or end is None:
+        return
+    duration = marker_duration(args)
+    color = swept_volume_color(swept)
+    plot_line_segments(client, [start, end], color, args.swept_volume_line_thickness, duration, args.persistent)
+    blockers = []
+    for center in swept.get("blocking_cell_centers", []) or []:
+        point = lifted_vector(center, args.swept_volume_z_lift_m + 0.15)
+        if point is not None:
+            blockers.append(point)
+    if blockers:
+        client.simPlotPoints(blockers, color_rgba=SWEEP_BLOCKED_COLOR, size=args.swept_volume_blocking_size, duration=duration, is_persistent=args.persistent)
+    if args.label:
+        label = f"SWEEP {swept.get('status', 'unknown')} ttc={fixed_osd_value(swept.get('time_to_collision_s'), '.1f', 'n/a')}s"
+        client.simPlotStrings([label], [airsim.Vector3r(end.x_val, end.y_val, end.z_val - 0.55)], scale=0.95, color_rgba=color, duration=duration)
 
 
 def draw_reference_markers(client: Any, snapshot: dict[str, Any] | None, args: argparse.Namespace) -> None:
@@ -571,12 +650,16 @@ def format_osd_occupancy_line(snapshot: dict[str, Any] | None) -> str | None:
     return f"src={short_text(src, 18)} occ={occupancy.get('occupied_count', 0)} free={occupancy.get('free_count', 0)} unk={occupancy.get('unknown_count', 0)} near={nearest} clear={clear}"
 
 
-def plot_line_segments(client: Any, points: list[Any], args: argparse.Namespace, duration: float) -> None:
-    try:
-        client.simPlotLineList(points, color_rgba=EGO_VELOCITY_COLOR, thickness=args.osd_arrow_thickness, duration=duration, is_persistent=False)
-    except AttributeError:
-        for index in range(0, len(points), 2):
-            client.simPlotLineStrip(points[index : index + 2], color_rgba=EGO_VELOCITY_COLOR, thickness=args.osd_arrow_thickness, duration=duration, is_persistent=False)
+def format_osd_swept_volume_line(snapshot: dict[str, Any] | None) -> str | None:
+    swept = swept_volume_from_snapshot(snapshot)
+    if swept is None:
+        return None
+    status = str(swept.get("status", "unknown")).replace("_", "-")
+    ttc = fixed_osd_value(swept.get("time_to_collision_s"), ".1f", "n/a")
+    clear = fixed_osd_value(swept.get("min_clearance_m"), ".1f", "n/a")
+    radius = fixed_osd_value(swept.get("radius_m"), ".1f", "n/a")
+    blockers = len(swept.get("blocking_cell_centers", []) or [])
+    return f"status={short_text(status, 16)} ttc={ttc}s clear={clear}m r={radius} blockers={blockers}"
 
 
 def draw_ego_velocity_arrow(client: Any, stats: dict[str, Any], args: argparse.Namespace) -> None:
@@ -602,7 +685,7 @@ def draw_ego_velocity_arrow(client: Any, stats: dict[str, Any], args: argparse.N
             end,
             airsim.Vector3r(end.x_val - head_len * math.cos(heading + head_angle), end.y_val - head_len * math.sin(heading + head_angle), z),
         ])
-    plot_line_segments(client, points, args, duration)
+    plot_line_segments(client, points, EGO_VELOCITY_COLOR, args.osd_arrow_thickness, duration)
 
 
 def maybe_draw_osd(client: Any, snapshot: dict[str, Any] | None, mission_event: dict[str, Any] | None, args: argparse.Namespace, state: dict[str, Any]) -> None:
@@ -612,11 +695,14 @@ def maybe_draw_osd(client: Any, snapshot: dict[str, Any] | None, mission_event: 
     if stats is None:
         return
     occupancy_line = format_osd_occupancy_line(snapshot) if args.show_occupancy_summary else None
+    swept_volume_line = format_osd_swept_volume_line(snapshot) if args.show_swept_volume else None
     if args.dry_run:
         print(f"OSD {args.osd_name}: {format_osd_line(stats)}")
         print(f"OSD {args.osd_state_name}: {format_osd_state_line(stats, mission_event)}")
         if occupancy_line is not None:
             print(f"OSD {args.osd_occupancy_name}: {occupancy_line}")
+        if swept_volume_line is not None:
+            print(f"OSD {args.osd_swept_volume_name}: {swept_volume_line}")
         return
     if client is None:
         return
@@ -629,6 +715,8 @@ def maybe_draw_osd(client: Any, snapshot: dict[str, Any] | None, mission_event: 
         client.simPrintLogMessage(args.osd_state_name, format_osd_state_line(stats, mission_event), severity=args.osd_severity)
         if occupancy_line is not None:
             client.simPrintLogMessage(args.osd_occupancy_name, occupancy_line, severity=args.osd_severity)
+        if swept_volume_line is not None:
+            client.simPrintLogMessage(args.osd_swept_volume_name, swept_volume_line, severity=args.osd_severity)
     draw_ego_velocity_arrow(client, stats, args)
 
 
@@ -645,7 +733,7 @@ def build_debug_report(ghost_event: dict[str, Any] | None, ghost_seq: int | None
         world_position = vec3(world.get("position_local")) if world else None
         delta_plan_minus_world = vec_delta(planned_position, world_position)
         tracks.append({"source_track_id": track, "selected": bool(world.get("selected")) if world else False, "planned_position_local": planned_position, "world_position_local": world_position, "delta_plan_minus_world": delta_plan_minus_world, "delta_plan_minus_world_norm_m": vec_norm(delta_plan_minus_world), "world_minus_ego": vec_delta(world_position, ego_position)})
-    return {"ghost_seq": ghost_seq, "world_seq": snapshot_seq, "mission_seq": mission_seq, "selected_target": selected_target, "ghost_timestamp_ns": ghost_event.get("timestamp_ns") if ghost_event else None, "world_timestamp_ns": snapshot.get("timestamp_ns") if snapshot else None, "ghost_elapsed_s": ghost_event.get("scenario_elapsed_s") if ghost_event else None, "ego": {"position_local": ego_position, "height_m": ego.get("height_m"), "map_frame_id": ego.get("map_frame_id")}, "occupancy": occupancy_from_snapshot(snapshot), "tracks": tracks}
+    return {"ghost_seq": ghost_seq, "world_seq": snapshot_seq, "mission_seq": mission_seq, "selected_target": selected_target, "ghost_timestamp_ns": ghost_event.get("timestamp_ns") if ghost_event else None, "world_timestamp_ns": snapshot.get("timestamp_ns") if snapshot else None, "ghost_elapsed_s": ghost_event.get("scenario_elapsed_s") if ghost_event else None, "ego": {"position_local": ego_position, "height_m": ego.get("height_m"), "map_frame_id": ego.get("map_frame_id")}, "occupancy": occupancy_from_snapshot(snapshot), "swept_volume": swept_volume_from_snapshot(snapshot), "tracks": tracks}
 
 
 def maybe_print_debug_report(report: dict[str, Any], args: argparse.Namespace, state: dict[str, float]) -> None:
@@ -663,6 +751,9 @@ def maybe_print_debug_report(report: dict[str, Any], args: argparse.Namespace, s
     occupancy = report.get("occupancy")
     if isinstance(occupancy, dict):
         print(f"  occupancy src={occupancy.get('source_kind')} occ={occupancy.get('occupied_count')} free={occupancy.get('free_count')} unk={occupancy.get('unknown_count')} clear={occupancy.get('forward_corridor_clearance_m')}", file=sys.stderr)
+    swept = report.get("swept_volume")
+    if isinstance(swept, dict):
+        print(f"  swept_volume status={swept.get('status')} ttc={swept.get('time_to_collision_s')} clear={swept.get('min_clearance_m')} blockers={len(swept.get('blocking_cell_centers', []) or [])}", file=sys.stderr)
     for track in report.get("tracks", []):
         print("  track={track} selected={selected} plan={plan} ag={ag} delta={delta} norm={norm} ag_minus_ego={rel}".format(track=track.get("source_track_id"), selected=track.get("selected"), plan=rounded(track.get("planned_position_local")), ag=rounded(track.get("world_position_local")), delta=rounded(track.get("delta_plan_minus_world")), norm=rounded(track.get("delta_plan_minus_world_norm_m")), rel=rounded(track.get("world_minus_ego"))), file=sys.stderr)
 
@@ -715,6 +806,7 @@ def main() -> int:
         draw_agents(client, dynamic_planned, args)
         draw_agents(client, world_agents, args)
         draw_occupancy(client, stream.latest_world_snapshot, args)
+        draw_swept_volume(client, stream.latest_world_snapshot, args)
         draw_reference_markers(client, stream.latest_world_snapshot, args)
         maybe_draw_osd(client, stream.latest_world_snapshot, stream.latest_mission_event, args, osd_state)
         report = build_debug_report(stream.latest_ghost_detections, stream.latest_ghost_seq, stream.latest_world_snapshot, stream.latest_world_seq, stream.latest_mission_seq, selected_target, planned_agents, world_agents)
