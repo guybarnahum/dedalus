@@ -32,13 +32,13 @@ AirSimProviderConfig airsim_config_from(const CoreStackProviderConfig& config) {
 }
 
 OccupancySourceKind occupancy_source_from(const CoreStackProviderConfig& config) {
-    if (config.track4_occupancy_source == "synthetic_fixture") {
+    if (config.occupancy_source == "synthetic_fixture") {
         return OccupancySourceKind::SyntheticFixture;
     }
-    if (config.track4_occupancy_source == "airsim_ground_truth") {
+    if (config.occupancy_source == "airsim_ground_truth") {
         return OccupancySourceKind::AirSimGroundTruth;
     }
-    throw std::invalid_argument("unknown track4_occupancy_source: " + config.track4_occupancy_source);
+    throw std::invalid_argument("unknown occupancy_source: " + config.occupancy_source);
 }
 
 std::string ghost_scenario_path_from(const CoreStackProviderConfig& config) {
@@ -57,9 +57,9 @@ std::unique_ptr<GhostTargetProvider> make_ghost_target_provider(const CoreStackP
             GhostScenario::load_from_file(ghost_scenario_path_from(config)));
     }
     if (config.ghost_targets_source == "airsim_objects") {
-        if (config.ghost_targets_airsim_objects.empty()) {
+        if (config.ghost_targets_airsim_objects.empty() && config.ghost_targets_airsim_patterns.empty()) {
             throw std::invalid_argument(
-                "ghost_targets_source: airsim_objects requires a non-empty ghost_targets_airsim_objects list");
+                "ghost_targets_source: airsim_objects requires exact object or pattern bindings");
         }
         return std::make_unique<GhostTargetProvider>(
             AirSimGhostObjectSourceConfig{
@@ -67,7 +67,8 @@ std::unique_ptr<GhostTargetProvider> make_ghost_target_provider(const CoreStackP
                 .rpc_port = config.source_rpc_port,
                 .bridge_command = "python3 simulation/airsim/scripts/airsim-object-poses.py",
                 .bridge_transport = config.bridge_transport,
-                .objects = config.ghost_targets_airsim_objects});
+                .objects = config.ghost_targets_airsim_objects,
+                .patterns = config.ghost_targets_airsim_patterns});
     }
     throw std::invalid_argument("unknown ghost_targets_source: " + config.ghost_targets_source);
 }
