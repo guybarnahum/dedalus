@@ -16,6 +16,7 @@ tracker: simple_centroid
 identity_resolver: appearance_only
 projector: flat_ground
 world_model: in_memory
+track4_occupancy_source: airsim_ground_truth
 frame_annotator: ppm_sequence
 annotation_output_path: out/object_behavior_airsim_existing_object_circle_annotation
 annotation_output_fps: 5
