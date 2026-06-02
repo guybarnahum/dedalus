@@ -93,7 +93,9 @@ int main() {
     config.world_model = "in_memory";
     config.frame_annotator = "null";
 
-    dedalus::CoreStackRunner runner{registry.create(config), nullptr, snapshot_publisher};
+    dedalus::CoreStackRunner runner{
+        registry.create(config),
+        dedalus::CoreStackRunnerConfig{.snapshot_publisher = snapshot_publisher}};
     if (!runner.run_once()) {
         std::cerr << "CoreStackRunner failed to publish a snapshot\n";
         return 1;

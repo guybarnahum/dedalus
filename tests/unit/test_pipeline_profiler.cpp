@@ -40,7 +40,9 @@ int main() {
     config.fallback_map_frame_id = dedalus::MapFrameId{"map_local_0001"};
 
     auto timing_writer = std::make_unique<dedalus::PipelineProfiler>(profile_path);
-    dedalus::CoreStackRunner runner{registry.create(config), std::move(timing_writer)};
+    dedalus::CoreStackRunner runner{
+        registry.create(config),
+        dedalus::CoreStackRunnerConfig{.timing_writer = std::move(timing_writer)}};
 
     if (!runner.run_once()) {
         std::cerr << "pipeline profiler runner failed to process synthetic frame\n";
