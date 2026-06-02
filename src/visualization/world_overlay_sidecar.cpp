@@ -51,6 +51,17 @@ std::string occupancy_source_to_string(const OccupancySourceKind source) {
     }
 }
 
+std::string swept_volume_status_to_string(const SweptVolumeStatus status) {
+    switch (status) {
+        case SweptVolumeStatus::Clear: return "clear";
+        case SweptVolumeStatus::OccupiedBlocked: return "occupied_blocked";
+        case SweptVolumeStatus::UnknownRisk: return "unknown_risk";
+        case SweptVolumeStatus::StaleMap: return "stale_map";
+        case SweptVolumeStatus::Unknown:
+        default: return "unknown";
+    }
+}
+
 std::string sidecar_file_name(const std::size_t frame_index) {
     std::ostringstream stream;
     stream << "frame_" << std::setw(6) << std::setfill('0') << frame_index << ".world_overlay.json";
@@ -106,6 +117,18 @@ WorldToImageProjectionConfig projection_config_for(const ImageView& image, const
     config.extrinsics.body_T_camera.position = Vec3{0.0, 0.0, 0.0};
     config.extrinsics.body_T_camera.rotation_rpy = Vec3{0.0, 0.0, 0.0};
     return config;
+}
+
+void write_projected_point_json(std::ostream& output, const ProjectedWorldPoint& projected) {
+    output << "{\n";
+    output << "        \"visible\": " << (projected.visible ? "true" : "false") << ",\n";
+    output << "        \"u_px\": " << projected.u_px << ",\n";
+    output << "        \"v_px\": " << projected.v_px << ",\n";
+    output << "        \"depth_m\": " << projected.depth_m << ",\n";
+    output << "        \"range_m\": " << projected.range_m << ",\n";
+    output << "        \"reason\": ";
+    write_json_string(output, projected.reason);
+    output << "\n      }";
 }
 
 void write_projected_occupancy(
@@ -182,6 +205,72 @@ void write_projected_occupancy(
         output << "      }";
     }
     if (!occupancy.debug_cells.empty()) {
+        output << "\n    ";
+    }
+    output << "]\n";
+    output << "  }";
+}
+
+void write_projected_swept_volume(
+    std::ostream& output,
+    const WorldSnapshot& snapshot,
+    const WorldToImageProjectionConfig& config) {
+    output << "  \"swept_volume\": {\n";
+    output << "    \"present\": " << (snapshot.has_latest_swept_volume ? "true" : "false");
+    if (!snapshot.has_latest_swept_volume) {
+        output << "\n  }";
+        return;
+    }
+
+    const auto& swept = snapshot.latest_swept_volume;
+    const auto projected_start = project_local_point_to_image(swept.start_local, snapshot.ego, config);
+    const auto projected_end = project_local_point_to_image(swept.end_local, snapshot.ego, config);
+    output << ",\n";
+    output << "    \"timestamp_ns\": " << swept.timestamp.timestamp_ns << ",\n";
+    output << "    \"map_frame_id\": ";
+    write_json_string(output, swept.map_frame_id.value);
+    output << ",\n";
+    output << "    \"status\": ";
+    write_json_string(output, swept_volume_status_to_string(swept.status));
+    output << ",\n";
+    output << "    \"source_provider\": ";
+    write_json_string(output, swept.source_provider);
+    output << ",\n";
+    output << "    \"reason\": ";
+    write_json_string(output, swept.reason);
+    output << ",\n";
+    output << "    \"start_local\": ";
+    write_vec3_json(output, swept.start_local);
+    output << ",\n";
+    output << "    \"end_local\": ";
+    write_vec3_json(output, swept.end_local);
+    output << ",\n";
+    output << "    \"radius_m\": " << swept.radius_m << ",\n";
+    output << "    \"horizon_s\": " << swept.horizon_s << ",\n";
+    output << "    \"nominal_speed_mps\": " << swept.nominal_speed_mps << ",\n";
+    output << "    \"min_clearance_m\": " << swept.min_clearance_m << ",\n";
+    output << "    \"time_to_collision_s\": " << swept.time_to_collision_s << ",\n";
+    output << "    \"has_valid_query\": " << (swept.has_valid_query ? "true" : "false") << ",\n";
+    output << "    \"projected_start\": ";
+    write_projected_point_json(output, projected_start);
+    output << ",\n";
+    output << "    \"projected_end\": ";
+    write_projected_point_json(output, projected_end);
+    output << ",\n";
+    output << "    \"projected_blocking_cells\": [";
+    for (std::size_t i = 0; i < swept.blocking_cell_centers.size(); ++i) {
+        if (i != 0) {
+            output << ",";
+        }
+        const auto projected = project_local_point_to_image(swept.blocking_cell_centers[i], snapshot.ego, config);
+        output << "\n      {\n";
+        output << "        \"center_local\": ";
+        write_vec3_json(output, swept.blocking_cell_centers[i]);
+        output << ",\n        \"projection\": ";
+        write_projected_point_json(output, projected);
+        output << "\n      }";
+    }
+    if (!swept.blocking_cell_centers.empty()) {
         output << "\n    ";
     }
     output << "]\n";
@@ -309,6 +398,8 @@ void write_world_overlay_sidecar(
 
     output << "  ],\n";
     write_projected_occupancy(output, context.world_snapshot, config);
+    output << ",\n";
+    write_projected_swept_volume(output, context.world_snapshot, config);
     output << "\n";
     output << "}\n";
 }
