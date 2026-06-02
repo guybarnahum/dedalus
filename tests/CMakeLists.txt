@@ -1,6 +1,6 @@
 function(dedalus_add_native_test)
     set(options)
-    set(one_value_args NAME LAYER)
+    set(one_value_args NAME LAYER TIMEOUT)
     set(multi_value_args SOURCES TAGS)
     cmake_parse_arguments(DEDALUS_TEST "${options}" "${one_value_args}" "${multi_value_args}" ${ARGN})
 
@@ -12,6 +12,14 @@ function(dedalus_add_native_test)
     endif()
     if(NOT DEDALUS_TEST_SOURCES)
         message(FATAL_ERROR "dedalus_add_native_test(${DEDALUS_TEST_NAME}) requires SOURCES")
+    endif()
+
+    if(NOT DEDALUS_TEST_TIMEOUT)
+        if(DEDALUS_TEST_LAYER STREQUAL "contracts")
+            set(DEDALUS_TEST_TIMEOUT 30)
+        else()
+            set(DEDALUS_TEST_TIMEOUT 60)
+        endif()
     endif()
 
     set(target_name "test_${DEDALUS_TEST_NAME}")
@@ -35,12 +43,13 @@ function(dedalus_add_native_test)
             LABELS "${DEDALUS_TEST_LAYER}"
             DEDALUS_LAYER "${DEDALUS_TEST_LAYER}"
             DEDALUS_TAGS "${DEDALUS_TEST_TAGS}"
+            TIMEOUT "${DEDALUS_TEST_TIMEOUT}"
     )
 endfunction()
 
 function(dedalus_add_python_test)
     set(options)
-    set(one_value_args NAME LAYER)
+    set(one_value_args NAME LAYER TIMEOUT)
     set(multi_value_args COMMAND_ARGS TAGS)
     cmake_parse_arguments(DEDALUS_TEST "${options}" "${one_value_args}" "${multi_value_args}" ${ARGN})
 
@@ -54,6 +63,10 @@ function(dedalus_add_python_test)
         message(FATAL_ERROR "dedalus_add_python_test requires COMMAND_ARGS")
     endif()
 
+    if(NOT DEDALUS_TEST_TIMEOUT)
+        set(DEDALUS_TEST_TIMEOUT 120)
+    endif()
+
     set(display_name "${DEDALUS_TEST_NAME} (${DEDALUS_TEST_LAYER})")
     add_test(
         NAME "${display_name}"
@@ -65,6 +78,7 @@ function(dedalus_add_python_test)
             LABELS "${DEDALUS_TEST_LAYER}"
             DEDALUS_LAYER "${DEDALUS_TEST_LAYER}"
             DEDALUS_TAGS "${DEDALUS_TEST_TAGS}"
+            TIMEOUT "${DEDALUS_TEST_TIMEOUT}"
     )
 endfunction()
 
