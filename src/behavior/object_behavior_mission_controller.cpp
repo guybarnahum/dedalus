@@ -891,8 +891,7 @@ ObjectBehaviorMissionConfig load_object_behavior_mission_config(const MissionOpt
         "object_behavior_camera_pointing_complete_mode",
         "neutral");
     if (config.camera_pitch_min_rad > config.camera_pitch_max_rad) {
-        throw std::invalid_argument(
-            "object_behavior_camera_pitch_min_deg must be <= object_behavior_camera_pitch_max_deg");
+        std::swap(config.camera_pitch_min_rad, config.camera_pitch_max_rad);
     }
 
     config.debug_every_n_ticks = parse_int(options.get_or("object_behavior_debug_every_n_ticks", "0"), "object_behavior_debug_every_n_ticks");
