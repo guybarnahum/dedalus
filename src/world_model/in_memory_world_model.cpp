@@ -57,6 +57,19 @@ Vec2 bbox_center(const Rect2& bbox) {
     return Vec2{bbox.x + bbox.width * 0.5, bbox.y + bbox.height * 0.5};
 }
 
+float distance_xy(const Vec3& a, const Vec3& b) {
+    const auto dx = static_cast<float>(a.x - b.x);
+    const auto dy = static_cast<float>(a.y - b.y);
+    return std::sqrt(dx * dx + dy * dy);
+}
+
+float distance_3d(const Vec3& a, const Vec3& b) {
+    const auto dx = static_cast<float>(a.x - b.x);
+    const auto dy = static_cast<float>(a.y - b.y);
+    const auto dz = static_cast<float>(a.z - b.z);
+    return std::sqrt(dx * dx + dy * dy + dz * dz);
+}
+
 float swept_path_lateral_distance_m(const Vec3& point, const Vec3& path_start, const Vec3& path_end) {
     const auto ax = static_cast<float>(path_start.x);
     const auto ay = static_cast<float>(path_start.y);
@@ -80,12 +93,14 @@ float swept_path_lateral_distance_m(const Vec3& point, const Vec3& path_start, c
     return std::sqrt(dx * dx + dy * dy);
 }
 
-OccupancyCellSummary synthetic_cell(
+OccupancyCellSummary occupancy_cell(
     Vec3 center,
     Vec3 size,
     OccupancyCellState state,
     float confidence,
-    float distance_to_nearest_occupied_m) {
+    float distance_to_nearest_occupied_m,
+    std::string source_provider,
+    std::string source_object_name = {}) {
     OccupancyCellSummary cell;
     cell.center_local = center;
     cell.size_m = size;
@@ -93,8 +108,22 @@ OccupancyCellSummary synthetic_cell(
     cell.confidence = confidence;
     cell.age_s = 0.0F;
     cell.distance_to_nearest_occupied_m = distance_to_nearest_occupied_m;
-    cell.source_provider = "synthetic_track4_fixture";
+    cell.source_provider = std::move(source_provider);
+    cell.source_object_name = std::move(source_object_name);
     return cell;
+}
+
+Vec3 class_default_size(ClassLabel label) {
+    switch (label) {
+        case ClassLabel::Person: return Vec3{0.8, 0.8, 1.8};
+        case ClassLabel::Car: return Vec3{4.5, 2.0, 1.7};
+        case ClassLabel::Boat: return Vec3{5.0, 2.2, 2.0};
+        case ClassLabel::Animal: return Vec3{1.2, 0.8, 1.0};
+        case ClassLabel::Tree: return Vec3{1.5, 1.5, 6.0};
+        case ClassLabel::Building:
+        case ClassLabel::House: return Vec3{8.0, 8.0, 6.0};
+        default: return Vec3{1.0, 1.0, 1.0};
+    }
 }
 
 EgoOccupancyMapSnapshot build_synthetic_ego_occupancy(
@@ -112,30 +141,15 @@ EgoOccupancyMapSnapshot build_synthetic_ego_occupancy(
 
     const auto& p = ego.local_T_body.position;
     const Vec3 cell_size{1.0, 1.0, 1.0};
-
-    occupancy.debug_cells.push_back(synthetic_cell(
-        Vec3{p.x + 5.0, p.y, p.z},
-        cell_size,
-        OccupancyCellState::Occupied,
-        0.85F,
-        0.0F));
-    occupancy.debug_cells.back().source_object_name = "synthetic_forward_obstacle";
-
-    occupancy.debug_cells.push_back(synthetic_cell(
-        Vec3{p.x + 3.0, p.y + 2.0, p.z},
-        cell_size,
-        OccupancyCellState::Free,
-        0.70F,
-        2.8F));
-
-    occupancy.debug_cells.push_back(synthetic_cell(
-        Vec3{p.x + 7.0, p.y - 2.5, p.z},
-        Vec3{2.0, 2.0, 1.5},
-        OccupancyCellState::Unknown,
-        0.55F,
-        2.5F));
-    occupancy.debug_cells.back().source_object_name = "synthetic_unknown_sector";
-
+    occupancy.debug_cells.push_back(occupancy_cell(
+        Vec3{p.x + 5.0, p.y, p.z}, cell_size, OccupancyCellState::Occupied, 0.85F, 0.0F,
+        "synthetic_track4_fixture", "synthetic_forward_obstacle"));
+    occupancy.debug_cells.push_back(occupancy_cell(
+        Vec3{p.x + 3.0, p.y + 2.0, p.z}, cell_size, OccupancyCellState::Free, 0.70F, 2.8F,
+        "synthetic_track4_fixture"));
+    occupancy.debug_cells.push_back(occupancy_cell(
+        Vec3{p.x + 7.0, p.y - 2.5, p.z}, Vec3{2.0, 2.0, 1.5}, OccupancyCellState::Unknown, 0.55F, 2.5F,
+        "synthetic_track4_fixture", "synthetic_unknown_sector"));
     occupancy.occupied_count = 1U;
     occupancy.free_count = 1U;
     occupancy.unknown_count = 1U;
@@ -145,7 +159,53 @@ EgoOccupancyMapSnapshot build_synthetic_ego_occupancy(
     return occupancy;
 }
 
-SweptVolumeDebug build_synthetic_swept_volume(
+EgoOccupancyMapSnapshot build_airsim_ground_truth_occupancy(
+    const EgoState& ego,
+    const PerceptionPipelineOutput& perception_output,
+    TimePoint timestamp,
+    const MapFrameId& map_frame_id) {
+    EgoOccupancyMapSnapshot occupancy;
+    occupancy.map_frame_id = map_frame_id;
+    occupancy.timestamp = timestamp;
+    occupancy.source_kind = OccupancySourceKind::AirSimGroundTruth;
+    occupancy.source_provider = "airsim_ground_truth_named_objects";
+    occupancy.resolution_m = 1.0F;
+    occupancy.size_m = Vec3{60.0, 60.0, 20.0};
+    occupancy.has_valid_occupancy = !perception_output.observations.empty();
+
+    float nearest = std::numeric_limits<float>::infinity();
+    float forward_clearance = std::numeric_limits<float>::infinity();
+    for (const auto& observation : perception_output.observations) {
+        const auto size = class_default_size(observation.class_label);
+        const float range = distance_3d(observation.position_local, ego.local_T_body.position);
+        nearest = std::min(nearest, range);
+        const auto dx = static_cast<float>(observation.position_local.x - ego.local_T_body.position.x);
+        if (dx >= 0.0F) {
+            const float lateral = distance_xy(
+                Vec3{observation.position_local.x, observation.position_local.y, 0.0},
+                Vec3{observation.position_local.x, ego.local_T_body.position.y, 0.0});
+            forward_clearance = std::min(forward_clearance, lateral);
+        }
+        occupancy.debug_cells.push_back(occupancy_cell(
+            observation.position_local,
+            size,
+            OccupancyCellState::Occupied,
+            std::max(0.0F, std::min(1.0F, observation.confidence)),
+            0.0F,
+            "airsim_ground_truth_named_objects",
+            observation.track_id.value));
+    }
+
+    occupancy.occupied_count = static_cast<std::uint32_t>(occupancy.debug_cells.size());
+    occupancy.free_count = 0U;
+    occupancy.unknown_count = 0U;
+    occupancy.stale_count = 0U;
+    occupancy.nearest_obstacle_distance_m = std::isfinite(nearest) ? nearest : 0.0F;
+    occupancy.forward_corridor_clearance_m = std::isfinite(forward_clearance) ? forward_clearance : occupancy.nearest_obstacle_distance_m;
+    return occupancy;
+}
+
+SweptVolumeDebug build_swept_volume(
     const EgoState& ego,
     const EgoOccupancyMapSnapshot& occupancy,
     TimePoint timestamp,
@@ -153,7 +213,7 @@ SweptVolumeDebug build_synthetic_swept_volume(
     SweptVolumeDebug swept;
     swept.map_frame_id = map_frame_id;
     swept.timestamp = timestamp;
-    swept.source_provider = "synthetic_track4_swept_volume";
+    swept.source_provider = occupancy.source_provider + "_swept_volume";
     swept.start_local = ego.local_T_body.position;
     swept.end_local = Vec3{ego.local_T_body.position.x + 8.0, ego.local_T_body.position.y, ego.local_T_body.position.z};
     swept.radius_m = 1.0F;
@@ -190,47 +250,51 @@ SweptVolumeDebug build_synthetic_swept_volume(
         swept.reason = "occupancy_not_valid";
     } else if (has_blocking_occupied) {
         swept.status = SweptVolumeStatus::OccupiedBlocked;
-        swept.reason = "synthetic_occupied_cell_intersects_forward_swept_volume";
+        swept.reason = "occupied_cell_intersects_forward_swept_volume";
     } else if (has_unknown_risk) {
         swept.status = SweptVolumeStatus::UnknownRisk;
-        swept.reason = "synthetic_unknown_cell_near_forward_swept_volume";
+        swept.reason = "unknown_cell_near_forward_swept_volume";
     } else {
         swept.status = SweptVolumeStatus::Clear;
-        swept.reason = "synthetic_forward_swept_volume_clear";
+        swept.reason = "forward_swept_volume_clear";
         swept.time_to_collision_s = 0.0F;
     }
     return swept;
 }
 
-void refresh_track4_synthetic_products(WorldSnapshot& snapshot) {
+void refresh_synthetic_track4_products(WorldSnapshot& snapshot) {
     snapshot.has_ego_occupancy = true;
-    snapshot.ego_occupancy = build_synthetic_ego_occupancy(
-        snapshot.ego,
-        snapshot.timestamp,
-        snapshot.active_map_frame_id);
+    snapshot.ego_occupancy = build_synthetic_ego_occupancy(snapshot.ego, snapshot.timestamp, snapshot.active_map_frame_id);
     snapshot.has_latest_swept_volume = true;
-    snapshot.latest_swept_volume = build_synthetic_swept_volume(
-        snapshot.ego,
-        snapshot.ego_occupancy,
-        snapshot.timestamp,
-        snapshot.active_map_frame_id);
+    snapshot.latest_swept_volume = build_swept_volume(snapshot.ego, snapshot.ego_occupancy, snapshot.timestamp, snapshot.active_map_frame_id);
+}
+
+void refresh_ground_truth_track4_products(WorldSnapshot& snapshot, const PerceptionPipelineOutput& output) {
+    snapshot.has_ego_occupancy = true;
+    snapshot.ego_occupancy = build_airsim_ground_truth_occupancy(snapshot.ego, output, snapshot.timestamp, snapshot.active_map_frame_id);
+    snapshot.has_latest_swept_volume = true;
+    snapshot.latest_swept_volume = build_swept_volume(snapshot.ego, snapshot.ego_occupancy, snapshot.timestamp, snapshot.active_map_frame_id);
 }
 
 }  // namespace
 
-InMemoryWorldModel::InMemoryWorldModel(MapFrameId map_frame_id) {
+InMemoryWorldModel::InMemoryWorldModel(MapFrameId map_frame_id)
+    : InMemoryWorldModel(InMemoryWorldModelConfig{.map_frame_id = map_frame_id}) {}
+
+InMemoryWorldModel::InMemoryWorldModel(InMemoryWorldModelConfig config)
+    : config_(std::move(config)) {
     snapshot_.timestamp = TimePoint{0};
-    snapshot_.active_map_frame_id = map_frame_id;
-    snapshot_.ego.map_frame_id = map_frame_id;
+    snapshot_.active_map_frame_id = config_.map_frame_id;
+    snapshot_.ego.map_frame_id = config_.map_frame_id;
     snapshot_.ego.home_T_body = snapshot_.ego.local_T_body;
     snapshot_.ego.home_timestamp = snapshot_.timestamp;
     snapshot_.ego.height_m = 0.0;
     snapshot_.ego.height_valid = true;
     snapshot_.ego.flight_status = EgoFlightStatus::Landed;
-    refresh_track4_synthetic_products(snapshot_);
+    refresh_synthetic_track4_products(snapshot_);
 
     MapFrame frame;
-    frame.map_frame_id = map_frame_id;
+    frame.map_frame_id = config_.map_frame_id;
     frame.scale_confidence = 0.5F;
     frame.orientation_confidence = 0.5F;
     frame.created_at = snapshot_.timestamp;
@@ -240,7 +304,6 @@ InMemoryWorldModel::InMemoryWorldModel(MapFrameId map_frame_id) {
 
 void InMemoryWorldModel::update_ego(const EgoState& ego) {
     snapshot_.timestamp = ego.timestamp;
-
     auto updated_ego = mission_ready_ego(ego);
     if (!updated_ego.home_T_body.has_value()) {
         if (snapshot_.ego.home_T_body.has_value()) {
@@ -251,11 +314,11 @@ void InMemoryWorldModel::update_ego(const EgoState& ego) {
             updated_ego.home_timestamp = updated_ego.timestamp;
         }
     }
-
     snapshot_.ego = updated_ego;
     snapshot_.active_map_frame_id = updated_ego.map_frame_id;
-    refresh_track4_synthetic_products(snapshot_);
-
+    if (config_.occupancy_source_kind == OccupancySourceKind::SyntheticFixture) {
+        refresh_synthetic_track4_products(snapshot_);
+    }
     if (!snapshot_.map_frames.empty()) {
         snapshot_.map_frames.front().map_frame_id = updated_ego.map_frame_id;
         snapshot_.map_frames.front().last_used = updated_ego.timestamp;
@@ -268,11 +331,9 @@ void InMemoryWorldModel::update_appearance(const AppearanceCondition& appearance
 
 void InMemoryWorldModel::ingest(const PerceptionPipelineOutput& perception_output) {
     snapshot_.agents.clear();
-
     std::size_t observation_index = 0;
     for (const auto& observation : perception_output.observations) {
         const auto id_suffix = track_suffix_or_fallback(observation.track_id, observation_index);
-
         AgentState agent;
         agent.agent_id = AgentId{"agent_" + id_suffix};
         agent.identity_id = IdentityId{"identity_" + id_suffix};
@@ -309,20 +370,16 @@ void InMemoryWorldModel::ingest(const PerceptionPipelineOutput& perception_outpu
         ++observation_index;
     }
 
-    snapshot_.tactical_exclusion_zones = cone_exclusion_mapper_.map(
-        perception_output.observations,
-        snapshot_.timestamp,
-        snapshot_.active_map_frame_id);
-
-    const auto flight_map_update = rough_flight_map_builder_.build(
-        perception_output.observations,
-        snapshot_.ego,
-        snapshot_.timestamp,
-        snapshot_.active_map_frame_id);
+    snapshot_.tactical_exclusion_zones = cone_exclusion_mapper_.map(perception_output.observations, snapshot_.timestamp, snapshot_.active_map_frame_id);
+    const auto flight_map_update = rough_flight_map_builder_.build(perception_output.observations, snapshot_.ego, snapshot_.timestamp, snapshot_.active_map_frame_id);
     snapshot_.static_structures = flight_map_update.static_structures;
     snapshot_.flight_corridors = flight_map_update.flight_corridors;
     snapshot_.landmarks = flight_map_update.landmarks;
-    refresh_track4_synthetic_products(snapshot_);
+    if (config_.occupancy_source_kind == OccupancySourceKind::AirSimGroundTruth) {
+        refresh_ground_truth_track4_products(snapshot_, perception_output);
+    } else {
+        refresh_synthetic_track4_products(snapshot_);
+    }
 
     snapshot_.containers.clear();
     ContainerState car;
@@ -342,7 +399,9 @@ void InMemoryWorldModel::ingest(const PerceptionPipelineOutput& perception_outpu
     region.bounds.max = Vec3{30.0, 6.0, -4.0};
     region.map_frame_id = snapshot_.active_map_frame_id;
     region.uncertainty = 0.6F;
-    region.reason = "synthetic_placeholder_depth_uncertainty";
+    region.reason = config_.occupancy_source_kind == OccupancySourceKind::AirSimGroundTruth ?
+        "airsim_ground_truth_named_object_coverage_boundary" :
+        "synthetic_placeholder_depth_uncertainty";
     snapshot_.uncertain_regions.push_back(region);
 }
 
