@@ -336,6 +336,14 @@ const MapFrameId& GhostScenario::map_frame_id() const {
     return map_frame_id_;
 }
 
+const std::vector<GhostDetectionSpec>& GhostScenario::detections() const {
+    return detections_;
+}
+
+bool GhostScenario::empty() const {
+    return detections_.empty();
+}
+
 std::vector<GhostDetectionState> GhostScenario::evaluate(double scenario_elapsed_s) const {
     std::vector<GhostDetectionState> output;
     output.reserve(detections_.size());
