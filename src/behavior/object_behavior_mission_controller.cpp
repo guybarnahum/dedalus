@@ -155,6 +155,24 @@ bool parse_bool(const std::string& value, bool fallback) {
     throw std::invalid_argument("invalid boolean value: " + value);
 }
 
+double parse_double(const std::string& value, const char* context) {
+    try {
+        return std::stod(value);
+    } catch (const std::exception&) {
+        throw std::invalid_argument(
+            std::string("invalid double for ") + context + ": '" + value + "'");
+    }
+}
+
+int parse_int(const std::string& value, const char* context) {
+    try {
+        return std::stoi(value);
+    } catch (const std::exception&) {
+        throw std::invalid_argument(
+            std::string("invalid integer for ") + context + ": '" + value + "'");
+    }
+}
+
 std::vector<std::string> split_csv(const std::string& value, const std::vector<std::string>& fallback) {
     if (value.empty()) {
         return fallback;
@@ -816,11 +834,12 @@ ObjectBehaviorMissionConfig load_object_behavior_mission_config(const MissionOpt
         throw std::invalid_argument("object_behavior mission_controller requires mission_options.behavior_spec_path");
     }
     config.behavior_spec = parse_behavior_spec_file(behavior_spec_path);
-    config.hold_velocity_mps = std::stod(options.get_or("object_behavior_hold_velocity_mps", "0.0"));
-    config.yaw_offset_rad = std::stod(options.get_or(
+    config.hold_velocity_mps = parse_double(options.get_or("object_behavior_hold_velocity_mps", "0.0"), "object_behavior_hold_velocity_mps");
+    config.yaw_offset_rad = parse_double(options.get_or(
         "object_behavior_yaw_offset_rad",
-        options.get_or("flight_yaw_offset_rad", "0.0")));
-    config.yaw_min_speed_mps = std::stod(options.get_or("object_behavior_yaw_min_speed_mps", "0.35"));
+        options.get_or("flight_yaw_offset_rad", "0.0")),
+        "object_behavior_yaw_offset_rad");
+    config.yaw_min_speed_mps = parse_double(options.get_or("object_behavior_yaw_min_speed_mps", "0.35"), "object_behavior_yaw_min_speed_mps");
     config.yaw_hold_last_when_unstable = parse_bool(
         options.get_or("object_behavior_yaw_hold_last_when_unstable", "true"),
         true);
@@ -836,20 +855,20 @@ ObjectBehaviorMissionConfig load_object_behavior_mission_config(const MissionOpt
     {
         const auto min_deg_str = options.get_or("object_behavior_camera_pitch_min_deg", "");
         if (!min_deg_str.empty()) {
-            config.camera_pitch_min_rad = deg_to_rad(std::stod(min_deg_str));
+            config.camera_pitch_min_rad = deg_to_rad(parse_double(min_deg_str, "object_behavior_camera_pitch_min_deg"));
         }
     }
     {
         const auto max_deg_str = options.get_or("object_behavior_camera_pitch_max_deg", "");
         if (!max_deg_str.empty()) {
-            config.camera_pitch_max_rad = deg_to_rad(std::stod(max_deg_str));
+            config.camera_pitch_max_rad = deg_to_rad(parse_double(max_deg_str, "object_behavior_camera_pitch_max_deg"));
         }
     }
-    config.camera_pitch_sign = std::stod(options.get_or("object_behavior_camera_pitch_sign", "-1"));
+    config.camera_pitch_sign = parse_double(options.get_or("object_behavior_camera_pitch_sign", "-1"), "object_behavior_camera_pitch_sign");
     {
         const auto offset_deg_str = options.get_or("object_behavior_camera_pitch_offset_deg", "");
         if (!offset_deg_str.empty()) {
-            config.camera_pitch_offset_rad = deg_to_rad(std::stod(offset_deg_str));
+            config.camera_pitch_offset_rad = deg_to_rad(parse_double(offset_deg_str, "object_behavior_camera_pitch_offset_deg"));
         }
     }
     config.camera_pointing_prepare_mode = options.get_or(
@@ -872,10 +891,10 @@ ObjectBehaviorMissionConfig load_object_behavior_mission_config(const MissionOpt
             "object_behavior_camera_pitch_min_deg must be <= object_behavior_camera_pitch_max_deg");
     }
 
-    config.debug_every_n_ticks = std::stoi(options.get_or("object_behavior_debug_every_n_ticks", "0"));
-    config.debug_level = std::stoi(options.get_or(
+    config.debug_every_n_ticks = parse_int(options.get_or("object_behavior_debug_every_n_ticks", "0"), "object_behavior_debug_every_n_ticks");
+    config.debug_level = parse_int(options.get_or(
         "object_behavior_debug_level",
-        "1"));
+        "1"), "object_behavior_debug_level");
     config.altitude_policy = parse_altitude_policy(options.get_or(
         "object_behavior_altitude_policy",
         "target_relative"));
@@ -885,22 +904,22 @@ ObjectBehaviorMissionConfig load_object_behavior_mission_config(const MissionOpt
     config.zero_target_velocity = parse_bool(
         options.get_or("object_behavior_zero_target_velocity", "false"),
         false);
-    config.follow_min_standoff_m = std::stod(options.get_or("object_behavior_follow_min_standoff_m", "8.0"));
-    config.follow_max_elevation_angle_deg = std::stod(options.get_or(
+    config.follow_min_standoff_m = parse_double(options.get_or("object_behavior_follow_min_standoff_m", "8.0"), "object_behavior_follow_min_standoff_m");
+    config.follow_max_elevation_angle_deg = parse_double(options.get_or(
         "object_behavior_follow_max_elevation_angle_deg",
-        "35.0"));
-    config.follow_arrival_slow_radius_m = std::stod(options.get_or(
+        "35.0"), "object_behavior_follow_max_elevation_angle_deg");
+    config.follow_arrival_slow_radius_m = parse_double(options.get_or(
         "object_behavior_follow_arrival_slow_radius_m",
-        "8.0"));
-    config.follow_arrival_hold_radius_m = std::stod(options.get_or(
+        "8.0"), "object_behavior_follow_arrival_slow_radius_m");
+    config.follow_arrival_hold_radius_m = parse_double(options.get_or(
         "object_behavior_follow_arrival_hold_radius_m",
-        "2.0"));
-    config.follow_arrival_kp = std::stod(options.get_or(
+        "2.0"), "object_behavior_follow_arrival_hold_radius_m");
+    config.follow_arrival_kp = parse_double(options.get_or(
         "object_behavior_follow_arrival_kp",
-        "0.35"));
+        "0.35"), "object_behavior_follow_arrival_kp");
     const auto completion_after_override = options.get_or("object_behavior_completion_after_s", "");
     if (!completion_after_override.empty()) {
-        config.behavior_spec.completion.after_s = std::stod(completion_after_override);
+        config.behavior_spec.completion.after_s = parse_double(completion_after_override, "object_behavior_completion_after_s");
     }
     // Backward compatibility:
     // - flight_safe_height_m remains the legacy single value.
@@ -909,23 +928,25 @@ ObjectBehaviorMissionConfig load_object_behavior_mission_config(const MissionOpt
     // - object_behavior_min_height_m controls ExecuteMission behavior altitude
     //   floor, allowing lower circling/inspection after a higher takeoff.
     const std::string legacy_safe_height = options.get_or("flight_safe_height_m", "8");
-    config.takeoff_height_m = std::stod(options.get_or(
+    config.takeoff_height_m = parse_double(options.get_or(
         "flight_takeoff_height_m",
-        legacy_safe_height));
-    config.behavior_min_height_m = std::stod(options.get_or(
+        legacy_safe_height),
+        "flight_takeoff_height_m");
+    config.behavior_min_height_m = parse_double(options.get_or(
         "object_behavior_min_height_m",
-        legacy_safe_height));
+        legacy_safe_height),
+        "object_behavior_min_height_m");
 
-    config.takeoff_velocity_mps = std::stod(options.get_or("flight_takeoff_velocity_mps", "1.0"));
-    config.go_home_velocity_mps = std::stod(options.get_or("flight_go_home_velocity_mps", "1.0"));
-    config.arm_retry_interval_s = std::stod(options.get_or("flight_arm_retry_interval_s", "1.0"));
-    config.arm_timeout_s = std::stod(options.get_or("flight_arm_timeout_s", "10.0"));
-    config.arm_dispatch_fallback_s = std::stod(options.get_or("flight_arm_dispatch_fallback_s", "0.0"));
-    config.takeoff_retry_interval_s = std::stod(options.get_or("flight_takeoff_retry_interval_s", "1.0"));
-    config.land_retry_interval_s = std::stod(options.get_or("flight_land_retry_interval_s", "1.0"));
-    config.land_timeout_s = std::stod(options.get_or("flight_land_timeout_s", "60.0"));
-    config.disarm_retry_interval_s = std::stod(options.get_or("flight_disarm_retry_interval_s", "1.0"));
-    config.disarm_timeout_s = std::stod(options.get_or("flight_disarm_timeout_s", "10.0"));
+    config.takeoff_velocity_mps = parse_double(options.get_or("flight_takeoff_velocity_mps", "1.0"), "flight_takeoff_velocity_mps");
+    config.go_home_velocity_mps = parse_double(options.get_or("flight_go_home_velocity_mps", "1.0"), "flight_go_home_velocity_mps");
+    config.arm_retry_interval_s = parse_double(options.get_or("flight_arm_retry_interval_s", "1.0"), "flight_arm_retry_interval_s");
+    config.arm_timeout_s = parse_double(options.get_or("flight_arm_timeout_s", "10.0"), "flight_arm_timeout_s");
+    config.arm_dispatch_fallback_s = parse_double(options.get_or("flight_arm_dispatch_fallback_s", "0.0"), "flight_arm_dispatch_fallback_s");
+    config.takeoff_retry_interval_s = parse_double(options.get_or("flight_takeoff_retry_interval_s", "1.0"), "flight_takeoff_retry_interval_s");
+    config.land_retry_interval_s = parse_double(options.get_or("flight_land_retry_interval_s", "1.0"), "flight_land_retry_interval_s");
+    config.land_timeout_s = parse_double(options.get_or("flight_land_timeout_s", "60.0"), "flight_land_timeout_s");
+    config.disarm_retry_interval_s = parse_double(options.get_or("flight_disarm_retry_interval_s", "1.0"), "flight_disarm_retry_interval_s");
+    config.disarm_timeout_s = parse_double(options.get_or("flight_disarm_timeout_s", "10.0"), "flight_disarm_timeout_s");
     config.home_policy = options.get_or("flight_home_policy", "initial_ego_pose");
     return config;
 }

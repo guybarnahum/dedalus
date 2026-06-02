@@ -145,6 +145,9 @@ ProjectedWorldPoint project_local_point_to_image(
         return result;
     }
 
+    // position_camera.x > near_plane_m > 0 here (near_plane_m validated positive
+    // at construction), so division is safe. isfinite guard below catches any
+    // remaining NaN/Inf from non-finite input vectors.
     result.u_px = config.intrinsics.fx * (position_camera.y / position_camera.x) + config.intrinsics.cx;
     result.v_px = config.intrinsics.fy * (position_camera.z / position_camera.x) + config.intrinsics.cy;
 
