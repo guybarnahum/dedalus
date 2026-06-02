@@ -650,6 +650,10 @@ int main(int argc, char** argv) {
             return 1;
         }
 
+        std::cout << "Mission summary: snapshots=" << frame_count
+                  << " final_state=" << (mission_runtime ? dedalus::to_string(mission_runtime->last_state()) : "disabled")
+                  << " graceful_shutdown_ticks=" << shutdown_wait_ticks
+                  << " frame_source_ended=" << (frame_source_ended ? "true" : "false") << "\n";
         std::cout << "Wrote " << frame_count << " snapshot(s) to " << artifact_snapshot_writer->output_dir() << "\n";
         std::cout << "Manifest: " << artifact_snapshot_writer->manifest_path() << "\n";
         if (finish_requested) {
