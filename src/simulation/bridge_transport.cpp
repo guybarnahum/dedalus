@@ -3,6 +3,7 @@
 #include <array>
 #include <cstdio>
 #include <cstdint>
+#include <memory>
 #include <stdexcept>
 #include <string>
 #include <vector>
@@ -39,7 +40,7 @@ std::string ignore_sigint_command(const std::string& command) {
 }  // namespace
 
 struct PipeBridgeTransport::Impl {
-    FILE* stream_pipe{nullptr};
+    std::unique_ptr<FILE, int(*)(FILE*)> stream_pipe{nullptr, pclose};
 };
 
 PipeBridgeTransport::~PipeBridgeTransport() {
@@ -79,19 +80,17 @@ std::optional<std::string> PipeBridgeTransport::read_stream_line(const std::stri
         impl_ = new Impl{};
     }
 
-    if (impl_->stream_pipe == nullptr) {
+    if (!impl_->stream_pipe) {
         const auto child_command = ignore_sigint_command(command);
-        impl_->stream_pipe = popen(child_command.c_str(), "r");
-        if (impl_->stream_pipe == nullptr) {
+        impl_->stream_pipe.reset(popen(child_command.c_str(), "r"));
+        if (!impl_->stream_pipe) {
             throw std::runtime_error("failed to start persistent bridge command");
         }
     }
 
     std::array<char, 65536> line{};
-    if (std::fgets(line.data(), static_cast<int>(line.size()), impl_->stream_pipe) == nullptr) {
-        FILE* pipe = impl_->stream_pipe;
-        impl_->stream_pipe = nullptr;
-        const int status = pclose(pipe);
+    if (std::fgets(line.data(), static_cast<int>(line.size()), impl_->stream_pipe.get()) == nullptr) {
+        const int status = pclose(impl_->stream_pipe.release());
         if (status != 0) {
             throw std::runtime_error("persistent bridge command exited with status " + std::to_string(status));
         }
@@ -118,10 +117,10 @@ std::optional<std::vector<std::uint8_t>> PipeBridgeTransport::read_stream_byte_v
         impl_ = new Impl{};
     }
 
-    if (impl_->stream_pipe == nullptr) {
+    if (!impl_->stream_pipe) {
         const auto child_command = ignore_sigint_command(command);
-        impl_->stream_pipe = popen(child_command.c_str(), "r");
-        if (impl_->stream_pipe == nullptr) {
+        impl_->stream_pipe.reset(popen(child_command.c_str(), "r"));
+        if (!impl_->stream_pipe) {
             throw std::runtime_error("failed to start persistent bridge command");
         }
     }
@@ -133,16 +132,14 @@ std::optional<std::vector<std::uint8_t>> PipeBridgeTransport::read_stream_byte_v
             output.data() + total_read,
             1U,
             byte_count - total_read,
-            impl_->stream_pipe);
+            impl_->stream_pipe.get());
         if (bytes_read > 0U) {
             total_read += bytes_read;
             continue;
         }
 
-        if (std::feof(impl_->stream_pipe) != 0) {
-            FILE* pipe = impl_->stream_pipe;
-            impl_->stream_pipe = nullptr;
-            const int status = pclose(pipe);
+        if (std::feof(impl_->stream_pipe.get()) != 0) {
+            const int status = pclose(impl_->stream_pipe.release());
             if (status != 0) {
                 throw std::runtime_error("persistent bridge command exited with status " + std::to_string(status));
             }
@@ -152,7 +149,7 @@ std::optional<std::vector<std::uint8_t>> PipeBridgeTransport::read_stream_byte_v
             throw std::runtime_error("persistent bridge command ended mid-frame");
         }
 
-        if (std::ferror(impl_->stream_pipe) != 0) {
+        if (std::ferror(impl_->stream_pipe.get()) != 0) {
             throw std::runtime_error("failed while reading persistent bridge command bytes");
         }
     }
@@ -161,9 +158,8 @@ std::optional<std::vector<std::uint8_t>> PipeBridgeTransport::read_stream_byte_v
 }
 
 void PipeBridgeTransport::close_stream() {
-    if (impl_ != nullptr && impl_->stream_pipe != nullptr) {
-        (void)pclose(impl_->stream_pipe);
-        impl_->stream_pipe = nullptr;
+    if (impl_ && impl_->stream_pipe) {
+        impl_->stream_pipe.reset();
     }
 }
 

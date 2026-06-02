@@ -1,7 +1,9 @@
 #include "dedalus/runtime/provider_registry.hpp"
 
+#include <functional>
 #include <stdexcept>
 #include <string>
+#include <string_view>
 #include <utility>
 
 #include "dedalus/sensors/recorded_frame_source.hpp"
@@ -56,96 +58,89 @@ std::unique_ptr<GhostTargetProvider> make_ghost_target_provider(const CoreStackP
     throw std::invalid_argument("unknown ghost_targets_source: " + config.ghost_targets_source);
 }
 
+// Table-driven provider resolution. Each entry maps a key string to a factory
+// lambda. resolve() walks the table and throws unknown_provider on no match.
+template <typename T>
+struct FactoryEntry {
+    std::string_view key;
+    std::function<std::unique_ptr<T>()> factory;
+};
+
+template <typename T>
+std::unique_ptr<T> resolve(
+    const std::string& category,
+    const std::string& name,
+    std::initializer_list<FactoryEntry<T>> entries) {
+    for (const auto& entry : entries) {
+        if (name == entry.key) return entry.factory();
+    }
+    throw unknown_provider(category, name);
+}
+
 }  // namespace
 
 CoreStackProviders ProviderRegistry::create(const CoreStackProviderConfig& config) const {
     CoreStackProviders providers;
-    const auto airsim_config = airsim_config_from(config);
+    const auto airsim = airsim_config_from(config);
 
-    if (config.frame_source == "synthetic") {
-        providers.frame_source = std::make_unique<SyntheticFrameSource>();
-    } else if (config.frame_source == "synthetic_mission") {
-        providers.frame_source = std::make_unique<SyntheticMissionFrameSource>();
-    } else if (config.frame_source == "video_only") {
-        providers.frame_source = std::make_unique<VideoOnlyFrameSource>(1U);
-    } else if (config.frame_source == "recorded_frames") {
-        if (config.recorded_manifest_path.empty()) {
-            throw std::invalid_argument("recorded_frames provider requires recorded_manifest_path");
-        }
-        providers.frame_source = std::make_unique<RecordedFrameSource>(config.recorded_manifest_path);
-    } else if (config.frame_source == "airsim") {
-        providers.frame_source = std::make_unique<AirSimFrameSource>(airsim_config);
-    } else {
-        throw unknown_provider("frame_source", config.frame_source);
-    }
+    providers.frame_source = resolve<FrameSource>("frame_source", config.frame_source, {
+        {"synthetic",         [&]() { return std::make_unique<SyntheticFrameSource>(); }},
+        {"synthetic_mission", [&]() { return std::make_unique<SyntheticMissionFrameSource>(); }},
+        {"video_only",        [&]() { return std::make_unique<VideoOnlyFrameSource>(1U); }},
+        {"recorded_frames",   [&]() -> std::unique_ptr<FrameSource> {
+            if (config.recorded_manifest_path.empty()) {
+                throw std::invalid_argument("recorded_frames provider requires recorded_manifest_path");
+            }
+            return std::make_unique<RecordedFrameSource>(config.recorded_manifest_path);
+        }},
+        {"airsim",            [&]() { return std::make_unique<AirSimFrameSource>(airsim); }},
+    });
 
-    if (config.ego_provider == "frame_hint") {
-        providers.ego_provider = std::make_unique<FrameHintEgoProvider>(config.fallback_map_frame_id);
-    } else if (config.ego_provider == "no_telemetry") {
-        providers.ego_provider = std::make_unique<NoTelemetryEgoProvider>(config.fallback_map_frame_id);
-    } else if (config.ego_provider == "airsim") {
-        providers.ego_provider = std::make_unique<AirSimEgoStateProvider>(airsim_config);
-    } else {
-        throw unknown_provider("ego_provider", config.ego_provider);
-    }
+    providers.ego_provider = resolve<EgoStateProvider>("ego_provider", config.ego_provider, {
+        {"frame_hint",   [&]() { return std::make_unique<FrameHintEgoProvider>(config.fallback_map_frame_id); }},
+        {"no_telemetry", [&]() { return std::make_unique<NoTelemetryEgoProvider>(config.fallback_map_frame_id); }},
+        {"airsim",       [&]() { return std::make_unique<AirSimEgoStateProvider>(airsim); }},
+    });
 
-    if (config.detector == "scripted") {
-        providers.detector = std::make_unique<ScriptedDetector>();
-    } else if (config.detector == "airsim_ground_truth") {
-        providers.detector = std::make_unique<AirSimGroundTruthDetector>(airsim_config);
-    } else {
-        throw unknown_provider("detector", config.detector);
-    }
+    providers.detector = resolve<Detector>("detector", config.detector, {
+        {"scripted",            [&]() { return std::make_unique<ScriptedDetector>(); }},
+        {"airsim_ground_truth", [&]() { return std::make_unique<AirSimGroundTruthDetector>(airsim); }},
+    });
 
-    if (config.camera_stabilizer == "null") {
-        providers.camera_stabilizer = std::make_unique<NullCameraStabilizer>();
-    } else {
-        throw unknown_provider("camera_stabilizer", config.camera_stabilizer);
-    }
+    providers.camera_stabilizer = resolve<CameraStabilizer>("camera_stabilizer", config.camera_stabilizer, {
+        {"null", [&]() { return std::make_unique<NullCameraStabilizer>(); }},
+    });
 
-    if (config.tracker == "simple_centroid") {
-        providers.tracker = std::make_unique<SimpleCentroidTracker>();
-    } else {
-        throw unknown_provider("tracker", config.tracker);
-    }
+    providers.tracker = resolve<Tracker>("tracker", config.tracker, {
+        {"simple_centroid", [&]() { return std::make_unique<SimpleCentroidTracker>(); }},
+    });
 
-    if (config.identity_resolver == "appearance_only") {
-        providers.identity_resolver = std::make_unique<AppearanceOnlyIdentityResolver>();
-    } else {
-        throw unknown_provider("identity_resolver", config.identity_resolver);
-    }
+    providers.identity_resolver = resolve<IdentityResolver>("identity_resolver", config.identity_resolver, {
+        {"appearance_only", [&]() { return std::make_unique<AppearanceOnlyIdentityResolver>(); }},
+    });
 
-    if (config.projector == "flat_ground") {
-        providers.projector = std::make_unique<FlatGroundProjector>();
-    } else if (config.projector == "airsim_depth") {
-        providers.projector = std::make_unique<AirSimDepthProjector>(airsim_config);
-    } else {
-        throw unknown_provider("projector", config.projector);
-    }
+    providers.projector = resolve<Projector3D>("projector", config.projector, {
+        {"flat_ground",  [&]() { return std::make_unique<FlatGroundProjector>(); }},
+        {"airsim_depth", [&]() { return std::make_unique<AirSimDepthProjector>(airsim); }},
+    });
 
     if (config.ghost_targets_enabled) {
         providers.ghost_targets = make_ghost_target_provider(config);
     }
 
-    if (config.world_model == "in_memory") {
-        providers.world_model = std::make_unique<InMemoryWorldModel>(config.fallback_map_frame_id);
-    } else {
-        throw unknown_provider("world_model", config.world_model);
-    }
+    providers.world_model = resolve<InMemoryWorldModel>("world_model", config.world_model, {
+        {"in_memory", [&]() { return std::make_unique<InMemoryWorldModel>(config.fallback_map_frame_id); }},
+    });
 
-    if (config.frame_annotator == "null") {
-        providers.frame_annotator = std::make_unique<NullFrameAnnotationSink>();
-    } else if (config.frame_annotator == "ppm_sequence") {
-        providers.frame_annotator = std::make_unique<PpmFrameAnnotationSink>(
-            config.annotation_output_path,
-            config.annotation_output_fps);
-    } else if (config.frame_annotator == "mp4") {
-        providers.frame_annotator = std::make_unique<Mp4FrameAnnotationSink>(
-            config.annotation_output_path,
-            config.annotation_output_fps);
-    } else {
-        throw unknown_provider("frame_annotator", config.frame_annotator);
-    }
+    providers.frame_annotator = resolve<FrameAnnotationSink>("frame_annotator", config.frame_annotator, {
+        {"null",         [&]() { return std::make_unique<NullFrameAnnotationSink>(); }},
+        {"ppm_sequence", [&]() { return std::make_unique<PpmFrameAnnotationSink>(
+                                     config.annotation_output_path,
+                                     config.annotation_output_fps); }},
+        {"mp4",          [&]() { return std::make_unique<Mp4FrameAnnotationSink>(
+                                     config.annotation_output_path,
+                                     config.annotation_output_fps); }},
+    });
 
     return providers;
 }
