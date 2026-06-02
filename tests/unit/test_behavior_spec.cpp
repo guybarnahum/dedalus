@@ -67,7 +67,7 @@ fallback:
 
     const auto spec = dedalus::parse_behavior_spec_text(yaml);
     require(spec.mission_name == "follow_person_demo", "mission name should parse");
-    require(spec.target.class_label == "person", "target class should parse");
+    require(spec.target.class_label == dedalus::ClassLabel::Person, "target class should parse");
     require(spec.target.track_id.empty(), "default target track id should be empty");
     require(spec.target.agent_id.empty(), "default target agent id should be empty");
     require(spec.target.policy == dedalus::TargetSelectionPolicy::HighestConfidence, "policy should parse");
@@ -104,7 +104,7 @@ void parses_json_circle() {
 
     const auto spec = dedalus::parse_behavior_spec_text(json);
     require(spec.mission_name == "circle_vehicle_demo", "JSON mission name should parse");
-    require(spec.target.class_label == "vehicle", "JSON target class should parse");
+    require(spec.target.class_label == dedalus::ClassLabel::Car, "JSON target class should parse");
     require(spec.target.policy == dedalus::TargetSelectionPolicy::Nearest, "JSON policy should parse");
     require(spec.behavior.type == dedalus::BehaviorType::Circle, "circle type should parse");
     require(spec.behavior.direction == dedalus::CircleDirection::CounterClockwise, "circle direction should parse");
@@ -133,7 +133,7 @@ behavior:
 )YAML";
 
     const auto track_spec = dedalus::parse_behavior_spec_text(track_yaml);
-    require(track_spec.target.class_label == "person", "track selector class should parse");
+    require(track_spec.target.class_label == dedalus::ClassLabel::Person, "track selector class should parse");
     require(track_spec.target.track_id == "ghost_person_001", "track selector track_id should parse");
     require(track_spec.target.agent_id.empty(), "track selector agent_id should default empty");
     require(track_spec.target.policy == dedalus::TargetSelectionPolicy::PersistentTrack, "track selector policy should parse");
@@ -150,7 +150,7 @@ behavior:
 })JSON";
 
     const auto agent_spec = dedalus::parse_behavior_spec_text(agent_json);
-    require(agent_spec.target.class_label == "person", "agent selector class should parse");
+    require(agent_spec.target.class_label == dedalus::ClassLabel::Person, "agent selector class should parse");
     require(agent_spec.target.track_id.empty(), "agent selector track_id should default empty");
     require(agent_spec.target.agent_id == "agent_track_0007", "agent selector agent_id should parse");
     require_near(agent_spec.target.confidence_min, 0.25, "agent selector confidence should parse");

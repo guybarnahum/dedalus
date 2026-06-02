@@ -14,7 +14,7 @@ namespace dedalus {
 struct AirSimGhostObjectBinding {
     TrackId source_track_id;
     std::string airsim_object_name;
-    std::string class_label{"unknown"};
+    ClassLabel class_label{ClassLabel::Unknown};
     double confidence{1.0};
     Vec3 size_m{1.0, 1.0, 1.0};
 };
@@ -22,7 +22,7 @@ struct AirSimGhostObjectBinding {
 struct AirSimGhostObjectPatternBinding {
     std::string source_track_prefix{"gt_obstacle"};
     std::string airsim_object_pattern;
-    std::string class_label{"obstacle"};
+    ClassLabel class_label{ClassLabel::Obstacle};
     double confidence{0.70};
     Vec3 size_m{1.0, 1.0, 1.0};
     int max_matches{64};

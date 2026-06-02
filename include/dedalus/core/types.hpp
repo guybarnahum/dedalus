@@ -1,6 +1,7 @@
 #pragma once
 
 #include <array>
+#include <cctype>
 #include <cstdint>
 #include <optional>
 #include <string>
@@ -113,6 +114,31 @@ enum class ClassLabel {
     Cable,
     Obstacle
 };
+
+[[nodiscard]] inline ClassLabel class_label_from_string(const std::string& value) {
+    std::string lower;
+    lower.reserve(value.size());
+    for (const char ch : value) {
+        lower += static_cast<char>(std::tolower(static_cast<unsigned char>(ch)));
+    }
+    if (lower == "person") return ClassLabel::Person;
+    if (lower == "drone") return ClassLabel::Drone;
+    if (lower == "car" || lower == "vehicle") return ClassLabel::Car;
+    if (lower == "boat") return ClassLabel::Boat;
+    if (lower == "animal") return ClassLabel::Animal;
+    if (lower == "house") return ClassLabel::House;
+    if (lower == "building") return ClassLabel::Building;
+    if (lower == "tree") return ClassLabel::Tree;
+    if (lower == "road") return ClassLabel::Road;
+    if (lower == "river") return ClassLabel::River;
+    if (lower == "terrain") return ClassLabel::Terrain;
+    if (lower == "pole") return ClassLabel::Pole;
+    if (lower == "wall") return ClassLabel::Wall;
+    if (lower == "fence") return ClassLabel::Fence;
+    if (lower == "cable" || lower == "wire") return ClassLabel::Cable;
+    if (lower == "obstacle" || lower == "unknown_obstacle") return ClassLabel::Obstacle;
+    return ClassLabel::Unknown;
+}
 
 enum class FactionLabel {
     Unknown,

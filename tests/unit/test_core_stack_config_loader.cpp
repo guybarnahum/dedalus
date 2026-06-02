@@ -139,7 +139,7 @@ int main() {
     const auto& binding = airsim_object_config.ghost_targets_airsim_objects.front();
     if (binding.source_track_id.value != "ghost_person_001" ||
         binding.airsim_object_name != "BRPlayer_01_96" ||
-        binding.class_label != "person" ||
+        binding.class_label != dedalus::ClassLabel::Person ||
         !near(binding.confidence, 0.82) ||
         !near(binding.size_m.x, 0.6) || !near(binding.size_m.y, 0.6) || !near(binding.size_m.z, 1.8)) {
         std::cerr << "AirSim existing-object binding fields did not parse as expected\n";

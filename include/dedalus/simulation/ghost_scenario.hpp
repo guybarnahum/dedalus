@@ -49,6 +49,5 @@ private:
 };
 
 [[nodiscard]] std::string to_string(ClassLabel label);
-[[nodiscard]] ClassLabel class_label_from_string(const std::string& value);
 
 }  // namespace dedalus

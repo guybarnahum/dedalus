@@ -64,7 +64,7 @@ bool validate_scripted_observation_chain() {
     }
 
     dedalus::TargetSelectorSpec specific_spec;
-    specific_spec.class_label = "person";
+    specific_spec.class_label = dedalus::ClassLabel::Person;
     specific_spec.track_id = "ghost_person_001";
     specific_spec.policy = dedalus::TargetSelectionPolicy::PersistentTrack;
     specific_spec.confidence_min = 0.5;
@@ -76,7 +76,7 @@ bool validate_scripted_observation_chain() {
     }
 
     dedalus::TargetSelectorSpec class_spec;
-    class_spec.class_label = "person";
+    class_spec.class_label = dedalus::ClassLabel::Person;
     class_spec.policy = dedalus::TargetSelectionPolicy::HighestConfidence;
     class_spec.confidence_min = 0.5;
 

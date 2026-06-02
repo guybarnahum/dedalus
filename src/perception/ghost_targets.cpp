@@ -225,7 +225,7 @@ GhostDetectionState state_from_binding_and_pose(
     const AirSimObjectPose& pose) {
     GhostDetectionState state;
     state.source_track_id = binding.source_track_id;
-    state.class_label = class_label_from_string(binding.class_label);
+    state.class_label = binding.class_label;
     state.confidence = binding.confidence;
     state.position_local_m = pose.position_ned_m;
     state.velocity_local_mps = Vec3{0.0, 0.0, 0.0};
@@ -240,7 +240,7 @@ GhostDetectionState state_from_pattern_and_pose(
     GhostDetectionState state;
     const auto suffix = sanitized_id_suffix(pose.name.empty() ? ("match_" + std::to_string(pattern_index)) : pose.name);
     state.source_track_id = TrackId{binding.source_track_prefix + "_" + suffix};
-    state.class_label = class_label_from_string(binding.class_label);
+    state.class_label = binding.class_label;
     state.confidence = binding.confidence;
     state.position_local_m = pose.position_ned_m;
     state.velocity_local_mps = Vec3{0.0, 0.0, 0.0};

@@ -68,7 +68,7 @@ dedalus::WorldSnapshot make_snapshot(
 dedalus::ObjectBehaviorMissionConfig make_config() {
     dedalus::ObjectBehaviorMissionConfig config;
     config.behavior_spec.mission_name = "object_behavior_test";
-    config.behavior_spec.target.class_label = "person";
+    config.behavior_spec.target.class_label = dedalus::ClassLabel::Person;
     config.behavior_spec.target.track_id = "ghost_person_001";
     config.behavior_spec.target.confidence_min = 0.55;
     config.behavior_spec.target.policy = dedalus::TargetSelectionPolicy::PersistentTrack;
@@ -88,7 +88,7 @@ dedalus::ObjectBehaviorMissionConfig make_config() {
 
 dedalus::ObjectBehaviorMissionConfig make_circle_config() {
     auto config = make_config();
-    config.behavior_spec.target.class_label = "car";
+    config.behavior_spec.target.class_label = dedalus::ClassLabel::Car;
     config.behavior_spec.target.track_id = "ghost_car_001";
     config.behavior_spec.behavior.type = dedalus::BehaviorType::Circle;
     config.behavior_spec.behavior.radius_m = 10.0;

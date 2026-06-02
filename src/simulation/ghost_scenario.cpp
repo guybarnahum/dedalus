@@ -23,13 +23,6 @@ std::string read_text_file(const std::string& path) {
     return buffer.str();
 }
 
-std::string lower_string(std::string value) {
-    for (char& ch : value) {
-        ch = static_cast<char>(std::tolower(static_cast<unsigned char>(ch)));
-    }
-    return value;
-}
-
 std::string parent_dir_or_dot(const std::string& path) {
     const auto parent = std::filesystem::path(path).parent_path();
     if (parent.empty()) {
@@ -264,27 +257,6 @@ std::string to_string(ClassLabel label) {
         case ClassLabel::Unknown:
         default: return "unknown";
     }
-}
-
-ClassLabel class_label_from_string(const std::string& value) {
-    const auto lower = lower_string(value);
-    if (lower == "person") return ClassLabel::Person;
-    if (lower == "drone") return ClassLabel::Drone;
-    if (lower == "car") return ClassLabel::Car;
-    if (lower == "boat") return ClassLabel::Boat;
-    if (lower == "animal") return ClassLabel::Animal;
-    if (lower == "house") return ClassLabel::House;
-    if (lower == "building") return ClassLabel::Building;
-    if (lower == "tree") return ClassLabel::Tree;
-    if (lower == "road") return ClassLabel::Road;
-    if (lower == "river") return ClassLabel::River;
-    if (lower == "terrain") return ClassLabel::Terrain;
-    if (lower == "pole") return ClassLabel::Pole;
-    if (lower == "wall") return ClassLabel::Wall;
-    if (lower == "fence") return ClassLabel::Fence;
-    if (lower == "cable" || lower == "wire") return ClassLabel::Cable;
-    if (lower == "obstacle" || lower == "unknown_obstacle") return ClassLabel::Obstacle;
-    return ClassLabel::Unknown;
 }
 
 GhostScenario::GhostScenario(std::string name, MapFrameId map_frame_id, std::vector<GhostDetectionSpec> detections)

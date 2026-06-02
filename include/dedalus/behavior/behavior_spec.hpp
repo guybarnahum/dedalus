@@ -3,6 +3,8 @@
 #include <string>
 #include <vector>
 
+#include "dedalus/core/types.hpp"
+
 namespace dedalus {
 
 enum class BehaviorSpecFormat {
@@ -63,7 +65,7 @@ struct BehaviorVector3 {
 };
 
 struct TargetSelectorSpec {
-    std::string class_label;
+    ClassLabel class_label{ClassLabel::Unknown};
     std::string track_id;
     std::string agent_id;
     double confidence_min{0.5};

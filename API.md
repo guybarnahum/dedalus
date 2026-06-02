@@ -775,8 +775,9 @@ Every consumer called `get_or(key, fallback)` and then `std::stod` / `std::stoi`
 `MissionTickOutput::events` is a `vector<string>` where each element is a pre-serialized compact JSON fragment. There is no typed `MissionEvent` variant enum or schema — the only contract is the informal `"event"` key. Consumers must parse JSON to branch on event type.  
 *Resolution:* `ControllerEventKind` enum and `ControllerEvent{kind, json_fields}` struct added to `mission_controller.hpp`. `MissionTickOutput::events` is now `vector<ControllerEvent>`. The `"event"` key is extracted from each payload string and typed as an enum value; `MissionRuntime` serializes it by prepending `"event":q(to_string(event.kind))` at write time. JSON output is byte-identical to before. Consumers can branch on `event.kind` without parsing JSON.
 
-**3. `AgentState` identity fields are not strongly typed**  
-`AgentState::identity_id` and `AgentState::class_label` are carried as raw strings in some code paths. Mixing `ClassLabel` enum and string in different layers creates silent mismatch risk.
+**3. `AgentState` identity fields are not strongly typed** ✅ **FIXED**  
+`AgentState::identity_id` and `AgentState::class_label` are carried as raw strings in some code paths. Mixing `ClassLabel` enum and string in different layers creates silent mismatch risk.  
+*Resolution:* `TargetSelectorSpec::class_label`, `AirSimGhostObjectBinding::class_label`, and `AirSimGhostObjectPatternBinding::class_label` changed from `std::string` to `ClassLabel`. Added `inline class_label_from_string()` to `include/dedalus/core/types.hpp` (includes "vehicle" and "wire"/"unknown_obstacle" aliases), called at parse time in `behavior_spec.cpp`, `config_loader.cpp`. Removed duplicate `class_label_from_string` from `ghost_scenario.hpp`/`.cpp` and `parse_class_label` from `target_selector.cpp`.
 
 ---
 

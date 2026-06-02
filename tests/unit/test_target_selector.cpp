@@ -59,7 +59,7 @@ dedalus::WorldSnapshot make_snapshot() {
 
 dedalus::TargetSelectorSpec person_spec() {
     dedalus::TargetSelectorSpec spec;
-    spec.class_label = "person";
+    spec.class_label = dedalus::ClassLabel::Person;
     spec.confidence_min = 0.5;
     spec.policy = dedalus::TargetSelectionPolicy::HighestConfidence;
     spec.reacquire_timeout_s = 5.0;
@@ -172,7 +172,7 @@ void no_candidates_and_invalid_spec_are_reported() {
     require(no_match.reason == "no_matching_agents", "missing track reason should be useful");
 
     dedalus::TargetSelectorSpec invalid_spec;
-    invalid_spec.class_label = "";
+    // class_label defaults to ClassLabel::Unknown, which triggers InvalidSpec
     const auto invalid = dedalus::TargetSelector{}.select(snapshot, invalid_spec);
     require(!invalid.selected, "invalid spec should not select");
     require(invalid.status == dedalus::TargetSelectionStatus::InvalidSpec, "invalid spec status should be invalid_spec");

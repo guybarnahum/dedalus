@@ -182,7 +182,7 @@ bool parse_airsim_object_binding_key(CoreStackProviderConfig& config, const std:
     auto& binding = config.ghost_targets_airsim_objects[index];
     if (field == "source_track_id") binding.source_track_id = TrackId{value};
     else if (field == "airsim_object_name") binding.airsim_object_name = value;
-    else if (field == "class") binding.class_label = value;
+    else if (field == "class") binding.class_label = class_label_from_string(value);
     else if (field == "confidence") binding.confidence = std::stod(value);
     else if (field == "size_m") binding.size_m = parse_vec3(value);
     else throw std::invalid_argument("unknown AirSim ghost object binding field: " + key);
@@ -197,7 +197,7 @@ bool parse_airsim_pattern_binding_key(CoreStackProviderConfig& config, const std
     auto& binding = config.ghost_targets_airsim_patterns[index];
     if (field == "source_track_prefix") binding.source_track_prefix = value;
     else if (field == "airsim_object_pattern") binding.airsim_object_pattern = value;
-    else if (field == "class") binding.class_label = value;
+    else if (field == "class") binding.class_label = class_label_from_string(value);
     else if (field == "confidence") binding.confidence = std::stod(value);
     else if (field == "size_m") binding.size_m = parse_vec3(value);
     else if (field == "max_matches") binding.max_matches = std::stoi(value);
@@ -259,7 +259,7 @@ void validate_airsim_object_bindings(const CoreStackProviderConfig& config) {
         const auto prefix = "ghost_targets_airsim.objects." + std::to_string(index);
         if (binding.source_track_id.value.empty()) throw std::invalid_argument(prefix + ".source_track_id is required");
         if (binding.airsim_object_name.empty()) throw std::invalid_argument(prefix + ".airsim_object_name is required");
-        if (binding.class_label.empty()) throw std::invalid_argument(prefix + ".class is required");
+        if (binding.class_label == ClassLabel::Unknown) throw std::invalid_argument(prefix + ".class is required");
         if (binding.confidence < 0.0 || binding.confidence > 1.0) throw std::invalid_argument(prefix + ".confidence must be in [0, 1]");
         if (binding.size_m.x <= 0.0 || binding.size_m.y <= 0.0 || binding.size_m.z <= 0.0) throw std::invalid_argument(prefix + ".size_m components must be positive");
     }
@@ -268,7 +268,7 @@ void validate_airsim_object_bindings(const CoreStackProviderConfig& config) {
         const auto prefix = "ghost_targets_airsim.patterns." + std::to_string(index);
         if (binding.source_track_prefix.empty()) throw std::invalid_argument(prefix + ".source_track_prefix is required");
         if (binding.airsim_object_pattern.empty()) throw std::invalid_argument(prefix + ".airsim_object_pattern is required");
-        if (binding.class_label.empty()) throw std::invalid_argument(prefix + ".class is required");
+        if (binding.class_label == ClassLabel::Unknown) throw std::invalid_argument(prefix + ".class is required");
         if (binding.confidence < 0.0 || binding.confidence > 1.0) throw std::invalid_argument(prefix + ".confidence must be in [0, 1]");
         if (binding.max_matches < 0) throw std::invalid_argument(prefix + ".max_matches must be >= 0");
         if (binding.size_m.x <= 0.0 || binding.size_m.y <= 0.0 || binding.size_m.z <= 0.0) throw std::invalid_argument(prefix + ".size_m components must be positive");

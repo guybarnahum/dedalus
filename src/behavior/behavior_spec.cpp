@@ -506,10 +506,10 @@ TargetSelectorSpec parse_target_selector(const ConfigNode& root) {
     const auto& target = required_child(root, "target", "root");
     const auto& selector = required_child(target, "selector", "target");
     TargetSelectorSpec spec;
-    spec.class_label = scalar_string(required_child(selector, "class", "target.selector"), "target.selector.class");
+    spec.class_label = class_label_from_string(scalar_string(required_child(selector, "class", "target.selector"), "target.selector.class"));
     spec.track_id = optional_string(selector, "track_id", spec.track_id);
     spec.agent_id = optional_string(selector, "agent_id", spec.agent_id);
-    if (spec.class_label.empty()) {
+    if (spec.class_label == ClassLabel::Unknown) {
         throw std::runtime_error("target.selector.class must not be empty");
     }
     spec.confidence_min = optional_double(selector, "confidence_min", spec.confidence_min);

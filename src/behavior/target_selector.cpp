@@ -10,43 +10,6 @@ namespace {
 
 constexpr double kNsPerSecond = 1000000000.0;
 
-ClassLabel parse_class_label(const std::string& value) {
-    if (value == "person") {
-        return ClassLabel::Person;
-    }
-    if (value == "drone") {
-        return ClassLabel::Drone;
-    }
-    if (value == "car" || value == "vehicle") {
-        return ClassLabel::Car;
-    }
- if (value == "boat") {
-        return ClassLabel::Boat;
-    }
-    if (value == "animal") {
-        return ClassLabel::Animal;
-    }
-    if (value == "house") {
-        return ClassLabel::House;
-    }
-    if (value == "building") {
-        return ClassLabel::Building;
-    }
-    if (value == "tree") {
-        return ClassLabel::Tree;
-    }
-    if (value == "road") {
-        return ClassLabel::Road;
-    }
-    if (value == "river") {
-        return ClassLabel::River;
-    }
-    if (value == "terrain") {
-        return ClassLabel::Terrain;
-    }
-    return ClassLabel::Unknown;
-}
-
 bool is_selectable_lifecycle(AgentLifecycle lifecycle) {
     return lifecycle == AgentLifecycle::New || lifecycle == AgentLifecycle::Active;
 }
@@ -150,8 +113,7 @@ TargetSelection TargetSelector::select(
     const WorldSnapshot& snapshot,
     const TargetSelectorSpec& spec,
     const std::optional<TargetSelection>& previous) const {
-    const ClassLabel requested_class = parse_class_label(spec.class_label);
-    if (spec.class_label.empty() || requested_class == ClassLabel::Unknown) {
+    if (spec.class_label == ClassLabel::Unknown) {
         return make_empty(TargetSelectionStatus::InvalidSpec, "invalid_or_missing_target_class");
     }
     if (spec.confidence_min < 0.0 || spec.confidence_min > 1.0) {
@@ -164,7 +126,7 @@ TargetSelection TargetSelector::select(
     std::vector<const AgentState*> candidates;
     candidates.reserve(snapshot.agents.size());
     for (const auto& agent : snapshot.agents) {
-        if (matches_spec(agent, spec, requested_class)) {
+        if (matches_spec(agent, spec, spec.class_label)) {
             candidates.push_back(&agent);
         }
     }
