@@ -15,27 +15,11 @@ std::int64_t duration_us(const SteadyClock::time_point start) {
 
 }  // namespace
 
-CoreStackRunner::CoreStackRunner(CoreStackProviders providers)
-    : CoreStackRunner(std::move(providers), nullptr, nullptr, nullptr) {}
-
-CoreStackRunner::CoreStackRunner(CoreStackProviders providers, std::unique_ptr<PipelineProfiler> timing_writer)
-    : CoreStackRunner(std::move(providers), std::move(timing_writer), nullptr, nullptr) {}
-
-CoreStackRunner::CoreStackRunner(
-    CoreStackProviders providers,
-    std::unique_ptr<PipelineProfiler> timing_writer,
-    std::shared_ptr<WorldSnapshotPublisher> snapshot_publisher)
-    : CoreStackRunner(std::move(providers), std::move(timing_writer), std::move(snapshot_publisher), nullptr) {}
-
-CoreStackRunner::CoreStackRunner(
-    CoreStackProviders providers,
-    std::unique_ptr<PipelineProfiler> timing_writer,
-    std::shared_ptr<WorldSnapshotPublisher> snapshot_publisher,
-    std::shared_ptr<GhostDetectionsPublisher> ghost_detections_publisher)
+CoreStackRunner::CoreStackRunner(CoreStackProviders providers, CoreStackRunnerConfig config)
     : providers_(std::move(providers)),
-      timing_writer_(std::move(timing_writer)),
-      snapshot_publisher_(std::move(snapshot_publisher)),
-      ghost_detections_publisher_(std::move(ghost_detections_publisher)) {
+      timing_writer_(std::move(config.timing_writer)),
+      snapshot_publisher_(std::move(config.snapshot_publisher)),
+      ghost_detections_publisher_(std::move(config.ghost_detections_publisher)) {
     start_prefetch();
 }
 

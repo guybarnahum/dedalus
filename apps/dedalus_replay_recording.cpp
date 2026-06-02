@@ -161,7 +161,9 @@ int main(int argc, char** argv) {
             timing_writer = std::make_unique<dedalus::PipelineProfiler>(config.pipeline_timing_output_path);
         }
 
-        dedalus::CoreStackRunner runner{registry.create(config), std::move(timing_writer)};
+        dedalus::CoreStackRunner runner{
+            registry.create(config),
+            dedalus::CoreStackRunnerConfig{.timing_writer = std::move(timing_writer)}};
 
         const auto manifest_path = args.output_dir / "snapshot_manifest.txt";
         std::ofstream manifest{manifest_path};

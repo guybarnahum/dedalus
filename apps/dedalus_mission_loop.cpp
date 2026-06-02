@@ -513,9 +513,10 @@ int main(int argc, char** argv) {
 
         dedalus::CoreStackRunner runner{
             registry.create(config),
-            std::move(timing_writer),
-            snapshot_publisher,
-            ghost_detections_publisher};
+            dedalus::CoreStackRunnerConfig{
+                .timing_writer = std::move(timing_writer),
+                .snapshot_publisher = snapshot_publisher,
+                .ghost_detections_publisher = ghost_detections_publisher}};
 
         const auto mission_events_path = args.output_dir / "mission_events.jsonl";
         std::unique_ptr<dedalus::MissionRuntime> mission_runtime;

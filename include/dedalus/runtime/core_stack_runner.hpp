@@ -12,19 +12,15 @@
 
 namespace dedalus {
 
+struct CoreStackRunnerConfig {
+    std::unique_ptr<PipelineProfiler> timing_writer;
+    std::shared_ptr<WorldSnapshotPublisher> snapshot_publisher;
+    std::shared_ptr<GhostDetectionsPublisher> ghost_detections_publisher;
+};
+
 class CoreStackRunner {
 public:
-    explicit CoreStackRunner(CoreStackProviders providers);
-    CoreStackRunner(CoreStackProviders providers, std::unique_ptr<PipelineProfiler> timing_writer);
-    CoreStackRunner(
-        CoreStackProviders providers,
-        std::unique_ptr<PipelineProfiler> timing_writer,
-        std::shared_ptr<WorldSnapshotPublisher> snapshot_publisher);
-    CoreStackRunner(
-        CoreStackProviders providers,
-        std::unique_ptr<PipelineProfiler> timing_writer,
-        std::shared_ptr<WorldSnapshotPublisher> snapshot_publisher,
-        std::shared_ptr<GhostDetectionsPublisher> ghost_detections_publisher);
+    CoreStackRunner(CoreStackProviders providers, CoreStackRunnerConfig config = {});
     ~CoreStackRunner();
 
     CoreStackRunner(const CoreStackRunner&) = delete;
