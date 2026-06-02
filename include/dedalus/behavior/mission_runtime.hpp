@@ -9,6 +9,7 @@
 #include <string>
 #include <thread>
 
+#include "dedalus/behavior/flight_control_state_tracker.hpp"
 #include "dedalus/behavior/latest_world_snapshot.hpp"
 #include "dedalus/behavior/mission_controller.hpp"
 #include "dedalus/runtime/pubsub.hpp"
@@ -85,6 +86,7 @@ private:
     std::thread thread_;
     std::size_t tick_count_{0U};
     MissionLifecycleState last_state_{MissionLifecycleState::Idle};
+    FlightControlStateTracker flight_control_tracker_;
     std::optional<FlightCommandResult> last_command_result_;
     std::optional<CameraPointingResult> last_camera_pointing_result_;
     std::ofstream event_log_;

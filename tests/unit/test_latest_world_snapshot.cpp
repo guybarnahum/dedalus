@@ -1,21 +1,27 @@
 #include <iostream>
 #include <string>
 
-#include "dedalus/behavior/latest_world_snapshot.hpp"
+#include "dedalus/behavior/flight_control_state_tracker.hpp"
 
 namespace {
 
 bool expect_arm_state(
-    const dedalus::LatestWorldSnapshot& latest_snapshot,
+    const dedalus::FlightControlStateTracker& tracker,
     dedalus::FlightControlArmState expected,
     const std::string& context) {
-    const auto snapshot = latest_snapshot.latest();
-    if (!snapshot) {
-        std::cerr << context << ": expected a latest snapshot\n";
+    if (tracker.state().arm_state != expected) {
+        std::cerr << context << ": unexpected arm_state\n";
         return false;
     }
-    if (snapshot->flight_control.arm_state != expected) {
-        std::cerr << context << ": unexpected arm_state\n";
+    return true;
+}
+
+bool expect_snapshot_arm_state(
+    const dedalus::WorldSnapshot& snapshot,
+    dedalus::FlightControlArmState expected,
+    const std::string& context) {
+    if (snapshot.flight_control.arm_state != expected) {
+        std::cerr << context << ": unexpected snapshot arm_state\n";
         return false;
     }
     return true;
@@ -36,53 +42,59 @@ dedalus::WorldSnapshot ego_snapshot(
 }  // namespace
 
 int main() {
-    dedalus::LatestWorldSnapshot latest_snapshot;
+    dedalus::FlightControlStateTracker tracker;
 
-    latest_snapshot.mark_command_dispatched(
+    tracker.on_command_dispatched(
         dedalus::FlightCommandKind::Arm,
         dedalus::TimePoint{100},
         "arm_dispatch_ok");
-    if (!expect_arm_state(
-            latest_snapshot,
-            dedalus::FlightControlArmState::ArmRequested,
-            "mark Arm dispatched")) {
+    if (!expect_arm_state(tracker, dedalus::FlightControlArmState::ArmRequested,
+                          "on_command_dispatched Arm sets ArmRequested")) {
         return 1;
     }
 
-    latest_snapshot.publish(ego_snapshot(200, false, false));
-    if (!expect_arm_state(
-            latest_snapshot,
-            dedalus::FlightControlArmState::ArmRequested,
-            "fresh ego without armed validity preserves ArmRequested")) {
+    auto s1 = ego_snapshot(200, false, false);
+    tracker.apply_to_snapshot(s1);
+    if (!expect_snapshot_arm_state(s1, dedalus::FlightControlArmState::ArmRequested,
+                                   "ego without armed_valid preserves ArmRequested")) {
+        return 1;
+    }
+    if (!expect_arm_state(tracker, dedalus::FlightControlArmState::ArmRequested,
+                          "tracker state unchanged when ego not valid")) {
         return 1;
     }
 
-    latest_snapshot.publish(ego_snapshot(300, true, true));
-    if (!expect_arm_state(
-            latest_snapshot,
-            dedalus::FlightControlArmState::ArmedConfirmed,
-            "fresh ego armed confirms ArmRequested")) {
+    auto s2 = ego_snapshot(300, true, true);
+    tracker.apply_to_snapshot(s2);
+    if (!expect_snapshot_arm_state(s2, dedalus::FlightControlArmState::ArmedConfirmed,
+                                   "ego armed confirms ArmRequested -> ArmedConfirmed")) {
+        return 1;
+    }
+    if (!expect_arm_state(tracker, dedalus::FlightControlArmState::ArmedConfirmed,
+                          "tracker state updated to ArmedConfirmed")) {
         return 1;
     }
 
-    latest_snapshot.mark_command_dispatched(
+    tracker.on_command_dispatched(
         dedalus::FlightCommandKind::Disarm,
         dedalus::TimePoint{400},
         "disarm_dispatch_ok");
-    if (!expect_arm_state(
-            latest_snapshot,
-            dedalus::FlightControlArmState::DisarmRequested,
-            "mark Disarm dispatched")) {
+    if (!expect_arm_state(tracker, dedalus::FlightControlArmState::DisarmRequested,
+                          "on_command_dispatched Disarm sets DisarmRequested")) {
         return 1;
     }
 
-    latest_snapshot.publish(ego_snapshot(500, true, false));
-    if (!expect_arm_state(
-            latest_snapshot,
-            dedalus::FlightControlArmState::DisarmedConfirmed,
-            "fresh ego disarmed confirms DisarmRequested")) {
+    auto s3 = ego_snapshot(500, true, false);
+    tracker.apply_to_snapshot(s3);
+    if (!expect_snapshot_arm_state(s3, dedalus::FlightControlArmState::DisarmedConfirmed,
+                                   "ego disarmed confirms DisarmRequested -> DisarmedConfirmed")) {
+        return 1;
+    }
+    if (!expect_arm_state(tracker, dedalus::FlightControlArmState::DisarmedConfirmed,
+                          "tracker state updated to DisarmedConfirmed")) {
         return 1;
     }
 
     return 0;
 }
+

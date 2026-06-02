@@ -783,9 +783,9 @@ Every consumer called `get_or(key, fallback)` and then `std::stod` / `std::stoi`
 
 ### State Ownership and Coupling
 
-**4. `LatestWorldSnapshot` is a write-back accumulator, not a pure handoff**  
+**4. `LatestWorldSnapshot` is a write-back accumulator, not a pure handoff** ✅ **FIXED**  
 `publish()` carries forward the previous snapshot's `flight_control` state and applies arm-confirmation heuristics. Separately, `MissionRuntime` calls `mark_command_dispatched()` / `mark_command_failed()` to write back into it. This means a single class plays two roles: publisher handoff and stateful flight-control FSM accumulator. Bugs in either path are hard to isolate.  
-*Suggested fix:* Move `FlightControlState` merge/update logic into `MissionRuntime` or a dedicated `FlightControlStateTracker`. `LatestWorldSnapshot` should be a thin SPSC snapshot holder only.
+*Resolution:* `LatestWorldSnapshot` is now a pure SPSC snapshot holder (`publish` + `latest` only). Flight control state tracking — arm-state transitions and ego confirmation — is extracted into `FlightControlStateTracker` (`include/dedalus/behavior/flight_control_state_tracker.hpp`), owned and mutated exclusively on the `MissionRuntime` tick thread. `tick_once()` calls `flight_control_tracker_.apply_to_snapshot()` before handing the snapshot to the controller; `dispatch_command()` calls `on_command_dispatched/failed` directly instead of writing back through the snapshot.
 
 **5. `EffectiveWorldView::memory` and `EffectiveWorldView::conflicts` are permanently empty stubs**  
 `InMemoryWorldModel::effective_view()` returns an `EffectiveWorldView` whose `memory` and `conflicts` fields are never populated. Any code that branches on them silently sees empty collections. This is known and intentional for future WorldView expansion — but the fields should either be documented as stubs or gated behind a feature flag.

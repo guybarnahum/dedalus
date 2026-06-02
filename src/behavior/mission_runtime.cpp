@@ -207,6 +207,7 @@ bool MissionRuntime::tick_once() {
     MissionTickInput input;
     input.now = now_timepoint();
     input.snapshot = *snapshot;
+    flight_control_tracker_.apply_to_snapshot(input.snapshot);
     input.last_command_result = last_command_result_;
     input.finish_requested = finish_requested_.load();
     if (input.snapshot.timestamp.timestamp_ns > 0) {
@@ -355,19 +356,19 @@ void MissionRuntime::dispatch_command(
     try {
         last_command_result_ = sink_->send(*output.command);
         if (last_command_result_->success) {
-            snapshots_->mark_command_dispatched(
+            flight_control_tracker_.on_command_dispatched(
                 output.command->kind,
                 input.now,
                 last_command_result_->status);
         } else {
-            snapshots_->mark_command_failed(
+            flight_control_tracker_.on_command_failed(
                 output.command->kind,
                 input.now,
                 last_command_result_->status);
         }
     } catch (const std::exception& ex) {
         last_command_result_ = FlightCommandResult{output.command->kind, false, ex.what()};
-        snapshots_->mark_command_failed(output.command->kind, input.now, ex.what());
+        flight_control_tracker_.on_command_failed(output.command->kind, input.now, ex.what());
         write_event(
             "\"event\":\"command_exception\",\"tick\":" + std::to_string(tick_count_) +
             ",\"state\":" + q(to_string(output.state)) +
