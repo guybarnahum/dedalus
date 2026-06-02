@@ -1,9 +1,9 @@
 # AirSim existing-object circle behavior run config.
 #
-# This config reuses the validated 2.26E explicit existing-object binding and
-# switches the behavior spec from follow to circle/orbit behavior.
+# This config reuses the validated explicit existing-object binding and switches
+# the behavior spec from follow to circle/orbit behavior.
 #
-# Default target:
+# Default behavior target:
 #   source_track_id: ghost_person_001
 #   airsim_object_name: BRPlayer_01_96
 #   class: person
@@ -16,7 +16,7 @@ tracker: simple_centroid
 identity_resolver: appearance_only
 projector: flat_ground
 world_model: in_memory
-track4_occupancy_source: airsim_ground_truth
+occupancy_source: airsim_ground_truth
 frame_annotator: ppm_sequence
 annotation_output_path: out/object_behavior_airsim_existing_object_circle_annotation
 annotation_output_fps: 5
@@ -37,6 +37,51 @@ ghost_targets_airsim.objects.0.airsim_object_name: BRPlayer_01_96
 ghost_targets_airsim.objects.0.class: person
 ghost_targets_airsim.objects.0.confidence: 0.82
 ghost_targets_airsim.objects.0.size_m: [0.6, 0.6, 1.8]
+
+# AirSim object-pattern bindings emulate the geometry-first obstacle evidence
+# a future visual obstacle detector should produce. Semantic labels are best-effort
+# type hints for validation/comparison, not a safety requirement.
+ghost_targets_airsim.patterns.0.source_track_prefix: gt_tree
+ghost_targets_airsim.patterns.0.airsim_object_pattern: Tree*
+ghost_targets_airsim.patterns.0.class: tree
+ghost_targets_airsim.patterns.0.confidence: 0.95
+ghost_targets_airsim.patterns.0.size_m: [1.5, 1.5, 6.0]
+ghost_targets_airsim.patterns.0.max_matches: 32
+
+ghost_targets_airsim.patterns.1.source_track_prefix: gt_pole
+ghost_targets_airsim.patterns.1.airsim_object_pattern: Pole*
+ghost_targets_airsim.patterns.1.class: pole
+ghost_targets_airsim.patterns.1.confidence: 0.90
+ghost_targets_airsim.patterns.1.size_m: [0.35, 0.35, 5.0]
+ghost_targets_airsim.patterns.1.max_matches: 32
+
+ghost_targets_airsim.patterns.2.source_track_prefix: gt_wall
+ghost_targets_airsim.patterns.2.airsim_object_pattern: Wall*
+ghost_targets_airsim.patterns.2.class: wall
+ghost_targets_airsim.patterns.2.confidence: 0.90
+ghost_targets_airsim.patterns.2.size_m: [4.0, 0.5, 2.5]
+ghost_targets_airsim.patterns.2.max_matches: 32
+
+ghost_targets_airsim.patterns.3.source_track_prefix: gt_fence
+ghost_targets_airsim.patterns.3.airsim_object_pattern: Fence*
+ghost_targets_airsim.patterns.3.class: fence
+ghost_targets_airsim.patterns.3.confidence: 0.85
+ghost_targets_airsim.patterns.3.size_m: [4.0, 0.25, 1.8]
+ghost_targets_airsim.patterns.3.max_matches: 32
+
+ghost_targets_airsim.patterns.4.source_track_prefix: gt_cable
+ghost_targets_airsim.patterns.4.airsim_object_pattern: Cable*
+ghost_targets_airsim.patterns.4.class: cable
+ghost_targets_airsim.patterns.4.confidence: 0.80
+ghost_targets_airsim.patterns.4.size_m: [0.15, 0.15, 4.0]
+ghost_targets_airsim.patterns.4.max_matches: 32
+
+ghost_targets_airsim.patterns.5.source_track_prefix: gt_wire
+ghost_targets_airsim.patterns.5.airsim_object_pattern: Wire*
+ghost_targets_airsim.patterns.5.class: cable
+ghost_targets_airsim.patterns.5.confidence: 0.80
+ghost_targets_airsim.patterns.5.size_m: [0.15, 0.15, 4.0]
+ghost_targets_airsim.patterns.5.max_matches: 32
 
 mission_controller: object_behavior
 mission_tick_hz: 10
