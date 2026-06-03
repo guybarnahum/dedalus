@@ -2,6 +2,7 @@
 
 #include <atomic>
 #include <chrono>
+#include <cstdint>
 #include <exception>
 #include <fstream>
 #include <memory>
@@ -41,6 +42,13 @@ struct MissionRuntimeConfig {
     std::string event_log_path{};
 };
 
+struct MissionRuntimeStats {
+    std::uint64_t events_written{0};
+    std::uint64_t event_publish_total_us{0};
+    std::uint64_t event_log_write_total_us{0};
+    std::uint64_t event_log_flush_total_us{0};
+};
+
 class MissionRuntime {
 public:
     MissionRuntime(
@@ -71,6 +79,7 @@ public:
     [[nodiscard]] bool terminal_settled() const;
     [[nodiscard]] std::size_t tick_count() const;
     [[nodiscard]] MissionLifecycleState last_state() const;
+    [[nodiscard]] MissionRuntimeStats stats() const;
 
 private:
     void loop();
@@ -97,6 +106,10 @@ private:
     std::optional<CameraPointingResult> last_camera_pointing_result_;
     std::ofstream event_log_;
     mutable std::mutex event_log_mutex_;
+    std::atomic<std::uint64_t> events_written_{0};
+    std::atomic<std::uint64_t> event_publish_total_us_{0};
+    std::atomic<std::uint64_t> event_log_write_total_us_{0};
+    std::atomic<std::uint64_t> event_log_flush_total_us_{0};
 };
 
 }  // namespace dedalus
