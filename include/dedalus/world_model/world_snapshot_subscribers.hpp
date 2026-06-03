@@ -2,6 +2,7 @@
 
 #include <atomic>
 #include <condition_variable>
+#include <cstdint>
 #include <deque>
 #include <filesystem>
 #include <fstream>
@@ -31,6 +32,16 @@ struct ArtifactSnapshotWriterConfig {
     int max_queue_depth{64};  // frames; oldest frame is dropped and counted when full
 };
 
+struct ArtifactSnapshotWriterStats {
+    int frame_count{0};
+    int dropped_frames{0};
+    std::uint64_t enqueue_count{0};
+    std::uint64_t write_count{0};
+    std::uint64_t enqueue_total_us{0};
+    std::uint64_t write_total_us{0};
+    std::uint64_t manifest_flush_total_us{0};
+};
+
 class ArtifactSnapshotWriter final : public WorldSnapshotSubscriber {
 public:
     explicit ArtifactSnapshotWriter(ArtifactSnapshotWriterConfig config);
@@ -45,6 +56,7 @@ public:
 
     [[nodiscard]] int frame_count() const;
     [[nodiscard]] int dropped_frames() const;
+    [[nodiscard]] ArtifactSnapshotWriterStats stats() const;
     [[nodiscard]] const std::filesystem::path& output_dir() const;
     [[nodiscard]] const std::filesystem::path& manifest_path() const;
 
@@ -58,6 +70,11 @@ private:
 
     std::atomic<int> frame_count_{0};
     std::atomic<int> dropped_frames_{0};
+    std::atomic<std::uint64_t> enqueue_count_{0};
+    std::atomic<std::uint64_t> write_count_{0};
+    std::atomic<std::uint64_t> enqueue_total_us_{0};
+    std::atomic<std::uint64_t> write_total_us_{0};
+    std::atomic<std::uint64_t> manifest_flush_total_us_{0};
 
     std::deque<std::pair<int, std::shared_ptr<const WorldSnapshot>>> write_queue_;
     mutable std::mutex mutex_;
