@@ -174,6 +174,6 @@ std::vector<std::string> ProviderRegistry::projectors() const { return {"flat_gr
 std::vector<std::string> ProviderRegistry::world_models() const { return {"in_memory"}; }
 std::vector<std::string> ProviderRegistry::frame_annotators() const { return {"null", "ppm_sequence", "mp4"}; }
 std::vector<std::string> ProviderRegistry::mission_controllers() const { return {"disabled", "trajectory_mission", "object_behavior"}; }
-std::vector<std::string> ProviderRegistry::flight_command_sinks() const { return {"disabled", "airsim_velocity"}; }
+std::vector<std::string> ProviderRegistry::flight_command_sinks() const { return {"disabled", "airsim_velocity", "px4_bridge", "px4_mavlink"}; }
 
 }  // namespace dedalus

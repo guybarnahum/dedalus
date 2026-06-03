@@ -293,6 +293,26 @@ void validate_config(const CoreStackProviderConfig& config) {
 
 }  // namespace
 
+void validate_provider_names(const CoreStackProviderConfig& config, const ProviderRegistry& registry) {
+    const auto check = [](const std::string& field, const std::string& value,
+                          const std::vector<std::string>& valid) {
+        if (std::find(valid.begin(), valid.end(), value) == valid.end()) {
+            throw std::invalid_argument("unknown " + field + ": " + value);
+        }
+    };
+    check("frame_source",        config.frame_source,        registry.frame_sources());
+    check("ego_provider",        config.ego_provider,        registry.ego_providers());
+    check("detector",            config.detector,            registry.detectors());
+    check("camera_stabilizer",   config.camera_stabilizer,   registry.camera_stabilizers());
+    check("tracker",             config.tracker,             registry.trackers());
+    check("identity_resolver",   config.identity_resolver,   registry.identity_resolvers());
+    check("projector",           config.projector,           registry.projectors());
+    check("world_model",         config.world_model,         registry.world_models());
+    check("frame_annotator",     config.frame_annotator,     registry.frame_annotators());
+    check("mission_controller",  config.mission_controller,  registry.mission_controllers());
+    check("flight_command_sink", config.flight_command_sink, registry.flight_command_sinks());
+}
+
 CoreStackProviderConfig load_core_stack_config(const std::string& path) {
     std::ifstream input{path};
     if (!input) throw std::runtime_error("failed to open core-stack config: " + path);
@@ -318,6 +338,7 @@ CoreStackProviderConfig load_core_stack_config(const std::string& path) {
         }
     }
     validate_config(config);
+    validate_provider_names(config, ProviderRegistry{});
     return config;
 }
 

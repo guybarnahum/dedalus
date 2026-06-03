@@ -197,6 +197,44 @@ int main() {
         std::cerr << "flight command sink registry list is empty\n";
         return 1;
     }
+    if (!contains(flight_sinks, "px4_bridge") || !contains(flight_sinks, "px4_mavlink")) {
+        std::cerr << "flight command sink registry missing px4_bridge or px4_mavlink\n";
+        return 1;
+    }
+
+    // validate_provider_names: valid config must pass without throwing
+    try {
+        dedalus::validate_provider_names(config, registry);
+    } catch (const std::exception& ex) {
+        std::cerr << "validate_provider_names rejected valid config: " << ex.what() << "\n";
+        return 1;
+    }
+
+    // validate_provider_names: unknown frame_source must be rejected at load time
+    {
+        dedalus::CoreStackProviderConfig bad_config = config;
+        bad_config.frame_source = "nonexistent_provider";
+        try {
+            dedalus::validate_provider_names(bad_config, registry);
+            std::cerr << "validate_provider_names should reject unknown frame_source\n";
+            return 1;
+        } catch (const std::invalid_argument&) {
+            // expected
+        }
+    }
+
+    // validate_provider_names: unknown flight_command_sink must be rejected at load time
+    {
+        dedalus::CoreStackProviderConfig bad_config = config;
+        bad_config.flight_command_sink = "unknown_sink";
+        try {
+            dedalus::validate_provider_names(bad_config, registry);
+            std::cerr << "validate_provider_names should reject unknown flight_command_sink\n";
+            return 1;
+        } catch (const std::invalid_argument&) {
+            // expected
+        }
+    }
 
     return 0;
 }

@@ -864,9 +864,9 @@ Timing rows are written incrementally; if the process is killed (e.g., Ctrl-C in
 
 ### Configuration and Testing
 
-**18. Config validation happens only at construction time, not at load time**  
+**18. Config validation happens only at construction time, not at load time**  ✅ **FIXED**  
 `load_core_stack_config()` parses YAML into `CoreStackProviderConfig` but does not validate that the named providers (`frame_source`, `detector`, etc.) exist in the registry, or that required `mission_options` keys are present. Invalid names produce runtime errors deep inside `ProviderRegistry::create()`.  
-*Suggested fix:* Add a `validate(CoreStackProviderConfig, const ProviderRegistry&)` free function callable from test fixtures and from `load_core_stack_config()`.
+*Resolution:* `validate_provider_names(const CoreStackProviderConfig&, const ProviderRegistry&)` added as a public free function in `config_loader.hpp`. It checks all eleven string provider fields (`frame_source`, `ego_provider`, `detector`, `camera_stabilizer`, `tracker`, `identity_resolver`, `projector`, `world_model`, `frame_annotator`, `mission_controller`, `flight_command_sink`) against the corresponding registry list and throws `std::invalid_argument("unknown <field>: <value>")` for any unknown name. `load_core_stack_config()` calls it automatically using a default-constructed `ProviderRegistry{}` before returning. `ProviderRegistry::flight_command_sinks()` was also corrected to include `"px4_bridge"` and `"px4_mavlink"` which were handled by the mission loop but missing from the enumerated list. Tests verify a valid config passes, and that unknown `frame_source` and `flight_command_sink` values are rejected.
 
 **19. No integration test exercises `MissionRuntime` with a real `FlightCommandSink`**  
 The CTest suite uses `NullFlightCommandSink` in all mission tests. There are no tests that verify the JSON protocol between `Px4BridgeCommandSink` and `px4-command-bridge.py`, or that `AirSimVelocityCommandSink` parses the response correctly.
