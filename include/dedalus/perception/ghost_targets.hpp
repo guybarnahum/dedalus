@@ -34,6 +34,7 @@ struct AirSimGhostObjectSourceConfig {
     std::string bridge_command{"python3 simulation/airsim/scripts/airsim-object-poses.py"};
     std::string bridge_transport{"pipe"};
     std::string scene_inventory_path;
+    double stream_rate_hz{30.0};
     std::vector<AirSimGhostObjectBinding> objects;
     std::vector<AirSimGhostObjectPatternBinding> patterns;
 };
