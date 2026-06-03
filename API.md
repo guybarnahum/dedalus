@@ -834,8 +834,10 @@ Construction from `GhostScenario` and from `AirSimGhostObjectSourceConfig` resul
 
 *Resolution:* `ghost_targets.cpp` now defines an abstract `GhostTargetBackend` class with a single pure-virtual `detections_at(timestamp, scenario_elapsed_s)` method. `TrajectoryScenarioBackend` and `AirSimObjectsBackend` are concrete implementations in the anonymous namespace. `GhostTargetProvider::Impl` reduces to a single `unique_ptr<GhostTargetBackend>` member, eliminating the `SourceType` enum and the branching `if` in `frame_at()`. Frame assembly (timestamp, map_frame_id, observations) remains in `GhostTargetProvider::frame_at()`. The public API and header are unchanged. 34/34 tests pass.
 
-**13. No per-detection depth information flows from detector to projector**  
+**13. No per-detection depth information flows from detector to projector** ✅ **FIXED**  
 `Detector` produces only 2-D `Detection2D` (bounding boxes). The `Projector3D` stage must independently acquire depth (via AirSim RPC or flat-ground assumption) because depth is not part of `Detection2D`. This means every non-flat-ground projector makes its own bridge call, bypassing any depth data the detector might already have access to.
+
+*Resolution:* Added `std::optional<double> depth_m` to both `Detection2D` and `Track2D` (non-breaking; defaults to empty). `SimpleCentroidTracker` copies `depth_m` from each source detection to the corresponding track. `FlatGroundProjector` uses `track.depth_m.value_or(kFlatGroundDepthM)` instead of the hardcoded 18.0 m constant, so detectors that populate depth (e.g. a future `AirSimGroundTruthDetector` implementation) automatically benefit without a separate RPC call. Existing behaviour is fully preserved when depth is absent. 34/34 tests pass.
 
 ---
 

@@ -68,6 +68,7 @@ std::vector<Track2D> SimpleCentroidTracker::update(const std::vector<Detection2D
         track.state = TrackState::Confirmed;
         track.age_frames = 1;
         track.missed_frames = 0;
+        track.depth_m = detection.depth_m;
         tracks.push_back(track);
     }
 
@@ -102,6 +103,9 @@ std::vector<Observation3D> FlatGroundProjector::project(
     for (const auto& track : tracks) {
         const double bbox_center_x = track.bbox_px.x + (track.bbox_px.width * 0.5);
         const double normalized_x = (bbox_center_x - frame.intrinsics.cx) / frame.intrinsics.fx;
+        // Use detector-supplied depth when available; fall back to the flat-ground constant.
+        constexpr double kFlatGroundDepthM = 18.0;
+        const double depth_m = track.depth_m.value_or(kFlatGroundDepthM);
 
         Observation3D observation;
         observation.track_id = track.track_id;
@@ -112,7 +116,7 @@ std::vector<Observation3D> FlatGroundProjector::project(
         observation.source_frame_id = frame.frame_id;
         observation.has_source_frame = true;
         observation.timestamp = track.timestamp;
-        observation.position_body = Vec3{18.0, normalized_x * 18.0, 1.5};
+        observation.position_body = Vec3{depth_m, normalized_x * depth_m, 1.5};
         observation.position_local = Vec3{
             ego.local_T_body.position.x + observation.position_body.x,
             ego.local_T_body.position.y + observation.position_body.y,

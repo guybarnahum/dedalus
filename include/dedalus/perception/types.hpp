@@ -1,5 +1,6 @@
 #pragma once
 
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -16,6 +17,11 @@ struct Detection2D {
     ClassLabel class_label{ClassLabel::Unknown};
     FactionLabel faction{FactionLabel::Unknown};
     FeatureVector appearance;
+    // Optional depth at the bounding-box centroid, metres.  Populated by
+    // detectors that have direct depth access (e.g. AirSim ground-truth).
+    // When present, Projector3D implementations may use it instead of making
+    // a separate depth acquisition call.
+    std::optional<double> depth_m;
 };
 
 enum class TrackState {
@@ -36,6 +42,8 @@ struct Track2D {
     TrackState state{TrackState::Tentative};
     int age_frames{0};
     int missed_frames{0};
+    // Depth carried forward from the source Detection2D, if available.
+    std::optional<double> depth_m;
 };
 
 struct IdentityHypothesis {
