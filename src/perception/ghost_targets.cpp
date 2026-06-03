@@ -96,6 +96,20 @@ std::string build_object_pose_command(const AirSimGhostObjectSourceConfig& confi
     return command.str();
 }
 
+std::string build_object_pose_stream_command(const AirSimGhostObjectSourceConfig& config) {
+    validate_bridge_base_command(config.bridge_command);
+    std::ostringstream command;
+    command << config.bridge_command
+            << " --host " << shell_quote(config.host)
+            << " --rpc-port " << config.rpc_port
+            << " --stream-jsonl"
+            << " --stream-rate-hz 5";
+    for (const auto& object : config.objects) {
+        command << " --object " << shell_quote(object.airsim_object_name);
+    }
+    return command.str();
+}
+
 std::string read_text_file(const std::string& path) {
     std::ifstream input{path};
     if (!input) {
@@ -390,12 +404,24 @@ public:
         if (!expanded.empty()) {
             config_.objects.insert(config_.objects.end(), expanded.begin(), expanded.end());
             config_.patterns.clear();
+            use_persistent_stream_ = true;
+            stream_command_ = build_object_pose_stream_command(config_);
         }
     }
 
     std::vector<GhostDetectionState> detections_at(TimePoint timestamp, double /*scenario_elapsed_s*/) const override {
-        const auto command = build_object_pose_command(config_, timestamp);
-        const auto poses = parse_object_pose_json(transport_->request_once(command));
+        std::vector<AirSimObjectPose> poses;
+        if (use_persistent_stream_) {
+            const auto line = transport_->read_stream_line(stream_command_);
+            if (!line.has_value()) {
+                throw std::runtime_error("persistent AirSim object-pose stream ended unexpectedly");
+            }
+            poses = parse_object_pose_json(*line);
+        } else {
+            const auto command = build_object_pose_command(config_, timestamp);
+            poses = parse_object_pose_json(transport_->request_once(command));
+        }
+
         std::vector<GhostDetectionState> detections;
         detections.reserve(config_.objects.size() + poses.size());
         for (const auto& binding : config_.objects) {
@@ -419,6 +445,8 @@ public:
 private:
     AirSimGhostObjectSourceConfig config_;
     std::unique_ptr<BridgeTransport> transport_;
+    bool use_persistent_stream_{false};
+    std::string stream_command_;
 };
 
 }  // namespace
