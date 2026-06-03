@@ -13,7 +13,11 @@ from typing import Any
 
 COMPLETE_STATE_ORDER = ["Prepare", "Takeoff", "ExecuteMission", "GoHome", "Land", "Complete"]
 ABORT_AFTER_FLIGHT_STATE_ORDER = ["Prepare", "Takeoff", "ExecuteMission", "GoHome", "Land", "Abort"]
-OBJECT_BEHAVIOR_EVENTS = {"target_selected", "target_reacquired", "target_lost", "behavior_start", "behavior_tick_sample", "behavior_complete", "behavior_failed", "fallback_start", "fallback_complete", "behavior_sequence_step_start", "behavior_sequence_step_complete"}
+OBJECT_BEHAVIOR_EVENTS = {
+    "target_selected", "target_reacquired", "target_lost", "behavior_start",
+    "behavior_tick_sample", "behavior_complete", "behavior_failed", "fallback_start",
+    "fallback_complete", "behavior_sequence_step_start", "behavior_sequence_step_complete",
+}
 CAMERA_POINTING_EVENTS = {"camera_pointing_intent", "camera_pointing_dispatch", "camera_pointing_result"}
 SEQUENCE_EVENTS = {"behavior_sequence_step_start", "behavior_sequence_step_complete"}
 VALID_OCCUPANCY_CELL_STATES = {"free", "occupied", "unknown"}
@@ -46,6 +50,8 @@ class ValidationResult:
     occupancy_sidecars_checked: int = 0
     occupancy_projected_cells_checked: int = 0
     occupancy_source_kinds: dict[str, int] = field(default_factory=dict)
+    occupancy_max_occupied_count: int = 0
+    occupancy_source_object_prefix_counts: dict[str, int] = field(default_factory=dict)
     swept_volume_snapshots_checked: int = 0
     swept_volume_sidecars_checked: int = 0
     swept_volume_statuses: dict[str, int] = field(default_factory=dict)
@@ -87,12 +93,12 @@ def snapshot_path_from_manifest_line(line: str) -> Path | None:
 def snapshot_paths(run_dir: Path) -> list[Path]:
     manifest = run_dir / "snapshot_manifest.txt"
     if manifest.exists():
-        out: list[Path] = []
+        paths: list[Path] = []
         for raw in manifest.read_text(encoding="utf-8").splitlines():
             path = snapshot_path_from_manifest_line(raw)
             if path is not None:
-                out.append(path if path.is_absolute() else run_dir / path)
-        return out
+                paths.append(path if path.is_absolute() else run_dir / path)
+        return paths
     return sorted(run_dir.glob("snapshot_*.json"))
 
 
@@ -166,10 +172,10 @@ def collect_timeline(events: list[dict[str, Any]], result: ValidationResult) -> 
 
 
 def validate_order(result: ValidationResult, expected_order: list[str]) -> None:
-    search_from = 0
     if not result.state_path:
         result.failures.append("no mission state transitions found")
         return
+    search_from = 0
     for state in expected_order:
         try:
             index = result.state_path.index(state, search_from)
@@ -261,7 +267,21 @@ def validate_camera(result: ValidationResult, expected_modes: list[str], camera_
         result.failures.append(f"expected camera proof frames in {camera_frames_dir}")
 
 
-def validate_snapshot_occupancy(snapshot: dict[str, Any], result: ValidationResult, path: Path) -> None:
+def record_source_object_prefix(result: ValidationResult, source_object_name: Any, expected_prefixes: list[str]) -> None:
+    if not isinstance(source_object_name, str):
+        return
+    for prefix in expected_prefixes:
+        if source_object_name.startswith(prefix):
+            result.occupancy_source_object_prefix_counts[prefix] = result.occupancy_source_object_prefix_counts.get(prefix, 0) + 1
+
+
+def validate_snapshot_occupancy(
+    snapshot: dict[str, Any],
+    result: ValidationResult,
+    path: Path,
+    *,
+    expected_prefixes: list[str],
+) -> None:
     occ = snapshot.get("ego_occupancy")
     if not isinstance(occ, dict):
         result.failures.append(f"snapshot {path} missing ego_occupancy object")
@@ -284,13 +304,18 @@ def validate_snapshot_occupancy(snapshot: dict[str, Any], result: ValidationResu
     for key in ("occupied_count", "free_count", "unknown_count", "stale_count"):
         if not isinstance(occ.get(key), int) or occ.get(key) < 0:
             result.failures.append(f"snapshot {path} occupancy missing nonnegative integer {key}")
+    if isinstance(occ.get("occupied_count"), int):
+        result.occupancy_max_occupied_count = max(result.occupancy_max_occupied_count, int(occ["occupied_count"]))
     cells = occ.get("debug_cells")
     if not isinstance(cells, list) or not cells:
         result.failures.append(f"snapshot {path} occupancy missing non-empty debug_cells")
     else:
-        for index, cell in enumerate(cells[:32]):
+        for index, cell in enumerate(cells):
             if not isinstance(cell, dict):
                 result.failures.append(f"snapshot {path} occupancy debug_cells[{index}] is not an object")
+                continue
+            record_source_object_prefix(result, cell.get("source_object_name"), expected_prefixes)
+            if index >= 32:
                 continue
             if cell.get("state") not in VALID_OCCUPANCY_CELL_STATES:
                 result.failures.append(f"snapshot {path} occupancy debug_cells[{index}] invalid state")
@@ -416,7 +441,16 @@ def validate_sidecar_swept(sidecar: dict[str, Any], result: ValidationResult, pa
     result.swept_volume_sidecars_checked += 1
 
 
-def validate_snapshots(run_dir: Path, result: ValidationResult, *, occupancy: bool, swept: bool, allow_missing: bool, sidecars_expected: bool) -> None:
+def validate_snapshots(
+    run_dir: Path,
+    result: ValidationResult,
+    *,
+    occupancy: bool,
+    swept: bool,
+    allow_missing: bool,
+    sidecars_expected: bool,
+    expected_prefixes: list[str],
+) -> None:
     paths = snapshot_paths(run_dir)
     if not paths:
         if not allow_missing or not sidecars_expected:
@@ -429,7 +463,7 @@ def validate_snapshots(run_dir: Path, result: ValidationResult, *, occupancy: bo
             continue
         readable = True
         if occupancy:
-            validate_snapshot_occupancy(data, result, path)
+            validate_snapshot_occupancy(data, result, path, expected_prefixes=expected_prefixes)
         if swept:
             validate_snapshot_swept(data, result, path)
     if not readable:
@@ -452,6 +486,26 @@ def validate_sidecars(run_dir: Path, result: ValidationResult, *, occupancy: boo
             validate_sidecar_swept(data, result, path)
 
 
+def validate_occupancy_evidence_expectations(
+    result: ValidationResult,
+    *,
+    expected_source: str | None,
+    min_occupied_cells: int,
+    expected_prefixes: list[str],
+) -> None:
+    if expected_source is not None and result.occupancy_source_kinds.get(expected_source, 0) == 0:
+        observed = ", ".join(sorted(result.occupancy_source_kinds)) or "none"
+        result.failures.append(f"expected occupancy source_kind {expected_source}; observed {observed}")
+    if min_occupied_cells > 0 and result.occupancy_max_occupied_count < min_occupied_cells:
+        result.failures.append(
+            f"expected at least {min_occupied_cells} occupied occupancy cells; "
+            f"max observed {result.occupancy_max_occupied_count}"
+        )
+    for prefix in expected_prefixes:
+        if result.occupancy_source_object_prefix_counts.get(prefix, 0) == 0:
+            result.failures.append(f"expected occupancy source_object_name prefix {prefix}")
+
+
 def validate_run_dir(
     run_dir: Path,
     *,
@@ -468,6 +522,9 @@ def validate_run_dir(
     expect_occupancy_sidecars: bool,
     expect_swept_volume: bool,
     expect_swept_volume_sidecars: bool,
+    expected_occupancy_source: str | None,
+    min_occupied_cells: int,
+    expected_source_object_prefixes: list[str],
     safe_height_m: float,
     landed_height_m: float,
     allow_missing_snapshots: bool,
@@ -502,12 +559,27 @@ def validate_run_dir(
     snapshot_requested = expect_occupancy or expect_swept_volume
     sidecar_requested = expect_occupancy_sidecars or expect_swept_volume_sidecars
     if snapshot_requested:
-        validate_snapshots(run_dir, result, occupancy=expect_occupancy, swept=expect_swept_volume, allow_missing=allow_missing_snapshots, sidecars_expected=sidecar_requested)
+        validate_snapshots(
+            run_dir,
+            result,
+            occupancy=expect_occupancy,
+            swept=expect_swept_volume,
+            allow_missing=allow_missing_snapshots,
+            sidecars_expected=sidecar_requested,
+            expected_prefixes=expected_source_object_prefixes,
+        )
     if sidecar_requested:
         validate_sidecars(run_dir, result, occupancy=expect_occupancy_sidecars, swept=expect_swept_volume_sidecars, required=True)
-    else:
-        if expect_occupancy or expect_swept_volume:
-            validate_sidecars(run_dir, result, occupancy=expect_occupancy, swept=expect_swept_volume, required=False)
+    elif expect_occupancy or expect_swept_volume:
+        validate_sidecars(run_dir, result, occupancy=expect_occupancy, swept=expect_swept_volume, required=False)
+
+    if expect_occupancy or expected_occupancy_source is not None or min_occupied_cells > 0 or expected_source_object_prefixes:
+        validate_occupancy_evidence_expectations(
+            result,
+            expected_source=expected_occupancy_source,
+            min_occupied_cells=min_occupied_cells,
+            expected_prefixes=expected_source_object_prefixes,
+        )
     return result
 
 
@@ -557,8 +629,11 @@ def print_result(result: ValidationResult) -> None:
         print(f"    debug_cells_checked: {result.occupancy_debug_cells_checked}")
         print(f"    sidecars_checked: {result.occupancy_sidecars_checked}")
         print(f"    projected_cells_checked: {result.occupancy_projected_cells_checked}")
+        print(f"    max_occupied_count: {result.occupancy_max_occupied_count}")
         for source in sorted(result.occupancy_source_kinds):
             print(f"    source_kind {source}: {result.occupancy_source_kinds[source]}")
+        for prefix in sorted(result.occupancy_source_object_prefix_counts):
+            print(f"    source_object_prefix {prefix}: {result.occupancy_source_object_prefix_counts[prefix]}")
     if result.swept_volume_snapshots_checked or result.swept_volume_sidecars_checked:
         print("  swept_volume_artifacts:")
         print(f"    snapshots_checked: {result.swept_volume_snapshots_checked}")
@@ -604,6 +679,9 @@ def main() -> int:
     parser.add_argument("--expect-occupancy-sidecars", action="store_true")
     parser.add_argument("--expect-swept-volume", action="store_true")
     parser.add_argument("--expect-swept-volume-sidecars", action="store_true")
+    parser.add_argument("--expect-occupancy-source", choices=sorted(VALID_OCCUPANCY_SOURCE_KINDS), default=None)
+    parser.add_argument("--expect-min-occupied-cells", type=int, default=0)
+    parser.add_argument("--expect-source-object-prefix", action="append", default=[])
     parser.add_argument("--safe-height-m", type=float, default=1.0)
     parser.add_argument("--landed-height-m", type=float, default=1.0)
     parser.add_argument("--allow-missing-snapshots", action="store_true")
@@ -615,6 +693,9 @@ def main() -> int:
             print("--expect-complete conflicts with --expect-final-state", file=sys.stderr)
             return 2
         expected_final_state = "Complete"
+    if args.expect_min_occupied_cells < 0:
+        print("--expect-min-occupied-cells must be >= 0", file=sys.stderr)
+        return 2
 
     result = validate_run_dir(
         args.run_dir,
@@ -627,10 +708,13 @@ def main() -> int:
         expect_camera_modes=parse_csv(args.expect_camera_modes),
         camera_frames_dir=args.camera_frames_dir,
         expect_camera_proof_frames=args.expect_camera_proof_frames,
-        expect_occupancy=args.expect_occupancy or args.expect_occupancy_sidecars,
+        expect_occupancy=args.expect_occupancy or args.expect_occupancy_sidecars or args.expect_occupancy_source is not None or args.expect_min_occupied_cells > 0 or bool(args.expect_source_object_prefix),
         expect_occupancy_sidecars=args.expect_occupancy_sidecars,
         expect_swept_volume=args.expect_swept_volume or args.expect_swept_volume_sidecars,
         expect_swept_volume_sidecars=args.expect_swept_volume_sidecars,
+        expected_occupancy_source=args.expect_occupancy_source,
+        min_occupied_cells=args.expect_min_occupied_cells,
+        expected_source_object_prefixes=args.expect_source_object_prefix,
         safe_height_m=args.safe_height_m,
         landed_height_m=args.landed_height_m,
         allow_missing_snapshots=args.allow_missing_snapshots,
