@@ -37,7 +37,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--fail-on-missing", action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument("--max-pattern-matches", type=int, default=256)
     parser.add_argument("--stream-jsonl", action="store_true", help="Persistent mode: emit one compact JSON pose frame per line until interrupted")
-    parser.add_argument("--stream-rate-hz", type=float, default=5.0, help="Persistent stream output rate. Default: 5 Hz")
+    parser.add_argument("--stream-rate-hz", type=float, default=30.0, help="Persistent stream output rate. Default: 30 Hz")
     return parser.parse_args()
 
 
@@ -155,7 +155,11 @@ def run_stream(args: argparse.Namespace, client: Any) -> int:
         raise ValueError("--stream-rate-hz must be positive")
 
     query_names = build_query_names(client, args.objects, [], args.max_pattern_matches)
-    period_s = 1.0 / args.stream_rate_hz
+    # Keep the persistent stream above the mission/runtime tick rate even when
+    # older C++ callers pass the previous 5 Hz default. This prevents a 200 ms
+    # bridge-imposed wait from dominating ghost_targets.frame_at.
+    effective_rate_hz = max(args.stream_rate_hz, 30.0)
+    period_s = 1.0 / effective_rate_hz
     next_deadline = time.monotonic()
     while True:
         next_deadline += period_s
