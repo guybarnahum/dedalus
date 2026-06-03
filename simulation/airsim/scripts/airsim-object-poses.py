@@ -32,12 +32,14 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--host", default="127.0.0.1", help="AirSim RPC host")
     parser.add_argument("--rpc-port", type=int, default=41451, help="AirSim RPC port")
     parser.add_argument("--object", action="append", default=[], dest="objects", help="Exact object name to query. May be repeated.")
+    parser.add_argument("--dynamic-object", action="append", default=[], dest="dynamic_objects", help="Exact object name to refresh every stream frame. Other objects may use static refresh throttling.")
     parser.add_argument("--pattern", action="append", default=[], dest="patterns", help="AirSim/Unreal object-name pattern such as Tree* or Cable*. May be repeated.")
     parser.add_argument("--timestamp-ns", type=int, default=0, help="Optional caller timestamp to echo in the one-shot response.")
     parser.add_argument("--fail-on-missing", action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument("--max-pattern-matches", type=int, default=256)
     parser.add_argument("--stream-jsonl", action="store_true", help="Persistent mode: emit one compact JSON pose frame per line until interrupted")
     parser.add_argument("--stream-rate-hz", type=float, default=30.0, help="Persistent stream output rate. Default: 30 Hz")
+    parser.add_argument("--static-refresh-every-frames", type=int, default=10, help="Refresh non-dynamic objects every N stream frames. Cached poses are emitted between refreshes. Use 1 to refresh all objects every frame.")
     return parser.parse_args()
 
 
@@ -95,6 +97,19 @@ def build_query_names(client: Any, objects: list[str], patterns: list[str], max_
     return deduped
 
 
+def read_object_pose(client: Any, name: str, pattern: str | None, *, fail_on_missing: bool) -> dict[str, Any]:
+    try:
+        pose = client.simGetObjectPose(name)
+        return pose_to_json(name, pose, source_pattern=pattern)
+    except Exception as exc:
+        if fail_on_missing:
+            raise
+        payload = {"name": name, "pose_available": False, "error": str(exc)}
+        if pattern is not None:
+            payload["source_pattern"] = pattern
+        return payload
+
+
 def read_object_poses(
     client: Any,
     query_names: list[tuple[str, str | None]],
@@ -106,8 +121,7 @@ def read_object_poses(
     errors: list[str] = []
     for name, pattern in query_names:
         try:
-            pose = client.simGetObjectPose(name)
-            objects.append(pose_to_json(name, pose, source_pattern=pattern))
+            objects.append(read_object_pose(client, name, pattern, fail_on_missing=fail_on_missing))
         except Exception as exc:
             error = f"{name}: {exc}"
             errors.append(error)
@@ -153,8 +167,14 @@ def run_stream(args: argparse.Namespace, client: Any) -> int:
         raise ValueError("--stream-jsonl requires at least one --object")
     if args.stream_rate_hz <= 0.0:
         raise ValueError("--stream-rate-hz must be positive")
+    if args.static_refresh_every_frames <= 0:
+        raise ValueError("--static-refresh-every-frames must be positive")
 
     query_names = build_query_names(client, args.objects, [], args.max_pattern_matches)
+    query_by_name = {name: pattern for name, pattern in query_names}
+    dynamic_names = set(args.dynamic_objects)
+    cached: dict[str, dict[str, Any]] = {}
+    frame_index = 0
     # Keep the persistent stream above the mission/runtime tick rate even when
     # older C++ callers pass the previous 5 Hz default. This prevents a 200 ms
     # bridge-imposed wait from dominating ghost_targets.frame_at.
@@ -163,13 +183,29 @@ def run_stream(args: argparse.Namespace, client: Any) -> int:
     next_deadline = time.monotonic()
     while True:
         next_deadline += period_s
+        frame_index += 1
+        output_objects: list[dict[str, Any]] = []
+        refresh_static = frame_index == 1 or args.static_refresh_every_frames == 1 or (frame_index % args.static_refresh_every_frames) == 0
+        errors: list[str] = []
+        for name, pattern in query_names:
+            should_refresh = name in dynamic_names or refresh_static or name not in cached
+            if should_refresh:
+                try:
+                    cached[name] = read_object_pose(client, name, pattern, fail_on_missing=args.fail_on_missing)
+                except Exception as exc:
+                    error = f"{name}: {exc}"
+                    errors.append(error)
+                    cached[name] = {"name": name, "pose_available": False, "error": str(exc)}
+            output_objects.append(cached[name])
+        if errors and args.fail_on_missing:
+            raise RuntimeError("failed to read AirSim object pose(s): " + "; ".join(errors))
         emit_payload(
-            read_object_poses(
-                client,
-                query_names,
-                timestamp_ns=0,
-                fail_on_missing=args.fail_on_missing,
-            )
+            {
+                "schema_version": 1,
+                "source": "airsim_object_poses",
+                "timestamp_ns": time.time_ns(),
+                "objects": output_objects,
+            }
         )
         sleep_s = next_deadline - time.monotonic()
         if sleep_s > 0.0:
