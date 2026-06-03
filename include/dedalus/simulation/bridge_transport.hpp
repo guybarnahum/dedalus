@@ -54,6 +54,8 @@ private:
     std::unique_ptr<Impl> impl_;
 };
 
+// Planned stub — not yet implemented. Constructing this transport throws immediately.
+// Re-enable when the shared-memory ring-buffer protocol is ready.
 class SharedMemoryBridgeTransport final : public BridgeTransport {
 public:
     std::string request_once(const std::string& command) override;

@@ -51,7 +51,8 @@ std::unique_ptr<BridgeTransport> make_transport(const std::string& transport_nam
         return std::make_unique<PipeBridgeTransport>();
     }
     if (transport_name == "shared_memory") {
-        return std::make_unique<SharedMemoryBridgeTransport>();
+        throw std::runtime_error(
+            "shared_memory bridge transport is not yet implemented; use bridge_transport: pipe");
     }
     throw std::runtime_error("unknown AirSim bridge transport: " + transport_name);
 }
