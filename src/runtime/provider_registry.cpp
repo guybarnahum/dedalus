@@ -51,6 +51,18 @@ std::string scene_inventory_path_from(const CoreStackProviderConfig& config) {
     return config.ghost_targets_airsim_scene_inventory_path;
 }
 
+double env_double_or(const char* name, double fallback) {
+    const char* env = std::getenv(name);
+    if (env == nullptr || *env == '\0') return fallback;
+    return std::stod(env);
+}
+
+int env_int_or(const char* name, int fallback) {
+    const char* env = std::getenv(name);
+    if (env == nullptr || *env == '\0') return fallback;
+    return std::stoi(env);
+}
+
 std::string ghost_scenario_path_from(const CoreStackProviderConfig& config) {
     if (!config.ghost_targets_scenario_path.empty()) {
         return config.ghost_targets_scenario_path;
@@ -78,6 +90,10 @@ std::unique_ptr<GhostTargetProvider> make_ghost_target_provider(const CoreStackP
                 .bridge_command = "python3 simulation/airsim/scripts/airsim-object-poses.py",
                 .bridge_transport = config.bridge_transport,
                 .scene_inventory_path = scene_inventory_path_from(config),
+                .stream_rate_hz = config.ghost_targets_airsim_object_pose_stream_rate_hz,
+                .nearby_radius_m = env_double_or("DEDALUS_AIRSIM_GT_NEARBY_RADIUS_M", 80.0),
+                .max_objects_per_frame = env_int_or("DEDALUS_AIRSIM_GT_MAX_OBJECTS_PER_FRAME", 128),
+                .static_refresh_every_n_frames = env_int_or("DEDALUS_AIRSIM_GT_STATIC_REFRESH_EVERY_N_FRAMES", 10),
                 .objects = config.ghost_targets_airsim_objects,
                 .patterns = config.ghost_targets_airsim_patterns});
     }
