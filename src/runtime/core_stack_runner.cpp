@@ -65,33 +65,52 @@ bool CoreStackRunner::run_once() {
         return false;
     }
 
+    start = SteadyClock::now();
     PerceptionPipeline pipeline(
         providers_.detector,
         providers_.camera_stabilizer,
         providers_.tracker,
         providers_.identity_resolver,
         providers_.projector);
+    if (timing_writer_) {
+        timing_writer_->record_stage("perception_pipeline.construct", duration_us(start));
+    }
 
     start = SteadyClock::now();
     auto perception_output = pipeline.process(*frame, *ego_estimate.ego);
+    if (timing_writer_) {
+        timing_writer_->record_stage("perception_pipeline.process", duration_us(start));
+    }
+
     if (providers_.ghost_targets) {
         if (!ghost_scenario_start_.has_value()) {
             ghost_scenario_start_ = frame->timestamp;
         }
+        start = SteadyClock::now();
         const auto ghost_frame = providers_.ghost_targets->frame_at(
             frame->timestamp,
             ego_estimate.ego->map_frame_id,
             *ghost_scenario_start_);
-        if (ghost_detections_publisher_) {
-            ghost_detections_publisher_->publish(ghost_frame);
+        if (timing_writer_) {
+            timing_writer_->record_stage("ghost_targets.frame_at", duration_us(start));
         }
+
+        if (ghost_detections_publisher_) {
+            start = SteadyClock::now();
+            ghost_detections_publisher_->publish(ghost_frame);
+            if (timing_writer_) {
+                timing_writer_->record_stage("ghost_detections.publish", duration_us(start));
+            }
+        }
+
+        start = SteadyClock::now();
         perception_output.observations.insert(
             perception_output.observations.end(),
             ghost_frame.observations.begin(),
             ghost_frame.observations.end());
-    }
-    if (timing_writer_) {
-        timing_writer_->record_stage("perception_pipeline.process", duration_us(start));
+        if (timing_writer_) {
+            timing_writer_->record_stage("perception_output.merge_ghost_observations", duration_us(start));
+        }
     }
 
     start = SteadyClock::now();
@@ -116,11 +135,16 @@ bool CoreStackRunner::run_once() {
 
     start = SteadyClock::now();
     const auto snapshot_for_annotation = providers_.world_model->snapshot();
-    if (snapshot_publisher_) {
-        snapshot_publisher_->publish(snapshot_for_annotation);
-    }
     if (timing_writer_) {
         timing_writer_->record_stage("world_model.snapshot", duration_us(start));
+    }
+
+    if (snapshot_publisher_) {
+        start = SteadyClock::now();
+        snapshot_publisher_->publish(snapshot_for_annotation);
+        if (timing_writer_) {
+            timing_writer_->record_stage("snapshot_publisher.publish", duration_us(start));
+        }
     }
 
     AnnotationContext annotation;
