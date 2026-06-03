@@ -56,6 +56,10 @@ class ValidationResult:
     swept_volume_sidecars_checked: int = 0
     swept_volume_statuses: dict[str, int] = field(default_factory=dict)
     swept_volume_blocking_cells_checked: int = 0
+    scene_inventory_path: str | None = None
+    scene_inventory_scene_id: str | None = None
+    scene_inventory_object_count: int = 0
+    scene_inventory_class_counts: dict[str, int] = field(default_factory=dict)
 
     @property
     def valid(self) -> bool:
@@ -275,13 +279,7 @@ def record_source_object_prefix(result: ValidationResult, source_object_name: An
             result.occupancy_source_object_prefix_counts[prefix] = result.occupancy_source_object_prefix_counts.get(prefix, 0) + 1
 
 
-def validate_snapshot_occupancy(
-    snapshot: dict[str, Any],
-    result: ValidationResult,
-    path: Path,
-    *,
-    expected_prefixes: list[str],
-) -> None:
+def validate_snapshot_occupancy(snapshot: dict[str, Any], result: ValidationResult, path: Path, *, expected_prefixes: list[str]) -> None:
     occ = snapshot.get("ego_occupancy")
     if not isinstance(occ, dict):
         result.failures.append(f"snapshot {path} missing ego_occupancy object")
@@ -441,16 +439,47 @@ def validate_sidecar_swept(sidecar: dict[str, Any], result: ValidationResult, pa
     result.swept_volume_sidecars_checked += 1
 
 
-def validate_snapshots(
-    run_dir: Path,
-    result: ValidationResult,
-    *,
-    occupancy: bool,
-    swept: bool,
-    allow_missing: bool,
-    sidecars_expected: bool,
-    expected_prefixes: list[str],
-) -> None:
+def validate_scene_inventory(path: Path, result: ValidationResult) -> None:
+    result.scene_inventory_path = str(path)
+    data = read_json(path, result, "scene inventory")
+    if data is None:
+        return
+    if data.get("schema_version") != 1:
+        result.failures.append(f"scene inventory {path} schema_version is not 1")
+    scene_id = data.get("scene_id")
+    if not isinstance(scene_id, str) or not scene_id:
+        result.failures.append(f"scene inventory {path} missing scene_id")
+    else:
+        result.scene_inventory_scene_id = scene_id
+    source = data.get("source")
+    if not isinstance(source, dict) or source.get("kind") != "airsim_scene_inventory":
+        result.failures.append(f"scene inventory {path} missing source.kind=airsim_scene_inventory")
+    class_counts = data.get("class_counts")
+    if not isinstance(class_counts, dict):
+        result.failures.append(f"scene inventory {path} missing class_counts object")
+    else:
+        result.scene_inventory_class_counts = {str(k): int(v) for k, v in class_counts.items() if isinstance(v, int)}
+    objects = data.get("objects")
+    if not isinstance(objects, list) or not objects:
+        result.failures.append(f"scene inventory {path} missing non-empty objects list")
+        return
+    result.scene_inventory_object_count = len(objects)
+    for index, obj in enumerate(objects[:32]):
+        if not isinstance(obj, dict):
+            result.failures.append(f"scene inventory {path} objects[{index}] is not an object")
+            continue
+        for key in ("name", "canonical_class", "geometry_class"):
+            if not isinstance(obj.get(key), str) or not obj.get(key):
+                result.failures.append(f"scene inventory {path} objects[{index}] missing {key}")
+        if not isinstance(obj.get("pose_available"), bool):
+            result.failures.append(f"scene inventory {path} objects[{index}] missing bool pose_available")
+        if obj.get("pose_available") is True and not is_vec3(obj.get("position_ned_m")):
+            result.failures.append(f"scene inventory {path} objects[{index}] missing vec3 position_ned_m")
+        if not is_vec3(obj.get("recommended_size_m")):
+            result.failures.append(f"scene inventory {path} objects[{index}] missing vec3 recommended_size_m")
+
+
+def validate_snapshots(run_dir: Path, result: ValidationResult, *, occupancy: bool, swept: bool, allow_missing: bool, sidecars_expected: bool, expected_prefixes: list[str]) -> None:
     paths = snapshot_paths(run_dir)
     if not paths:
         if not allow_missing or not sidecars_expected:
@@ -486,21 +515,12 @@ def validate_sidecars(run_dir: Path, result: ValidationResult, *, occupancy: boo
             validate_sidecar_swept(data, result, path)
 
 
-def validate_occupancy_evidence_expectations(
-    result: ValidationResult,
-    *,
-    expected_source: str | None,
-    min_occupied_cells: int,
-    expected_prefixes: list[str],
-) -> None:
+def validate_occupancy_evidence_expectations(result: ValidationResult, *, expected_source: str | None, min_occupied_cells: int, expected_prefixes: list[str]) -> None:
     if expected_source is not None and result.occupancy_source_kinds.get(expected_source, 0) == 0:
         observed = ", ".join(sorted(result.occupancy_source_kinds)) or "none"
         result.failures.append(f"expected occupancy source_kind {expected_source}; observed {observed}")
     if min_occupied_cells > 0 and result.occupancy_max_occupied_count < min_occupied_cells:
-        result.failures.append(
-            f"expected at least {min_occupied_cells} occupied occupancy cells; "
-            f"max observed {result.occupancy_max_occupied_count}"
-        )
+        result.failures.append(f"expected at least {min_occupied_cells} occupied occupancy cells; max observed {result.occupancy_max_occupied_count}")
     for prefix in expected_prefixes:
         if result.occupancy_source_object_prefix_counts.get(prefix, 0) == 0:
             result.failures.append(f"expected occupancy source_object_name prefix {prefix}")
@@ -525,6 +545,7 @@ def validate_run_dir(
     expected_occupancy_source: str | None,
     min_occupied_cells: int,
     expected_source_object_prefixes: list[str],
+    scene_inventory_path: Path | None,
     safe_height_m: float,
     landed_height_m: float,
     allow_missing_snapshots: bool,
@@ -536,6 +557,9 @@ def validate_run_dir(
     result.snapshot_count = len(snapshot_paths(run_dir))
     if result.snapshot_count == 0 and not allow_missing_snapshots:
         result.failures.append("no snapshot artifacts found; expected snapshot_manifest.txt or snapshot_*.json")
+
+    if scene_inventory_path is not None:
+        validate_scene_inventory(scene_inventory_path, result)
 
     events_path = run_dir / "mission_events.jsonl"
     needs_events = expected_final_state is not None or expect_behavior or expect_sequence or expect_camera_pointing
@@ -559,27 +583,14 @@ def validate_run_dir(
     snapshot_requested = expect_occupancy or expect_swept_volume
     sidecar_requested = expect_occupancy_sidecars or expect_swept_volume_sidecars
     if snapshot_requested:
-        validate_snapshots(
-            run_dir,
-            result,
-            occupancy=expect_occupancy,
-            swept=expect_swept_volume,
-            allow_missing=allow_missing_snapshots,
-            sidecars_expected=sidecar_requested,
-            expected_prefixes=expected_source_object_prefixes,
-        )
+        validate_snapshots(run_dir, result, occupancy=expect_occupancy, swept=expect_swept_volume, allow_missing=allow_missing_snapshots, sidecars_expected=sidecar_requested, expected_prefixes=expected_source_object_prefixes)
     if sidecar_requested:
         validate_sidecars(run_dir, result, occupancy=expect_occupancy_sidecars, swept=expect_swept_volume_sidecars, required=True)
     elif expect_occupancy or expect_swept_volume:
         validate_sidecars(run_dir, result, occupancy=expect_occupancy, swept=expect_swept_volume, required=False)
 
     if expect_occupancy or expected_occupancy_source is not None or min_occupied_cells > 0 or expected_source_object_prefixes:
-        validate_occupancy_evidence_expectations(
-            result,
-            expected_source=expected_occupancy_source,
-            min_occupied_cells=min_occupied_cells,
-            expected_prefixes=expected_source_object_prefixes,
-        )
+        validate_occupancy_evidence_expectations(result, expected_source=expected_occupancy_source, min_occupied_cells=min_occupied_cells, expected_prefixes=expected_source_object_prefixes)
     return result
 
 
@@ -597,6 +608,14 @@ def print_result(result: ValidationResult) -> None:
         print(f"  landed_gate_height_m: {result.landed_gate_height_m:.3f}")
     if result.abort_height_m is not None:
         print(f"  abort_height_m: {result.abort_height_m:.3f}")
+    if result.scene_inventory_path is not None:
+        print("  scene_inventory:")
+        print(f"    path: {result.scene_inventory_path}")
+        if result.scene_inventory_scene_id is not None:
+            print(f"    scene_id: {result.scene_inventory_scene_id}")
+        print(f"    object_count: {result.scene_inventory_object_count}")
+        for class_name in sorted(result.scene_inventory_class_counts):
+            print(f"    class {class_name}: {result.scene_inventory_class_counts[class_name]}")
     if result.behavior_events:
         print("  behavior_events:")
         for name in sorted(result.behavior_events):
@@ -682,6 +701,7 @@ def main() -> int:
     parser.add_argument("--expect-occupancy-source", choices=sorted(VALID_OCCUPANCY_SOURCE_KINDS), default=None)
     parser.add_argument("--expect-min-occupied-cells", type=int, default=0)
     parser.add_argument("--expect-source-object-prefix", action="append", default=[])
+    parser.add_argument("--expect-scene-inventory", type=Path, default=None)
     parser.add_argument("--safe-height-m", type=float, default=1.0)
     parser.add_argument("--landed-height-m", type=float, default=1.0)
     parser.add_argument("--allow-missing-snapshots", action="store_true")
@@ -715,6 +735,7 @@ def main() -> int:
         expected_occupancy_source=args.expect_occupancy_source,
         min_occupied_cells=args.expect_min_occupied_cells,
         expected_source_object_prefixes=args.expect_source_object_prefix,
+        scene_inventory_path=args.expect_scene_inventory,
         safe_height_m=args.safe_height_m,
         landed_height_m=args.landed_height_m,
         allow_missing_snapshots=args.allow_missing_snapshots,
