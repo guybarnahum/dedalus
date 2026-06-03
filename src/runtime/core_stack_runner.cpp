@@ -90,7 +90,8 @@ bool CoreStackRunner::run_once() {
         const auto ghost_frame = providers_.ghost_targets->frame_at(
             frame->timestamp,
             ego_estimate.ego->map_frame_id,
-            *ghost_scenario_start_);
+            *ghost_scenario_start_,
+            ego_estimate.ego->local_T_body.position);
         if (timing_writer_) {
             timing_writer_->record_stage("ghost_targets.frame_at", duration_us(start));
         }
