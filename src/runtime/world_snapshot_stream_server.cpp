@@ -177,42 +177,36 @@ void RuntimeEventStreamServer::stop() {
 }
 
 void RuntimeEventStreamServer::on_snapshot(const WorldSnapshot& snapshot) {
-    std::uint64_t seq = 0;
-    {
+    const std::uint64_t seq = [this] {
         std::lock_guard<std::mutex> lock{mutex_};
-        seq = ++published_seq_;
-    }
-    auto line = stream_line_for(seq, snapshot);
-    {
-        std::lock_guard<std::mutex> lock{mutex_};
-        send_queue_.push_back(std::move(line));
-    }
-    queue_cv_.notify_one();
+        return ++published_seq_;
+    }();
+    enqueue_line(stream_line_for(seq, snapshot));
 }
 
 void RuntimeEventStreamServer::on_ghost_detections(const GhostDetectionsFrame& frame) {
-    std::uint64_t seq = 0;
-    {
+    const std::uint64_t seq = [this] {
         std::lock_guard<std::mutex> lock{mutex_};
-        seq = ++published_seq_;
-    }
-    auto line = stream_line_for(seq, frame);
-    {
-        std::lock_guard<std::mutex> lock{mutex_};
-        send_queue_.push_back(std::move(line));
-    }
-    queue_cv_.notify_one();
+        return ++published_seq_;
+    }();
+    enqueue_line(stream_line_for(seq, frame));
 }
 
 void RuntimeEventStreamServer::on_mission_event(const MissionEvent& event) {
-    std::uint64_t seq = 0;
+    const std::uint64_t seq = [this] {
+        std::lock_guard<std::mutex> lock{mutex_};
+        return ++published_seq_;
+    }();
+    enqueue_line(stream_line_for(seq, event));
+}
+
+void RuntimeEventStreamServer::enqueue_line(std::string line) {
     {
         std::lock_guard<std::mutex> lock{mutex_};
-        seq = ++published_seq_;
-    }
-    auto line = stream_line_for(seq, event);
-    {
-        std::lock_guard<std::mutex> lock{mutex_};
+        if (send_queue_.size() >= config_.max_send_queue_depth) {
+            send_queue_.pop_front();  // drop oldest; bounds memory under slow consumers
+            ++dropped_messages_;
+        }
         send_queue_.push_back(std::move(line));
     }
     queue_cv_.notify_one();
@@ -231,8 +225,34 @@ void RuntimeEventStreamServer::publish_json_line(const std::string& line) {
 
     std::vector<int> dead_clients;
     for (const int fd : clients) {
+        // Drain any per-client back-buffer before sending the new line.
+        // client_pending_ is owned exclusively by the writer thread; no mutex needed.
+        auto& pending = client_pending_[fd];
+        bool caught_up = true;
+        while (!pending.empty()) {
+            if (send_all_nonblocking(fd, pending.front())) {
+                pending.pop_front();
+            } else {
+                caught_up = false;
+                break;
+            }
+        }
+
+        if (!caught_up) {
+            // Socket buffer still full — add the new line to the per-client queue.
+            pending.push_back(line);
+            if (pending.size() > config_.max_client_pending_depth) {
+                dead_clients.push_back(fd);  // back-buffer overflow: drop client
+            }
+            continue;
+        }
+
+        // Back-buffer is empty — send the new line directly.
         if (!send_all_nonblocking(fd, line)) {
-            dead_clients.push_back(fd);
+            pending.push_back(line);
+            if (pending.size() > config_.max_client_pending_depth) {
+                dead_clients.push_back(fd);
+            }
         }
     }
 
@@ -248,6 +268,7 @@ void RuntimeEventStreamServer::publish_json_line(const std::string& line) {
             client_fds_.erase(it);
             ++dropped_clients_;
         }
+        client_pending_.erase(fd);
     }
 }
 
@@ -261,7 +282,8 @@ RuntimeEventStreamServerStats RuntimeEventStreamServer::stats() const {
         .published_seq = published_seq_,
         .connected_clients = client_fds_.size(),
         .accepted_clients = accepted_clients_,
-        .dropped_clients = dropped_clients_};
+        .dropped_clients = dropped_clients_,
+        .dropped_messages = dropped_messages_};
 }
 
 void RuntimeEventStreamServer::writer_loop() {
@@ -336,6 +358,7 @@ void RuntimeEventStreamServer::close_all_clients() {
         close_fd(fd);
     }
     client_fds_.clear();
+    client_pending_.clear();  // writer thread is joined by this point
 }
 
 }  // namespace dedalus

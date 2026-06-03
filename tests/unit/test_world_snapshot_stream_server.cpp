@@ -161,11 +161,32 @@ void streams_jsonl_runtime_events_to_client() {
     require(stats.accepted_clients >= 1, "server should accept at least one client");
 }
 
+void bounded_queue_drops_oldest_on_overflow() {
+    // Configure a tiny shared queue so we can force a drop without a real client.
+    // The server is deliberately NOT started: no writer thread drains the queue,
+    // so we can push items faster than they are consumed.
+    dedalus::RuntimeEventStreamServerConfig cfg;
+    cfg.bind_host = "127.0.0.1";
+    cfg.port = 0;
+    cfg.max_send_queue_depth = 2;
+    dedalus::RuntimeEventStreamServer server{cfg};
+
+    // Three pushes: the third overflows the queue, dropping the oldest.
+    server.on_snapshot(make_snapshot(1000, "track_a"));
+    server.on_snapshot(make_snapshot(2000, "track_b"));
+    server.on_snapshot(make_snapshot(3000, "track_c"));
+
+    const auto s = server.stats();
+    require(s.dropped_messages == 1, "one message should be dropped when shared queue overflows");
+    require(s.published_seq == 3, "published_seq increments regardless of queue drops");
+}
+
 }  // namespace
 
 int main() {
     try {
         streams_jsonl_runtime_events_to_client();
+        bounded_queue_drops_oldest_on_overflow();
     } catch (const std::exception& exc) {
         std::cerr << "test_world_snapshot_stream_server failed: " << exc.what() << '\n';
         return 1;

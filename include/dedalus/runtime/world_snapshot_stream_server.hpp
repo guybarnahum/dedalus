@@ -7,6 +7,7 @@
 #include <mutex>
 #include <string>
 #include <thread>
+#include <unordered_map>
 #include <vector>
 
 #include "dedalus/behavior/mission_runtime.hpp"
@@ -19,6 +20,10 @@ struct RuntimeEventStreamServerConfig {
     std::string bind_host{"127.0.0.1"};
     std::uint16_t port{0};
     int listen_backlog{8};
+    // Shared send queue bound: oldest message is dropped when the queue is full.
+    std::size_t max_send_queue_depth{256};
+    // Per-client back-buffer bound: client is dropped when its buffer is full.
+    std::size_t max_client_pending_depth{16};
 };
 
 struct RuntimeEventStreamServerStats {
@@ -26,6 +31,7 @@ struct RuntimeEventStreamServerStats {
     std::size_t connected_clients{0};
     std::uint64_t accepted_clients{0};
     std::uint64_t dropped_clients{0};
+    std::uint64_t dropped_messages{0};  // shared queue overflow drops
 };
 
 class RuntimeEventStreamServer final : public WorldSnapshotSubscriber, public GhostDetectionsSubscriber, public MissionEventSubscriber {
@@ -48,6 +54,7 @@ public:
     [[nodiscard]] RuntimeEventStreamServerStats stats() const;
 
 private:
+    void enqueue_line(std::string line);
     void publish_json_line(const std::string& line);
     void accept_loop();
     void writer_loop();
@@ -64,9 +71,13 @@ private:
     std::condition_variable queue_cv_;
     std::deque<std::string> send_queue_;
     std::vector<int> client_fds_;
+    // Per-client back-buffer: holds lines that could not be sent due to EAGAIN.
+    // Owned exclusively by the writer thread; no mutex required.
+    std::unordered_map<int, std::deque<std::string>> client_pending_;
     std::uint64_t published_seq_{0};
     std::uint64_t accepted_clients_{0};
     std::uint64_t dropped_clients_{0};
+    std::uint64_t dropped_messages_{0};
 };
 
 using WorldSnapshotStreamServerConfig = RuntimeEventStreamServerConfig;
