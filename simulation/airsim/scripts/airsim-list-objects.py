@@ -1,28 +1,9 @@
 #!/usr/bin/env python3
 """List AirSim scene objects and poses.
 
-This is a discovery tool for binding existing AirSim environment objects to
-Dedalus ghost detections later. It does not move objects, publish events, or
-modify the simulator.
-
-Examples:
-
-  python3 simulation/airsim/scripts/airsim-list-objects.py
-
-  python3 simulation/airsim/scripts/airsim-list-objects.py \
-    --name-regex '.*(Car|Vehicle|Person|Human|Pedestrian|BRPlayer).*' \
-    --class-pattern car='(?i)(car|vehicle)' \
-    --class-pattern person='(?i)(person|human|pedestrian|brplayer)' \
-    --only-matched \
-    --format table
-
-  python3 simulation/airsim/scripts/airsim-list-objects.py \
-    --match-class person \
-    --format table
-
-  python3 simulation/airsim/scripts/airsim-list-objects.py \
-    --only-matched \
-    --output out/airsim_scene_objects.json
+This is a discovery and inventory tool for binding existing AirSim environment
+objects to Dedalus ground-truth obstacle evidence. It does not move objects,
+publish events, or modify the simulator.
 """
 
 from __future__ import annotations
@@ -32,6 +13,7 @@ import json
 import math
 import re
 import sys
+import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -43,15 +25,60 @@ except ImportError as exc:
 
 
 DEFAULT_CLASS_PATTERNS = {
+    "person": r"(?i)(person|human|pedestrian|character|mannequin|brplayer|player)",
     "car": r"(?i)(car|vehicle|truck|suv|sedan|van)",
-    "person": r"(?i)(person|human|pedestrian|character|mannequin|brplayer)",
+    "drone": r"(?i)(drone|uav|multirotor)",
     "animal": r"(?i)(animal|animalaicontroller)",
+    "tree": r"(?i)tree",
+    "wall": r"(?i)wall",
+    "fence": r"(?i)fence",
+    "cable": r"(?i)(cable|wire|power[_-]?line|power|line)",
+    "pole": r"(?i)(pole|post)",
+    "rock": r"(?i)rock",
+    "building": r"(?i)(building|house|structure)",
 }
+
+GEOMETRY_CLASS_BY_CANONICAL_CLASS = {
+    "person": "volume",
+    "car": "volume",
+    "truck": "volume",
+    "drone": "volume",
+    "animal": "volume",
+    "tree": "vertical_thin",
+    "wall": "surface",
+    "fence": "surface",
+    "cable": "linear_thin",
+    "pole": "vertical_thin",
+    "rock": "volume",
+    "building": "surface",
+    "terrain": "surface",
+    "unknown_obstacle": "unknown",
+}
+
+RECOMMENDED_SIZE_M_BY_CANONICAL_CLASS = {
+    "person": [0.8, 0.8, 1.8],
+    "car": [4.5, 2.0, 1.7],
+    "truck": [6.0, 2.5, 2.5],
+    "drone": [0.8, 0.8, 0.3],
+    "animal": [1.2, 0.8, 1.0],
+    "tree": [1.5, 1.5, 6.0],
+    "wall": [4.0, 0.5, 2.5],
+    "fence": [4.0, 0.25, 1.8],
+    "cable": [0.15, 0.15, 4.0],
+    "pole": [0.35, 0.35, 5.0],
+    "rock": [1.5, 1.5, 1.0],
+    "building": [8.0, 8.0, 6.0],
+    "terrain": [4.0, 4.0, 0.25],
+    "unknown_obstacle": [1.0, 1.0, 1.0],
+}
+
+THIN_GEOMETRY_CLASSES = {"linear_thin", "vertical_thin"}
 
 
 @dataclass(frozen=True)
 class ClassPattern:
     class_name: str
+    regex_text: str
     regex: re.Pattern[str]
 
 
@@ -59,36 +86,25 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--host", default="127.0.0.1", help="AirSim RPC host")
     parser.add_argument("--rpc-port", type=int, default=41451, help="AirSim RPC port")
+    parser.add_argument("--vehicle-name", default="PX4", help="Vehicle name recorded in inventory metadata")
+    parser.add_argument("--scene-id", default="airsim_scene", help="Stable scene id used in inventory output")
     parser.add_argument("--name-regex", default=".*", help="Regex passed to simListSceneObjects")
     parser.add_argument(
         "--class-pattern",
         action="append",
         default=[],
         metavar="CLASS=REGEX",
-        help="Class matcher. May be repeated, e.g. --class-pattern car='(?i)car|vehicle'. This labels matches; add --only-matched or --match-class to filter.",
+        help="Class matcher. May be repeated, e.g. --class-pattern car='(?i)car|vehicle'.",
     )
-    parser.add_argument(
-        "--no-default-class-patterns",
-        action="store_true",
-        help="Disable built-in car/person/animal name matchers.",
-    )
-    parser.add_argument(
-        "--only-matched",
-        action="store_true",
-        help="Only print objects matching at least one class pattern.",
-    )
-    parser.add_argument(
-        "--match-class",
-        action="append",
-        default=[],
-        metavar="CLASS",
-        help="Only print objects matched as this class. May be repeated. Implies --only-matched.",
-    )
-    parser.add_argument("--limit", type=int, default=0, help="Maximum number of objects to print; 0 means unlimited.")
+    parser.add_argument("--no-default-class-patterns", action="store_true", help="Disable built-in canonical class matchers")
+    parser.add_argument("--only-matched", action="store_true", help="Only print objects matching at least one class pattern")
+    parser.add_argument("--match-class", action="append", default=[], metavar="CLASS", help="Only print objects matched as this class. May be repeated. Implies --only-matched.")
+    parser.add_argument("--limit", type=int, default=0, help="Maximum number of objects to print; 0 means unlimited")
     parser.add_argument("--format", choices=["json", "table", "names"], default="json")
-    parser.add_argument("--output", type=Path, default=None, help="Write JSON output to this path instead of stdout.")
+    parser.add_argument("--inventory-schema", action="store_true", help="Emit canonical scene-inventory JSON schema instead of legacy discovery JSON")
+    parser.add_argument("--output", type=Path, default=None, help="Write JSON output to this path instead of stdout")
     parser.add_argument("--sort", choices=["name", "class", "distance"], default="name")
-    parser.add_argument("--indent", type=int, default=2, help="JSON indentation; use 0 for compact JSON.")
+    parser.add_argument("--indent", type=int, default=2, help="JSON indentation; use 0 for compact JSON")
     return parser.parse_args()
 
 
@@ -109,7 +125,7 @@ def compile_class_patterns(args: argparse.Namespace) -> list[ClassPattern]:
     compiled: list[ClassPattern] = []
     for class_name, pattern in raw_patterns:
         try:
-            compiled.append(ClassPattern(class_name=class_name, regex=re.compile(pattern)))
+            compiled.append(ClassPattern(class_name=class_name, regex_text=pattern, regex=re.compile(pattern)))
         except re.error as exc:
             raise ValueError(f"invalid regex for class {class_name!r}: {pattern!r}: {exc}") from exc
     return compiled
@@ -154,6 +170,25 @@ def match_classes(name: str, patterns: list[ClassPattern]) -> list[str]:
     return matches
 
 
+def canonical_class_from_matches(matched_classes: list[str]) -> str:
+    return matched_classes[0] if matched_classes else "unknown_obstacle"
+
+
+def geometry_class_for(canonical_class: str) -> str:
+    return GEOMETRY_CLASS_BY_CANONICAL_CLASS.get(canonical_class, "unknown")
+
+
+def recommended_size_for(canonical_class: str) -> list[float]:
+    return RECOMMENDED_SIZE_M_BY_CANONICAL_CLASS.get(canonical_class, RECOMMENDED_SIZE_M_BY_CANONICAL_CLASS["unknown_obstacle"])
+
+
+def class_pattern_map(patterns: list[ClassPattern]) -> dict[str, str]:
+    out: dict[str, str] = {}
+    for pattern in patterns:
+        out[pattern.class_name] = pattern.regex_text
+    return out
+
+
 def list_objects(args: argparse.Namespace) -> dict[str, Any]:
     class_patterns = compile_class_patterns(args)
     requested_classes = {str(class_name).strip() for class_name in args.match_class if str(class_name).strip()}
@@ -179,9 +214,16 @@ def list_objects(args: argparse.Namespace) -> dict[str, Any]:
             error = str(exc)
 
         position = pose_json.get("position_ned_m", [0.0, 0.0, 0.0])
+        canonical_class = canonical_class_from_matches(matched_classes)
+        geometry_class = geometry_class_for(canonical_class)
         row = {
             "name": name,
             "matched_classes": matched_classes,
+            "canonical_class": canonical_class,
+            "geometry_class": geometry_class,
+            "recommended_size_m": recommended_size_for(canonical_class),
+            "thin_obstacle": geometry_class in THIN_GEOMETRY_CLASSES,
+            "source_pattern": class_pattern_map(class_patterns).get(canonical_class),
             "pose_available": pose_available,
             **pose_json,
             "distance_from_origin_m": round(distance_from_origin(position), 6) if pose_available else None,
@@ -191,7 +233,7 @@ def list_objects(args: argparse.Namespace) -> dict[str, Any]:
         rows.append(row)
 
     if args.sort == "class":
-        rows.sort(key=lambda row: (",".join(row["matched_classes"]) if row["matched_classes"] else "~", row["name"]))
+        rows.sort(key=lambda row: (str(row.get("canonical_class") or "~"), row["name"]))
     elif args.sort == "distance":
         rows.sort(key=lambda row: (row["distance_from_origin_m"] is None, row["distance_from_origin_m"] or 0.0, row["name"]))
     else:
@@ -203,12 +245,12 @@ def list_objects(args: argparse.Namespace) -> dict[str, Any]:
     class_counts: dict[str, int] = {}
     unmatched = 0
     for row in rows:
-        if not row["matched_classes"]:
+        canonical_class = str(row.get("canonical_class") or "unknown_obstacle")
+        class_counts[canonical_class] = class_counts.get(canonical_class, 0) + 1
+        if canonical_class == "unknown_obstacle":
             unmatched += 1
-        for class_name in row["matched_classes"]:
-            class_counts[class_name] = class_counts.get(class_name, 0) + 1
 
-    return {
+    legacy_payload = {
         "schema_version": 1,
         "source": "airsim_scene_objects",
         "host": args.host,
@@ -220,19 +262,42 @@ def list_objects(args: argparse.Namespace) -> dict[str, Any]:
         "unmatched_count": unmatched,
         "objects": rows,
     }
+    if not args.inventory_schema:
+        return legacy_payload
+
+    return {
+        "schema_version": 1,
+        "scene_id": args.scene_id,
+        "generated_at_unix_ns": time.time_ns(),
+        "source": {
+            "kind": "airsim_scene_inventory",
+            "host": args.host,
+            "rpc_port": args.rpc_port,
+            "vehicle_name": args.vehicle_name,
+            "generator": "simulation/airsim/scripts/airsim-list-objects.py",
+            "name_regex": args.name_regex,
+        },
+        "class_patterns": class_pattern_map(class_patterns),
+        "class_counts": class_counts,
+        "unmatched_count": unmatched,
+        "object_count": len(rows),
+        "objects": rows,
+    }
 
 
 def emit_table(payload: dict[str, Any]) -> str:
     rows = payload["objects"]
-    headers = ["class", "name", "x", "y", "z", "yaw_deg", "dist_m"]
+    headers = ["class", "geom", "name", "x", "y", "z", "yaw_deg", "dist_m"]
     data: list[list[str]] = []
     for row in rows:
-        classes = ",".join(row.get("matched_classes", [])) or "-"
+        canonical_class = str(row.get("canonical_class") or ",".join(row.get("matched_classes", [])) or "-")
+        geometry_class = str(row.get("geometry_class") or "-")
         position = row.get("position_ned_m") or [None, None, None]
         rpy = row.get("orientation_rpy_deg") or [None, None, None]
         data.append(
             [
-                classes,
+                canonical_class,
+                geometry_class,
                 str(row.get("name", "")),
                 "-" if position[0] is None else f"{float(position[0]):.2f}",
                 "-" if position[1] is None else f"{float(position[1]):.2f}",
@@ -252,7 +317,8 @@ def emit_table(payload: dict[str, Any]) -> str:
 
     lines = [fmt(headers), fmt(["-" * width for width in widths])]
     lines.extend(fmt(row) for row in data)
-    lines.append(f"\ncount={payload['count']} class_counts={payload['class_counts']} unmatched={payload['unmatched_count']}")
+    count_key = "object_count" if "object_count" in payload else "count"
+    lines.append(f"\ncount={payload[count_key]} class_counts={payload['class_counts']} unmatched={payload['unmatched_count']}")
     return "\n".join(lines) + "\n"
 
 
