@@ -22,6 +22,13 @@
 namespace dedalus {
 namespace {
 
+using SteadyClock = std::chrono::steady_clock;
+
+std::uint64_t elapsed_us(const SteadyClock::time_point start) {
+    return static_cast<std::uint64_t>(
+        std::chrono::duration_cast<std::chrono::microseconds>(SteadyClock::now() - start).count());
+}
+
 void close_fd(int fd) {
     if (fd >= 0) {
         ::close(fd);
@@ -177,30 +184,49 @@ void RuntimeEventStreamServer::stop() {
 }
 
 void RuntimeEventStreamServer::on_snapshot(const WorldSnapshot& snapshot) {
+    const auto start = SteadyClock::now();
     const std::uint64_t seq = [this] {
         std::lock_guard<std::mutex> lock{mutex_};
+        ++snapshot_messages_;
         return ++published_seq_;
     }();
-    enqueue_line(stream_line_for(seq, snapshot));
+    auto line = stream_line_for(seq, snapshot);
+    const auto serialize_duration_us = elapsed_us(start);
+    enqueue_line(std::move(line));
+    std::lock_guard<std::mutex> lock{mutex_};
+    serialize_total_us_ += serialize_duration_us;
 }
 
 void RuntimeEventStreamServer::on_ghost_detections(const GhostDetectionsFrame& frame) {
+    const auto start = SteadyClock::now();
     const std::uint64_t seq = [this] {
         std::lock_guard<std::mutex> lock{mutex_};
+        ++ghost_detection_messages_;
         return ++published_seq_;
     }();
-    enqueue_line(stream_line_for(seq, frame));
+    auto line = stream_line_for(seq, frame);
+    const auto serialize_duration_us = elapsed_us(start);
+    enqueue_line(std::move(line));
+    std::lock_guard<std::mutex> lock{mutex_};
+    serialize_total_us_ += serialize_duration_us;
 }
 
 void RuntimeEventStreamServer::on_mission_event(const MissionEvent& event) {
+    const auto start = SteadyClock::now();
     const std::uint64_t seq = [this] {
         std::lock_guard<std::mutex> lock{mutex_};
+        ++mission_event_messages_;
         return ++published_seq_;
     }();
-    enqueue_line(stream_line_for(seq, event));
+    auto line = stream_line_for(seq, event);
+    const auto serialize_duration_us = elapsed_us(start);
+    enqueue_line(std::move(line));
+    std::lock_guard<std::mutex> lock{mutex_};
+    serialize_total_us_ += serialize_duration_us;
 }
 
 void RuntimeEventStreamServer::enqueue_line(std::string line) {
+    const auto start = SteadyClock::now();
     {
         std::lock_guard<std::mutex> lock{mutex_};
         if (send_queue_.size() >= config_.max_send_queue_depth) {
@@ -208,11 +234,13 @@ void RuntimeEventStreamServer::enqueue_line(std::string line) {
             ++dropped_messages_;
         }
         send_queue_.push_back(std::move(line));
+        enqueue_total_us_ += elapsed_us(start);
     }
     queue_cv_.notify_one();
 }
 
 void RuntimeEventStreamServer::publish_json_line(const std::string& line) {
+    const auto start = SteadyClock::now();
     std::vector<int> clients;
     {
         std::lock_guard<std::mutex> lock{mutex_};
@@ -220,6 +248,8 @@ void RuntimeEventStreamServer::publish_json_line(const std::string& line) {
     }
 
     if (clients.empty()) {
+        std::lock_guard<std::mutex> lock{mutex_};
+        publish_total_us_ += elapsed_us(start);
         return;
     }
 
@@ -256,20 +286,21 @@ void RuntimeEventStreamServer::publish_json_line(const std::string& line) {
         }
     }
 
-    if (dead_clients.empty()) {
-        return;
+    if (!dead_clients.empty()) {
+        std::lock_guard<std::mutex> lock{mutex_};
+        for (const int fd : dead_clients) {
+            auto it = std::find(client_fds_.begin(), client_fds_.end(), fd);
+            if (it != client_fds_.end()) {
+                close_fd(*it);
+                client_fds_.erase(it);
+                ++dropped_clients_;
+            }
+            client_pending_.erase(fd);
+        }
     }
 
     std::lock_guard<std::mutex> lock{mutex_};
-    for (const int fd : dead_clients) {
-        auto it = std::find(client_fds_.begin(), client_fds_.end(), fd);
-        if (it != client_fds_.end()) {
-            close_fd(*it);
-            client_fds_.erase(it);
-            ++dropped_clients_;
-        }
-        client_pending_.erase(fd);
-    }
+    publish_total_us_ += elapsed_us(start);
 }
 
 std::uint16_t RuntimeEventStreamServer::port() const {
@@ -283,7 +314,13 @@ RuntimeEventStreamServerStats RuntimeEventStreamServer::stats() const {
         .connected_clients = client_fds_.size(),
         .accepted_clients = accepted_clients_,
         .dropped_clients = dropped_clients_,
-        .dropped_messages = dropped_messages_};
+        .dropped_messages = dropped_messages_,
+        .snapshot_messages = snapshot_messages_,
+        .ghost_detection_messages = ghost_detection_messages_,
+        .mission_event_messages = mission_event_messages_,
+        .serialize_total_us = serialize_total_us_,
+        .enqueue_total_us = enqueue_total_us_,
+        .publish_total_us = publish_total_us_};
 }
 
 void RuntimeEventStreamServer::writer_loop() {
@@ -318,31 +355,26 @@ void RuntimeEventStreamServer::accept_loop() {
         const int ready = ::select(fd + 1, &read_fds, nullptr, nullptr, &tv);
         if (ready < 0) {
             if (errno == EINTR) {
-                continue;  // interrupted by signal, re-check running_
+                continue;
             }
-            break;  // EBADF: stop() closed the socket — exit cleanly
+            break;
         }
         if (ready == 0) {
-            continue;  // timeout — re-check running_
+            continue;
         }
         sockaddr_in client_addr{};
         socklen_t client_len = sizeof(client_addr);
         const int client_fd = ::accept(fd, reinterpret_cast<sockaddr*>(&client_addr), &client_len);
-        if (client_fd >= 0) {
-            try {
-                set_nonblocking(client_fd);
-                std::lock_guard<std::mutex> lock{mutex_};
-                client_fds_.push_back(client_fd);
-                ++accepted_clients_;
-            } catch (...) {
-                close_fd(client_fd);
+        if (client_fd < 0) {
+            if (errno == EAGAIN || errno == EWOULDBLOCK || errno == EINTR) {
+                continue;
             }
-            continue;
+            break;
         }
-        if (errno == EAGAIN || errno == EWOULDBLOCK || errno == EINTR) {
-            continue;  // spurious wakeup from select()
-        }
-        break;  // unexpected accept() error
+        set_nonblocking(client_fd);
+        std::lock_guard<std::mutex> lock{mutex_};
+        client_fds_.push_back(client_fd);
+        ++accepted_clients_;
     }
 }
 
@@ -358,7 +390,7 @@ void RuntimeEventStreamServer::close_all_clients() {
         close_fd(fd);
     }
     client_fds_.clear();
-    client_pending_.clear();  // writer thread is joined by this point
+    client_pending_.clear();
 }
 
 }  // namespace dedalus
