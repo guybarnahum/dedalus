@@ -169,6 +169,17 @@ dedalus_add_native_test(
     SOURCES unit/test_px4_mavlink_command_sink.cpp
 )
 
+dedalus_add_native_test(
+    NAME px4_bridge_command_sink
+    LAYER contracts
+    TAGS unit
+    SOURCES unit/test_px4_bridge_command_sink.cpp
+)
+set_tests_properties("px4_bridge_command_sink (contracts)"
+    PROPERTIES
+        WORKING_DIRECTORY ${PROJECT_SOURCE_DIR}
+)
+
 # Layer 2: deterministic native unit tests, usually with synthetic in-memory data.
 dedalus_add_native_test(
     NAME pubsub
