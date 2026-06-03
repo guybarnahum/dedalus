@@ -249,36 +249,81 @@ GhostDetectionState state_from_pattern_and_pose(
     return state;
 }
 
+// Abstract backend interface — each backend converts timestamp/elapsed-time
+// to a flat list of GhostDetectionState without knowing about frame assembly.
+class GhostTargetBackend {
+public:
+    virtual ~GhostTargetBackend() = default;
+    virtual std::vector<GhostDetectionState> detections_at(
+        TimePoint timestamp, double scenario_elapsed_s) const = 0;
+};
+
+class TrajectoryScenarioBackend final : public GhostTargetBackend {
+public:
+    explicit TrajectoryScenarioBackend(GhostScenario scenario)
+        : scenario_(std::move(scenario)) {}
+
+    std::vector<GhostDetectionState> detections_at(
+        TimePoint /*timestamp*/, double scenario_elapsed_s) const override {
+        return scenario_.evaluate(scenario_elapsed_s);
+    }
+
+private:
+    GhostScenario scenario_;
+};
+
+class AirSimObjectsBackend final : public GhostTargetBackend {
+public:
+    explicit AirSimObjectsBackend(AirSimGhostObjectSourceConfig config)
+        : config_(std::move(config)),
+          transport_(make_transport(config_.bridge_transport)) {
+        if (config_.objects.empty() && config_.patterns.empty()) {
+            throw std::invalid_argument(
+                "AirSim ghost object source requires exact object or pattern bindings");
+        }
+    }
+
+    std::vector<GhostDetectionState> detections_at(
+        TimePoint timestamp, double /*scenario_elapsed_s*/) const override {
+        const auto command = build_object_pose_command(config_, timestamp);
+        const auto poses = parse_object_pose_json(transport_->request_once(command));
+        std::vector<GhostDetectionState> detections;
+        detections.reserve(config_.objects.size() + poses.size());
+        for (const auto& binding : config_.objects) {
+            detections.push_back(state_from_binding_and_pose(
+                binding, find_pose_for_object(poses, binding.airsim_object_name)));
+        }
+        std::size_t pattern_index = 0U;
+        for (const auto& pose : poses) {
+            if (pose.source_pattern.empty()) {
+                continue;
+            }
+            const auto* binding = find_pattern_for_pose(config_.patterns, pose);
+            if (binding == nullptr) {
+                continue;
+            }
+            detections.push_back(state_from_pattern_and_pose(*binding, pose, pattern_index));
+            ++pattern_index;
+        }
+        return detections;
+    }
+
+private:
+    AirSimGhostObjectSourceConfig config_;
+    std::unique_ptr<BridgeTransport> transport_;
+};
+
 }  // namespace
 
 struct GhostTargetProvider::Impl {
-    enum class SourceType {
-        TrajectoryScenario,
-        AirSimObjects,
-    };
-
-    explicit Impl(GhostScenario scenario)
-        : source_type(SourceType::TrajectoryScenario), scenario(std::move(scenario)) {}
-
-    explicit Impl(AirSimGhostObjectSourceConfig source_config)
-        : source_type(SourceType::AirSimObjects), airsim_config(std::move(source_config)) {
-        if (airsim_config.objects.empty() && airsim_config.patterns.empty()) {
-            throw std::invalid_argument("AirSim ghost object source requires exact object or pattern bindings");
-        }
-        transport = make_transport(airsim_config.bridge_transport);
-    }
-
-    SourceType source_type{SourceType::TrajectoryScenario};
-    GhostScenario scenario;
-    AirSimGhostObjectSourceConfig airsim_config;
-    std::unique_ptr<BridgeTransport> transport;
+    std::unique_ptr<GhostTargetBackend> backend;
 };
 
 GhostTargetProvider::GhostTargetProvider(GhostScenario scenario)
-    : impl_(std::make_unique<Impl>(std::move(scenario))) {}
+    : impl_(std::make_unique<Impl>(Impl{std::make_unique<TrajectoryScenarioBackend>(std::move(scenario))})) {}
 
 GhostTargetProvider::GhostTargetProvider(AirSimGhostObjectSourceConfig config)
-    : impl_(std::make_unique<Impl>(std::move(config))) {}
+    : impl_(std::make_unique<Impl>(Impl{std::make_unique<AirSimObjectsBackend>(std::move(config))})) {}
 
 GhostTargetProvider::~GhostTargetProvider() = default;
 GhostTargetProvider::GhostTargetProvider(GhostTargetProvider&&) noexcept = default;
@@ -292,32 +337,7 @@ GhostDetectionsFrame GhostTargetProvider::frame_at(
     frame.timestamp = timestamp;
     frame.map_frame_id = map_frame_id;
     frame.scenario_elapsed_s = elapsed_seconds(timestamp, scenario_start);
-
-    if (impl_->source_type == Impl::SourceType::TrajectoryScenario) {
-        frame.detections = impl_->scenario.evaluate(frame.scenario_elapsed_s);
-    } else {
-        const auto command = build_object_pose_command(impl_->airsim_config, timestamp);
-        const auto poses = parse_object_pose_json(impl_->transport->request_once(command));
-        frame.detections.reserve(impl_->airsim_config.objects.size() + poses.size());
-        for (const auto& binding : impl_->airsim_config.objects) {
-            frame.detections.push_back(state_from_binding_and_pose(
-                binding,
-                find_pose_for_object(poses, binding.airsim_object_name)));
-        }
-        std::size_t pattern_index = 0U;
-        for (const auto& pose : poses) {
-            if (pose.source_pattern.empty()) {
-                continue;
-            }
-            const auto* binding = find_pattern_for_pose(impl_->airsim_config.patterns, pose);
-            if (binding == nullptr) {
-                continue;
-            }
-            frame.detections.push_back(state_from_pattern_and_pose(*binding, pose, pattern_index));
-            ++pattern_index;
-        }
-    }
-
+    frame.detections = impl_->backend->detections_at(timestamp, frame.scenario_elapsed_s);
     frame.observations.reserve(frame.detections.size());
     for (const auto& state : frame.detections) {
         frame.observations.push_back(observation_from_state(state, timestamp, frame.map_frame_id));

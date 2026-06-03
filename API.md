@@ -828,9 +828,11 @@ Stages (`Detector`, `Tracker`, etc.) are passed by reference and owned externall
 
 *Resolution:* `PerceptionPipeline` constructor and private members changed from raw references (`T&`) to `std::shared_ptr<T>` for all five stages. The five pipeline-stage members in `CoreStackProviders` changed from `unique_ptr<T>` to `shared_ptr<T>` (the `resolve()` factory still returns `unique_ptr`, which implicitly converts to `shared_ptr` on assignment). `core_stack_runner.cpp` passes the `shared_ptr` members directly. Both test files updated to construct stages via `make_shared`. 34/34 tests pass.
 
-**12. `GhostTargetProvider` has two structurally different backends with no common config base**  
+**12. `GhostTargetProvider` has two structurally different backends with no common config base** ✅ **FIXED**  
 Construction from `GhostScenario` and from `AirSimGhostObjectSourceConfig` results in a pimpl that internally branches on which variant is active. The two backends have different config schemas, different initialization paths, and share only the output type. This makes it hard to add a third backend cleanly.  
 *Suggested fix:* Define a `GhostTargetBackend` abstract interface and use a factory keyed by the same `ghost_targets_source` string used in `CoreStackProviderConfig`.
+
+*Resolution:* `ghost_targets.cpp` now defines an abstract `GhostTargetBackend` class with a single pure-virtual `detections_at(timestamp, scenario_elapsed_s)` method. `TrajectoryScenarioBackend` and `AirSimObjectsBackend` are concrete implementations in the anonymous namespace. `GhostTargetProvider::Impl` reduces to a single `unique_ptr<GhostTargetBackend>` member, eliminating the `SourceType` enum and the branching `if` in `frame_at()`. Frame assembly (timestamp, map_frame_id, observations) remains in `GhostTargetProvider::frame_at()`. The public API and header are unchanged. 34/34 tests pass.
 
 **13. No per-detection depth information flows from detector to projector**  
 `Detector` produces only 2-D `Detection2D` (bounding boxes). The `Projector3D` stage must independently acquire depth (via AirSim RPC or flat-ground assumption) because depth is not part of `Detection2D`. This means every non-flat-ground projector makes its own bridge call, bypassing any depth data the detector might already have access to.
