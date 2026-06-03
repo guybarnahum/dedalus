@@ -1,5 +1,6 @@
 #include "dedalus/world_model/world_snapshot_subscribers.hpp"
 
+#include <chrono>
 #include <iomanip>
 #include <iostream>
 #include <sstream>
@@ -7,6 +8,16 @@
 #include <utility>
 
 namespace dedalus {
+namespace {
+
+using SteadyClock = std::chrono::steady_clock;
+
+std::uint64_t elapsed_us(const SteadyClock::time_point start) {
+    return static_cast<std::uint64_t>(
+        std::chrono::duration_cast<std::chrono::microseconds>(SteadyClock::now() - start).count());
+}
+
+}  // namespace
 
 LatestWorldSnapshotSubscriber::LatestWorldSnapshotSubscriber(std::shared_ptr<LatestWorldSnapshot> latest_snapshot)
     : latest_snapshot_(std::move(latest_snapshot)) {
@@ -45,6 +56,7 @@ ArtifactSnapshotWriter::~ArtifactSnapshotWriter() {
 }
 
 void ArtifactSnapshotWriter::on_snapshot(const WorldSnapshot& snapshot) {
+    const auto start = SteadyClock::now();
     const int frame_number = ++frame_count_;
     auto item = std::make_shared<const WorldSnapshot>(snapshot);
     {
@@ -57,6 +69,8 @@ void ArtifactSnapshotWriter::on_snapshot(const WorldSnapshot& snapshot) {
         }
         write_queue_.emplace_back(frame_number, std::move(item));
     }
+    ++enqueue_count_;
+    enqueue_total_us_ += elapsed_us(start);
     queue_cv_.notify_one();
 }
 
@@ -66,6 +80,17 @@ int ArtifactSnapshotWriter::frame_count() const {
 
 int ArtifactSnapshotWriter::dropped_frames() const {
     return dropped_frames_.load();
+}
+
+ArtifactSnapshotWriterStats ArtifactSnapshotWriter::stats() const {
+    return ArtifactSnapshotWriterStats{
+        .frame_count = frame_count_.load(),
+        .dropped_frames = dropped_frames_.load(),
+        .enqueue_count = enqueue_count_.load(),
+        .write_count = write_count_.load(),
+        .enqueue_total_us = enqueue_total_us_.load(),
+        .write_total_us = write_total_us_.load(),
+        .manifest_flush_total_us = manifest_flush_total_us_.load()};
 }
 
 const std::filesystem::path& ArtifactSnapshotWriter::output_dir() const {
@@ -97,6 +122,7 @@ void ArtifactSnapshotWriter::writer_loop() {
             write_queue_.pop_front();
         }
 
+        const auto write_start = SteadyClock::now();
         const auto frame_number = task.first;
         const auto& snap = task.second;
         const auto snapshot_name = "snapshot_" + zero_padded(frame_number, 4) + ".json";
@@ -113,10 +139,14 @@ void ArtifactSnapshotWriter::writer_loop() {
             // destructor closes and flushes
         }
 
+        const auto manifest_start = SteadyClock::now();
         manifest_ << frame_number << " " << snapshot_name << " "
                   << snap->timestamp.timestamp_ns << " "
                   << snap->active_map_frame_id.value << "\n";
         manifest_.flush();
+        manifest_flush_total_us_ += elapsed_us(manifest_start);
+        write_total_us_ += elapsed_us(write_start);
+        ++write_count_;
     }
 }
 
