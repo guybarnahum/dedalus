@@ -193,10 +193,6 @@ def ego_json_bytes(
     timestamp_ns: int,
     mavlink_ego_reader: MavlinkEgoTelemetryReader | None = None,
 ) -> bytes:
-    # 2.14 optimization:
-    # Use one AirSim RPC per frame for ego telemetry. MultirotorState already
-    # carries kinematics_estimated position/orientation/velocity, so avoid an
-    # extra simGetVehiclePose() call in stream_binary_ego mode.
     state = client.getMultirotorState(vehicle_name=vehicle_name)
     kin = state.kinematics_estimated
 
@@ -280,30 +276,10 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--camera-name", default="front_center")
     parser.add_argument("--count", type=int, default=0, help="0 means stream forever")
     parser.add_argument("--rate-hz", type=float, default=5.0)
-    parser.add_argument(
-        "--include-ego",
-        action="store_true",
-        help="Append ego telemetry JSON after each RGB payload using binary protocol version 2.",
-    )
-    parser.add_argument(
-        "--mavlink-armed-endpoints",
-        default=os.environ.get("DEDALUS_MAVLINK_ARMED_ENDPOINTS", ""),
-        help="Deprecated alias for --mavlink-ego-endpoints.",
-    )
-    parser.add_argument(
-        "--mavlink-ego-endpoints",
-        default=os.environ.get("DEDALUS_MAVLINK_EGO_ENDPOINTS", ""),
-        help=(
-            "Comma-separated pymavlink endpoints used to derive ego telemetry "
-            "from HEARTBEAT and LOCAL_POSITION_NED. Example: "
-            "udpin:127.0.0.1:14550,udpin:127.0.0.1:14540"
-        ),
-    )
-    parser.add_argument(
-        "--timing-jsonl",
-        default="",
-        help="Optional path for bridge-internal timing JSONL records.",
-    )
+    parser.add_argument("--include-ego", action="store_true", help="Append ego telemetry JSON after each RGB payload using binary protocol version 2.")
+    parser.add_argument("--mavlink-armed-endpoints", default=os.environ.get("DEDALUS_MAVLINK_ARMED_ENDPOINTS", ""), help="Deprecated alias for --mavlink-ego-endpoints.")
+    parser.add_argument("--mavlink-ego-endpoints", default=os.environ.get("DEDALUS_MAVLINK_EGO_ENDPOINTS", ""), help="Comma-separated pymavlink endpoints used to derive ego telemetry from HEARTBEAT and LOCAL_POSITION_NED.")
+    parser.add_argument("--timing-jsonl", default="", help="Optional path for bridge-internal timing JSONL records.")
     return parser.parse_args()
 
 
@@ -314,13 +290,11 @@ def main() -> int:
     mavlink_ego_reader = MavlinkEgoTelemetryReader(parse_mavlink_endpoints(endpoint_string))
     try:
         client = airsim.MultirotorClient(ip=args.host, port=args.rpc_port)
-        # AirSim's Python client may print connection diagnostics to stdout.
-        # stdout is the binary frame protocol for this bridge, so redirect any
-        # human diagnostics to stderr before the first protocol byte is emitted.
         with redirect_stdout(sys.stderr):
             client.confirmConnection()
 
         period_s = 0.0 if args.rate_hz <= 0 else 1.0 / args.rate_hz
+        next_deadline = time.perf_counter()
         sequence = 0
         while args.count == 0 or sequence < args.count:
             loop_start_ns = time.perf_counter_ns()
@@ -343,30 +317,27 @@ def main() -> int:
             rgb_end_ns = time.perf_counter_ns()
 
             ego_start_ns = time.perf_counter_ns()
-            ego_payload = (
-                ego_json_bytes(client, args.vehicle_name, timestamp_ns, mavlink_ego_reader)
-                if args.include_ego
-                else b""
-            )
+            ego_payload = ego_json_bytes(client, args.vehicle_name, timestamp_ns, mavlink_ego_reader) if args.include_ego else b""
             ego_end_ns = time.perf_counter_ns()
 
             write_start_ns = time.perf_counter_ns()
-            write_ok = write_frame(
-                sequence,
-                timestamp_ns,
-                int(response.width),
-                int(response.height),
-                payload,
-                ego_payload,
-            )
+            write_ok = write_frame(sequence, timestamp_ns, int(response.width), int(response.height), payload, ego_payload)
             write_end_ns = time.perf_counter_ns()
             if not write_ok:
                 return 0
 
             sleep_ms = 0.0
+            target_period_ms = period_s * 1000.0
+            behind_ms = 0.0
             if period_s > 0 and (args.count == 0 or sequence < args.count):
+                next_deadline += period_s
                 sleep_start_ns = time.perf_counter_ns()
-                time.sleep(period_s)
+                sleep_s = next_deadline - time.perf_counter()
+                if sleep_s > 0.0:
+                    time.sleep(sleep_s)
+                else:
+                    behind_ms = -sleep_s * 1000.0
+                    next_deadline = time.perf_counter()
                 sleep_end_ns = time.perf_counter_ns()
                 sleep_ms = elapsed_ms(sleep_start_ns, sleep_end_ns)
 
@@ -380,11 +351,14 @@ def main() -> int:
                     "payload_bytes": len(payload),
                     "ego_bytes": len(ego_payload),
                     "include_ego": bool(args.include_ego),
+                    "target_period_ms": target_period_ms,
                     "sim_get_images_ms": elapsed_ms(image_start_ns, image_end_ns),
                     "rgb_convert_ms": elapsed_ms(rgb_start_ns, rgb_end_ns),
                     "ego_sample_ms": elapsed_ms(ego_start_ns, ego_end_ns),
                     "stdout_write_ms": elapsed_ms(write_start_ns, write_end_ns),
                     "sleep_ms": sleep_ms,
+                    "producer_behind_ms": behind_ms,
+                    "producer_compute_ms": elapsed_ms(loop_start_ns, write_end_ns),
                     "total_loop_ms": elapsed_ms(loop_start_ns, loop_end_ns),
                 }
             )
@@ -398,8 +372,6 @@ if __name__ == "__main__":
     try:
         raise SystemExit(main())
     finally:
-        # Avoid the interpreter printing a second BrokenPipeError while flushing
-        # stdout during process teardown after the C++ consumer exits normally.
         try:
             sys.stdout.close()
         except BrokenPipeError:
