@@ -1,6 +1,7 @@
 #pragma once
 
 #include <memory>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -35,6 +36,9 @@ struct AirSimGhostObjectSourceConfig {
     std::string bridge_transport{"pipe"};
     std::string scene_inventory_path;
     double stream_rate_hz{30.0};
+    double nearby_radius_m{80.0};
+    int max_objects_per_frame{128};
+    int static_refresh_every_n_frames{10};
     std::vector<AirSimGhostObjectBinding> objects;
     std::vector<AirSimGhostObjectPatternBinding> patterns;
 };
@@ -74,17 +78,20 @@ public:
     GhostDetectionsFrame frame_at(
         TimePoint timestamp,
         MapFrameId map_frame_id,
-        TimePoint scenario_start = TimePoint{0}) const;
+        TimePoint scenario_start = TimePoint{0},
+        std::optional<Vec3> ego_position_local = std::nullopt) const;
 
     std::vector<Observation3D> observations_at(
         TimePoint timestamp,
         MapFrameId map_frame_id,
-        TimePoint scenario_start = TimePoint{0}) const;
+        TimePoint scenario_start = TimePoint{0},
+        std::optional<Vec3> ego_position_local = std::nullopt) const;
 
     PerceptionPipelineOutput output_at(
         TimePoint timestamp,
         MapFrameId map_frame_id,
-        TimePoint scenario_start = TimePoint{0}) const;
+        TimePoint scenario_start = TimePoint{0},
+        std::optional<Vec3> ego_position_local = std::nullopt) const;
 
 private:
     struct Impl;
