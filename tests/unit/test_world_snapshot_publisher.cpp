@@ -116,7 +116,7 @@ void artifact_writer_writes_snapshots_and_manifest() {
     std::filesystem::remove_all(output_dir);
 
     {
-        dedalus::ArtifactSnapshotWriter writer{output_dir};
+        dedalus::ArtifactSnapshotWriter writer{dedalus::ArtifactSnapshotWriterConfig{.output_dir = output_dir}};
         writer.on_snapshot(make_snapshot(123, "track_alpha"));
         writer.on_snapshot(make_snapshot(456, "track_beta"));
         require(writer.frame_count() == 2, "artifact writer frame count should advance");
@@ -146,7 +146,7 @@ void artifact_writer_does_not_skip_burst_frames() {
     std::filesystem::remove_all(output_dir);
 
     {
-        dedalus::ArtifactSnapshotWriter writer{output_dir};
+        dedalus::ArtifactSnapshotWriter writer{dedalus::ArtifactSnapshotWriterConfig{.output_dir = output_dir}};
         for (int index = 1; index <= kSnapshotCount; ++index) {
             writer.on_snapshot(make_snapshot(index * 1000, "track_burst_" + std::to_string(index)));
         }
@@ -162,6 +162,28 @@ void artifact_writer_does_not_skip_burst_frames() {
     std::filesystem::remove_all(output_dir);
 }
 
+void artifact_writer_dropped_frames_counter() {
+    const auto output_dir = std::filesystem::temp_directory_path() / "dedalus_world_snapshot_publisher_drop_test";
+    std::filesystem::remove_all(output_dir);
+
+    {
+        dedalus::ArtifactSnapshotWriterConfig cfg;
+        cfg.output_dir = output_dir;
+        cfg.max_queue_depth = 4;
+        dedalus::ArtifactSnapshotWriter writer{cfg};
+        // Push 500 frames in a tight loop. The writer thread performs disk I/O between dequeues
+        // and cannot drain frames faster than they are enqueued, so the bounded queue will
+        // overflow and dropped_frames must become positive.
+        for (int i = 1; i <= 500; ++i) {
+            writer.on_snapshot(make_snapshot(i * 1000, "track_drop_" + std::to_string(i)));
+        }
+        require(writer.dropped_frames() >= 1, "dropped_frames should be positive after queue overflow");
+        require(writer.frame_count() == 500, "frame_count increments regardless of drops");
+    }
+
+    std::filesystem::remove_all(output_dir);
+}
+
 }  // namespace
 
 int main() {
@@ -170,6 +192,7 @@ int main() {
         synchronous_publishers_do_not_drop_burst_frames();
         artifact_writer_writes_snapshots_and_manifest();
         artifact_writer_does_not_skip_burst_frames();
+        artifact_writer_dropped_frames_counter();
     } catch (const std::exception& exc) {
         std::cerr << "test_world_snapshot_publisher failed: " << exc.what() << '\n';
         return 1;

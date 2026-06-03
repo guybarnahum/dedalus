@@ -26,9 +26,14 @@ private:
     std::shared_ptr<LatestWorldSnapshot> latest_snapshot_;
 };
 
+struct ArtifactSnapshotWriterConfig {
+    std::filesystem::path output_dir;
+    int max_queue_depth{64};  // frames; oldest frame is dropped and counted when full
+};
+
 class ArtifactSnapshotWriter final : public WorldSnapshotSubscriber {
 public:
-    explicit ArtifactSnapshotWriter(std::filesystem::path output_dir);
+    explicit ArtifactSnapshotWriter(ArtifactSnapshotWriterConfig config);
     ~ArtifactSnapshotWriter() override;
 
     ArtifactSnapshotWriter(const ArtifactSnapshotWriter&) = delete;
@@ -39,20 +44,20 @@ public:
     void on_snapshot(const WorldSnapshot& snapshot) override;
 
     [[nodiscard]] int frame_count() const;
+    [[nodiscard]] int dropped_frames() const;
     [[nodiscard]] const std::filesystem::path& output_dir() const;
     [[nodiscard]] const std::filesystem::path& manifest_path() const;
 
 private:
-    static constexpr int kMaxQueueDepth = 64;
-
     static std::string zero_padded(int value, int width);
     void writer_loop();
 
-    std::filesystem::path output_dir_;
+    ArtifactSnapshotWriterConfig config_;
     std::filesystem::path manifest_path_;
     std::ofstream manifest_;
 
     std::atomic<int> frame_count_{0};
+    std::atomic<int> dropped_frames_{0};
 
     std::deque<std::pair<int, std::shared_ptr<const WorldSnapshot>>> write_queue_;
     mutable std::mutex mutex_;

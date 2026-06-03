@@ -19,10 +19,10 @@ void LatestWorldSnapshotSubscriber::on_snapshot(const WorldSnapshot& snapshot) {
     latest_snapshot_->publish(snapshot);
 }
 
-ArtifactSnapshotWriter::ArtifactSnapshotWriter(std::filesystem::path output_dir)
-    : output_dir_(std::move(output_dir)),
-      manifest_path_(output_dir_ / "snapshot_manifest.txt") {
-    std::filesystem::create_directories(output_dir_);
+ArtifactSnapshotWriter::ArtifactSnapshotWriter(ArtifactSnapshotWriterConfig config)
+    : config_(std::move(config)),
+      manifest_path_(config_.output_dir / "snapshot_manifest.txt") {
+    std::filesystem::create_directories(config_.output_dir);
     manifest_.open(manifest_path_, std::ios::out | std::ios::trunc);
     if (!manifest_) {
         throw std::runtime_error("failed to open snapshot manifest: " + manifest_path_.string());
@@ -49,10 +49,11 @@ void ArtifactSnapshotWriter::on_snapshot(const WorldSnapshot& snapshot) {
     auto item = std::make_shared<const WorldSnapshot>(snapshot);
     {
         std::lock_guard<std::mutex> lock{mutex_};
-        if (static_cast<int>(write_queue_.size()) >= kMaxQueueDepth) {
-            std::cerr << "ArtifactSnapshotWriter: queue full (" << kMaxQueueDepth
+        if (static_cast<int>(write_queue_.size()) >= config_.max_queue_depth) {
+            std::cerr << "ArtifactSnapshotWriter: queue full (" << config_.max_queue_depth
                       << " frames), dropping frame " << write_queue_.front().first << "\n";
             write_queue_.pop_front();
+            ++dropped_frames_;
         }
         write_queue_.emplace_back(frame_number, std::move(item));
     }
@@ -63,8 +64,12 @@ int ArtifactSnapshotWriter::frame_count() const {
     return frame_count_.load();
 }
 
+int ArtifactSnapshotWriter::dropped_frames() const {
+    return dropped_frames_.load();
+}
+
 const std::filesystem::path& ArtifactSnapshotWriter::output_dir() const {
-    return output_dir_;
+    return config_.output_dir;
 }
 
 const std::filesystem::path& ArtifactSnapshotWriter::manifest_path() const {
@@ -95,7 +100,7 @@ void ArtifactSnapshotWriter::writer_loop() {
         const auto frame_number = task.first;
         const auto& snap = task.second;
         const auto snapshot_name = "snapshot_" + zero_padded(frame_number, 4) + ".json";
-        const auto snapshot_path = output_dir_ / snapshot_name;
+        const auto snapshot_path = config_.output_dir / snapshot_name;
 
         {
             std::ofstream snapshot_file{snapshot_path};

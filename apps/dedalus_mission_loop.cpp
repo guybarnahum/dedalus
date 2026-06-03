@@ -449,7 +449,8 @@ int main(int argc, char** argv) {
         auto ghost_detections_publisher = std::make_shared<dedalus::GhostDetectionsPublisher>();
         auto mission_event_publisher = std::make_shared<dedalus::MissionEventPublisher>();
         auto latest_snapshot_subscriber = std::make_shared<dedalus::LatestWorldSnapshotSubscriber>(latest_snapshot);
-        auto artifact_snapshot_writer = std::make_shared<dedalus::ArtifactSnapshotWriter>(args.output_dir);
+        auto artifact_snapshot_writer = std::make_shared<dedalus::ArtifactSnapshotWriter>(
+            dedalus::ArtifactSnapshotWriterConfig{.output_dir = args.output_dir});
 
         std::shared_ptr<dedalus::RuntimeEventStreamServer> runtime_event_stream_server;
         if (args.world_snapshot_stream_port > 0) {
