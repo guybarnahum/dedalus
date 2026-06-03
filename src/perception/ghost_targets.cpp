@@ -4,8 +4,11 @@
 
 #include <algorithm>
 #include <cctype>
+#include <fstream>
 #include <iomanip>
 #include <memory>
+#include <regex>
+#include <set>
 #include <sstream>
 #include <stdexcept>
 #include <string>
@@ -93,6 +96,49 @@ std::string build_object_pose_command(const AirSimGhostObjectSourceConfig& confi
     return command.str();
 }
 
+std::string read_text_file(const std::string& path) {
+    std::ifstream input{path};
+    if (!input) {
+        throw std::runtime_error("failed to open AirSim scene inventory: " + path);
+    }
+    std::ostringstream buffer;
+    buffer << input.rdbuf();
+    return buffer.str();
+}
+
+std::size_t find_matching_delim(const std::string& text, std::size_t open_pos, char open_ch, char close_ch) {
+    int depth = 0;
+    bool in_string = false;
+    bool escaped = false;
+    for (std::size_t i = open_pos; i < text.size(); ++i) {
+        const char ch = text[i];
+        if (escaped) {
+            escaped = false;
+            continue;
+        }
+        if (ch == '\\') {
+            escaped = true;
+            continue;
+        }
+        if (ch == '"') {
+            in_string = !in_string;
+            continue;
+        }
+        if (in_string) {
+            continue;
+        }
+        if (ch == open_ch) {
+            ++depth;
+        } else if (ch == close_ch) {
+            --depth;
+            if (depth == 0) {
+                return i;
+            }
+        }
+    }
+    throw std::runtime_error("JSON has unmatched delimiter");
+}
+
 std::string parse_json_string_optional(const std::string& json, const std::string& key, std::size_t search_start = 0U) {
     const std::string marker = "\"" + key + "\":";
     const auto marker_pos = json.find(marker, search_start);
@@ -160,6 +206,11 @@ struct AirSimObjectPose {
     Vec3 position_ned_m;
 };
 
+struct SceneInventoryObject {
+    std::string name;
+    std::string canonical_class;
+};
+
 std::vector<AirSimObjectPose> parse_object_pose_json(const std::string& json) {
     std::vector<AirSimObjectPose> poses;
     std::size_t cursor = 0U;
@@ -168,11 +219,9 @@ std::vector<AirSimObjectPose> parse_object_pose_json(const std::string& json) {
         if (name_marker == std::string::npos) {
             break;
         }
-        const auto object_end = json.find('}', name_marker);
-        if (object_end == std::string::npos) {
-            throw std::runtime_error("unterminated AirSim object pose JSON object");
-        }
-        const auto object_json = json.substr(name_marker, object_end - name_marker + 1U);
+        const auto object_start = json.rfind('{', name_marker);
+        const auto object_end = find_matching_delim(json, object_start, '{', '}');
+        const auto object_json = json.substr(object_start, object_end - object_start + 1U);
         AirSimObjectPose pose;
         pose.name = parse_json_string_optional(object_json, "name");
         pose.source_pattern = parse_json_string_optional(object_json, "source_pattern");
@@ -183,28 +232,48 @@ std::vector<AirSimObjectPose> parse_object_pose_json(const std::string& json) {
     return poses;
 }
 
-const AirSimObjectPose& find_pose_for_object(
-    const std::vector<AirSimObjectPose>& poses,
-    const std::string& object_name) {
-    const auto it = std::find_if(
-        poses.begin(),
-        poses.end(),
-        [&](const AirSimObjectPose& pose) { return pose.name == object_name; });
+std::vector<SceneInventoryObject> parse_scene_inventory_objects(const std::string& json) {
+    const auto objects_key = json.find("\"objects\"");
+    if (objects_key == std::string::npos) {
+        throw std::runtime_error("AirSim scene inventory missing objects array");
+    }
+    const auto array_start = json.find('[', objects_key);
+    if (array_start == std::string::npos) {
+        throw std::runtime_error("AirSim scene inventory objects field is not an array");
+    }
+    const auto array_end = find_matching_delim(json, array_start, '[', ']');
+    std::vector<SceneInventoryObject> objects;
+    std::size_t cursor = array_start + 1U;
+    while (cursor < array_end) {
+        const auto object_start = json.find('{', cursor);
+        if (object_start == std::string::npos || object_start > array_end) {
+            break;
+        }
+        const auto object_end = find_matching_delim(json, object_start, '{', '}');
+        const auto object_json = json.substr(object_start, object_end - object_start + 1U);
+        SceneInventoryObject object;
+        object.name = parse_json_string_optional(object_json, "name");
+        object.canonical_class = parse_json_string_optional(object_json, "canonical_class");
+        if (!object.name.empty()) {
+            objects.push_back(std::move(object));
+        }
+        cursor = object_end + 1U;
+    }
+    return objects;
+}
+
+const AirSimObjectPose& find_pose_for_object(const std::vector<AirSimObjectPose>& poses, const std::string& object_name) {
+    const auto it = std::find_if(poses.begin(), poses.end(), [&](const AirSimObjectPose& pose) { return pose.name == object_name; });
     if (it == poses.end()) {
         throw std::runtime_error("AirSim object pose response missing object: " + object_name);
     }
     return *it;
 }
 
-const AirSimGhostObjectPatternBinding* find_pattern_for_pose(
-    const std::vector<AirSimGhostObjectPatternBinding>& patterns,
-    const AirSimObjectPose& pose) {
-    const auto it = std::find_if(
-        patterns.begin(),
-        patterns.end(),
-        [&](const AirSimGhostObjectPatternBinding& binding) {
-            return binding.airsim_object_pattern == pose.source_pattern;
-        });
+const AirSimGhostObjectPatternBinding* find_pattern_for_pose(const std::vector<AirSimGhostObjectPatternBinding>& patterns, const AirSimObjectPose& pose) {
+    const auto it = std::find_if(patterns.begin(), patterns.end(), [&](const AirSimGhostObjectPatternBinding& binding) {
+        return binding.airsim_object_pattern == pose.source_pattern;
+    });
     return it == patterns.end() ? nullptr : &*it;
 }
 
@@ -222,9 +291,7 @@ std::string sanitized_id_suffix(const std::string& value) {
     return out;
 }
 
-GhostDetectionState state_from_binding_and_pose(
-    const AirSimGhostObjectBinding& binding,
-    const AirSimObjectPose& pose) {
+GhostDetectionState state_from_binding_and_pose(const AirSimGhostObjectBinding& binding, const AirSimObjectPose& pose) {
     GhostDetectionState state;
     state.source_track_id = binding.source_track_id;
     state.class_label = binding.class_label;
@@ -235,10 +302,7 @@ GhostDetectionState state_from_binding_and_pose(
     return state;
 }
 
-GhostDetectionState state_from_pattern_and_pose(
-    const AirSimGhostObjectPatternBinding& binding,
-    const AirSimObjectPose& pose,
-    std::size_t pattern_index) {
+GhostDetectionState state_from_pattern_and_pose(const AirSimGhostObjectPatternBinding& binding, const AirSimObjectPose& pose, std::size_t pattern_index) {
     GhostDetectionState state;
     const auto suffix = sanitized_id_suffix(pose.name.empty() ? ("match_" + std::to_string(pattern_index)) : pose.name);
     state.source_track_id = TrackId{binding.source_track_prefix + "_" + suffix};
@@ -250,22 +314,65 @@ GhostDetectionState state_from_pattern_and_pose(
     return state;
 }
 
-// Abstract backend interface — each backend converts timestamp/elapsed-time
-// to a flat list of GhostDetectionState without knowing about frame assembly.
+bool inventory_object_matches_pattern(const SceneInventoryObject& object, const AirSimGhostObjectPatternBinding& binding) {
+    const auto class_name = to_string(binding.class_label);
+    if (!object.canonical_class.empty() && object.canonical_class == class_name) {
+        return true;
+    }
+    try {
+        return std::regex_search(object.name, std::regex(binding.airsim_object_pattern));
+    } catch (const std::regex_error&) {
+        return false;
+    }
+}
+
+std::vector<AirSimGhostObjectBinding> expand_patterns_from_scene_inventory(const AirSimGhostObjectSourceConfig& config) {
+    if (config.scene_inventory_path.empty() || config.patterns.empty()) {
+        return {};
+    }
+    const auto inventory_objects = parse_scene_inventory_objects(read_text_file(config.scene_inventory_path));
+    std::vector<AirSimGhostObjectBinding> expanded;
+    std::set<std::string> used_names;
+    for (const auto& existing : config.objects) {
+        used_names.insert(existing.airsim_object_name);
+    }
+    for (const auto& pattern : config.patterns) {
+        int matched = 0;
+        for (const auto& object : inventory_objects) {
+            if (pattern.max_matches > 0 && matched >= pattern.max_matches) {
+                break;
+            }
+            if (used_names.find(object.name) != used_names.end()) {
+                continue;
+            }
+            if (!inventory_object_matches_pattern(object, pattern)) {
+                continue;
+            }
+            AirSimGhostObjectBinding binding;
+            binding.source_track_id = TrackId{pattern.source_track_prefix + "_" + sanitized_id_suffix(object.name)};
+            binding.airsim_object_name = object.name;
+            binding.class_label = pattern.class_label;
+            binding.confidence = pattern.confidence;
+            binding.size_m = pattern.size_m;
+            expanded.push_back(std::move(binding));
+            used_names.insert(object.name);
+            ++matched;
+        }
+    }
+    return expanded;
+}
+
 class GhostTargetBackend {
 public:
     virtual ~GhostTargetBackend() = default;
-    virtual std::vector<GhostDetectionState> detections_at(
-        TimePoint timestamp, double scenario_elapsed_s) const = 0;
+    virtual std::vector<GhostDetectionState> detections_at(TimePoint timestamp, double scenario_elapsed_s) const = 0;
 };
 
 class TrajectoryScenarioBackend final : public GhostTargetBackend {
 public:
-    explicit TrajectoryScenarioBackend(GhostScenario scenario)
-        : scenario_(std::move(scenario)) {}
+    explicit TrajectoryScenarioBackend(GhostScenario scenario) : scenario_(std::move(scenario)) {}
 
-    std::vector<GhostDetectionState> detections_at(
-        TimePoint /*timestamp*/, double scenario_elapsed_s) const override {
+    std::vector<GhostDetectionState> detections_at(TimePoint /*timestamp*/, double scenario_elapsed_s) const override {
         return scenario_.evaluate(scenario_elapsed_s);
     }
 
@@ -275,24 +382,24 @@ private:
 
 class AirSimObjectsBackend final : public GhostTargetBackend {
 public:
-    explicit AirSimObjectsBackend(AirSimGhostObjectSourceConfig config)
-        : config_(std::move(config)),
-          transport_(make_transport(config_.bridge_transport)) {
+    explicit AirSimObjectsBackend(AirSimGhostObjectSourceConfig config) : config_(std::move(config)), transport_(make_transport(config_.bridge_transport)) {
         if (config_.objects.empty() && config_.patterns.empty()) {
-            throw std::invalid_argument(
-                "AirSim ghost object source requires exact object or pattern bindings");
+            throw std::invalid_argument("AirSim ghost object source requires exact object or pattern bindings");
+        }
+        const auto expanded = expand_patterns_from_scene_inventory(config_);
+        if (!expanded.empty()) {
+            config_.objects.insert(config_.objects.end(), expanded.begin(), expanded.end());
+            config_.patterns.clear();
         }
     }
 
-    std::vector<GhostDetectionState> detections_at(
-        TimePoint timestamp, double /*scenario_elapsed_s*/) const override {
+    std::vector<GhostDetectionState> detections_at(TimePoint timestamp, double /*scenario_elapsed_s*/) const override {
         const auto command = build_object_pose_command(config_, timestamp);
         const auto poses = parse_object_pose_json(transport_->request_once(command));
         std::vector<GhostDetectionState> detections;
         detections.reserve(config_.objects.size() + poses.size());
         for (const auto& binding : config_.objects) {
-            detections.push_back(state_from_binding_and_pose(
-                binding, find_pose_for_object(poses, binding.airsim_object_name)));
+            detections.push_back(state_from_binding_and_pose(binding, find_pose_for_object(poses, binding.airsim_object_name)));
         }
         std::size_t pattern_index = 0U;
         for (const auto& pose : poses) {
@@ -330,10 +437,7 @@ GhostTargetProvider::~GhostTargetProvider() = default;
 GhostTargetProvider::GhostTargetProvider(GhostTargetProvider&&) noexcept = default;
 GhostTargetProvider& GhostTargetProvider::operator=(GhostTargetProvider&&) noexcept = default;
 
-GhostDetectionsFrame GhostTargetProvider::frame_at(
-    TimePoint timestamp,
-    MapFrameId map_frame_id,
-    TimePoint scenario_start) const {
+GhostDetectionsFrame GhostTargetProvider::frame_at(TimePoint timestamp, MapFrameId map_frame_id, TimePoint scenario_start) const {
     GhostDetectionsFrame frame;
     frame.timestamp = timestamp;
     frame.map_frame_id = map_frame_id;
@@ -346,17 +450,11 @@ GhostDetectionsFrame GhostTargetProvider::frame_at(
     return frame;
 }
 
-std::vector<Observation3D> GhostTargetProvider::observations_at(
-    TimePoint timestamp,
-    MapFrameId map_frame_id,
-    TimePoint scenario_start) const {
+std::vector<Observation3D> GhostTargetProvider::observations_at(TimePoint timestamp, MapFrameId map_frame_id, TimePoint scenario_start) const {
     return frame_at(timestamp, map_frame_id, scenario_start).observations;
 }
 
-PerceptionPipelineOutput GhostTargetProvider::output_at(
-    TimePoint timestamp,
-    MapFrameId map_frame_id,
-    TimePoint scenario_start) const {
+PerceptionPipelineOutput GhostTargetProvider::output_at(TimePoint timestamp, MapFrameId map_frame_id, TimePoint scenario_start) const {
     PerceptionPipelineOutput output;
     output.observations = observations_at(timestamp, map_frame_id, scenario_start);
     return output;
