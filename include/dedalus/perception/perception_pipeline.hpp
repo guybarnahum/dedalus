@@ -1,5 +1,6 @@
 #pragma once
 
+#include <memory>
 #include <vector>
 
 #include "dedalus/perception/types.hpp"
@@ -64,20 +65,20 @@ struct PerceptionPipelineOutput {
 class PerceptionPipeline {
 public:
     PerceptionPipeline(
-        Detector& detector,
-        CameraStabilizer& stabilizer,
-        Tracker& tracker,
-        IdentityResolver& identity_resolver,
-        Projector3D& projector);
+        std::shared_ptr<Detector> detector,
+        std::shared_ptr<CameraStabilizer> stabilizer,
+        std::shared_ptr<Tracker> tracker,
+        std::shared_ptr<IdentityResolver> identity_resolver,
+        std::shared_ptr<Projector3D> projector);
 
     PerceptionPipelineOutput process(const FramePacket& frame, const EgoState& ego);
 
 private:
-    Detector& detector_;
-    CameraStabilizer& stabilizer_;
-    Tracker& tracker_;
-    IdentityResolver& identity_resolver_;
-    Projector3D& projector_;
+    std::shared_ptr<Detector> detector_;
+    std::shared_ptr<CameraStabilizer> stabilizer_;
+    std::shared_ptr<Tracker> tracker_;
+    std::shared_ptr<IdentityResolver> identity_resolver_;
+    std::shared_ptr<Projector3D> projector_;
 };
 
 class ScriptedDetector final : public Detector {

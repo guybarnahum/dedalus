@@ -5,24 +5,24 @@
 namespace dedalus {
 
 PerceptionPipeline::PerceptionPipeline(
-    Detector& detector,
-    CameraStabilizer& stabilizer,
-    Tracker& tracker,
-    IdentityResolver& identity_resolver,
-    Projector3D& projector)
-    : detector_(detector),
-      stabilizer_(stabilizer),
-      tracker_(tracker),
-      identity_resolver_(identity_resolver),
-      projector_(projector) {}
+    std::shared_ptr<Detector> detector,
+    std::shared_ptr<CameraStabilizer> stabilizer,
+    std::shared_ptr<Tracker> tracker,
+    std::shared_ptr<IdentityResolver> identity_resolver,
+    std::shared_ptr<Projector3D> projector)
+    : detector_(std::move(detector)),
+      stabilizer_(std::move(stabilizer)),
+      tracker_(std::move(tracker)),
+      identity_resolver_(std::move(identity_resolver)),
+      projector_(std::move(projector)) {}
 
 PerceptionPipelineOutput PerceptionPipeline::process(const FramePacket& frame, const EgoState& ego) {
     PerceptionPipelineOutput output;
-    output.detections = detector_.detect(frame);
-    output.stabilized_frame = stabilizer_.stabilize(frame, output.detections);
-    output.tracks = tracker_.update(output.stabilized_frame.detections);
-    output.identities = identity_resolver_.resolve(output.tracks);
-    output.observations = projector_.project(output.tracks, output.stabilized_frame.frame, ego);
+    output.detections = detector_->detect(frame);
+    output.stabilized_frame = stabilizer_->stabilize(frame, output.detections);
+    output.tracks = tracker_->update(output.stabilized_frame.detections);
+    output.identities = identity_resolver_->resolve(output.tracks);
+    output.observations = projector_->project(output.tracks, output.stabilized_frame.frame, ego);
     return output;
 }
 

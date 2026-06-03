@@ -55,11 +55,11 @@ struct CoreStackProviderConfig {
 struct CoreStackProviders {
     std::unique_ptr<FrameSource> frame_source;
     std::unique_ptr<EgoStateProvider> ego_provider;
-    std::unique_ptr<Detector> detector;
-    std::unique_ptr<CameraStabilizer> camera_stabilizer;
-    std::unique_ptr<Tracker> tracker;
-    std::unique_ptr<IdentityResolver> identity_resolver;
-    std::unique_ptr<Projector3D> projector;
+    std::shared_ptr<Detector> detector;
+    std::shared_ptr<CameraStabilizer> camera_stabilizer;
+    std::shared_ptr<Tracker> tracker;
+    std::shared_ptr<IdentityResolver> identity_resolver;
+    std::shared_ptr<Projector3D> projector;
     std::unique_ptr<GhostTargetProvider> ghost_targets;
     std::unique_ptr<InMemoryWorldModel> world_model;
     std::unique_ptr<FrameAnnotationSink> frame_annotator;

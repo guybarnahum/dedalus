@@ -66,11 +66,11 @@ bool CoreStackRunner::run_once() {
     }
 
     PerceptionPipeline pipeline(
-        *providers_.detector,
-        *providers_.camera_stabilizer,
-        *providers_.tracker,
-        *providers_.identity_resolver,
-        *providers_.projector);
+        providers_.detector,
+        providers_.camera_stabilizer,
+        providers_.tracker,
+        providers_.identity_resolver,
+        providers_.projector);
 
     start = SteadyClock::now();
     auto perception_output = pipeline.process(*frame, *ego_estimate.ego);

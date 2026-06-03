@@ -106,11 +106,11 @@ int main() {
 
     const dedalus::EgoState ego = *frame->ego_hint;
 
-    dedalus::ScriptedDetector detector;
-    dedalus::NullCameraStabilizer stabilizer;
-    dedalus::SimpleCentroidTracker tracker;
-    dedalus::AppearanceOnlyIdentityResolver identity_resolver;
-    dedalus::FlatGroundProjector projector;
+    auto detector         = std::make_shared<dedalus::ScriptedDetector>();
+    auto stabilizer        = std::make_shared<dedalus::NullCameraStabilizer>();
+    auto tracker           = std::make_shared<dedalus::SimpleCentroidTracker>();
+    auto identity_resolver = std::make_shared<dedalus::AppearanceOnlyIdentityResolver>();
+    auto projector         = std::make_shared<dedalus::FlatGroundProjector>();
     dedalus::PerceptionPipeline pipeline(detector, stabilizer, tracker, identity_resolver, projector);
 
     auto output = pipeline.process(*frame, ego);

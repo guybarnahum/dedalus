@@ -822,9 +822,11 @@ Even with the `validate_tmux_target()` allowlist guard, `std::system()` spawns a
 
 ### Pipeline Design
 
-**11. `PerceptionPipeline` holds non-owning references to all five stages**  
+**11. `PerceptionPipeline` holds non-owning references to all five stages** ✅ **FIXED**  
 Stages (`Detector`, `Tracker`, etc.) are passed by reference and owned externally (by `CoreStackProviders`). The lifetime coupling is implicit — if any stage is destroyed while the pipeline is live, the result is undefined behavior. There are no assertions or lifetime annotations.  
 *Suggested fix:* `PerceptionPipeline` should hold `shared_ptr` to each stage, or stages should be owned exclusively inside the pipeline.
+
+*Resolution:* `PerceptionPipeline` constructor and private members changed from raw references (`T&`) to `std::shared_ptr<T>` for all five stages. The five pipeline-stage members in `CoreStackProviders` changed from `unique_ptr<T>` to `shared_ptr<T>` (the `resolve()` factory still returns `unique_ptr`, which implicitly converts to `shared_ptr` on assignment). `core_stack_runner.cpp` passes the `shared_ptr` members directly. Both test files updated to construct stages via `make_shared`. 34/34 tests pass.
 
 **12. `GhostTargetProvider` has two structurally different backends with no common config base**  
 Construction from `GhostScenario` and from `AirSimGhostObjectSourceConfig` results in a pimpl that internally branches on which variant is active. The two backends have different config schemas, different initialization paths, and share only the output type. This makes it hard to add a third backend cleanly.  
