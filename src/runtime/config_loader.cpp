@@ -53,9 +53,7 @@ std::uint32_t parse_uint32(const std::string& value, const char* context) {
 
 // clang-format off
 void apply_mission_option(MissionOptions& opts, const std::string& key, const std::string& value) {
-    // behavior spec
     if (key == "behavior_spec_path")                           { opts.behavior_spec_path = value; return; }
-    // follow behavior
     if (key == "object_behavior_follow_observation_geometry_enabled") { opts.follow_observation_geometry_enabled = parse_bool(value); return; }
     if (key == "object_behavior_zero_target_velocity")         { opts.zero_target_velocity = parse_bool(value); return; }
     if (key == "object_behavior_follow_min_standoff_m")        { opts.follow_min_standoff_m = std::stod(value); return; }
@@ -64,7 +62,6 @@ void apply_mission_option(MissionOptions& opts, const std::string& key, const st
     if (key == "object_behavior_follow_arrival_hold_radius_m") { opts.follow_arrival_hold_radius_m = std::stod(value); return; }
     if (key == "object_behavior_follow_arrival_kp")            { opts.follow_arrival_kp = std::stod(value); return; }
     if (key == "object_behavior_completion_after_s")           { opts.completion_after_s = std::stod(value); return; }
-    // object behavior core
     if (key == "object_behavior_hold_velocity_mps")            { opts.hold_velocity_mps = std::stod(value); return; }
     if (key == "object_behavior_yaw_mode")                     { opts.yaw_mode = value; return; }
     if (key == "object_behavior_yaw_min_speed_mps")            { opts.yaw_min_speed_mps = std::stod(value); return; }
@@ -76,7 +73,6 @@ void apply_mission_option(MissionOptions& opts, const std::string& key, const st
     if (key == "object_behavior_debug_level")                  { opts.debug_level = std::stoi(value); return; }
     if (key == "object_behavior_altitude_policy")              { opts.altitude_policy = value; return; }
     if (key == "object_behavior_min_height_m")                 { opts.behavior_min_height_m = std::stod(value); return; }
-    // camera pointing
     if (key == "object_behavior_camera_pointing_cameras")      { opts.camera_pointing_cameras = value; return; }
     if (key == "object_behavior_camera_pitch_min_deg")         { opts.camera_pitch_min_deg = std::stod(value); return; }
     if (key == "object_behavior_camera_pitch_max_deg")         { opts.camera_pitch_max_deg = std::stod(value); return; }
@@ -97,7 +93,6 @@ void apply_mission_option(MissionOptions& opts, const std::string& key, const st
     if (key == "object_behavior_camera_pointing_mavlink_flags")               { opts.camera_pointing_mavlink_flags               = parse_uint32(value, key.c_str()); return; }
     if (key == "object_behavior_camera_pointing_deadband_rad") { opts.camera_pointing_deadband_rad = std::stod(value); return; }
     if (key == "object_behavior_camera_pointing_resend_s")     { opts.camera_pointing_resend_s = std::stod(value); return; }
-    // flight lifecycle
     if (key == "flight_safe_height_m")             { opts.safe_height_m = std::stod(value); return; }
     if (key == "flight_takeoff_height_m")          { opts.takeoff_height_m = std::stod(value); return; }
     if (key == "flight_takeoff_velocity_mps")      { opts.takeoff_velocity_mps = std::stod(value); return; }
@@ -117,7 +112,6 @@ void apply_mission_option(MissionOptions& opts, const std::string& key, const st
     if (key == "flight_prepare_session_command")   { opts.prepare_session_command = value; return; }
     if (key == "flight_trajectory_path")           { opts.trajectory_path = value; return; }
     if (key == "flight_control_mode")              { opts.flight_control_mode = value; return; }
-    // flight sinks
     if (key == "flight_px4_command_bridge")        { opts.px4_command_bridge = value; return; }
     if (key == "flight_velocity_command_bridge")   { opts.velocity_command_bridge = value; return; }
     if (key == "flight_mavlink_command_endpoints") { opts.mavlink_command_endpoints = value; return; }
@@ -128,12 +122,9 @@ void apply_mission_option(MissionOptions& opts, const std::string& key, const st
     if (key == "flight_mavlink_source_system_id")    { opts.mavlink_source_system_id    = parse_uint8(value, key.c_str()); return; }
     if (key == "flight_mavlink_source_component_id") { opts.mavlink_source_component_id = parse_uint8(value, key.c_str()); return; }
     if (key == "flight_mavlink_set_offboard_on_velocity") { opts.set_offboard_on_velocity = parse_bool(value); return; }
-
-    std::cerr << "WARNING: unrecognized mission_options key: " << key
-              << " (check for typos; value will be ignored)\n";
+    std::cerr << "WARNING: unrecognized mission_options key: " << key << " (check for typos; value will be ignored)\n";
 }
 // clang-format on
-
 
 Vec3 parse_vec3(const std::string& value) {
     std::string normalized;
@@ -152,25 +143,16 @@ std::string mission_option_key_from(const std::string& key) {
     return key.substr(std::string{prefix}.size());
 }
 
-std::pair<std::size_t, std::string> parse_indexed_field(
-    const std::string& key,
-    const std::string& prefix,
-    const std::string& description) {
+std::pair<std::size_t, std::string> parse_indexed_field(const std::string& key, const std::string& prefix, const std::string& description) {
     const auto remainder = key.substr(prefix.size());
     const auto dot_pos = remainder.find('.');
-    if (dot_pos == std::string::npos || dot_pos == 0U || dot_pos + 1U >= remainder.size()) {
-        throw std::invalid_argument("invalid " + description + " key: " + key);
-    }
+    if (dot_pos == std::string::npos || dot_pos == 0U || dot_pos + 1U >= remainder.size()) throw std::invalid_argument("invalid " + description + " key: " + key);
     const auto index_text = remainder.substr(0U, dot_pos);
     const auto field = remainder.substr(dot_pos + 1U);
     std::size_t parsed_chars = 0U;
     const auto index = std::stoul(index_text, &parsed_chars);
-    if (parsed_chars != index_text.size()) {
-        throw std::invalid_argument("invalid " + description + " index: " + key);
-    }
-    if (index >= 1024U) {
-        throw std::invalid_argument("unreasonable " + description + " index: " + key);
-    }
+    if (parsed_chars != index_text.size()) throw std::invalid_argument("invalid " + description + " index: " + key);
+    if (index >= 1024U) throw std::invalid_argument("unreasonable " + description + " index: " + key);
     return {index, field};
 }
 
@@ -208,7 +190,6 @@ bool parse_airsim_pattern_binding_key(CoreStackProviderConfig& config, const std
 void apply_config_value(CoreStackProviderConfig& config, const std::string& key, const std::string& value) {
     if (parse_airsim_object_binding_key(config, key, value)) return;
     if (parse_airsim_pattern_binding_key(config, key, value)) return;
-
     if (key == "frame_source") config.frame_source = value;
     else if (key == "ego_provider") config.ego_provider = value;
     else if (key == "detector") config.detector = value;
@@ -220,6 +201,7 @@ void apply_config_value(CoreStackProviderConfig& config, const std::string& key,
     else if (key == "ghost_targets_source") config.ghost_targets_source = value;
     else if (key == "ghost_targets_scenario") config.ghost_targets_scenario = value;
     else if (key == "ghost_targets_scenario_path") config.ghost_targets_scenario_path = value;
+    else if (key == "ghost_targets_airsim_scene_inventory_path") config.ghost_targets_airsim_scene_inventory_path = value;
     else if (key == "world_model") config.world_model = value;
     else if (key == "occupancy_source") config.occupancy_source = value;
     else if (key == "frame_annotator") config.frame_annotator = value;
@@ -251,9 +233,7 @@ void apply_config_value(CoreStackProviderConfig& config, const std::string& key,
 
 void validate_airsim_object_bindings(const CoreStackProviderConfig& config) {
     if (config.ghost_targets_source != "airsim_objects") return;
-    if (config.ghost_targets_airsim_objects.empty() && config.ghost_targets_airsim_patterns.empty()) {
-        throw std::invalid_argument("ghost_targets_source=airsim_objects requires exact object or pattern bindings");
-    }
+    if (config.ghost_targets_airsim_objects.empty() && config.ghost_targets_airsim_patterns.empty()) throw std::invalid_argument("ghost_targets_source=airsim_objects requires exact object or pattern bindings");
     for (std::size_t index = 0; index < config.ghost_targets_airsim_objects.size(); ++index) {
         const auto& binding = config.ghost_targets_airsim_objects[index];
         const auto prefix = "ghost_targets_airsim.objects." + std::to_string(index);
@@ -276,29 +256,18 @@ void validate_airsim_object_bindings(const CoreStackProviderConfig& config) {
 }
 
 void validate_config(const CoreStackProviderConfig& config) {
-    if (config.ghost_targets_source != "trajectory_scenario" && config.ghost_targets_source != "airsim_objects") {
-        throw std::invalid_argument("unknown ghost_targets_source: " + config.ghost_targets_source);
-    }
-    if (config.ghost_targets_source != "airsim_objects" && (!config.ghost_targets_airsim_objects.empty() || !config.ghost_targets_airsim_patterns.empty())) {
-        throw std::invalid_argument("ghost_targets_airsim bindings require ghost_targets_source=airsim_objects");
-    }
-    if (config.occupancy_source != "synthetic_fixture" && config.occupancy_source != "airsim_ground_truth") {
-        throw std::invalid_argument("unknown occupancy_source: " + config.occupancy_source);
-    }
-    if (config.occupancy_source == "airsim_ground_truth" && config.ghost_targets_source != "airsim_objects") {
-        throw std::invalid_argument("occupancy_source=airsim_ground_truth requires ghost_targets_source=airsim_objects");
-    }
+    if (config.ghost_targets_source != "trajectory_scenario" && config.ghost_targets_source != "airsim_objects") throw std::invalid_argument("unknown ghost_targets_source: " + config.ghost_targets_source);
+    if (config.ghost_targets_source != "airsim_objects" && (!config.ghost_targets_airsim_objects.empty() || !config.ghost_targets_airsim_patterns.empty())) throw std::invalid_argument("ghost_targets_airsim bindings require ghost_targets_source=airsim_objects");
+    if (config.occupancy_source != "synthetic_fixture" && config.occupancy_source != "airsim_ground_truth") throw std::invalid_argument("unknown occupancy_source: " + config.occupancy_source);
+    if (config.occupancy_source == "airsim_ground_truth" && config.ghost_targets_source != "airsim_objects") throw std::invalid_argument("occupancy_source=airsim_ground_truth requires ghost_targets_source=airsim_objects");
     validate_airsim_object_bindings(config);
 }
 
 }  // namespace
 
 void validate_provider_names(const CoreStackProviderConfig& config, const ProviderRegistry& registry) {
-    const auto check = [](const std::string& field, const std::string& value,
-                          const std::vector<std::string>& valid) {
-        if (std::find(valid.begin(), valid.end(), value) == valid.end()) {
-            throw std::invalid_argument("unknown " + field + ": " + value);
-        }
+    const auto check = [](const std::string& field, const std::string& value, const std::vector<std::string>& valid) {
+        if (std::find(valid.begin(), valid.end(), value) == valid.end()) throw std::invalid_argument("unknown " + field + ": " + value);
     };
     check("frame_source",        config.frame_source,        registry.frame_sources());
     check("ego_provider",        config.ego_provider,        registry.ego_providers());
@@ -316,7 +285,6 @@ void validate_provider_names(const CoreStackProviderConfig& config, const Provid
 CoreStackProviderConfig load_core_stack_config(const std::string& path) {
     std::ifstream input{path};
     if (!input) throw std::runtime_error("failed to open core-stack config: " + path);
-
     CoreStackProviderConfig config;
     std::string line;
     int line_number = 0;
@@ -331,14 +299,10 @@ CoreStackProviderConfig load_core_stack_config(const std::string& path) {
         const std::string key = trim(line.substr(0U, separator_pos));
         const std::string value = strip_quotes(trim(line.substr(separator_pos + 1U)));
         if (key.empty() || value.empty()) throw std::runtime_error("invalid core-stack config line " + std::to_string(line_number) + ": empty key or value");
-        try {
-            apply_config_value(config, key, value);
-        } catch (const std::exception& ex) {
-            throw std::runtime_error("invalid core-stack config line " + std::to_string(line_number) + ": " + ex.what());
-        }
+        try { apply_config_value(config, key, value); }
+        catch (const std::exception& ex) { throw std::runtime_error("invalid core-stack config line " + std::to_string(line_number) + ": " + ex.what()); }
     }
     validate_config(config);
-    validate_provider_names(config, ProviderRegistry{});
     return config;
 }
 
