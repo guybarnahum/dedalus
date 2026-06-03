@@ -100,7 +100,6 @@ Options:
   --airsim-host HOST          AirSim RPC host. Default: 127.0.0.1
   --airsim-rpc-port PORT      AirSim RPC port. Default: 41451
   --source-frame-rate-hz HZ   Override frame-source producer --rate-hz in an effective config. Use 0 for uncapped.
-  --airsim-frame-rate-hz HZ   Deprecated alias for --source-frame-rate-hz.
   --frame-producer-timing     Add --timing-jsonl to the frame producer command.
   --frame-producer-timing-path PATH
                                 Timing JSONL output path. Default: <output-dir>/profile/source_frame_bridge_<timestamp>.jsonl
@@ -230,11 +229,6 @@ while [[ $# -gt 0 ]]; do
         --airsim-host) AIRSIM_HOST="$2"; shift 2 ;;
         --airsim-rpc-port) AIRSIM_RPC_PORT="$2"; shift 2 ;;
         --source-frame-rate-hz) SOURCE_FRAME_RATE_HZ="$2"; shift 2 ;;
-        --airsim-frame-rate-hz)
-            echo "⚠️  --airsim-frame-rate-hz is deprecated; use --source-frame-rate-hz." >&2
-            SOURCE_FRAME_RATE_HZ="$2"
-            shift 2
-            ;;
         --frame-producer-timing) WITH_FRAME_PRODUCER_TIMING=1; shift ;;
         --frame-producer-timing-path) FRAME_PRODUCER_TIMING_PATH="$(abs_path "$2")"; WITH_FRAME_PRODUCER_TIMING=1; shift 2 ;;
         --pipeline-timing) WITH_PIPELINE_TIMING=1; shift ;;
