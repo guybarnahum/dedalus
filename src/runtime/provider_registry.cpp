@@ -2,6 +2,7 @@
 
 #include <cstdlib>
 #include <functional>
+#include <memory>
 #include <stdexcept>
 #include <string>
 #include <string_view>
@@ -90,10 +91,27 @@ struct FactoryEntry {
 };
 
 template <typename T>
+struct SharedFactoryEntry {
+    std::string_view key;
+    std::function<std::shared_ptr<T>()> factory;
+};
+
+template <typename T>
 std::unique_ptr<T> resolve(
     const std::string& category,
     const std::string& name,
     std::initializer_list<FactoryEntry<T>> entries) {
+    for (const auto& entry : entries) {
+        if (name == entry.key) return entry.factory();
+    }
+    throw unknown_provider(category, name);
+}
+
+template <typename T>
+std::shared_ptr<T> resolve_shared(
+    const std::string& category,
+    const std::string& name,
+    std::initializer_list<SharedFactoryEntry<T>> entries) {
     for (const auto& entry : entries) {
         if (name == entry.key) return entry.factory();
     }
