@@ -15,6 +15,7 @@ It writes machine-readable JSON to stdout and human diagnostics to stderr.
 from __future__ import annotations
 
 import argparse
+import contextlib
 import json
 import sys
 import time
@@ -178,7 +179,11 @@ def run_stream(args: argparse.Namespace, client: Any) -> int:
 def main() -> int:
     args = parse_args()
     client = airsim.MultirotorClient(ip=args.host, port=args.rpc_port)
-    client.confirmConnection()
+    # AirSim's confirmConnection() prints a human banner to stdout. The C++
+    # bridge consumes stdout as machine JSON, and persistent mode reads one line
+    # at a time, so redirect the banner to stderr to keep stdout JSON-only.
+    with contextlib.redirect_stdout(sys.stderr):
+        client.confirmConnection()
     if args.stream_jsonl:
         return run_stream(args, client)
     return run_one_shot(args, client)
