@@ -2,6 +2,7 @@
 
 #include <memory>
 #include <optional>
+#include <vector>
 
 #include "dedalus/perception/ghost_targets.hpp"
 #include "dedalus/runtime/pipeline_profiler.hpp"
@@ -15,6 +16,9 @@ struct CoreStackRunnerConfig {
     std::unique_ptr<PipelineProfiler> timing_writer;
     std::shared_ptr<WorldSnapshotPublisher> snapshot_publisher;
     std::shared_ptr<GhostDetectionsPublisher> ghost_detections_publisher;
+    // Subscribers subscribed to snapshot_publisher at construction time.
+    // CoreStackRunner retains these shared_ptrs (the publisher holds weak refs).
+    std::vector<std::shared_ptr<WorldSnapshotSubscriber>> snapshot_subscribers;
 };
 
 class CoreStackRunner {
@@ -35,6 +39,7 @@ private:
     std::unique_ptr<PipelineProfiler> timing_writer_;
     std::shared_ptr<WorldSnapshotPublisher> snapshot_publisher_;
     std::shared_ptr<GhostDetectionsPublisher> ghost_detections_publisher_;
+    std::vector<std::shared_ptr<WorldSnapshotSubscriber>> snapshot_subscriber_handles_;
     std::optional<TimePoint> ghost_scenario_start_;
 };
 

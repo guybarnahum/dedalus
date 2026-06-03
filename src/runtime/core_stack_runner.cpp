@@ -18,7 +18,17 @@ CoreStackRunner::CoreStackRunner(CoreStackProviders providers, CoreStackRunnerCo
     : providers_(std::move(providers)),
       timing_writer_(std::move(config.timing_writer)),
       snapshot_publisher_(std::move(config.snapshot_publisher)),
-      ghost_detections_publisher_(std::move(config.ghost_detections_publisher)) {}
+      ghost_detections_publisher_(std::move(config.ghost_detections_publisher)),
+      snapshot_subscriber_handles_(std::move(config.snapshot_subscribers)) {
+    if (!snapshot_subscriber_handles_.empty()) {
+        if (!snapshot_publisher_) {
+            snapshot_publisher_ = std::make_shared<WorldSnapshotPublisher>();
+        }
+        for (const auto& sub : snapshot_subscriber_handles_) {
+            snapshot_publisher_->subscribe(sub);
+        }
+    }
+}
 
 CoreStackRunner::~CoreStackRunner() = default;
 

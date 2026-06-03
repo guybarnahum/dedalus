@@ -450,8 +450,6 @@ int main(int argc, char** argv) {
         auto mission_event_publisher = std::make_shared<dedalus::MissionEventPublisher>();
         auto latest_snapshot_subscriber = std::make_shared<dedalus::LatestWorldSnapshotSubscriber>(latest_snapshot);
         auto artifact_snapshot_writer = std::make_shared<dedalus::ArtifactSnapshotWriter>(args.output_dir);
-        snapshot_publisher->subscribe(latest_snapshot_subscriber);
-        snapshot_publisher->subscribe(artifact_snapshot_writer);
 
         std::shared_ptr<dedalus::RuntimeEventStreamServer> runtime_event_stream_server;
         if (args.world_snapshot_stream_port > 0) {
@@ -472,7 +470,8 @@ int main(int argc, char** argv) {
             dedalus::CoreStackRunnerConfig{
                 .timing_writer = std::move(timing_writer),
                 .snapshot_publisher = snapshot_publisher,
-                .ghost_detections_publisher = ghost_detections_publisher}};
+                .ghost_detections_publisher = ghost_detections_publisher,
+                .snapshot_subscribers = {latest_snapshot_subscriber, artifact_snapshot_writer}}};
 
         const auto mission_events_path = args.output_dir / "mission_events.jsonl";
         std::unique_ptr<dedalus::MissionRuntime> mission_runtime;
