@@ -97,7 +97,7 @@ Options:
   --scene-id ID               Scene id for scene inventory artifact. Default: AirSimNH
   --scene-inventory PATH      Scene inventory output path. Default: ../../out/airsim_scene_inventory/<scene-id>.objects.json
   --refresh-scene-inventory   Regenerate scene inventory even if it exists
-  --no-scene-inventory        Skip scene inventory generation and validation
+  --no-scene-inventory        Skip scene inventory generation, provider inventory override, and validation
   --camera CAMERA             AirSim camera to command. May repeat. Default: front_center and 0
   --no-camera                 Do not start camera-pointing bridge
   --no-overlay                Do not start overlay
@@ -441,7 +441,12 @@ if [[ "$WITH_VALIDATION" -eq 1 ]]; then
     VALIDATION_RUN_SHELL="bash $(printf '%q' "$VALIDATION_SCRIPT") 2>&1 | tee $(printf '%q' "$VALIDATION_LOG")"
     tmux new-window -t "$SESSION_NAME" -n validation "bash -lc $(printf '%q' "$(tmux_shell_with_failure_hold "$VALIDATION_RUN_SHELL")")"
 fi
-MISSION_SHELL="cd $(printf '%q' "$REPO_ROOT_ABS") && $(quote_cmd "${MISSION_CMD[@]}") 2>&1 | tee $(printf '%q' "$MISSION_LOG")"
+if [[ "$WITH_SCENE_INVENTORY" -eq 1 ]]; then
+    MISSION_ENV="DEDALUS_AIRSIM_SCENE_INVENTORY=$(printf '%q' "$SCENE_INVENTORY_PATH")"
+else
+    MISSION_ENV=""
+fi
+MISSION_SHELL="cd $(printf '%q' "$REPO_ROOT_ABS") && ${MISSION_ENV:+$MISSION_ENV }$(quote_cmd "${MISSION_CMD[@]}") 2>&1 | tee $(printf '%q' "$MISSION_LOG")"
 tmux new-window -t "$SESSION_NAME" -n mission-loop "bash -lc $(printf '%q' "$(tmux_shell_with_failure_hold "$MISSION_SHELL")")"
 tmux select-window -t "$SESSION_NAME:mission-loop"
 
@@ -451,6 +456,9 @@ echo "Mission loop:"
 echo "  log:     $MISSION_LOG"
 echo "  output:  $OUTPUT_DIR"
 echo "  config:  $CONFIG_PATH"
+if [[ "$WITH_SCENE_INVENTORY" -eq 1 ]]; then
+    echo "  inventory override: $SCENE_INVENTORY_PATH"
+fi
 echo ""
 if [[ "$WITH_SCENE_INVENTORY" -eq 1 ]]; then
     echo "Scene inventory:"
@@ -494,7 +502,7 @@ echo "  stop mission stack: tmux kill-session -t $SESSION_NAME"
 echo "  stop simulator/PX4: ./stop.sh"
 echo ""
 echo "Mission command:"
-echo "  $(quote_cmd "${MISSION_CMD[@]}")"
+echo "  ${MISSION_ENV:+$MISSION_ENV }$(quote_cmd "${MISSION_CMD[@]}")"
 if [[ "$WITH_OVERLAY" -eq 1 ]]; then
     echo "Overlay command:"
     echo "  $(quote_cmd "${OVERLAY_CMD[@]}")"
