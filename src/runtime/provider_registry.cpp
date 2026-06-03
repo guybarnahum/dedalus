@@ -1,5 +1,6 @@
 #include "dedalus/runtime/provider_registry.hpp"
 
+#include <cstdlib>
 #include <functional>
 #include <stdexcept>
 #include <string>
@@ -41,6 +42,14 @@ OccupancySourceKind occupancy_source_from(const CoreStackProviderConfig& config)
     throw std::invalid_argument("unknown occupancy_source: " + config.occupancy_source);
 }
 
+std::string scene_inventory_path_from(const CoreStackProviderConfig& config) {
+    const char* env = std::getenv("DEDALUS_AIRSIM_SCENE_INVENTORY");
+    if (env != nullptr && *env != '\0') {
+        return std::string{env};
+    }
+    return config.ghost_targets_airsim_scene_inventory_path;
+}
+
 std::string ghost_scenario_path_from(const CoreStackProviderConfig& config) {
     if (!config.ghost_targets_scenario_path.empty()) {
         return config.ghost_targets_scenario_path;
@@ -67,6 +76,7 @@ std::unique_ptr<GhostTargetProvider> make_ghost_target_provider(const CoreStackP
                 .rpc_port = config.source_rpc_port,
                 .bridge_command = "python3 simulation/airsim/scripts/airsim-object-poses.py",
                 .bridge_transport = config.bridge_transport,
+                .scene_inventory_path = scene_inventory_path_from(config),
                 .objects = config.ghost_targets_airsim_objects,
                 .patterns = config.ghost_targets_airsim_patterns});
     }
@@ -104,13 +114,9 @@ CoreStackProviders ProviderRegistry::create(const CoreStackProviderConfig& confi
             if (config.recorded_manifest_path.empty()) {
                 throw std::invalid_argument("recorded_frames provider requires recorded_manifest_path");
             }
-            return std::make_unique<AsyncPrefetchFrameSource>(
-                std::make_unique<RecordedFrameSource>(config.recorded_manifest_path));
+            return std::make_unique<RecordedFrameSource>(config.recorded_manifest_path);
         }},
-        {"airsim",            [&]() -> std::unique_ptr<FrameSource> {
-            return std::make_unique<AsyncPrefetchFrameSource>(
-                std::make_unique<AirSimFrameSource>(airsim));
-        }},
+        {"airsim",            [&]() { return std::make_unique<AirSimFrameSource>(airsim); }},
     });
 
     providers.ego_provider = resolve<EgoStateProvider>("ego_provider", config.ego_provider, {
@@ -119,26 +125,26 @@ CoreStackProviders ProviderRegistry::create(const CoreStackProviderConfig& confi
         {"airsim",       [&]() { return std::make_unique<AirSimEgoStateProvider>(airsim); }},
     });
 
-    providers.detector = resolve<Detector>("detector", config.detector, {
-        {"scripted",            [&]() { return std::make_unique<ScriptedDetector>(); }},
-        {"airsim_ground_truth", [&]() { return std::make_unique<AirSimGroundTruthDetector>(airsim); }},
+    providers.detector = resolve_shared<Detector>("detector", config.detector, {
+        {"scripted",            [&]() { return std::make_shared<ScriptedDetector>(); }},
+        {"airsim_ground_truth", [&]() { return std::make_shared<AirSimGroundTruthDetector>(airsim); }},
     });
 
-    providers.camera_stabilizer = resolve<CameraStabilizer>("camera_stabilizer", config.camera_stabilizer, {
-        {"null", [&]() { return std::make_unique<NullCameraStabilizer>(); }},
+    providers.camera_stabilizer = resolve_shared<CameraStabilizer>("camera_stabilizer", config.camera_stabilizer, {
+        {"null", [&]() { return std::make_shared<NullCameraStabilizer>(); }},
     });
 
-    providers.tracker = resolve<Tracker>("tracker", config.tracker, {
-        {"simple_centroid", [&]() { return std::make_unique<SimpleCentroidTracker>(); }},
+    providers.tracker = resolve_shared<Tracker>("tracker", config.tracker, {
+        {"simple_centroid", [&]() { return std::make_shared<SimpleCentroidTracker>(); }},
     });
 
-    providers.identity_resolver = resolve<IdentityResolver>("identity_resolver", config.identity_resolver, {
-        {"appearance_only", [&]() { return std::make_unique<AppearanceOnlyIdentityResolver>(); }},
+    providers.identity_resolver = resolve_shared<IdentityResolver>("identity_resolver", config.identity_resolver, {
+        {"appearance_only", [&]() { return std::make_shared<AppearanceOnlyIdentityResolver>(); }},
     });
 
-    providers.projector = resolve<Projector3D>("projector", config.projector, {
-        {"flat_ground",  [&]() { return std::make_unique<FlatGroundProjector>(); }},
-        {"airsim_depth", [&]() { return std::make_unique<AirSimDepthProjector>(airsim); }},
+    providers.projector = resolve_shared<Projector3D>("projector", config.projector, {
+        {"flat_ground",  [&]() { return std::make_shared<FlatGroundProjector>(); }},
+        {"airsim_depth", [&]() { return std::make_shared<AirSimDepthProjector>(airsim); }},
     });
 
     if (config.ghost_targets_enabled) {
