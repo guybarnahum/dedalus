@@ -71,6 +71,7 @@ std::string shell_quote(const std::string& value) {
 }
 
 std::string build_bridge_command(const AirSimProviderConfig& config, const std::string& base_command) {
+    validate_bridge_base_command(base_command);
     std::ostringstream command;
     command << base_command
             << " --host " << shell_quote(config.host)

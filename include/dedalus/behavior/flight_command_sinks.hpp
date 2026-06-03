@@ -107,6 +107,7 @@ private:
     }
 
     [[nodiscard]] std::string build_command(const VelocityCommand& command) const {
+        validate_bridge_base_command(config_.bridge_command);
         const Vec3 velocity = bounded_velocity(command.velocity_local_mps);
         std::ostringstream out;
         out << config_.bridge_command

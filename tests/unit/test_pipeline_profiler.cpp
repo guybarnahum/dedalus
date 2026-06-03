@@ -86,5 +86,40 @@ int main() {
     }
 
     std::filesystem::remove_all(output_dir);
+
+    // --- RAII flush test ---
+    // Verify that destroying a PipelineProfiler with an open frame (begin_frame
+    // called but end_frame never called) writes the frame to disk via the
+    // destructor rather than silently discarding it.
+    const auto raii_profile_path = output_dir / "raii_pipeline_profile.jsonl";
+    {
+        dedalus::PipelineProfiler raii_profiler{raii_profile_path};
+        dedalus::FramePacket raii_frame;
+        raii_frame.frame_id = dedalus::FrameId{"frame_raii"};
+        raii_frame.timestamp = dedalus::TimePoint{987654321};
+        raii_profiler.begin_frame(raii_frame);
+        raii_profiler.record_stage("dummy_stage", 42);
+        // Deliberately omit end_frame() — destructor must flush.
+    }  // raii_profiler destroyed here
+
+    if (!std::filesystem::exists(raii_profile_path)) {
+        std::cerr << "RAII flush test: profiler destructor did not create output\n";
+        return 1;
+    }
+    {
+        const auto raii_profile = read_text_file(raii_profile_path);
+        if (raii_profile.find("\"frame_id\":\"frame_raii\"") == std::string::npos) {
+            std::cerr << "RAII flush test: in-progress frame not written by destructor\n";
+            std::cerr << raii_profile << "\n";
+            return 1;
+        }
+        if (raii_profile.find("\"dummy_stage\":42") == std::string::npos) {
+            std::cerr << "RAII flush test: stage data missing from destructor-flushed frame\n";
+            std::cerr << raii_profile << "\n";
+            return 1;
+        }
+    }
+
+    std::filesystem::remove_all(output_dir);
     return 0;
 }

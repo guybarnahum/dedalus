@@ -34,10 +34,18 @@ std::string read_pipe_to_end(FILE* pipe) {
     return output;
 }
 
-// Allowlist: characters permitted in a bridge_command string that is passed to
-// popen() via the shell.  The set covers all real command lines in config/;
-// anything outside it indicates a mis-configured or malicious value.
-void validate_bridge_command(const std::string& command) {
+std::string ignore_sigint_command(const std::string& command) {
+    return "trap '' INT; exec " + command;
+}
+
+}  // namespace
+
+// Allowlist: characters permitted in the bridge_command BASE string (the value
+// from config, before argument appending).  The set covers all real command
+// lines in config/; anything outside it indicates a mis-configured or
+// malicious value.  Single-quoted arguments appended by build_*_command helpers
+// are safe and are NOT passed through this check.
+void validate_bridge_base_command(const std::string& command) {
     if (command.empty()) {
         throw std::invalid_argument("bridge_command must not be empty");
     }
@@ -52,12 +60,6 @@ void validate_bridge_command(const std::string& command) {
     }
 }
 
-std::string ignore_sigint_command(const std::string& command) {
-    return "trap '' INT; exec " + command;
-}
-
-}  // namespace
-
 struct PipeBridgeTransport::Impl {
     std::unique_ptr<FILE, int(*)(FILE*)> stream_pipe{nullptr, pclose};
 };
@@ -69,7 +71,6 @@ PipeBridgeTransport::~PipeBridgeTransport() {
 }
 
 std::string PipeBridgeTransport::request_once(const std::string& command) {
-    validate_bridge_command(command);
     const auto child_command = ignore_sigint_command(command);
     FILE* pipe = popen(child_command.c_str(), "r");
     if (pipe == nullptr) {
@@ -101,7 +102,6 @@ std::optional<std::string> PipeBridgeTransport::read_stream_line(const std::stri
     }
 
     if (!impl_->stream_pipe) {
-        validate_bridge_command(command);
         const auto child_command = ignore_sigint_command(command);
         impl_->stream_pipe.reset(popen(child_command.c_str(), "r"));
         if (!impl_->stream_pipe) {
@@ -139,7 +139,6 @@ std::optional<std::vector<std::uint8_t>> PipeBridgeTransport::read_stream_byte_v
     }
 
     if (!impl_->stream_pipe) {
-        validate_bridge_command(command);
         const auto child_command = ignore_sigint_command(command);
         impl_->stream_pipe.reset(popen(child_command.c_str(), "r"));
         if (!impl_->stream_pipe) {

@@ -61,6 +61,16 @@ PipelineProfiler::PipelineProfiler(std::filesystem::path output_path)
     }
 }
 
+PipelineProfiler::~PipelineProfiler() {
+    if (frame_open_) {
+        try {
+            end_frame();
+        } catch (...) {
+            // Swallow write errors on destruction; data is best-effort here.
+        }
+    }
+}
+
 void PipelineProfiler::begin_frame(const FramePacket& frame) {
     if (frame_open_) {
         end_frame();

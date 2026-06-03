@@ -8,6 +8,13 @@
 
 namespace dedalus {
 
+// Validates that a bridge_command base string (the config-file value, before
+// argument appending) contains only characters safe to pass to popen().
+// Throws std::invalid_argument on violation.  Call this on the base command
+// only — code-appended shell-quoted arguments (added by build_bridge_command
+// etc.) are not subject to this check.
+void validate_bridge_base_command(const std::string& command);
+
 // Single-request transport: sends a command and reads the full response.
 class OneShotTransport {
 public:

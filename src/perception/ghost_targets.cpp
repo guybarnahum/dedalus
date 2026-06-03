@@ -73,6 +73,7 @@ std::string shell_quote(const std::string& value) {
 }
 
 std::string build_object_pose_command(const AirSimGhostObjectSourceConfig& config, TimePoint timestamp) {
+    validate_bridge_base_command(config.bridge_command);
     std::ostringstream command;
     command << config.bridge_command
             << " --host " << shell_quote(config.host)

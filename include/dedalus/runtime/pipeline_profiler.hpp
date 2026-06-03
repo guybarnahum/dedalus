@@ -25,6 +25,9 @@ struct PipelineFrameProfile {
 class PipelineProfiler {
 public:
     explicit PipelineProfiler(std::filesystem::path output_path);
+    // Destructor flushes any in-progress frame so that partial data is
+    // committed on normal object destruction (RAII flush guarantee).
+    ~PipelineProfiler();
 
     void begin_frame(const FramePacket& frame);
     void record_stage(std::string name, std::int64_t duration_us);
