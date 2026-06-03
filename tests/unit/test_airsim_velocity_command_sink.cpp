@@ -1,5 +1,4 @@
 #include <iostream>
-#include <optional>
 #include <string>
 #include <vector>
 
@@ -7,7 +6,7 @@
 
 namespace {
 
-class FakeTransport final : public dedalus::BridgeTransport {
+class FakeTransport final : public dedalus::OneShotTransport {
 public:
     explicit FakeTransport(std::string response) : response_(std::move(response)) {}
 
@@ -15,22 +14,6 @@ public:
         commands.push_back(command);
         return response_;
     }
-
-    std::optional<std::string> read_stream_line(const std::string&) override {
-        return std::nullopt;
-    }
-
-    std::optional<std::string> read_stream_bytes(const std::string&, std::size_t) override {
-        return std::nullopt;
-    }
-
-    std::optional<std::vector<std::uint8_t>> read_stream_byte_vector(
-        const std::string&,
-        std::size_t) override {
-        return std::nullopt;
-    }
-
-    void close_stream() override {}
 
     std::vector<std::string> commands;
 

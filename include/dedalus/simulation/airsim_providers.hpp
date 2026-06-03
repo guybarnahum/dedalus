@@ -50,7 +50,7 @@ public:
 
 private:
     AirSimProviderConfig config_;
-    std::unique_ptr<BridgeTransport> transport_;
+    std::unique_ptr<OneShotTransport> transport_;
 };
 
 class AirSimDepthProjector final : public Projector3D {

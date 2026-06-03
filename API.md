@@ -799,9 +799,9 @@ Each binary (e.g., `dedalus_core_stack.cpp`, `dedalus_mission_loop.cpp`) manuall
 
 ### Interface and Transport
 
-**7. `BridgeTransport` mixes one-shot and streaming modes in one interface**  
+**7. `BridgeTransport` mixes one-shot and streaming modes in one interface** ✅ **FIXED**  
 `request_once()`, `read_stream_line()`, and `read_stream_byte_vector()` are all on the same abstract class. Concrete callers (`AirSimFrameSource`, `AirSimEgoStateProvider`, `AirSimDepthProjector`) each use only one or two of these modes. The implicit contract for "which mode is active" after `read_stream_line()` is never set vs. one-shot calls is not documented or enforced.  
-*Suggested fix:* Split into `OneShotTransport` and `StreamTransport` interfaces; compose in concrete adapters that need both.
+*Resolution:* Introduced `OneShotTransport` (`request_once` only) and `StreamTransport` (`read_stream_line`, `read_stream_bytes`, `read_stream_byte_vector`, `close_stream` only) as separate abstract classes. `BridgeTransport` inherits both and serves as the combined interface for callers that genuinely need both modes. `PipeBridgeTransport` and `SharedMemoryBridgeTransport` are unchanged (still implement `BridgeTransport`). `AirSimEgoStateProvider` and `AirSimVelocityCommandSink` now hold `unique_ptr<OneShotTransport>` — their constructors accept the narrower type. `AirSimFrameSource` retains `unique_ptr<BridgeTransport>` since it selects one-shot or streaming at runtime. `FakeTransport` in the velocity-sink test is simplified to only implement `OneShotTransport`, dropping the five no-op streaming stubs.
 
 **8. `SharedMemoryBridgeTransport` is an unimplemented stub**  
 All five virtual methods throw or are undefined. The class is registered as a valid transport choice in config. Any attempt to use it will crash at runtime with no useful error message.  

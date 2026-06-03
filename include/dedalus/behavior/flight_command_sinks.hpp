@@ -31,7 +31,7 @@ public:
 
     AirSimVelocityCommandSink(
         AirSimVelocityCommandSinkConfig config,
-        std::unique_ptr<BridgeTransport> transport)
+        std::unique_ptr<OneShotTransport> transport)
         : config_(std::move(config)), transport_(std::move(transport)) {
         if (config_.command_duration_s <= 0.0) {
             throw std::invalid_argument("AirSimVelocityCommandSink requires positive command_duration_s");
@@ -134,7 +134,7 @@ private:
     }
 
     AirSimVelocityCommandSinkConfig config_;
-    std::unique_ptr<BridgeTransport> transport_;
+    std::unique_ptr<OneShotTransport> transport_;
 };
 
 struct Px4BridgeCommandSinkConfig {
