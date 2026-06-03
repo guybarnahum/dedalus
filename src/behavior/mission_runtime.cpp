@@ -429,8 +429,28 @@ void MissionRuntime::loop() {
     auto deadline = std::chrono::steady_clock::now();
     while (running_.load()) {
         deadline += period;
-        (void)tick_once();
+        try {
+            (void)tick_once();
+        } catch (const std::exception& exc) {
+            loop_exception_ = std::current_exception();
+            write_event("\"event\":\"runtime_error\",\"tick\":" + std::to_string(tick_count_) +
+                        ",\"error\":" + q(exc.what()));
+            running_.store(false);
+            break;
+        } catch (...) {
+            loop_exception_ = std::current_exception();
+            write_event("\"event\":\"runtime_error\",\"tick\":" + std::to_string(tick_count_) +
+                        ",\"error\":\"unknown exception\"");
+            running_.store(false);
+            break;
+        }
         std::this_thread::sleep_until(deadline);
+    }
+}
+
+void MissionRuntime::rethrow_if_exception() const {
+    if (loop_exception_) {
+        std::rethrow_exception(loop_exception_);
     }
 }
 

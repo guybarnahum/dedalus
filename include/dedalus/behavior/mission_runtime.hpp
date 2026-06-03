@@ -2,6 +2,7 @@
 
 #include <atomic>
 #include <chrono>
+#include <exception>
 #include <fstream>
 #include <memory>
 #include <mutex>
@@ -61,6 +62,10 @@ public:
     void request_finish();
     bool tick_once();
 
+    // If the loop thread terminated due to an unhandled exception, rethrows it
+    // on the calling thread.  Call after stop() or join to propagate errors.
+    void rethrow_if_exception() const;
+
     [[nodiscard]] bool running() const;
     [[nodiscard]] bool finish_requested() const;
     [[nodiscard]] bool terminal_settled() const;
@@ -84,6 +89,7 @@ private:
     std::atomic<bool> finish_requested_{false};
     std::atomic<bool> terminal_settled_{false};
     std::thread thread_;
+    std::exception_ptr loop_exception_;
     std::size_t tick_count_{0U};
     MissionLifecycleState last_state_{MissionLifecycleState::Idle};
     FlightControlStateTracker flight_control_tracker_;

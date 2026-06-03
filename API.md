@@ -843,9 +843,10 @@ Construction from `GhostScenario` and from `AirSimGhostObjectSourceConfig` resul
 
 ### Reliability and Observability
 
-**14. Exceptions in `MissionRuntime::loop()` are silently swallowed**  
+**14. Exceptions in `MissionRuntime::loop()` are silently swallowed**  ✅ **FIXED**  
 If `tick_once()` throws, the default `while (running_.load())` loop terminates silently. No error is propagated to the main thread, no `MissionEvent` is emitted, and external observers see `running()` flip to false without a reason.  
-*Suggested fix:* Catch exceptions in the loop body, emit a terminal `MissionEvent` with the error, and surface the exception via `std::exception_ptr` accessible from the main thread.
+*Suggested fix:* Catch exceptions in the loop body, emit a terminal `MissionEvent` with the error, and surface the exception via `std::exception_ptr` accessible from the main thread.  
+*Resolution:* `loop()` now wraps `tick_once()` in a try/catch. On any thrown exception the exception is stored via `std::current_exception()` into `loop_exception_`, a `runtime_error` `MissionEvent` is emitted with the error text, `running_` is set to false, and the loop exits cleanly. `MissionRuntime::rethrow_if_exception()` (new public method) lets the main thread retrieve and rethrow the stored exception after `stop()` returns.
 
 **15. `PipelineProfiler` has no mechanism to flush or export timing data at shutdown**  
 Timing rows are written incrementally; if the process is killed (e.g., Ctrl-C in CI) before normal shutdown, the trailing rows may be lost. There is no signal handler or RAII flush.
