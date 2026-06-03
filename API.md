@@ -807,9 +807,11 @@ Each binary (e.g., `dedalus_core_stack.cpp`, `dedalus_mission_loop.cpp`) manuall
 All five virtual methods throw or are undefined. The class is registered as a valid transport choice in config. Any attempt to use it will crash at runtime with no useful error message.  
 *Resolution:* The class is retained as a planned stub (annotated in the header). The error is promoted to construction time: both `make_transport()` factories (`airsim_providers.cpp`, `ghost_targets.cpp`) now throw `"shared_memory bridge transport is not yet implemented; use bridge_transport: pipe"` immediately when `bridge_transport: shared_memory` is read from config, rather than silently constructing the class and crashing on the first method call.
 
-**9. `AirSimVelocityCommandSink` detects success by `"OK"` substring match in stdout**  
+**9. `AirSimVelocityCommandSink` detects success by `"OK"` substring match in stdout** ✅ **FIXED**  
 The Python bridge script writes a success indicator to stdout and the C++ sink checks `response.find("OK") != npos`. This is a fragile text protocol — any debug print from the script that contains "OK" would be a false positive.  
 *Suggested fix:* Adopt the same structured JSON response convention used by `Px4BridgeCommandSink` (which parses a `"status"` field).
+
+*Resolution:* `airsim-send-velocity.py` now imports `json` and emits `json.dumps({"ok": True, ...})` for every success path (arm, takeoff, disarm, velocity). `AirSimVelocityCommandSink::send()` uses a private `json_ok_value()` helper (parsing `"ok":true`) matching the pattern in `Px4BridgeCommandSink`, replacing the `output.find("OK")` substring check. The unit-test `FakeTransport` responses were updated from plain-text `"OK sent\n"` / `"ERROR nope\n"` to `{"ok":true,...}` / `{"ok":false,"error":"nope"}`. 34/34 tests pass.
 
 **10. `Px4MavlinkCommandSink` calls `std::system()` for tmux send-keys**  
 Even with the `validate_tmux_target()` allowlist guard, `std::system()` spawns a full shell. Any future loosening of the allowlist reintroduces shell injection. A `fork`+`exec` (or `posix_spawn`) approach with a pre-split `argv` array would eliminate the shell entirely.

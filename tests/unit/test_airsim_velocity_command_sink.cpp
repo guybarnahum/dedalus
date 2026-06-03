@@ -36,7 +36,7 @@ int main() {
     config.command_duration_s = 0.2;
     config.max_velocity_mps = 2.0;
 
-    auto fake_transport = std::make_unique<FakeTransport>("OK sent\n");
+    auto fake_transport = std::make_unique<FakeTransport>("{\"ok\":true,\"command\":\"velocity\"}");
     auto* fake_transport_ptr = fake_transport.get();
     dedalus::AirSimVelocityCommandSink sink{config, std::move(fake_transport)};
 
@@ -105,7 +105,7 @@ int main() {
 
     bool threw = false;
     try {
-        auto failing_transport = std::make_unique<FakeTransport>("ERROR nope\n");
+        auto failing_transport = std::make_unique<FakeTransport>("{\"ok\":false,\"error\":\"nope\"}");
         dedalus::AirSimVelocityCommandSink failing_sink{config, std::move(failing_transport)};
         failing_sink.send(command);
     } catch (const std::runtime_error&) {

@@ -20,6 +20,7 @@ ego/PX4 telemetry in the world model.
 from __future__ import annotations
 
 import argparse
+import json
 import math
 import os
 import subprocess
@@ -274,10 +275,14 @@ def main() -> int:
             args.prearm_warmup_duration,
         )
         px4_shell(args.px4_tmux_target, "commander arm")
-        print(
-            f"OK command=arm dispatch=px4_shell target={args.px4_tmux_target} "
-            f"api_control={api_control_enabled} warmup_count={args.prearm_warmup_count}"
-        )
+        print(json.dumps({
+            "ok": True,
+            "command": "arm",
+            "dispatch": "px4_shell",
+            "target": args.px4_tmux_target,
+            "api_control": api_control_enabled,
+            "warmup_count": args.prearm_warmup_count,
+        }))
         return 0
 
     if args.command == "takeoff":
@@ -291,16 +296,20 @@ def main() -> int:
                 args.safe_height,
                 parse_mavlink_endpoints(args.mavlink_endpoints),
             )
-        print(
-            f"OK command=takeoff dispatch=px4_shell target={args.px4_tmux_target} "
-            f"api_control={api_control_enabled} safe_height={args.safe_height:.3f} "
-            f"reached_height={reached_height:.3f}"
-        )
+        print(json.dumps({
+            "ok": True,
+            "command": "takeoff",
+            "dispatch": "px4_shell",
+            "target": args.px4_tmux_target,
+            "api_control": api_control_enabled,
+            "safe_height": round(args.safe_height, 3),
+            "reached_height": round(reached_height, 3),
+        }))
         return 0
 
     if args.command == "disarm":
         px4_shell(args.px4_tmux_target, "commander disarm")
-        print(f"OK command=disarm dispatch=px4_shell target={args.px4_tmux_target}")
+        print(json.dumps({"ok": True, "command": "disarm", "dispatch": "px4_shell", "target": args.px4_tmux_target}))
         return 0
 
     client = make_client(args)
@@ -320,15 +329,17 @@ def main() -> int:
     if not args.no_join:
         task.join()
 
-    print(
-        "OK "
-        f"command=velocity "
-        f"vehicle={args.vehicle_name} "
-        f"api_control={api_control_enabled} "
-        f"velocity=({args.vx:.3f},{args.vy:.3f},{args.vz:.3f}) "
-        f"duration={args.duration:.3f} "
-        f"yaw_rate={args.yaw_rate:.3f}"
-    )
+    print(json.dumps({
+        "ok": True,
+        "command": "velocity",
+        "vehicle": args.vehicle_name,
+        "api_control": api_control_enabled,
+        "vx": round(args.vx, 3),
+        "vy": round(args.vy, 3),
+        "vz": round(args.vz, 3),
+        "duration": round(args.duration, 3),
+        "yaw_rate": round(args.yaw_rate, 3),
+    }))
     return 0
 
 

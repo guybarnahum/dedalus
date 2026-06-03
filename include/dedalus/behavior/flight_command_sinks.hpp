@@ -68,16 +68,25 @@ public:
         FlightCommandResult result;
         result.kind = command.kind;
         result.status = output;
-        result.success = output.find("OK") != std::string::npos;
+        result.success = json_ok_value(output);
         if (!result.success) {
-            throw std::runtime_error("AirSim command helper did not report OK: " + output);
+            throw std::runtime_error("AirSim command helper did not report ok: " + output);
         }
         return result;
     }
 
 private:
-    [[nodiscard]] static std::string shell_quote(const std::string& value) {
-        std::string quoted = "'";
+    // Returns true when the JSON response contains "ok":true.
+    [[nodiscard]] static bool json_ok_value(const std::string& json) {
+        const auto pos = json.find("\"ok\":");
+        if (pos == std::string::npos) {
+            return false;
+        }
+        const auto start = pos + 5U;
+        return json.compare(start, 4U, "true") == 0;
+    }
+
+    [[nodiscard]] static std::string shell_quote(const std::string& value) {        std::string quoted = "'";
         for (const char ch : value) {
             if (ch == '\'') {
                 quoted += "'\\''";
