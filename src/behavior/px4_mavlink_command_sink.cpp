@@ -4,8 +4,10 @@
 #include <netinet/in.h>
 #include <sys/select.h>
 #include <sys/socket.h>
+#include <sys/wait.h>
 #include <unistd.h>
 
+#include <array>
 #include <cctype>
 #include <cerrno>
 #include <chrono>
@@ -66,19 +68,6 @@ void validate_tmux_target(const std::string& target) {
             std::string("px4_tmux_target contains disallowed character '") +
             static_cast<char>(ch) + "': " + target);
     }
-}
-
-std::string shell_quote(const std::string& value) {
-    std::string quoted = "'";
-    for (const char ch : value) {
-        if (ch == '\'') {
-            quoted += "'\\''";
-        } else {
-            quoted += ch;
-        }
-    }
-    quoted += "'";
-    return quoted;
 }
 
 std::vector<std::string> split_csv(const std::string& value) {
@@ -397,10 +386,30 @@ struct Px4MavlinkCommandSink::Impl {
 
     void run_px4_shell(const std::string& command) const {
         validate_tmux_target(config.px4_tmux_target);
-        const std::string rendered =
-            "tmux send-keys -t " + shell_quote(config.px4_tmux_target) + " " + shell_quote(command) + " C-m";
-        const int rc = std::system(rendered.c_str());
-        if (rc != 0) {
+        // Build argv without invoking a shell.  tmux receives each argument
+        // as a separate element, so injection is structurally impossible
+        // regardless of the content of `command`.
+        const std::array<const char*, 7> argv{{
+            "tmux", "send-keys", "-t",
+            config.px4_tmux_target.c_str(),
+            command.c_str(),
+            "C-m",
+            nullptr,
+        }};
+        const pid_t pid = ::fork();
+        if (pid < 0) {
+            throw std::runtime_error("failed to fork for tmux: " + std::string(std::strerror(errno)));
+        }
+        if (pid == 0) {
+            // NOLINTNEXTLINE(cppcoreguidelines-pro-type-const-cast) — execvp takes char* const argv[]
+            ::execvp("tmux", const_cast<char* const*>(argv.data()));
+            _exit(127);
+        }
+        int status{};
+        if (::waitpid(pid, &status, 0) < 0) {
+            throw std::runtime_error("waitpid for tmux failed: " + std::string(std::strerror(errno)));
+        }
+        if (!WIFEXITED(status) || WEXITSTATUS(status) != 0) {
             throw std::runtime_error("PX4 shell command failed: " + command);
         }
     }

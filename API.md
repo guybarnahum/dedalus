@@ -813,8 +813,10 @@ The Python bridge script writes a success indicator to stdout and the C++ sink c
 
 *Resolution:* `airsim-send-velocity.py` now imports `json` and emits `json.dumps({"ok": True, ...})` for every success path (arm, takeoff, disarm, velocity). `AirSimVelocityCommandSink::send()` uses a private `json_ok_value()` helper (parsing `"ok":true`) matching the pattern in `Px4BridgeCommandSink`, replacing the `output.find("OK")` substring check. The unit-test `FakeTransport` responses were updated from plain-text `"OK sent\n"` / `"ERROR nope\n"` to `{"ok":true,...}` / `{"ok":false,"error":"nope"}`. 34/34 tests pass.
 
-**10. `Px4MavlinkCommandSink` calls `std::system()` for tmux send-keys**  
+**10. `Px4MavlinkCommandSink` calls `std::system()` for tmux send-keys** ✅ **FIXED**  
 Even with the `validate_tmux_target()` allowlist guard, `std::system()` spawns a full shell. Any future loosening of the allowlist reintroduces shell injection. A `fork`+`exec` (or `posix_spawn`) approach with a pre-split `argv` array would eliminate the shell entirely.
+
+*Resolution:* `run_px4_shell()` in `px4_mavlink_command_sink.cpp` now uses `fork()`+`execvp()` with a fixed `argv` array: `{"tmux", "send-keys", "-t", target, command, "C-m", nullptr}`. No shell is invoked; the target and command are passed as separate `execvp` arguments so injection is structurally impossible regardless of their content. The `shell_quote()` helper and the `rendered` command string are removed. `<sys/wait.h>` added for `waitpid`. 34/34 tests pass.
 
 ---
 
