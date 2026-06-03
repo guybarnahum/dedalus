@@ -32,6 +32,12 @@ struct RuntimeEventStreamServerStats {
     std::uint64_t accepted_clients{0};
     std::uint64_t dropped_clients{0};
     std::uint64_t dropped_messages{0};  // shared queue overflow drops
+    std::uint64_t snapshot_messages{0};
+    std::uint64_t ghost_detection_messages{0};
+    std::uint64_t mission_event_messages{0};
+    std::uint64_t serialize_total_us{0};
+    std::uint64_t enqueue_total_us{0};
+    std::uint64_t publish_total_us{0};
 };
 
 class RuntimeEventStreamServer final : public WorldSnapshotSubscriber, public GhostDetectionsSubscriber, public MissionEventSubscriber {
@@ -78,6 +84,12 @@ private:
     std::uint64_t accepted_clients_{0};
     std::uint64_t dropped_clients_{0};
     std::uint64_t dropped_messages_{0};
+    std::uint64_t snapshot_messages_{0};
+    std::uint64_t ghost_detection_messages_{0};
+    std::uint64_t mission_event_messages_{0};
+    std::uint64_t serialize_total_us_{0};
+    std::uint64_t enqueue_total_us_{0};
+    std::uint64_t publish_total_us_{0};
 };
 
 using WorldSnapshotStreamServerConfig = RuntimeEventStreamServerConfig;
