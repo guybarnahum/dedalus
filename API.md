@@ -7,53 +7,53 @@ This document maps the runtime architecture, every major component interface, an
 ## 1. Runtime Architecture Overview
 
 ```
-┌─────────────────────────────────────────────────────────┐
-│                   dedalus_mission_loop                   │
-│                  (main application binary)               │
-│                                                          │
-│  CoreStackProviderConfig ──► ProviderRegistry            │
-│      (YAML via config_loader)     │                      │
-│                                   ▼                      │
-│                          CoreStackProviders              │
-│                                   │                      │
-│  CoreStackRunnerConfig ──► CoreStackRunner               │
-│                                   │  run_once() →        │
-│                    ┌──────────────┼──────────────────┐   │
-│                    ▼              ▼                   ▼   │
+┌────────────────────────────────────────────────────────────────────┐
+│                   dedalus_mission_loop                             │
+│                  (main application binary)                         │
+│                                                                    │
+│  CoreStackProviderConfig ──► ProviderRegistry                      │
+│      (YAML via config_loader)     │                                │
+│                                   ▼                                │
+│                          CoreStackProviders                        │
+│                                   │                                │
+│  CoreStackRunnerConfig ──► CoreStackRunner                         │
+│                                   │  run_once() →                  │
+│                    ┌──────────────┼────────────────────┐           │
+│                    ▼              ▼                    ▼           │
 │             FrameSource    EgoStateProvider    GhostTargetProvider │
-│                    │              │                   │   │
-│                    └──────────────┘                   │   │
-│                          FramePacket + EgoState        │   │
-│                                   │                   │   │
-│                            PerceptionPipeline          │   │
-│                         (Detector→Stabilizer→          │   │
-│                          Tracker→Identity→Projector)   │   │
-│                                   │                   │   │
-│                      PerceptionPipelineOutput          │   │
-│                         + GhostDetectionsFrame         │   │
-│                                   │                   │   │
-│                          InMemoryWorldModel            │   │
-│                                   │                   │   │
-│                           WorldSnapshot                │   │
-│                                   │                   │   │
-│          ┌──────────────┬─────────┴──────────┐        │   │
-│          ▼              ▼                    ▼        │   │
-│  WorldSnapshot   LatestWorldSnapshot  ArtifactSnapshot│   │
-│  Publisher       (mission hand-off)   Writer          │   │
-│          │                                            │   │
-│          ▼                                            │   │
-│  RuntimeEventStream                                   │   │
-│  Server (TCP JSONL)                                   │   │
-│                                                       │   │
-│  MissionRuntime (async thread @ tick_hz)              │   │
-│      │                                                │   │
-│      ├── MissionController::tick()                    │   │
-│      │       (ObjectBehaviorMissionController)        │   │
-│      ├── FlightCommandSink::send()                    │   │
-│      └── CameraPointingSink::send()                   │   │
-│                                                       │   │
-│  MissionEventPublisher                                │   │
-└─────────────────────────────────────────────────────────┘
+│                    │              │                    │           │
+│                    └──────────────┘                    │           │
+│                          FramePacket + EgoState        │           │
+│                                   │                    │           │
+│                            PerceptionPipeline          │           │
+│                         (Detector→Stabilizer→          │           │
+│                          Tracker→Identity→Projector)   │           │
+│                                   │                    │           │
+│                      PerceptionPipelineOutput          │           │
+│                         + GhostDetectionsFrame         │           │
+│                                   │                    │           │
+│                          InMemoryWorldModel            │           │
+│                                   │                    │           │
+│                           WorldSnapshot                │           │
+│                                   │                    │           │
+│          ┌──────────────┬─────────┴──────────┐         │           │
+│          ▼              ▼                    ▼         │           │
+│  WorldSnapshot   LatestWorldSnapshot  ArtifactSnapshot │           │
+│  Publisher       (mission hand-off)   Writer           │           │
+│          │                                             │           │
+│          ▼                                             │           │
+│  RuntimeEventStream                                    │           │
+│  Server (TCP JSONL)                                    │           │
+│                                                        │           │
+│  MissionRuntime (async thread @ tick_hz)               │           │
+│      │                                                 │           │
+│      ├── MissionController::tick()                     │           │
+│      │       (ObjectBehaviorMissionController)         │           │
+│      ├── FlightCommandSink::send()                     │           │
+│      └── CameraPointingSink::send()                    │           │
+│                                                        │           │
+│  MissionEventPublisher                                 │           │
+└────────────────────────────────────────────────────────────────────┘
 ```
 
 ---
