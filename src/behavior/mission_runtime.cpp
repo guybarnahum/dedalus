@@ -2,6 +2,7 @@
 
 #include "dedalus/core/json_utils.hpp"
 
+#include <chrono>
 #include <iostream>
 #include <sstream>
 #include <stdexcept>
@@ -9,6 +10,13 @@
 
 namespace dedalus {
 namespace {
+
+using SteadyClock = std::chrono::steady_clock;
+
+std::uint64_t elapsed_us(const SteadyClock::time_point start) {
+    return static_cast<std::uint64_t>(
+        std::chrono::duration_cast<std::chrono::microseconds>(SteadyClock::now() - start).count());
+}
 
 bool output_is_terminal_settled(const MissionTickOutput& output) {
     return (output.state == MissionLifecycleState::Complete && output.status == "complete") ||
@@ -419,6 +427,14 @@ MissionLifecycleState MissionRuntime::last_state() const {
     return last_state_;
 }
 
+MissionRuntimeStats MissionRuntime::stats() const {
+    return MissionRuntimeStats{
+        .events_written = events_written_.load(),
+        .event_publish_total_us = event_publish_total_us_.load(),
+        .event_log_write_total_us = event_log_write_total_us_.load(),
+        .event_log_flush_total_us = event_log_flush_total_us_.load()};
+}
+
 void MissionRuntime::loop() {
     const auto period = std::chrono::duration_cast<std::chrono::steady_clock::duration>(
         std::chrono::duration<double>(1.0 / config_.tick_hz));
@@ -457,14 +473,20 @@ void MissionRuntime::rethrow_if_exception() const {
 void MissionRuntime::write_event(std::string json_fields) {
     const auto event_json = "{" + json_fields + "}";
     if (mission_event_publisher_) {
+        const auto publish_start = SteadyClock::now();
         mission_event_publisher_->publish(MissionEvent{.timestamp = now_timepoint(), .json = event_json});
+        event_publish_total_us_.fetch_add(elapsed_us(publish_start));
     }
-    if (!event_log_) {
-        return;
+    if (event_log_) {
+        std::lock_guard<std::mutex> lock{event_log_mutex_};
+        const auto write_start = SteadyClock::now();
+        event_log_ << event_json << "\n";
+        event_log_write_total_us_.fetch_add(elapsed_us(write_start));
+        const auto flush_start = SteadyClock::now();
+        event_log_.flush();
+        event_log_flush_total_us_.fetch_add(elapsed_us(flush_start));
     }
-    std::lock_guard<std::mutex> lock{event_log_mutex_};
-    event_log_ << event_json << "\n";
-    event_log_.flush();
+    events_written_.fetch_add(1U);
 }
 
 TimePoint MissionRuntime::now_timepoint() const {
