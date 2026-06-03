@@ -22,8 +22,8 @@ struct WorldMemorySnapshot {
 
 struct EffectiveWorldView {
     WorldSnapshot actual;
-    WorldMemorySnapshot memory;
-    std::vector<MapConflict> conflicts;
+    WorldMemorySnapshot memory;     // stub: not populated — WorldMemorySnapshot expansion pending
+    std::vector<MapConflict> conflicts;  // stub: not populated — conflict-detection expansion pending
     std::vector<UncertainRegion> uncertain_regions;
 };
 

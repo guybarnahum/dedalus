@@ -412,8 +412,8 @@ WorldSnapshot InMemoryWorldModel::snapshot() const {
 EffectiveWorldView InMemoryWorldModel::effective_view() const {
     EffectiveWorldView view;
     view.actual = snapshot_;
-    view.memory.confidence = 0.0F;
     view.uncertain_regions = snapshot_.uncertain_regions;
+    // view.memory and view.conflicts are intentional stubs — see effective_world_view.hpp
     return view;
 }
 
