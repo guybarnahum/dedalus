@@ -31,7 +31,7 @@ VEHICLE_NAME="PX4"
 AIRSIM_HOST="127.0.0.1"
 AIRSIM_RPC_PORT="41451"
 AIRSIM_PREFLIGHT=1
-AIRSIM_FRAME_RATE_HZ=""
+SOURCE_FRAME_RATE_HZ=""
 WITH_FRAME_PRODUCER_TIMING=0
 FRAME_PRODUCER_TIMING_PATH=""
 WITH_PIPELINE_TIMING=0
@@ -82,7 +82,7 @@ Examples:
   ./run_mission.sh --attach
   ./run_mission.sh --overlay-debug
   ./run_mission.sh --scene-id AirSimNH --refresh-scene-inventory
-  ./run_mission.sh --airsim-frame-rate-hz 0 --pipeline-timing --frame-producer-timing
+  ./run_mission.sh --source-frame-rate-hz 0 --pipeline-timing --frame-producer-timing
 
 Options:
   --session NAME              tmux session name. Default: dedalus-mission
@@ -99,10 +99,11 @@ Options:
   --vehicle-name NAME         AirSim vehicle name. Default: PX4
   --airsim-host HOST          AirSim RPC host. Default: 127.0.0.1
   --airsim-rpc-port PORT      AirSim RPC port. Default: 41451
-  --airsim-frame-rate-hz HZ   Override AirSim binary frame producer --rate-hz in an effective config. Use 0 for uncapped.
-  --frame-producer-timing     Add --timing-jsonl to the AirSim binary frame producer command.
+  --source-frame-rate-hz HZ   Override frame-source producer --rate-hz in an effective config. Use 0 for uncapped.
+  --airsim-frame-rate-hz HZ   Deprecated alias for --source-frame-rate-hz.
+  --frame-producer-timing     Add --timing-jsonl to the frame producer command.
   --frame-producer-timing-path PATH
-                                Timing JSONL output path. Default: <output-dir>/profile/airsim_binary_bridge_<timestamp>.jsonl
+                                Timing JSONL output path. Default: <output-dir>/profile/source_frame_bridge_<timestamp>.jsonl
   --pipeline-timing           Enable C++ pipeline timing in an effective config.
   --pipeline-timing-path PATH Timing JSONL output path. Default: <output-dir>/profile/pipeline_<timestamp>.jsonl
   --no-airsim-preflight       Skip the AirSim RPC preflight check
@@ -228,7 +229,12 @@ while [[ $# -gt 0 ]]; do
         --vehicle-name) VEHICLE_NAME="$2"; shift 2 ;;
         --airsim-host) AIRSIM_HOST="$2"; shift 2 ;;
         --airsim-rpc-port) AIRSIM_RPC_PORT="$2"; shift 2 ;;
-        --airsim-frame-rate-hz) AIRSIM_FRAME_RATE_HZ="$2"; shift 2 ;;
+        --source-frame-rate-hz) SOURCE_FRAME_RATE_HZ="$2"; shift 2 ;;
+        --airsim-frame-rate-hz)
+            echo "⚠️  --airsim-frame-rate-hz is deprecated; use --source-frame-rate-hz." >&2
+            SOURCE_FRAME_RATE_HZ="$2"
+            shift 2
+            ;;
         --frame-producer-timing) WITH_FRAME_PRODUCER_TIMING=1; shift ;;
         --frame-producer-timing-path) FRAME_PRODUCER_TIMING_PATH="$(abs_path "$2")"; WITH_FRAME_PRODUCER_TIMING=1; shift 2 ;;
         --pipeline-timing) WITH_PIPELINE_TIMING=1; shift ;;
@@ -282,7 +288,7 @@ if [[ -z "$SCENE_INVENTORY_PATH" ]]; then
     SCENE_INVENTORY_PATH="$REPO_ROOT_ABS/out/airsim_scene_inventory/${SCENE_ID}.objects.json"
 fi
 if [[ -z "$FRAME_PRODUCER_TIMING_PATH" ]]; then
-    FRAME_PRODUCER_TIMING_PATH="$PROFILE_DIR/airsim_binary_bridge_${TIMESTAMP}.jsonl"
+    FRAME_PRODUCER_TIMING_PATH="$PROFILE_DIR/source_frame_bridge_${TIMESTAMP}.jsonl"
 fi
 if [[ -z "$PIPELINE_TIMING_PATH" ]]; then
     PIPELINE_TIMING_PATH="$PROFILE_DIR/pipeline_${TIMESTAMP}.jsonl"
@@ -307,9 +313,9 @@ fi
 
 mkdir -p "$OUTPUT_DIR" "$CAMERA_FRAMES_DIR" "$PROFILE_DIR"
 
-if [[ -n "$AIRSIM_FRAME_RATE_HZ" || "$WITH_FRAME_PRODUCER_TIMING" -eq 1 || "$WITH_PIPELINE_TIMING" -eq 1 ]]; then
+if [[ -n "$SOURCE_FRAME_RATE_HZ" || "$WITH_FRAME_PRODUCER_TIMING" -eq 1 || "$WITH_PIPELINE_TIMING" -eq 1 ]]; then
     EFFECTIVE_CONFIG_PATH="$OUTPUT_DIR/effective_core_stack_${TIMESTAMP}.yml"
-    python3 - "$CONFIG_PATH" "$EFFECTIVE_CONFIG_PATH" "$AIRSIM_FRAME_RATE_HZ" "$WITH_FRAME_PRODUCER_TIMING" "$FRAME_PRODUCER_TIMING_PATH" "$WITH_PIPELINE_TIMING" "$PIPELINE_TIMING_PATH" <<'PY'
+    python3 - "$CONFIG_PATH" "$EFFECTIVE_CONFIG_PATH" "$SOURCE_FRAME_RATE_HZ" "$WITH_FRAME_PRODUCER_TIMING" "$FRAME_PRODUCER_TIMING_PATH" "$WITH_PIPELINE_TIMING" "$PIPELINE_TIMING_PATH" <<'PY'
 from __future__ import annotations
 import shlex
 import sys
@@ -533,15 +539,15 @@ echo "  config:  $CONFIG_PATH"
 if [[ "$WITH_SCENE_INVENTORY" -eq 1 ]]; then
     echo "  inventory override: $SCENE_INVENTORY_PATH"
 fi
-if [[ -n "$AIRSIM_FRAME_RATE_HZ" || "$WITH_FRAME_PRODUCER_TIMING" -eq 1 || "$WITH_PIPELINE_TIMING" -eq 1 ]]; then
+if [[ -n "$SOURCE_FRAME_RATE_HZ" || "$WITH_FRAME_PRODUCER_TIMING" -eq 1 || "$WITH_PIPELINE_TIMING" -eq 1 ]]; then
     echo "  effective config generated from launch overrides"
 fi
 echo ""
-if [[ -n "$AIRSIM_FRAME_RATE_HZ" || "$WITH_FRAME_PRODUCER_TIMING" -eq 1 || "$WITH_PIPELINE_TIMING" -eq 1 ]]; then
+if [[ -n "$SOURCE_FRAME_RATE_HZ" || "$WITH_FRAME_PRODUCER_TIMING" -eq 1 || "$WITH_PIPELINE_TIMING" -eq 1 ]]; then
     echo "Frame source overrides:"
-    if [[ -n "$AIRSIM_FRAME_RATE_HZ" ]]; then echo "  AirSim frame rate: $AIRSIM_FRAME_RATE_HZ Hz (0 means uncapped)"; fi
-    if [[ "$WITH_FRAME_PRODUCER_TIMING" -eq 1 ]]; then echo "  producer timing:  $FRAME_PRODUCER_TIMING_PATH"; fi
-    if [[ "$WITH_PIPELINE_TIMING" -eq 1 ]]; then echo "  pipeline timing:  $PIPELINE_TIMING_PATH"; fi
+    if [[ -n "$SOURCE_FRAME_RATE_HZ" ]]; then echo "  source frame rate: $SOURCE_FRAME_RATE_HZ Hz (0 means uncapped)"; fi
+    if [[ "$WITH_FRAME_PRODUCER_TIMING" -eq 1 ]]; then echo "  producer timing:   $FRAME_PRODUCER_TIMING_PATH"; fi
+    if [[ "$WITH_PIPELINE_TIMING" -eq 1 ]]; then echo "  pipeline timing:   $PIPELINE_TIMING_PATH"; fi
     echo ""
 fi
 if [[ "$WITH_SCENE_INVENTORY" -eq 1 ]]; then
