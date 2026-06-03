@@ -28,6 +28,7 @@ struct CoreStackProviderConfig {
     std::string ghost_targets_scenario_path;
     std::vector<AirSimGhostObjectBinding> ghost_targets_airsim_objects;
     std::vector<AirSimGhostObjectPatternBinding> ghost_targets_airsim_patterns;
+    std::string ghost_targets_airsim_scene_inventory_path;
     std::string world_model{"in_memory"};
     std::string occupancy_source{"synthetic_fixture"};
     std::string frame_annotator{"null"};
