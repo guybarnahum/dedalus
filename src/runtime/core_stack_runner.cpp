@@ -1,5 +1,6 @@
 #include "dedalus/runtime/core_stack_runner.hpp"
 
+#include <algorithm>
 #include <chrono>
 #include <utility>
 
@@ -10,6 +11,10 @@ using SteadyClock = std::chrono::steady_clock;
 
 std::int64_t duration_us(const SteadyClock::time_point start) {
     return std::chrono::duration_cast<std::chrono::microseconds>(SteadyClock::now() - start).count();
+}
+
+std::int64_t duration_between_us(const SteadyClock::time_point start, const SteadyClock::time_point end) {
+    return std::chrono::duration_cast<std::chrono::microseconds>(end - start).count();
 }
 
 }  // namespace
@@ -37,7 +42,8 @@ bool CoreStackRunner::run_once() {
 
     auto start = SteadyClock::now();
     auto frame = providers_.frame_source->next_frame();
-    const auto frame_source_wait_duration_us = duration_us(start);
+    const auto frame_available_time = SteadyClock::now();
+    const auto frame_source_wait_duration_us = duration_between_us(start, frame_available_time);
 
     if (!frame.has_value()) {
         providers_.frame_annotator->finish();
@@ -45,11 +51,18 @@ bool CoreStackRunner::run_once() {
     }
 
     if (timing_writer_) {
+        std::int64_t frame_source_reported_io_us = 0;
         timing_writer_->begin_frame(*frame);
         timing_writer_->record_stage("frame_source.next_frame_wait", frame_source_wait_duration_us);
+        timing_writer_->record_stage("runtime.frame_source_wall_wait", frame_source_wait_duration_us);
         for (const auto& source_timing : frame->source_timings) {
             timing_writer_->record_stage(source_timing.name, source_timing.duration_us);
+            frame_source_reported_io_us += source_timing.duration_us;
         }
+        timing_writer_->record_stage("runtime.frame_source_reported_io", frame_source_reported_io_us);
+        timing_writer_->record_stage(
+            "runtime.frame_source_unattributed_wait",
+            std::max<std::int64_t>(0, frame_source_wait_duration_us - frame_source_reported_io_us));
     }
 
     start = SteadyClock::now();
@@ -59,6 +72,7 @@ bool CoreStackRunner::run_once() {
     }
     if (!ego_estimate.ego.has_value()) {
         if (timing_writer_) {
+            timing_writer_->record_stage("runtime.post_frame_compute", duration_between_us(frame_available_time, SteadyClock::now()));
             timing_writer_->set_measured_total(duration_us(run_once_start));
             timing_writer_->end_frame();
         }
@@ -157,6 +171,7 @@ bool CoreStackRunner::run_once() {
     providers_.frame_annotator->annotate(annotation);
     if (timing_writer_) {
         timing_writer_->record_stage("frame_annotator.annotate", duration_us(start));
+        timing_writer_->record_stage("runtime.post_frame_compute", duration_between_us(frame_available_time, SteadyClock::now()));
         timing_writer_->set_measured_total(duration_us(run_once_start));
         timing_writer_->end_frame();
     }
