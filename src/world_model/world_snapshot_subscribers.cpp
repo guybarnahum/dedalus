@@ -69,8 +69,8 @@ void ArtifactSnapshotWriter::on_snapshot(const WorldSnapshot& snapshot) {
         }
         write_queue_.emplace_back(frame_number, std::move(item));
     }
-    ++enqueue_count_;
-    enqueue_total_us_ += elapsed_us(start);
+    enqueue_count_.fetch_add(1U);
+    enqueue_total_us_.fetch_add(elapsed_us(start));
     queue_cv_.notify_one();
 }
 
@@ -144,9 +144,9 @@ void ArtifactSnapshotWriter::writer_loop() {
                   << snap->timestamp.timestamp_ns << " "
                   << snap->active_map_frame_id.value << "\n";
         manifest_.flush();
-        manifest_flush_total_us_ += elapsed_us(manifest_start);
-        write_total_us_ += elapsed_us(write_start);
-        ++write_count_;
+        manifest_flush_total_us_.fetch_add(elapsed_us(manifest_start));
+        write_total_us_.fetch_add(elapsed_us(write_start));
+        write_count_.fetch_add(1U);
     }
 }
 
