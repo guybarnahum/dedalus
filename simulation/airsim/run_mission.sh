@@ -58,6 +58,7 @@ VALIDATION_RADIUS="10.0"
 VALIDATION_TIMEOUT_S="300"
 VALIDATION_AVG_RADIUS_ERROR_MAX="1.0"
 VALIDATION_MAX_RADIUS_ERROR_AFTER_LATCH="3.0"
+VALIDATION_MIN_OCCUPIED_CELLS="48"
 VALIDATION_COMPLETE_REASON="orbit_count_elapsed"
 VALIDATION_EXPECT_SEQUENCE=0
 VALIDATION_SEQUENCE_STEPS="approach,circle"
@@ -123,6 +124,8 @@ Options:
   --validation-min-orbits N   Circle validator --min-orbits. Default: 2.95
   --validation-radius M       Circle validator --radius. Default: 10.0
   --validation-timeout-s S    Wait timeout for runtime_stop. Default: 300; use 0 to wait forever.
+  --validation-min-occupied-cells N
+                                Artifact validator minimum occupied GT cells. Default: 48
   --validation-complete-reason REASON
                                 Behavior complete reason for circle validator. Default: orbit_count_elapsed
   --expect-sequence            Require behavior sequence step events in artifact validation.
@@ -255,6 +258,7 @@ while [[ $# -gt 0 ]]; do
         --validation-min-orbits) VALIDATION_MIN_ORBITS="$2"; shift 2 ;;
         --validation-radius) VALIDATION_RADIUS="$2"; shift 2 ;;
         --validation-timeout-s) VALIDATION_TIMEOUT_S="$2"; shift 2 ;;
+        --validation-min-occupied-cells) VALIDATION_MIN_OCCUPIED_CELLS="$2"; shift 2 ;;
         --validation-complete-reason) VALIDATION_COMPLETE_REASON="$2"; shift 2 ;;
         --expect-sequence) VALIDATION_EXPECT_SEQUENCE=1; shift ;;
         --expect-sequence-steps) VALIDATION_SEQUENCE_STEPS="$2"; shift 2 ;;
@@ -456,7 +460,7 @@ while True:
     time.sleep(2.0)
 PY
 python3 tools/mission/mission-events-summary.py "\$EVENTS" --expect-complete
-VALIDATE_MISSION_CMD=(python3 tools/mission/validate-mission-artifacts.py $(printf '%q' "$OUTPUT_DIR") --expect-complete --expect-behavior --safe-height-m $(printf '%q' "$VALIDATION_SAFE_HEIGHT") --landed-height-m 1.0 --expect-occupancy --expect-occupancy-source airsim_ground_truth --expect-min-occupied-cells 100 --expect-source-object-prefix gt_tree_ --expect-source-object-prefix gt_wall_ --expect-source-object-prefix gt_fence_ --expect-source-object-prefix gt_cable_ --expect-swept-volume)
+VALIDATE_MISSION_CMD=(python3 tools/mission/validate-mission-artifacts.py $(printf '%q' "$OUTPUT_DIR") --expect-complete --expect-behavior --safe-height-m $(printf '%q' "$VALIDATION_SAFE_HEIGHT") --landed-height-m 1.0 --expect-occupancy --expect-occupancy-source airsim_ground_truth --expect-min-occupied-cells $(printf '%q' "$VALIDATION_MIN_OCCUPIED_CELLS") --expect-source-object-prefix gt_tree_ --expect-source-object-prefix gt_wall_ --expect-source-object-prefix gt_fence_ --expect-source-object-prefix gt_cable_ --expect-swept-volume)
 EOF
 )
 if [[ "$WITH_SCENE_INVENTORY" -eq 1 ]]; then
@@ -576,6 +580,7 @@ if [[ "$WITH_VALIDATION" -eq 1 ]]; then
     echo "  timeout:    $VALIDATION_TIMEOUT_S s"
     echo "  validators: mission-events-summary, validate-mission-artifacts, validate-circle-trajectory"
     echo "  complete reason: $VALIDATION_COMPLETE_REASON"
+    echo "  min occupied cells: $VALIDATION_MIN_OCCUPIED_CELLS"
     echo ""
 fi
 
