@@ -5,6 +5,7 @@
 #include <cstdint>
 #include <exception>
 #include <fstream>
+#include <functional>
 #include <memory>
 #include <mutex>
 #include <optional>
@@ -35,6 +36,7 @@ public:
 };
 
 using MissionEventPublisher = EventPublisher<MissionEvent>;
+using CameraPointingHandoff = std::function<void(const CameraPointingCommand&)>;
 
 struct MissionRuntimeConfig {
     double tick_hz{10.0};
@@ -57,7 +59,8 @@ public:
         std::unique_ptr<MissionController> controller,
         std::unique_ptr<FlightCommandSink> sink,
         std::shared_ptr<MissionEventPublisher> mission_event_publisher = nullptr,
-        std::unique_ptr<CameraPointingSink> camera_pointing_sink = nullptr);
+        std::unique_ptr<CameraPointingSink> camera_pointing_sink = nullptr,
+        CameraPointingHandoff camera_pointing_handoff = {});
     ~MissionRuntime();
 
     MissionRuntime(const MissionRuntime&) = delete;
@@ -70,8 +73,6 @@ public:
     void request_finish();
     bool tick_once();
 
-    // If the loop thread terminated due to an unhandled exception, rethrows it
-    // on the calling thread.  Call after stop() or join to propagate errors.
     void rethrow_if_exception() const;
 
     [[nodiscard]] bool running() const;
@@ -93,6 +94,7 @@ private:
     std::unique_ptr<MissionController> controller_;
     std::unique_ptr<FlightCommandSink> sink_;
     std::unique_ptr<CameraPointingSink> camera_pointing_sink_;
+    CameraPointingHandoff camera_pointing_handoff_;
     std::shared_ptr<MissionEventPublisher> mission_event_publisher_;
     std::atomic<bool> running_{false};
     std::atomic<bool> finish_requested_{false};
