@@ -376,6 +376,15 @@ if(Python3_Interpreter_FOUND)
             ${PROJECT_SOURCE_DIR}
     )
 
+    dedalus_add_python_test(
+        NAME obstacle_sensing_evidence_snapshot_validator
+        LAYER synthetic
+        TAGS integration world_model validation
+        COMMAND_ARGS
+            ${PROJECT_SOURCE_DIR}/tests/integration/test_obstacle_sensing_evidence_snapshot_validator.py
+            ${PROJECT_SOURCE_DIR}
+    )
+
     # Layer 4: archive-grade scenario/campaign tests.
     dedalus_add_python_test(
         NAME mission_scenario_runner
