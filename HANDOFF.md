@@ -23,9 +23,29 @@ To generate a current handoff, read `LLM.md` and the current repo state, then fi
    - `docs/geometric_volume_detection_and_spatial_mapping_plan.md`
 9. Read `docs/selected_entity_slow_moving_animal_validation.md` and `docs/moving_target_behavior_validation_results.md` when continuing moving-target/object-conditioned behavior work.
 10. Read `LLM.back.md` only for historical context when needed; `LLM.md` is authoritative.
-11. Run `git log --oneline -1` to get the current commit SHA.
-12. Substitute all `<PLACEHOLDER>` values below with current state.
-13. Emit the filled-in prompt as plain text — no surrounding explanation.
+11. Use architectural names in handoffs, docs, commands, and validators. Do not invent arbitrary placeholder file or directory names. Use concrete subsystem/scenario names such as `out/object_behavior_airsim_existing_object_circle`, `out/mission_loop_snapshots`, `tools/mission/validate-track4-snapshots.py`, or the exact `--output-dir` printed by the run.
+12. Run `git log --oneline -1` to get the current commit SHA.
+13. Substitute all `<PLACEHOLDER>` values below with current state.
+14. Emit the filled-in prompt as plain text — no surrounding explanation.
+
+---
+
+## Naming and Artifact Convention
+
+```text
+Use architectural names, not arbitrary placeholder names.
+
+Prefer names that encode the subsystem, scenario, artifact role, or runtime boundary:
+  out/object_behavior_airsim_existing_object_circle
+  out/mission_loop_snapshots
+  tools/mission/validate-track4-snapshots.py
+  tools/mission/validate-mission-artifacts.py
+  simulation/airsim/run_mission.sh
+
+Avoid invented generic names such as mission_YYYY, latest_run, foo.json, temp.json, or ad-hoc simulation/artifacts/mission_* unless that is the actual architectural path produced by the repo.
+
+When referring to run artifacts, use the concrete `--output-dir` value or the named output directory printed by `dedalus_mission_loop` / `simulation/airsim/run_mission.sh`.
+```
 
 ---
 
@@ -73,6 +93,11 @@ Current diagnosis:
 Immediate tasks:
   <NUMBERED_TASK_LIST — copy from LLM.md Active Next Work or update to reflect current state>
 
+Naming convention:
+  Use architectural names, not arbitrary placeholder names, for files, directories, artifacts, validators, and commands.
+  Use concrete subsystem/scenario names and actual `--output-dir` values printed by the repo.
+  Do not refer to non-existent generic paths such as simulation/artifacts/mission_* unless that is the actual path produced by the command being discussed.
+
 Do not:
   - Do not use YOLO/DETR/classifier outputs as a prerequisite for Track 4 obstacle avoidance. Track 4 uses classless geometric/arbitrary-volume evidence.
   - Do not judge a visual/volume detector against global AirSim GT objects outside the configured sensing volume.
@@ -80,6 +105,7 @@ Do not:
   - Do not put obstacle avoidance, map-building policy, or detector semantics inside a flight command sink.
   - Do not duplicate occupancy logic for GT and visual sources; normalize them into the same obstacle evidence / occupancy contract.
   - Do not make `rough_flight_map_builder.cpp` a second perception pipeline; it should consume normalized reflexive occupancy / obstacle evidence.
+  - Do not use arbitrary placeholder artifact names when an architectural path or exact `--output-dir` exists.
   <OTHER_DO_NOT_LIST — copy from LLM.md Known Traps and add any session-specific traps>
 
 Patch policy:
@@ -121,6 +147,14 @@ Validation:
       --validation-min-orbits 0.20 \
       --validation-complete-reason duration_elapsed \
       --validation-min-occupied-cells 48
+
+  For Track 4 snapshot evidence validation, use the architectural validator and concrete output directory:
+
+    python3 tools/mission/validate-track4-snapshots.py <OUTPUT_DIR>
+
+  Example output directory:
+
+    out/object_behavior_airsim_existing_object_circle
 
 Expected success:
   <SPECIFIC_LOG_STATE_OR_TEST_RESULT_THAT SIGNALS TASK COMPLETE>
