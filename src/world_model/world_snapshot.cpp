@@ -143,11 +143,34 @@ const char* to_string(OccupancyCellState value) {
 const char* to_string(OccupancySourceKind value) {
     switch (value) {
         case OccupancySourceKind::AirSimGroundTruth: return "airsim_ground_truth";
+        case OccupancySourceKind::AirSimGroundTruthVisualEmulation: return "airsim_gt_visual_emulation";
         case OccupancySourceKind::VisualObstacleDetector: return "visual_obstacle_detector";
         case OccupancySourceKind::DepthProvider: return "depth_provider";
         case OccupancySourceKind::Fused: return "fused";
         case OccupancySourceKind::SyntheticFixture:
         default: return "synthetic_fixture";
+    }
+}
+
+const char* to_string(ObstacleEvidenceState value) {
+    switch (value) {
+        case ObstacleEvidenceState::Free: return "free";
+        case ObstacleEvidenceState::Occupied: return "occupied";
+        case ObstacleEvidenceState::ThinStructureRisk: return "thin_structure_risk";
+        case ObstacleEvidenceState::Unknown:
+        default: return "unknown";
+    }
+}
+
+const char* to_string(ObstacleEvidenceShape value) {
+    switch (value) {
+        case ObstacleEvidenceShape::FrustumBin: return "frustum_bin";
+        case ObstacleEvidenceShape::RaySegment: return "ray_segment";
+        case ObstacleEvidenceShape::SurfacePatch: return "surface_patch";
+        case ObstacleEvidenceShape::LineSegment: return "line_segment";
+        case ObstacleEvidenceShape::Capsule: return "capsule";
+        case ObstacleEvidenceShape::Voxel:
+        default: return "voxel";
     }
 }
 
@@ -263,6 +286,75 @@ void write_swept_volume(std::ostringstream& out, const SweptVolumeDebug& swept) 
     out << "  },\n";
 }
 
+void write_obstacle_sensing_volumes(std::ostringstream& out, const std::vector<ObstacleSensingVolume>& volumes) {
+    out << "  \"obstacle_sensing_volumes\": [";
+    for (std::size_t i = 0; i < volumes.size(); ++i) {
+        const auto& volume = volumes[i];
+        if (i != 0) out << ",";
+        out << "\n    {\n";
+        out << "      \"timestamp_ns\": " << volume.timestamp.timestamp_ns << ",\n";
+        out << "      \"sensor_name\": \"" << escape_json(volume.sensor_name) << "\",\n";
+        out << "      \"provider_name\": \"" << escape_json(volume.provider_name) << "\",\n";
+        if (volume.has_source_frame) {
+            out << "      \"source_frame_id\": \"" << escape_json(volume.source_frame_id.value) << "\",\n";
+        }
+        out << "      \"map_frame_id\": \"" << escape_json(volume.map_frame_id.value) << "\",\n";
+        out << "      \"origin_local\": "; write_vec3(out, volume.origin_local); out << ",\n";
+        out << "      \"forward_axis_local\": "; write_vec3(out, volume.forward_axis_local); out << ",\n";
+        out << "      \"right_axis_local\": "; write_vec3(out, volume.right_axis_local); out << ",\n";
+        out << "      \"up_axis_local\": "; write_vec3(out, volume.up_axis_local); out << ",\n";
+        out << "      \"near_range_m\": " << volume.near_range_m << ",\n";
+        out << "      \"far_range_m\": " << volume.far_range_m << ",\n";
+        out << "      \"horizontal_fov_rad\": " << volume.horizontal_fov_rad << ",\n";
+        out << "      \"vertical_fov_rad\": " << volume.vertical_fov_rad << ",\n";
+        out << "      \"min_reliable_range_m\": " << volume.min_reliable_range_m << ",\n";
+        out << "      \"max_reliable_range_m\": " << volume.max_reliable_range_m << ",\n";
+        out << "      \"min_surface_area_m2\": " << volume.min_surface_area_m2 << ",\n";
+        out << "      \"min_angular_size_rad\": " << volume.min_angular_size_rad << ",\n";
+        out << "      \"min_confidence\": " << volume.min_confidence << "\n";
+        out << "    }";
+    }
+    if (!volumes.empty()) out << "\n  ";
+    out << "],\n";
+}
+
+void write_obstacle_evidence(std::ostringstream& out, const std::vector<ObstacleEvidence>& evidence_list) {
+    out << "  \"obstacle_evidence\": [";
+    for (std::size_t i = 0; i < evidence_list.size(); ++i) {
+        const auto& evidence = evidence_list[i];
+        if (i != 0) out << ",";
+        out << "\n    {\n";
+        out << "      \"timestamp_ns\": " << evidence.timestamp.timestamp_ns << ",\n";
+        out << "      \"sensor_name\": \"" << escape_json(evidence.sensor_name) << "\",\n";
+        out << "      \"source_provider\": \"" << escape_json(evidence.source_provider) << "\",\n";
+        out << "      \"source_kind\": \"" << to_string(evidence.source_kind) << "\",\n";
+        if (evidence.has_source_frame) {
+            out << "      \"source_frame_id\": \"" << escape_json(evidence.source_frame_id.value) << "\",\n";
+        }
+        out << "      \"map_frame_id\": \"" << escape_json(evidence.map_frame_id.value) << "\",\n";
+        out << "      \"state\": \"" << to_string(evidence.state) << "\",\n";
+        out << "      \"shape\": \"" << to_string(evidence.shape) << "\",\n";
+        out << "      \"center_local\": "; write_vec3(out, evidence.center_local); out << ",\n";
+        out << "      \"size_m\": "; write_vec3(out, evidence.size_m); out << ",\n";
+        out << "      \"endpoint_a_local\": "; write_vec3(out, evidence.endpoint_a_local); out << ",\n";
+        out << "      \"endpoint_b_local\": "; write_vec3(out, evidence.endpoint_b_local); out << ",\n";
+        out << "      \"radius_m\": " << evidence.radius_m << ",\n";
+        out << "      \"occupancy_probability\": " << evidence.occupancy_probability << ",\n";
+        out << "      \"free_probability\": " << evidence.free_probability << ",\n";
+        out << "      \"confidence\": " << evidence.confidence << ",\n";
+        out << "      \"range_m\": " << evidence.range_m << ",\n";
+        out << "      \"bearing_rad\": " << evidence.bearing_rad << ",\n";
+        out << "      \"elevation_rad\": " << evidence.elevation_rad << ",\n";
+        out << "      \"inside_sensing_volume\": " << bool_string(evidence.inside_sensing_volume) << ",\n";
+        out << "      \"inside_swept_volume\": " << bool_string(evidence.inside_swept_volume) << ",\n";
+        out << "      \"is_static_hint\": " << bool_string(evidence.is_static_hint) << ",\n";
+        out << "      \"is_thin_structure_hint\": " << bool_string(evidence.is_thin_structure_hint) << "\n";
+        out << "    }";
+    }
+    if (!evidence_list.empty()) out << "\n  ";
+    out << "],\n";
+}
+
 }  // namespace
 
 std::string to_json(const WorldSnapshot& snapshot) {
@@ -303,6 +395,8 @@ std::string to_json(const WorldSnapshot& snapshot) {
 
     if (snapshot.has_ego_occupancy) write_ego_occupancy(out, snapshot.ego_occupancy);
     if (snapshot.has_latest_swept_volume) write_swept_volume(out, snapshot.latest_swept_volume);
+    write_obstacle_sensing_volumes(out, snapshot.obstacle_sensing_volumes);
+    write_obstacle_evidence(out, snapshot.obstacle_evidence);
 
     out << "  \"agents\": [";
     for (std::size_t i = 0; i < snapshot.agents.size(); ++i) {
