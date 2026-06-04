@@ -275,13 +275,13 @@ public:
 class FlightCommandSink {
 public:
     virtual ~FlightCommandSink() = default;
-    virtual FlightCommandResult dispatch(const VelocityCommand& command) = 0;
+    virtual FlightCommandResult send(const VelocityCommand& command) = 0;
 };
 
 class CameraPointingSink {
 public:
     virtual ~CameraPointingSink() = default;
-    virtual CameraPointingResult dispatch(const CameraPointingCommand& command) = 0;
+    virtual CameraPointingResult send(const CameraPointingCommand& command) = 0;
 };
 
 }  // namespace dedalus
