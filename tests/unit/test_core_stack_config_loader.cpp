@@ -8,6 +8,8 @@
 
 namespace {
 
+constexpr double kPi = 3.14159265358979323846;
+
 bool near(double lhs, double rhs) {
     return std::abs(lhs - rhs) < 1.0e-9;
 }
@@ -56,6 +58,34 @@ int main() {
     }
     if (profile_config.pipeline_timing_output_path != "out/profile/pipeline_profile.jsonl") {
         std::cerr << "core_stack_profile_ci did not parse expected timing output path\n";
+        return 1;
+    }
+
+    const auto sensing_config = dedalus::load_core_stack_config("config/core_stack_sensing_coverage_ci.yaml");
+    if (sensing_config.mission_options.obstacle_sensing_cameras.size() != 2U) {
+        std::cerr << "sensing coverage config did not parse two obstacle sensing cameras\n";
+        return 1;
+    }
+    const auto& front_camera = sensing_config.mission_options.obstacle_sensing_cameras[0];
+    if (front_camera.camera_id.value != "front_center" || front_camera.camera_name != "front_center" ||
+        front_camera.role != "visual_obstacle_detector" ||
+        !near(front_camera.horizontal_fov_rad, kPi / 2.0) ||
+        !near(front_camera.vertical_fov_rad, kPi / 3.0) ||
+        !near(front_camera.near_range_m, 0.5) || !near(front_camera.far_range_m, 80.0) ||
+        !near(front_camera.min_reliable_range_m, 1.0) || !near(front_camera.max_reliable_range_m, 60.0) ||
+        !near(front_camera.body_T_camera_xyz_m.x, 0.1) || !near(front_camera.body_T_camera_xyz_m.z, -0.05) ||
+        front_camera.pointing_source != "camera_pointing_intent") {
+        std::cerr << "front obstacle sensing camera fields did not parse as expected\n";
+        return 1;
+    }
+    const auto& downward_camera = sensing_config.mission_options.obstacle_sensing_cameras[1];
+    if (downward_camera.camera_id.value != "downward" || downward_camera.camera_name != "downward" ||
+        downward_camera.role != "landing_area_detector" ||
+        !near(downward_camera.horizontal_fov_rad, 1.2217304763960306) ||
+        !near(downward_camera.vertical_fov_rad, 0.8726646259971648) ||
+        !near(downward_camera.body_T_camera_rpy_rad.y, kPi / 2.0) ||
+        downward_camera.pointing_source != "configured_fixed") {
+        std::cerr << "downward obstacle sensing camera fields did not parse as expected\n";
         return 1;
     }
 
