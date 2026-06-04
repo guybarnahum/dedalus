@@ -1,11 +1,11 @@
-# EFF-0 Runtime Profiling Baseline
+# Runtime Profiling Baseline
 
-EFF-0 is a measurement-only stage. It adds profiling spans and summary tooling so
+This is a measurement-only stage. It adds profiling spans and summary tooling so
 runtime optimization work can be driven by measured costs instead of guessing.
 
 ## Scope
 
-EFF-0 does **not** change mission behavior, obstacle semantics, controller logic,
+This stage does **not** change mission behavior, obstacle semantics, controller logic,
 or AirSim launch defaults.
 
 It measures:

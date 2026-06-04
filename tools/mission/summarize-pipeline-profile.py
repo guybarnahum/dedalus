@@ -3,7 +3,7 @@
 
 The profiler writes one JSON object per processed frame with a `stages` object
 mapping stage names to microsecond durations. This tool aggregates those stage
-samples so EFF-0 baselines can be compared before and after runtime changes.
+samples so profiling baselines can be compared before and after runtime changes.
 """
 
 from __future__ import annotations
