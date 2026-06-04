@@ -34,7 +34,7 @@ AirSim / PX4
   -> PX4 / AirSim
 ```
 
-Expanded view:
+Expanded current view:
 
 ```text
 Sources
@@ -90,7 +90,65 @@ External live subscribers
 
 ---
 
-## 2. Ghost target source modes
+## 2. Planned sensing coverage boundary
+
+The obstacle-sensing path must treat camera coverage as a first-class runtime input. Vehicle yaw and camera optical coverage are different volumes: the vehicle may fly forward while the camera is pitched down or pointed by a gimbal.
+
+The planned in-process dataflow is:
+
+```text
+FrameSource
+  -> FramePacket(camera_id, image, intrinsics, optional camera_T_body)
+
+EgoProvider
+  -> EgoState
+
+CameraPointingStateProvider
+  -> latest commanded/measured pointing state per camera
+
+SensingCoverageProvider
+  -> CameraSensingVolume per camera
+  -> SensingCoverageSnapshot for all cameras
+  -> EgoSensingFrame for each frame
+
+VisualObstacleDetector / visual-emulation adapter
+  -> ObstacleEvidence
+
+EgoOccupancyMapper
+  -> EgoOccupancyMapSnapshot
+
+GlobalSpatialMapper
+  -> global spatial map / long-term memory
+
+WorldSnapshotPublisher
+  -> obstacle_sensing_volumes
+  -> obstacle_evidence
+  -> ego_occupancy
+  -> latest_swept_volume
+```
+
+The detector-facing input should be:
+
+```text
+EgoSensingFrame
+  FramePacket
+  EgoState
+  CameraSensingVolume for FramePacket.camera_id
+```
+
+Rules:
+
+```text
+Sensing coverage is derived from camera geometry and pointing state, not ego yaw alone.
+World model publishes sensing volumes/evidence, but does not infer camera coverage after perception.
+AirSim global GT is an oracle of scene candidates; AirSim visual emulation is clipped to current camera coverage.
+```
+
+See `docs/sensing_coverage_architecture.md` for the full staged plan.
+
+---
+
+## 3. Ghost target source modes
 
 Ghost targets are simulation/debug inputs that deliberately enter at the same semantic boundary as real 3D detections: `Observation3D` appended to `PerceptionPipelineOutput.observations`.
 
@@ -131,7 +189,7 @@ Observation3D list
 
 The overlay must not discover scene objects or generate ghosts. Existing-object binding belongs in the mission-loop/provider side so visualization and behavior share one source of truth.
 
-The implemented 2.26E AirSim object mode supports explicit object selection:
+The implemented AirSim object mode supports explicit object selection:
 
 ```yaml
 ghost_targets_enabled: true
@@ -148,7 +206,7 @@ Later convenience modes may add `all` and seeded `random`, but they should not p
 
 ---
 
-## 3. Publisher / subscriber topology
+## 4. Publisher / subscriber topology
 
 ```text
                           +-----------------------------+
@@ -204,7 +262,7 @@ Behavior does not consume GhostDetectionsFrame directly.
 
 ---
 
-## 4. Runtime event stream records
+## 5. Runtime event stream records
 
 The optional runtime event stream is enabled by:
 
@@ -236,7 +294,7 @@ Sequence numbers are stream-local and shared across event types. A client should
 
 ---
 
-## 5. AirSim overlay subscriber dataflow
+## 6. AirSim overlay subscriber dataflow
 
 `simulation/airsim/scripts/airsim-world-overlay.py` is now a subscriber/renderer only.
 
@@ -252,6 +310,9 @@ RuntimeEventStreamServer
        render AG markers from world_snapshot.agents
        render EGO marker from world_snapshot.ego
        render SEL marker by matching target_selected source_track_id / agent_id to world_snapshot.agents
+       render obstacle_sensing_volumes as camera coverage markers
+       render obstacle_evidence as occupied/free/unknown/thin-risk evidence markers
+       render latest_swept_volume as collision query marker
        render DEDALUS numeric OSD from world_snapshot ego motion
        render DEDALUS-STATE from mission_event display_state/display_detail
   -> AirSim simPlotPoints / simPlotStrings / simPrintLogMessage
@@ -262,98 +323,12 @@ Run:
 ```bash
 python3 simulation/airsim/scripts/airsim-world-overlay.py \
   --stream-port 47770 \
-  --follow \
-  --rate-hz 5 \
-  --duration-s 180 \
-  --clear \
-  --label \
-  --osd \
-  --debug
+  --host 127.0.0.1 \
+  --rpc-port 41451 \
+  --vehicle-name PX4 \
+  --show-world-agents \
+  --show-sensing-volumes \
+  --show-obstacle-evidence \
+  --show-swept-volume \
+  --osd
 ```
-
-The overlay must not:
-
-```text
-- evaluate GhostScenario locally
-- discover/list AirSim objects for ghost binding
-- poll snapshot_manifest.txt in normal mode
-- read mission_events.jsonl for normal SEL state
-- infer behavior semantics such as following/circling/positioned; mission/behavior events must publish display_state/display_detail
-- decide between source modes such as combined/world_snapshot/artifact_snapshot
-```
-
-The overlay simply renders whichever event types arrive. Visibility controls should be simple renderer flags, such as `--hide-planned`, `--hide-world`, `--hide-ego`, or `--hide-selected`.
-
----
-
-## 6. Behavior / flight sink dataflow
-
-```text
-WorldSnapshotPublisher
-  -> LatestWorldSnapshotSubscriber
-  -> LatestWorldSnapshot
-  -> MissionRuntime async loop
-  -> ObjectBehaviorMissionController
-       -> TargetSelector reads WorldSnapshot.agents
-       -> emits mission events such as target_selected / behavior_start / behavior_complete / behavior_tick_sample
-       -> emits behavior display details such as arriving / following / positioned / circling / done
-       -> behavior math emits bounded velocity intent
-  -> Px4BridgeCommandSink
-  -> tools/px4/px4-command-bridge.py
-       PX4 shell: arm / takeoff / land / disarm
-       pymavlink: OFFBOARD velocity setpoints
-  -> PX4 / AirSim
-
-MissionRuntime
-  -> MissionEventPublisher
-  -> RuntimeEventStreamServer
-  -> mission_event JSONL records
-```
-
-Flight sinks receive bounded kinematic intent only. They must not own target selection, world-model reasoning, obstacle avoidance, or mission semantics.
-
----
-
-## 7. Artifact dataflow
-
-```text
-WorldSnapshotPublisher
-  -> ArtifactSnapshotWriter
-  -> out/.../snapshot_XXXX.json
-  -> out/.../snapshot_manifest.txt
-
-MissionRuntime
-  -> MissionEventPublisher
-  -> mission_events.jsonl
-
-FrameAnnotator
-  -> PPM frames and world_overlay sidecars
-
-Validators
-  -> read artifacts after the run
-```
-
-Artifacts are still important for evidence, regression tests, and human debugging. They are not the normal communication path between runtime components.
-
----
-
-## 8. Current live overlay markers
-
-```text
-PLAN:
-  dynamic planned/evaluated ghost detection from ghost_detections event.
-
-PLAN*:
-  static planned/evaluated ghost detection from ghost_detections event.
-
-AG:
-  world-model agent from world_snapshot event.
-
-EGO:
-  ego pose from world_snapshot event.
-
-SEL:
-  selected target from mission_event target_selected, rendered by matching source_track_id or agent_id to the latest world_snapshot agent.
-```
-
-For AirSim existing-object binding, PLAN / AG / SEL should appear over the real visible AirSim object whose pose drives the ghost detection.
