@@ -189,6 +189,26 @@ int main() {
         return 1;
     }
 
+    dedalus::CoreStackRunner sensing_runner{registry.create(sensing_config)};
+    if (!sensing_runner.run_once()) {
+        std::cerr << "sensing coverage config-composed runner failed\n";
+        return 1;
+    }
+    const auto sensing_snapshot = sensing_runner.snapshot();
+    if (sensing_snapshot.obstacle_sensing_volumes.size() != 1U) {
+        std::cerr << "sensing coverage runner should publish the frame camera sensing volume\n";
+        return 1;
+    }
+    const auto& published_volume = sensing_snapshot.obstacle_sensing_volumes.front();
+    if (published_volume.sensor_name != "front_center" || !published_volume.has_source_frame ||
+        published_volume.source_frame_id.value.empty() ||
+        !near(published_volume.origin_local.x, 0.1) || !near(published_volume.origin_local.z, -1.05) ||
+        !near(published_volume.horizontal_fov_rad, static_cast<float>(kPi / 2.0)) ||
+        !near(published_volume.vertical_fov_rad, static_cast<float>(kPi / 3.0))) {
+        std::cerr << "sensing coverage runner did not publish configured front camera volume\n";
+        return 1;
+    }
+
     dedalus::CoreStackRunner ghost_runner{registry.create(ghost_config)};
     if (!ghost_runner.run_once()) {
         std::cerr << "ghost config-composed runner failed\n";
