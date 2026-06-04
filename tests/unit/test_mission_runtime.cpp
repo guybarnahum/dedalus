@@ -48,13 +48,14 @@ public:
         command.timestamp = input.now;
         command.cameras = {"front_center", "0"};
         command.mode = "target";
-        command.pitch_rad = 0.42;
+        command.pitch_rad = commanded_pitch_rad;
         command.pitch_valid = true;
         command.source_track_id = "ghost_person_001";
         output.camera_pointing = command;
         return output;
     }
 
+    double commanded_pitch_rad{0.42};
     int ticks{0};
 };
 
@@ -106,8 +107,33 @@ bool any_event_contains(const std::vector<std::string>& events, const std::strin
     return false;
 }
 
-bool near(double lhs, double rhs) {
-    return std::abs(lhs - rhs) <= 1.0e-9;
+bool near(double lhs, double rhs, double tolerance = 1.0e-6) {
+    return std::abs(lhs - rhs) <= tolerance;
+}
+
+dedalus::CoreStackProviderConfig synthetic_sensing_config() {
+    dedalus::CoreStackProviderConfig config;
+    config.frame_source = "synthetic";
+    config.ego_provider = "frame_hint";
+    config.detector = "scripted";
+    config.camera_stabilizer = "null";
+    config.tracker = "simple_centroid";
+    config.identity_resolver = "appearance_only";
+    config.projector = "flat_ground";
+    config.world_model = "in_memory";
+    config.frame_annotator = "null";
+
+    dedalus::CameraSensingConfig camera;
+    camera.camera_id = dedalus::CameraId{"front_center"};
+    camera.camera_name = "front_center";
+    camera.role = "visual_obstacle_detector";
+    camera.horizontal_fov_rad = 1.5707963267948966;
+    camera.vertical_fov_rad = 1.0471975511965976;
+    camera.near_range_m = 0.5;
+    camera.far_range_m = 80.0;
+    camera.pointing_source = "camera_pointing_intent";
+    config.mission_options.obstacle_sensing_cameras.push_back(camera);
+    return config;
 }
 
 }  // namespace
@@ -119,16 +145,7 @@ int main() {
     snapshot_publisher->subscribe(latest_snapshot_subscriber);
 
     dedalus::ProviderRegistry registry;
-    dedalus::CoreStackProviderConfig config;
-    config.frame_source = "synthetic";
-    config.ego_provider = "frame_hint";
-    config.detector = "scripted";
-    config.camera_stabilizer = "null";
-    config.tracker = "simple_centroid";
-    config.identity_resolver = "appearance_only";
-    config.projector = "flat_ground";
-    config.world_model = "in_memory";
-    config.frame_annotator = "null";
+    const auto config = synthetic_sensing_config();
 
     dedalus::CoreStackRunner runner{
         registry.create(config),
@@ -145,6 +162,17 @@ int main() {
     }
     if (!published->ego.height_valid || published->ego.height_m <= 0.0) {
         std::cerr << "Published snapshot did not contain mission-ready ego height\n";
+        return 1;
+    }
+    if (published->obstacle_sensing_volumes.size() != 1U) {
+        std::cerr << "Initial runner did not publish neutral sensing coverage\n";
+        return 1;
+    }
+    const auto& neutral_volume = published->obstacle_sensing_volumes.front();
+    if (!near(neutral_volume.forward_axis_local.x, 1.0) ||
+        !near(neutral_volume.forward_axis_local.y, 0.0) ||
+        !near(neutral_volume.forward_axis_local.z, 0.0)) {
+        std::cerr << "Initial sensing coverage should be neutral body-forward camera coverage\n";
         return 1;
     }
 
@@ -207,6 +235,7 @@ int main() {
 
     auto camera_controller = std::make_unique<CameraPointingController>();
     auto* camera_controller_ptr = camera_controller.get();
+    const double commanded_pitch_rad = camera_controller_ptr->commanded_pitch_rad;
     auto flight_sink = std::make_unique<RecordingSink>();
     auto camera_sink = std::make_unique<RecordingCameraPointingSink>();
     auto* camera_sink_ptr = camera_sink.get();
@@ -224,7 +253,6 @@ int main() {
             std::move(camera_sink),
             [&](const dedalus::CameraPointingCommand& command) {
                 pointing_state_store.apply(command);
-                runner.update_camera_pointing_states(pointing_state_store.states());
             }};
 
         if (!runtime.tick_once()) {
@@ -247,8 +275,32 @@ int main() {
         std::cerr << "MissionRuntime camera pointing handoff did not populate store for all cameras\n";
         return 1;
     }
-    if (!front_state->valid || front_state->source != "camera_pointing_intent" || !near(front_state->pitch_rad, 0.42)) {
+    if (!front_state->valid || front_state->source != "camera_pointing_intent" || !near(front_state->pitch_rad, commanded_pitch_rad)) {
         std::cerr << "MissionRuntime camera pointing handoff did not preserve front camera state\n";
+        return 1;
+    }
+
+    dedalus::CoreStackRunner pitched_runner{
+        registry.create(config),
+        dedalus::CoreStackRunnerConfig{.snapshot_publisher = snapshot_publisher}};
+    pitched_runner.update_camera_pointing_states(pointing_state_store.states());
+    if (!pitched_runner.run_once()) {
+        std::cerr << "Pitched CoreStackRunner failed to publish a snapshot\n";
+        return 1;
+    }
+    const auto pitched_snapshot = latest_snapshot->latest();
+    if (!pitched_snapshot || pitched_snapshot->obstacle_sensing_volumes.size() != 1U) {
+        std::cerr << "Pitched runner did not publish sensing coverage\n";
+        return 1;
+    }
+    const auto& pitched_volume = pitched_snapshot->obstacle_sensing_volumes.front();
+    if (!near(pitched_volume.forward_axis_local.x, std::cos(commanded_pitch_rad)) ||
+        !near(pitched_volume.forward_axis_local.y, 0.0) ||
+        !near(pitched_volume.forward_axis_local.z, -std::sin(commanded_pitch_rad))) {
+        std::cerr << "Pitched sensing coverage did not reflect MissionRuntime camera-pointing handoff: got ["
+                  << pitched_volume.forward_axis_local.x << ", "
+                  << pitched_volume.forward_axis_local.y << ", "
+                  << pitched_volume.forward_axis_local.z << "]\n";
         return 1;
     }
 
