@@ -467,13 +467,7 @@ std::vector<ObstacleSensingVolume> visual_emulation_volumes_for(
     const WorldSnapshot& snapshot,
     const PerceptionPipelineOutput& output,
     const std::vector<ObstacleSensingVolume>& configured_volumes) {
-    std::vector<ObstacleSensingVolume> volumes;
-    if (configured_volumes.empty()) {
-        volumes.push_back(build_forward_sensing_volume(
-            snapshot.ego, snapshot.timestamp, snapshot.active_map_frame_id, "airsim_gt_visual_emulation"));
-    } else {
-        volumes = configured_volumes;
-    }
+    std::vector<ObstacleSensingVolume> volumes = configured_volumes;
     for (auto& volume : volumes) {
         volume.timestamp = snapshot.timestamp;
         volume.map_frame_id = snapshot.active_map_frame_id;
