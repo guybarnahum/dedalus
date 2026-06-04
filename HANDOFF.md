@@ -17,7 +17,8 @@ To generate a current handoff, read `LLM.md` and the current repo state, then fi
 5. Read `docs/mission_scenario_runner.md` for the scenario/campaign harness workflow.
 6. Read `docs/world_model_reprojection_validation_plan.md` before reprojection, annotation, or world-model evidence work.
 7. Read `WHITEPAPER.md` when architectural rationale is needed.
-8. For classless geometric occupancy / avoidance / volume detection work, read these together before coding:
+8. For classless geometric occupancy / avoidance / sensing coverage / volume detection work, read these together before coding:
+   - `docs/sensing_coverage_architecture.md`
    - `docs/classless_geometric_occupancy_and_avoidance_plan.md`
    - `docs/reflexive_obstacle_avoidance_architecture.md`
    - `docs/geometric_volume_detection_and_spatial_mapping_plan.md`
@@ -82,7 +83,8 @@ Then read:
   docs/mission_scenario_runner.md
   docs/world_model_reprojection_validation_plan.md
 
-For classless geometric occupancy / avoidance / volume detection work, also read:
+For classless geometric occupancy / avoidance / sensing coverage / volume detection work, also read:
+  docs/sensing_coverage_architecture.md
   docs/classless_geometric_occupancy_and_avoidance_plan.md
   docs/reflexive_obstacle_avoidance_architecture.md
   docs/geometric_volume_detection_and_spatial_mapping_plan.md
@@ -113,9 +115,10 @@ Naming convention:
 
 Do not:
   - Do not use YOLO/DETR/classifier outputs as a prerequisite for obstacle avoidance. The obstacle avoidance path uses classless geometric/arbitrary-volume evidence.
+  - Do not derive visual obstacle coverage from vehicle yaw alone. It is camera optical coverage composed from camera config, ego pose, and current camera/gimbal pointing state.
   - Do not judge a visual/volume detector against global AirSim GT objects outside the configured sensing volume.
   - Do not make AirSim GT global-oracle output mean the same thing as visual detector capability; add/use GT visual-emulation clipping when comparing sources.
-  - Do not put obstacle avoidance, map-building policy, or detector semantics inside a flight command sink.
+  - Do not put obstacle avoidance, map-building policy, sensing coverage, or detector semantics inside a flight command sink.
   - Do not duplicate occupancy logic for GT and visual sources; normalize them into the same obstacle evidence / occupancy contract.
   - Do not make `rough_flight_map_builder.cpp` a second perception pipeline; it should consume normalized reflexive occupancy / obstacle evidence.
   - Do not use arbitrary placeholder artifact names when an architectural path or exact `--output-dir` exists.
