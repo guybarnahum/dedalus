@@ -30,6 +30,21 @@ bridge_transport: pipe
 bridge_mode: stream_binary_ego
 bridge_command: python3 simulation/airsim/scripts/airsim-stream-frames-binary.py --include-ego --rate-hz 5 --mavlink-armed-endpoints udpin:127.0.0.1:14540
 
+# AirSim GT visual-emulation requires explicit camera sensing coverage.
+# The obstacle evidence path clips global GT objects against this camera volume.
+# Camera pitch is updated from camera_pointing_intent during object behavior.
+mission_options.obstacle_sensing.cameras.0.name: front_center
+mission_options.obstacle_sensing.cameras.0.role: visual_obstacle_detector
+mission_options.obstacle_sensing.cameras.0.horizontal_fov_deg: 90
+mission_options.obstacle_sensing.cameras.0.vertical_fov_deg: 60
+mission_options.obstacle_sensing.cameras.0.near_range_m: 0.5
+mission_options.obstacle_sensing.cameras.0.far_range_m: 80
+mission_options.obstacle_sensing.cameras.0.min_reliable_range_m: 1
+mission_options.obstacle_sensing.cameras.0.max_reliable_range_m: 60
+mission_options.obstacle_sensing.cameras.0.body_T_camera_xyz_m: [0, 0, 0]
+mission_options.obstacle_sensing.cameras.0.body_T_camera_rpy_deg: [0, 0, 0]
+mission_options.obstacle_sensing.cameras.0.pointing_source: camera_pointing_intent
+
 ghost_targets_enabled: true
 ghost_targets_source: airsim_objects
 ghost_targets_airsim.objects.0.source_track_id: ghost_person_001

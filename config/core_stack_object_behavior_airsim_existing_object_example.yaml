@@ -16,6 +16,7 @@ tracker: simple_centroid
 identity_resolver: appearance_only
 projector: flat_ground
 world_model: in_memory
+occupancy_source: airsim_ground_truth
 frame_annotator: ppm_sequence
 annotation_output_path: out/object_behavior_airsim_existing_object_annotation
 annotation_output_fps: 5
@@ -28,6 +29,20 @@ vehicle_camera_name: front_center
 bridge_transport: pipe
 bridge_mode: stream_binary_ego
 bridge_command: python3 simulation/airsim/scripts/airsim-stream-frames-binary.py --include-ego --rate-hz 5 --mavlink-armed-endpoints udpin:127.0.0.1:14540
+
+# AirSim GT visual-emulation requires explicit camera sensing coverage.
+# Do not infer visual obstacle coverage from vehicle yaw or fake a default cone.
+mission_options.obstacle_sensing.cameras.0.name: front_center
+mission_options.obstacle_sensing.cameras.0.role: visual_obstacle_detector
+mission_options.obstacle_sensing.cameras.0.horizontal_fov_deg: 90
+mission_options.obstacle_sensing.cameras.0.vertical_fov_deg: 60
+mission_options.obstacle_sensing.cameras.0.near_range_m: 0.5
+mission_options.obstacle_sensing.cameras.0.far_range_m: 80
+mission_options.obstacle_sensing.cameras.0.min_reliable_range_m: 1
+mission_options.obstacle_sensing.cameras.0.max_reliable_range_m: 60
+mission_options.obstacle_sensing.cameras.0.body_T_camera_xyz_m: [0, 0, 0]
+mission_options.obstacle_sensing.cameras.0.body_T_camera_rpy_deg: [0, 0, 0]
+mission_options.obstacle_sensing.cameras.0.pointing_source: camera_pointing_intent
 
 # 2.26E explicit existing-object ghost binding.
 ghost_targets_enabled: true
