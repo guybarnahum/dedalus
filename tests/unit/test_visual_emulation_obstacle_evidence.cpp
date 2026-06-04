@@ -1,5 +1,6 @@
 #include <cmath>
 #include <iostream>
+#include <vector>
 
 #include "dedalus/perception/perception_pipeline.hpp"
 #include "dedalus/world_model/in_memory_world_model.hpp"
@@ -10,11 +11,39 @@ bool near(double lhs, double rhs) {
     return std::abs(lhs - rhs) < 1.0e-9;
 }
 
+dedalus::ObstacleSensingVolume explicit_front_coverage(
+    dedalus::TimePoint timestamp,
+    const dedalus::MapFrameId& map_frame_id,
+    const dedalus::FrameId& frame_id) {
+    dedalus::ObstacleSensingVolume volume;
+    volume.timestamp = timestamp;
+    volume.sensor_name = "front_center";
+    volume.provider_name = "configured_camera_coverage";
+    volume.map_frame_id = map_frame_id;
+    volume.origin_local = dedalus::Vec3{0.0, 0.0, -8.0};
+    volume.forward_axis_local = dedalus::Vec3{1.0, 0.0, 0.0};
+    volume.right_axis_local = dedalus::Vec3{0.0, 1.0, 0.0};
+    volume.up_axis_local = dedalus::Vec3{0.0, 0.0, -1.0};
+    volume.near_range_m = 0.5F;
+    volume.far_range_m = 80.0F;
+    volume.horizontal_fov_rad = 1.57079632679F;
+    volume.vertical_fov_rad = 1.0471975512F;
+    volume.min_reliable_range_m = 1.0F;
+    volume.max_reliable_range_m = 60.0F;
+    volume.min_surface_area_m2 = 0.25F;
+    volume.min_angular_size_rad = 0.01F;
+    volume.min_confidence = 0.30F;
+    volume.source_frame_id = frame_id;
+    volume.has_source_frame = true;
+    return volume;
+}
+
 }  // namespace
 
 int main() {
     const dedalus::TimePoint timestamp{3000000000};
     const dedalus::MapFrameId map_frame_id{"map_local_0001"};
+    const dedalus::FrameId frame_id{"frame_0001"};
 
     dedalus::EgoState ego;
     ego.timestamp = timestamp;
@@ -29,7 +58,7 @@ int main() {
 
     dedalus::Observation3D forward_observation;
     forward_observation.track_id = dedalus::TrackId{"obstacle_forward"};
-    forward_observation.source_frame_id = dedalus::FrameId{"frame_0001"};
+    forward_observation.source_frame_id = frame_id;
     forward_observation.has_source_frame = true;
     forward_observation.timestamp = timestamp;
     forward_observation.position_local = dedalus::Vec3{5.0, 0.0, -8.0};
@@ -53,8 +82,25 @@ int main() {
     dedalus::InMemoryWorldModelConfig config;
     config.map_frame_id = map_frame_id;
     config.occupancy_source_kind = dedalus::OccupancySourceKind::AirSimGroundTruth;
+
+    dedalus::InMemoryWorldModel no_coverage_world_model{config};
+    no_coverage_world_model.update_ego(ego);
+    no_coverage_world_model.ingest(output);
+    const auto no_coverage_snapshot = no_coverage_world_model.snapshot();
+    if (!no_coverage_snapshot.has_ego_occupancy ||
+        no_coverage_snapshot.ego_occupancy.source_kind != dedalus::OccupancySourceKind::AirSimGroundTruth ||
+        no_coverage_snapshot.ego_occupancy.occupied_count != 3U) {
+        std::cerr << "ground-truth world model should retain global occupancy without visual coverage\n";
+        return 1;
+    }
+    if (!no_coverage_snapshot.obstacle_sensing_volumes.empty() || !no_coverage_snapshot.obstacle_evidence.empty()) {
+        std::cerr << "AirSim visual-emulation should not fake sensing coverage when none is supplied\n";
+        return 1;
+    }
+
     dedalus::InMemoryWorldModel world_model{config};
     world_model.update_ego(ego);
+    world_model.update_obstacle_sensing_volumes({explicit_front_coverage(timestamp, map_frame_id, frame_id)});
     world_model.ingest(output);
 
     const auto snapshot = world_model.snapshot();
@@ -67,13 +113,13 @@ int main() {
         return 1;
     }
     if (snapshot.obstacle_sensing_volumes.size() != 1U) {
-        std::cerr << "visual-emulation path did not expose one sensing volume\n";
+        std::cerr << "visual-emulation path did not expose the explicit sensing volume\n";
         return 1;
     }
     const auto& sensing_volume = snapshot.obstacle_sensing_volumes.front();
-    if (sensing_volume.provider_name != "airsim_gt_visual_emulation" || !sensing_volume.has_source_frame ||
-        sensing_volume.source_frame_id.value != "frame_0001") {
-        std::cerr << "visual-emulation sensing volume did not preserve provider/source-frame metadata\n";
+    if (sensing_volume.provider_name != "configured_camera_coverage" || !sensing_volume.has_source_frame ||
+        sensing_volume.source_frame_id.value != frame_id.value) {
+        std::cerr << "visual-emulation sensing volume did not preserve explicit provider/source-frame metadata\n";
         return 1;
     }
     if (snapshot.obstacle_evidence.size() != 1U) {
