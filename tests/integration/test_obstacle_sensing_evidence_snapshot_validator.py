@@ -62,8 +62,10 @@ def write_snapshot(path: Path, *, with_evidence: bool = True, inside_swept: bool
             {
                 "timestamp_ns": 123,
                 "sensor_name": "front_center",
-                "provider_name": "airsim_gt_visual_emulation",
+                "provider_name": "configured_camera_coverage",
                 "map_frame_id": "map_local_0001",
+                "source_frame_id": "frame_0001",
+                "has_source_frame": True,
                 "origin_local": [0.0, 0.0, -8.0],
                 "forward_axis_local": [1.0, 0.0, 0.0],
                 "right_axis_local": [0.0, 1.0, 0.0],
@@ -126,6 +128,7 @@ def main() -> int:
             "total volumes:    1",
             "total evidence:   1",
             "source_kinds:     {'airsim_gt_visual_emulation': 1}",
+            "volume providers: {'configured_camera_coverage': 1}",
             "inside swept:     1",
             "PASS",
         ):
@@ -144,6 +147,22 @@ def main() -> int:
         if "no frames had obstacle_evidence" not in missing.stdout:
             print(missing.stdout)
             print("validator did not explain missing obstacle_evidence", file=sys.stderr)
+            return 1
+
+        fake_volume_dir = root / "fake_visual_emulation_volume"
+        seed_snapshot_dir(fake_volume_dir)
+        fake_snapshot_path = fake_volume_dir / "snapshot_0001.json"
+        fake_snapshot = json.loads(fake_snapshot_path.read_text(encoding="utf-8"))
+        fake_snapshot["obstacle_sensing_volumes"][0]["provider_name"] = "airsim_gt_visual_emulation"
+        fake_snapshot_path.write_text(json.dumps(fake_snapshot, separators=(",", ":")) + "\n", encoding="utf-8")
+        fake_volume = run_validator(repo_root, fake_volume_dir)
+        if fake_volume.returncode == 0:
+            print(fake_volume.stdout)
+            print("validator accepted implicit/fake AirSim visual-emulation sensing volume", file=sys.stderr)
+            return 1
+        if "implicit/fake visual-emulation provider" not in fake_volume.stdout:
+            print(fake_volume.stdout)
+            print("validator did not explain fake visual-emulation sensing volume", file=sys.stderr)
             return 1
 
         nonblocking_dir = root / "nonblocking_obstacle_evidence"

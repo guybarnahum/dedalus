@@ -28,10 +28,18 @@ from typing import Any
 
 
 REQUIRED_VOLUME_KEYS = (
+    "sensor_name",
+    "provider_name",
+    "source_frame_id",
+    "has_source_frame",
     "origin_local",
     "forward_axis_local",
+    "right_axis_local",
+    "up_axis_local",
     "near_range_m",
     "far_range_m",
+    "min_reliable_range_m",
+    "max_reliable_range_m",
     "horizontal_fov_rad",
     "vertical_fov_rad",
 )
@@ -47,6 +55,9 @@ REQUIRED_EVIDENCE_KEYS = (
     "bearing_rad",
     "elevation_rad",
 )
+
+INVALID_VOLUME_PROVIDERS = {"airsim_gt_visual_emulation"}
+GT_VISUAL_SOURCE_KIND = "airsim_gt_visual_emulation"
 
 
 def load_json(path: pathlib.Path) -> dict[str, Any]:
@@ -106,6 +117,23 @@ def vector3(value: Any) -> list[float] | None:
         return None
 
 
+def positive_float(value: Any) -> float | None:
+    try:
+        result = float(value)
+    except (TypeError, ValueError):
+        return None
+    if result <= 0.0:
+        return None
+    return result
+
+
+def finite_float(value: Any) -> float | None:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
 def validate_dir(
     snapshot_dir: pathlib.Path,
     min_evidence: int,
@@ -161,6 +189,7 @@ def validate_dir(
         total_volumes += len(volumes)
         total_evidence += len(evidence)
 
+        volume_sensor_names: set[str] = set()
         for volume in volumes:
             if not isinstance(volume, dict):
                 add_error(f"{path}: sensing volume item is not an object")
@@ -169,16 +198,47 @@ def validate_dir(
             for key in REQUIRED_VOLUME_KEYS:
                 if key not in volume:
                     add_error(f"{path}: sensing volume missing {key}")
+            sensor_name = str(volume.get("sensor_name", "")).strip()
+            provider_name = str(volume.get("provider_name", "")).strip()
+            if sensor_name:
+                volume_sensor_names.add(sensor_name)
+            if provider_name in INVALID_VOLUME_PROVIDERS:
+                add_error(
+                    f"{path}: sensing volume provider_name={provider_name!r} is an implicit/fake visual-emulation provider"
+                )
+            if volume.get("has_source_frame") is not True:
+                add_error(f"{path}: sensing volume must have has_source_frame=true")
+            if not str(volume.get("source_frame_id", "")).strip():
+                add_error(f"{path}: sensing volume must preserve source_frame_id")
             if vector3(volume.get("origin_local")) is None:
                 add_error(f"{path}: sensing volume origin_local is not a vec3")
             if vector3(volume.get("forward_axis_local")) is None:
                 add_error(f"{path}: sensing volume forward_axis_local is not a vec3")
+            if vector3(volume.get("right_axis_local")) is None:
+                add_error(f"{path}: sensing volume right_axis_local is not a vec3")
+            if vector3(volume.get("up_axis_local")) is None:
+                add_error(f"{path}: sensing volume up_axis_local is not a vec3")
+            near = finite_float(volume.get("near_range_m"))
+            far = finite_float(volume.get("far_range_m"))
+            if near is None or far is None or near < 0.0 or far <= near:
+                add_error(f"{path}: sensing volume range must satisfy 0 <= near_range_m < far_range_m")
+            horizontal_fov = positive_float(volume.get("horizontal_fov_rad"))
+            vertical_fov = positive_float(volume.get("vertical_fov_rad"))
+            if horizontal_fov is None or vertical_fov is None:
+                add_error(f"{path}: sensing volume FOV values must be positive")
+            min_reliable = finite_float(volume.get("min_reliable_range_m"))
+            max_reliable = finite_float(volume.get("max_reliable_range_m"))
+            if min_reliable is None or max_reliable is None or min_reliable < 0.0 or max_reliable < min_reliable:
+                add_error(
+                    f"{path}: sensing volume reliable range must satisfy 0 <= min_reliable_range_m <= max_reliable_range_m"
+                )
 
         for item in evidence:
             if not isinstance(item, dict):
                 add_error(f"{path}: obstacle evidence item is not an object")
                 continue
-            source_kinds[str(item.get("source_kind", ""))] += 1
+            source_kind = str(item.get("source_kind", ""))
+            source_kinds[source_kind] += 1
             evidence_states[str(item.get("state", ""))] += 1
             in_sense += 1 if item.get("inside_sensing_volume") is True else 0
             in_sweep += 1 if item.get("inside_swept_volume") is True else 0
@@ -187,6 +247,20 @@ def validate_dir(
                     add_error(f"{path}: obstacle evidence missing {key}")
             if vector3(item.get("center_local")) is None:
                 add_error(f"{path}: obstacle evidence center_local is not a vec3")
+            if source_kind == GT_VISUAL_SOURCE_KIND:
+                if item.get("source_provider") != GT_VISUAL_SOURCE_KIND:
+                    add_error(
+                        f"{path}: AirSim visual-emulation evidence must use source_provider={GT_VISUAL_SOURCE_KIND}"
+                    )
+                if item.get("inside_sensing_volume") is not True:
+                    add_error(
+                        f"{path}: AirSim visual-emulation evidence must be inside the explicit sensing volume"
+                    )
+                evidence_sensor = str(item.get("sensor_name", "")).strip()
+                if volume_sensor_names and evidence_sensor not in volume_sensor_names:
+                    add_error(
+                        f"{path}: evidence sensor_name={evidence_sensor!r} did not match any sensing volume sensor"
+                    )
             if len(examples) < 3:
                 examples.append((path.name, item))
 
@@ -196,8 +270,8 @@ def validate_dir(
         add_error("no frames had obstacle_evidence")
     if total_evidence < min_evidence:
         add_error(f"only {total_evidence} evidence records found, expected at least {min_evidence}")
-    if require_gt_visual and total_evidence > 0 and "airsim_gt_visual_emulation" not in source_kinds:
-        add_error("expected at least one obstacle_evidence.source_kind == airsim_gt_visual_emulation")
+    if require_gt_visual and total_evidence > 0 and GT_VISUAL_SOURCE_KIND not in source_kinds:
+        add_error(f"expected at least one obstacle_evidence.source_kind == {GT_VISUAL_SOURCE_KIND}")
     if require_inside_swept and in_sweep <= 0:
         add_error("expected at least one obstacle_evidence item with inside_swept_volume=true")
 
