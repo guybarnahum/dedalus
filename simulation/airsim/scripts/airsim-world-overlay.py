@@ -989,7 +989,7 @@ def maybe_print_debug_report(report: dict[str, Any], args: argparse.Namespace, s
         in_sweep = sum(1 for item in evidence if isinstance(item, dict) and item.get("inside_swept_volume"))
         in_sense = sum(1 for item in evidence if isinstance(item, dict) and item.get("inside_sensing_volume"))
         thin = sum(1 for item in evidence if isinstance(item, dict) and item.get("state") == "thin_structure_risk")
-        print(f"  track4 volumes={len(sensing) if isinstance(sensing, list) else 0} evidence={len(evidence) if isinstance(evidence, list) else 0} in_sense={in_sense} in_sweep={in_sweep} thin={thin}", file=sys.stderr)
+        print(f"  obstacle_sensing_evidence volumes={len(sensing) if isinstance(sensing, list) else 0} evidence={len(evidence) if isinstance(evidence, list) else 0} in_sense={in_sense} in_sweep={in_sweep} thin={thin}", file=sys.stderr)
     for track in report.get("tracks", []):
         print("  track={track} selected={selected} plan={plan} ag={ag} delta={delta} norm={norm} ag_minus_ego={rel}".format(track=track.get("source_track_id"), selected=track.get("selected"), plan=rounded(track.get("planned_position_local")), ag=rounded(track.get("world_position_local")), delta=rounded(track.get("delta_plan_minus_world")), norm=rounded(track.get("delta_plan_minus_world_norm_m")), rel=rounded(track.get("world_minus_ego"))), file=sys.stderr)
 
