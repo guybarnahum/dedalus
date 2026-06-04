@@ -128,12 +128,14 @@ MissionRuntime::MissionRuntime(
     std::unique_ptr<MissionController> controller,
     std::unique_ptr<FlightCommandSink> sink,
     std::shared_ptr<MissionEventPublisher> mission_event_publisher,
-    std::unique_ptr<CameraPointingSink> camera_pointing_sink)
+    std::unique_ptr<CameraPointingSink> camera_pointing_sink,
+    CameraPointingHandoff camera_pointing_handoff)
     : config_(std::move(config)),
       snapshots_(std::move(snapshots)),
       controller_(std::move(controller)),
       sink_(std::move(sink)),
       camera_pointing_sink_(std::move(camera_pointing_sink)),
+      camera_pointing_handoff_(std::move(camera_pointing_handoff)),
       mission_event_publisher_(std::move(mission_event_publisher)) {
     if (config_.tick_hz <= 0.0) {
         throw std::invalid_argument("MissionRuntime requires positive tick_hz");
@@ -300,6 +302,9 @@ void MissionRuntime::dispatch_camera_pointing(
                   << " pitch_deg=" << camera_pointing.pitch_rad * 180.0 / 3.14159265358979323846
                   << " cameras=" << camera_pointing.cameras.size()
                   << "\n";
+    }
+    if (camera_pointing_handoff_) {
+        camera_pointing_handoff_(camera_pointing);
     }
     try {
         last_camera_pointing_result_ = camera_pointing_sink_->send(camera_pointing);
