@@ -385,6 +385,15 @@ if(Python3_Interpreter_FOUND)
             ${PROJECT_SOURCE_DIR}
     )
 
+    dedalus_add_python_test(
+        NAME architectural_naming_checker
+        LAYER synthetic
+        TAGS validation docs
+        COMMAND_ARGS
+            ${PROJECT_SOURCE_DIR}/tests/integration/test_architectural_naming_checker.py
+            ${PROJECT_SOURCE_DIR}
+    )
+
     # Layer 4: archive-grade scenario/campaign tests.
     dedalus_add_python_test(
         NAME mission_scenario_runner
