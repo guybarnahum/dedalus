@@ -23,9 +23,41 @@ To generate a current handoff, read `LLM.md` and the current repo state, then fi
    - `docs/geometric_volume_detection_and_spatial_mapping_plan.md`
 9. Read `docs/selected_entity_slow_moving_animal_validation.md` and `docs/moving_target_behavior_validation_results.md` when continuing moving-target/object-conditioned behavior work.
 10. Read `LLM.back.md` only for historical context when needed; `LLM.md` is authoritative.
-11. Run `git log --oneline -1` to get the current commit SHA.
-12. Substitute all `<PLACEHOLDER>` values below with current state.
-13. Emit the filled-in prompt as plain text — no surrounding explanation.
+11. Use architectural capability names in handoffs, docs, commands, validators, files, directories, and symbols. Do not name repo artifacts after planning labels such as `track4`, `milestone_XXX`, temporary phase names, or session-only shorthand. Prefer names that describe the stable subsystem or contract, such as `obstacle_sensing_evidence`, `world_snapshot`, `object_behavior`, `runtime_event_stream`, or `mission_artifact`.
+12. Run `git log --oneline -1` to get the current commit SHA.
+13. Substitute all `<PLACEHOLDER>` values below with current state.
+14. Emit the filled-in prompt as plain text — no surrounding explanation.
+
+---
+
+## Naming and Artifact Convention
+
+```text
+Use architectural capability names, not planning labels or arbitrary placeholders.
+
+Prefer names that encode the stable subsystem, runtime boundary, contract, scenario, or artifact role:
+  out/object_behavior_airsim_existing_object_circle
+  out/mission_loop_snapshots
+  tools/mission/validate-obstacle-sensing-evidence-snapshots.py
+  tools/mission/validate-mission-artifacts.py
+  simulation/airsim/run_mission.sh
+  obstacle_sensing_volumes
+  obstacle_evidence
+  runtime_event_stream
+  world_snapshot
+
+Avoid names based on planning labels or temporary session language:
+  track4
+  milestone_XXX
+  phase_YYY
+  latest_run
+  mission_YYYY
+  foo.json
+  temp.json
+  ad-hoc simulation/artifacts/mission_* unless that is the actual architectural path produced by the repo
+
+When referring to run artifacts, use the concrete `--output-dir` value or the named output directory printed by `dedalus_mission_loop` / `simulation/airsim/run_mission.sh`.
+```
 
 ---
 
@@ -68,18 +100,26 @@ Current observed behavior:
   <MOST_RECENT_NOTABLE_LOGS_OR_RUNTIME_OUTPUT>
 
 Current diagnosis:
-  <WHAT_IS_VERIFIED, WHAT_IS_STILL_UNVALIDATED, AND WHAT_IS LIKELY MISSING OR BROKEN>
+  <WHAT_IS_VERIFIED, WHAT_IS STILL_UNVALIDATED, AND WHAT_IS LIKELY MISSING OR BROKEN>
 
 Immediate tasks:
   <NUMBERED_TASK_LIST — copy from LLM.md Active Next Work or update to reflect current state>
 
+Naming convention:
+  Use architectural capability names, not planning labels or arbitrary placeholders, for files, directories, artifacts, validators, commands, and symbols.
+  Do not encode planning labels such as `track4`, `milestone_XXX`, temporary phase names, or session-only shorthand into repo files or validator names.
+  Use concrete subsystem/contract/scenario names and actual `--output-dir` values printed by the repo.
+  Do not refer to non-existent generic paths such as simulation/artifacts/mission_* unless that is the actual path produced by the command being discussed.
+
 Do not:
-  - Do not use YOLO/DETR/classifier outputs as a prerequisite for Track 4 obstacle avoidance. Track 4 uses classless geometric/arbitrary-volume evidence.
+  - Do not use YOLO/DETR/classifier outputs as a prerequisite for obstacle avoidance. The obstacle avoidance path uses classless geometric/arbitrary-volume evidence.
   - Do not judge a visual/volume detector against global AirSim GT objects outside the configured sensing volume.
   - Do not make AirSim GT global-oracle output mean the same thing as visual detector capability; add/use GT visual-emulation clipping when comparing sources.
   - Do not put obstacle avoidance, map-building policy, or detector semantics inside a flight command sink.
   - Do not duplicate occupancy logic for GT and visual sources; normalize them into the same obstacle evidence / occupancy contract.
   - Do not make `rough_flight_map_builder.cpp` a second perception pipeline; it should consume normalized reflexive occupancy / obstacle evidence.
+  - Do not use arbitrary placeholder artifact names when an architectural path or exact `--output-dir` exists.
+  - Do not name files, validators, scripts, or symbols after planning labels such as `track4`, `milestone_XXX`, temporary phase names, or session-only shorthand.
   <OTHER_DO_NOT_LIST — copy from LLM.md Known Traps and add any session-specific traps>
 
 Patch policy:
@@ -103,7 +143,7 @@ Validation:
     ctest --test-dir build-staging --output-on-failure -R \
       'mission_runtime|object_behavior_mission_controller|object_behavior_mission_smoke|core_stack_config_loader|behavior_spec|target_selector|world_snapshot_stream_server|mission_artifact_validator'
 
-  For live AirSim Track 4 validation, prefer `simulation/airsim/run_mission.sh`:
+  For live AirSim obstacle sensing/evidence validation, prefer `simulation/airsim/run_mission.sh`:
 
     DEDALUS_AIRSIM_GT_NEARBY_RADIUS_M=80 \
     DEDALUS_AIRSIM_GT_MAX_OBJECTS_PER_FRAME=128 \
@@ -121,6 +161,14 @@ Validation:
       --validation-min-orbits 0.20 \
       --validation-complete-reason duration_elapsed \
       --validation-min-occupied-cells 48
+
+  For obstacle sensing/evidence snapshot validation, use the architectural validator and concrete output directory:
+
+    python3 tools/mission/validate-obstacle-sensing-evidence-snapshots.py <OUTPUT_DIR>
+
+  Example output directory:
+
+    out/object_behavior_airsim_existing_object_circle
 
 Expected success:
   <SPECIFIC_LOG_STATE_OR_TEST_RESULT_THAT SIGNALS TASK COMPLETE>
