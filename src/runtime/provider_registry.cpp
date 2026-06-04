@@ -139,6 +139,7 @@ std::shared_ptr<T> resolve_shared(
 CoreStackProviders ProviderRegistry::create(const CoreStackProviderConfig& config) const {
     CoreStackProviders providers;
     const auto airsim = airsim_config_from(config);
+    providers.obstacle_sensing_cameras = config.mission_options.obstacle_sensing_cameras;
 
     providers.frame_source = resolve<FrameSource>("frame_source", config.frame_source, {
         {"synthetic",         [&]() { return std::make_unique<SyntheticFrameSource>(); }},
