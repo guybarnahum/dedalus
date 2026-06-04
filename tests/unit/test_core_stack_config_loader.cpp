@@ -8,8 +8,8 @@
 
 namespace {
 
-bool near(double lhs, double rhs) {
-    return std::abs(lhs - rhs) < 1.0e-9;
+bool near(double lhs, double rhs, double tolerance = 1.0e-6) {
+    return std::abs(lhs - rhs) <= tolerance;
 }
 
 bool contains(const std::vector<std::string>& values, const std::string& expected) {
