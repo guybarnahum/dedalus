@@ -200,9 +200,15 @@ int main() {
         return 1;
     }
     const auto& published_volume = sensing_snapshot.obstacle_sensing_volumes.front();
+    const auto expected_origin = dedalus::Vec3{
+        sensing_snapshot.ego.local_T_body.position.x + front_camera.body_T_camera_xyz_m.x,
+        sensing_snapshot.ego.local_T_body.position.y + front_camera.body_T_camera_xyz_m.y,
+        sensing_snapshot.ego.local_T_body.position.z + front_camera.body_T_camera_xyz_m.z};
     if (published_volume.sensor_name != "front_center" || !published_volume.has_source_frame ||
-        published_volume.source_frame_id.value.empty() ||
-        !near(published_volume.origin_local.x, 0.1) || !near(published_volume.origin_local.z, -1.05) ||
+        published_volume.source_frame_id.value.empty() || published_volume.map_frame_id.value != "map_local_0001" ||
+        !near(published_volume.origin_local.x, expected_origin.x) ||
+        !near(published_volume.origin_local.y, expected_origin.y) ||
+        !near(published_volume.origin_local.z, expected_origin.z) ||
         !near(published_volume.horizontal_fov_rad, static_cast<float>(kPi / 2.0)) ||
         !near(published_volume.vertical_fov_rad, static_cast<float>(kPi / 3.0))) {
         std::cerr << "sensing coverage runner did not publish configured front camera volume\n";
