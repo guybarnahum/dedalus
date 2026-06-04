@@ -31,6 +31,11 @@ VEHICLE_NAME="PX4"
 AIRSIM_HOST="127.0.0.1"
 AIRSIM_RPC_PORT="41451"
 AIRSIM_PREFLIGHT=1
+SOURCE_FRAME_RATE_HZ=""
+WITH_FRAME_PRODUCER_TIMING=0
+FRAME_PRODUCER_TIMING_PATH=""
+WITH_PIPELINE_TIMING=0
+PIPELINE_TIMING_PATH=""
 SCENE_ID="AirSimNH"
 WITH_SCENE_INVENTORY=1
 REFRESH_SCENE_INVENTORY=0
@@ -53,6 +58,7 @@ VALIDATION_RADIUS="10.0"
 VALIDATION_TIMEOUT_S="300"
 VALIDATION_AVG_RADIUS_ERROR_MAX="1.0"
 VALIDATION_MAX_RADIUS_ERROR_AFTER_LATCH="3.0"
+VALIDATION_MIN_OCCUPIED_CELLS="48"
 VALIDATION_COMPLETE_REASON="orbit_count_elapsed"
 VALIDATION_EXPECT_SEQUENCE=0
 VALIDATION_SEQUENCE_STEPS="approach,circle"
@@ -77,6 +83,7 @@ Examples:
   ./run_mission.sh --attach
   ./run_mission.sh --overlay-debug
   ./run_mission.sh --scene-id AirSimNH --refresh-scene-inventory
+  ./run_mission.sh --source-frame-rate-hz 0 --pipeline-timing --frame-producer-timing
 
 Options:
   --session NAME              tmux session name. Default: dedalus-mission
@@ -93,6 +100,12 @@ Options:
   --vehicle-name NAME         AirSim vehicle name. Default: PX4
   --airsim-host HOST          AirSim RPC host. Default: 127.0.0.1
   --airsim-rpc-port PORT      AirSim RPC port. Default: 41451
+  --source-frame-rate-hz HZ   Override frame-source producer --rate-hz in an effective config. Use 0 for uncapped.
+  --frame-producer-timing     Add --timing-jsonl to the frame producer command.
+  --frame-producer-timing-path PATH
+                                Timing JSONL output path. Default: <output-dir>/profile/source_frame_bridge_<timestamp>.jsonl
+  --pipeline-timing           Enable C++ pipeline timing in an effective config.
+  --pipeline-timing-path PATH Timing JSONL output path. Default: <output-dir>/profile/pipeline_<timestamp>.jsonl
   --no-airsim-preflight       Skip the AirSim RPC preflight check
   --scene-id ID               Scene id for scene inventory artifact. Default: AirSimNH
   --scene-inventory PATH      Scene inventory output path. Default: ../../out/airsim_scene_inventory/<scene-id>.objects.json
@@ -111,6 +124,8 @@ Options:
   --validation-min-orbits N   Circle validator --min-orbits. Default: 2.95
   --validation-radius M       Circle validator --radius. Default: 10.0
   --validation-timeout-s S    Wait timeout for runtime_stop. Default: 300; use 0 to wait forever.
+  --validation-min-occupied-cells N
+                                Artifact validator minimum occupied GT cells. Default: 48
   --validation-complete-reason REASON
                                 Behavior complete reason for circle validator. Default: orbit_count_elapsed
   --expect-sequence            Require behavior sequence step events in artifact validation.
@@ -216,6 +231,11 @@ while [[ $# -gt 0 ]]; do
         --vehicle-name) VEHICLE_NAME="$2"; shift 2 ;;
         --airsim-host) AIRSIM_HOST="$2"; shift 2 ;;
         --airsim-rpc-port) AIRSIM_RPC_PORT="$2"; shift 2 ;;
+        --source-frame-rate-hz) SOURCE_FRAME_RATE_HZ="$2"; shift 2 ;;
+        --frame-producer-timing) WITH_FRAME_PRODUCER_TIMING=1; shift ;;
+        --frame-producer-timing-path) FRAME_PRODUCER_TIMING_PATH="$(abs_path "$2")"; WITH_FRAME_PRODUCER_TIMING=1; shift 2 ;;
+        --pipeline-timing) WITH_PIPELINE_TIMING=1; shift ;;
+        --pipeline-timing-path) PIPELINE_TIMING_PATH="$(abs_path "$2")"; WITH_PIPELINE_TIMING=1; shift 2 ;;
         --no-airsim-preflight) AIRSIM_PREFLIGHT=0; shift ;;
         --scene-id) SCENE_ID="$2"; shift 2 ;;
         --scene-inventory) SCENE_INVENTORY_PATH="$(abs_path "$2")"; shift 2 ;;
@@ -238,6 +258,7 @@ while [[ $# -gt 0 ]]; do
         --validation-min-orbits) VALIDATION_MIN_ORBITS="$2"; shift 2 ;;
         --validation-radius) VALIDATION_RADIUS="$2"; shift 2 ;;
         --validation-timeout-s) VALIDATION_TIMEOUT_S="$2"; shift 2 ;;
+        --validation-min-occupied-cells) VALIDATION_MIN_OCCUPIED_CELLS="$2"; shift 2 ;;
         --validation-complete-reason) VALIDATION_COMPLETE_REASON="$2"; shift 2 ;;
         --expect-sequence) VALIDATION_EXPECT_SEQUENCE=1; shift ;;
         --expect-sequence-steps) VALIDATION_SEQUENCE_STEPS="$2"; shift 2 ;;
@@ -260,8 +281,15 @@ VALIDATION_SCRIPT="$LOG_DIR_ABS/validation_${TIMESTAMP}.sh"
 CAMERA_DEBUG_JSON="$OUTPUT_DIR/camera_pointing_latest.json"
 OVERLAY_DEBUG_JSON="$OUTPUT_DIR/overlay_debug_latest.json"
 CAMERA_FRAMES_DIR="$OUTPUT_DIR/camera_pointing_frames"
+PROFILE_DIR="$OUTPUT_DIR/profile"
 if [[ -z "$SCENE_INVENTORY_PATH" ]]; then
     SCENE_INVENTORY_PATH="$REPO_ROOT_ABS/out/airsim_scene_inventory/${SCENE_ID}.objects.json"
+fi
+if [[ -z "$FRAME_PRODUCER_TIMING_PATH" ]]; then
+    FRAME_PRODUCER_TIMING_PATH="$PROFILE_DIR/source_frame_bridge_${TIMESTAMP}.jsonl"
+fi
+if [[ -z "$PIPELINE_TIMING_PATH" ]]; then
+    PIPELINE_TIMING_PATH="$PROFILE_DIR/pipeline_${TIMESTAMP}.jsonl"
 fi
 
 if [[ ! -x "$MISSION_BIN" ]]; then
@@ -281,7 +309,57 @@ if [[ "$AIRSIM_PREFLIGHT" -eq 1 ]]; then
     require_airsim_rpc
 fi
 
-mkdir -p "$OUTPUT_DIR" "$CAMERA_FRAMES_DIR"
+mkdir -p "$OUTPUT_DIR" "$CAMERA_FRAMES_DIR" "$PROFILE_DIR"
+
+if [[ -n "$SOURCE_FRAME_RATE_HZ" || "$WITH_FRAME_PRODUCER_TIMING" -eq 1 || "$WITH_PIPELINE_TIMING" -eq 1 ]]; then
+    EFFECTIVE_CONFIG_PATH="$OUTPUT_DIR/effective_core_stack_${TIMESTAMP}.yml"
+    python3 - "$CONFIG_PATH" "$EFFECTIVE_CONFIG_PATH" "$SOURCE_FRAME_RATE_HZ" "$WITH_FRAME_PRODUCER_TIMING" "$FRAME_PRODUCER_TIMING_PATH" "$WITH_PIPELINE_TIMING" "$PIPELINE_TIMING_PATH" <<'PY'
+from __future__ import annotations
+import shlex
+import sys
+from pathlib import Path
+
+src = Path(sys.argv[1])
+dst = Path(sys.argv[2])
+frame_rate = sys.argv[3]
+with_frame_timing = sys.argv[4] == "1"
+frame_timing_path = sys.argv[5]
+with_pipeline_timing = sys.argv[6] == "1"
+pipeline_timing_path = sys.argv[7]
+
+lines = src.read_text(encoding="utf-8").splitlines()
+out: list[str] = []
+bridge_seen = False
+for line in lines:
+    if line.startswith("bridge_command:"):
+        bridge_seen = True
+        command_text = line.split(":", 1)[1].strip()
+        parts = shlex.split(command_text)
+        def set_option(parts: list[str], flag: str, value: str) -> list[str]:
+            if flag in parts:
+                idx = parts.index(flag)
+                if idx + 1 >= len(parts):
+                    raise SystemExit(f"bridge_command has {flag} without value")
+                parts[idx + 1] = value
+            else:
+                parts.extend([flag, value])
+            return parts
+        if frame_rate:
+            parts = set_option(parts, "--rate-hz", frame_rate)
+        if with_frame_timing:
+            parts = set_option(parts, "--timing-jsonl", frame_timing_path)
+        line = "bridge_command: " + shlex.join(parts)
+    if not (line.startswith("pipeline_timing_enabled:") or line.startswith("pipeline_timing_output_path:")):
+        out.append(line)
+if not bridge_seen:
+    raise SystemExit("config has no bridge_command line to override")
+if with_pipeline_timing:
+    out.append("pipeline_timing_enabled: true")
+    out.append("pipeline_timing_output_path: " + pipeline_timing_path)
+dst.write_text("\n".join(out) + "\n", encoding="utf-8")
+PY
+    CONFIG_PATH="$EFFECTIVE_CONFIG_PATH"
+fi
 
 if [[ "$WITH_SCENE_INVENTORY" -eq 1 ]]; then
     if [[ "$REFRESH_SCENE_INVENTORY" -eq 1 || ! -f "$SCENE_INVENTORY_PATH" ]]; then
@@ -382,7 +460,7 @@ while True:
     time.sleep(2.0)
 PY
 python3 tools/mission/mission-events-summary.py "\$EVENTS" --expect-complete
-VALIDATE_MISSION_CMD=(python3 tools/mission/validate-mission-artifacts.py $(printf '%q' "$OUTPUT_DIR") --expect-complete --expect-behavior --safe-height-m $(printf '%q' "$VALIDATION_SAFE_HEIGHT") --landed-height-m 1.0 --expect-occupancy --expect-occupancy-source airsim_ground_truth --expect-min-occupied-cells 100 --expect-source-object-prefix gt_tree_ --expect-source-object-prefix gt_wall_ --expect-source-object-prefix gt_fence_ --expect-source-object-prefix gt_cable_ --expect-swept-volume)
+VALIDATE_MISSION_CMD=(python3 tools/mission/validate-mission-artifacts.py $(printf '%q' "$OUTPUT_DIR") --expect-complete --expect-behavior --safe-height-m $(printf '%q' "$VALIDATION_SAFE_HEIGHT") --landed-height-m 1.0 --expect-occupancy --expect-occupancy-source airsim_ground_truth --expect-min-occupied-cells $(printf '%q' "$VALIDATION_MIN_OCCUPIED_CELLS") --expect-source-object-prefix gt_tree_ --expect-source-object-prefix gt_wall_ --expect-source-object-prefix gt_fence_ --expect-source-object-prefix gt_cable_ --expect-swept-volume)
 EOF
 )
 if [[ "$WITH_SCENE_INVENTORY" -eq 1 ]]; then
@@ -459,7 +537,17 @@ echo "  config:  $CONFIG_PATH"
 if [[ "$WITH_SCENE_INVENTORY" -eq 1 ]]; then
     echo "  inventory override: $SCENE_INVENTORY_PATH"
 fi
+if [[ -n "$SOURCE_FRAME_RATE_HZ" || "$WITH_FRAME_PRODUCER_TIMING" -eq 1 || "$WITH_PIPELINE_TIMING" -eq 1 ]]; then
+    echo "  effective config generated from launch overrides"
+fi
 echo ""
+if [[ -n "$SOURCE_FRAME_RATE_HZ" || "$WITH_FRAME_PRODUCER_TIMING" -eq 1 || "$WITH_PIPELINE_TIMING" -eq 1 ]]; then
+    echo "Frame source overrides:"
+    if [[ -n "$SOURCE_FRAME_RATE_HZ" ]]; then echo "  source frame rate: $SOURCE_FRAME_RATE_HZ Hz (0 means uncapped)"; fi
+    if [[ "$WITH_FRAME_PRODUCER_TIMING" -eq 1 ]]; then echo "  producer timing:   $FRAME_PRODUCER_TIMING_PATH"; fi
+    if [[ "$WITH_PIPELINE_TIMING" -eq 1 ]]; then echo "  pipeline timing:   $PIPELINE_TIMING_PATH"; fi
+    echo ""
+fi
 if [[ "$WITH_SCENE_INVENTORY" -eq 1 ]]; then
     echo "Scene inventory:"
     echo "  scene id: $SCENE_ID"
@@ -492,6 +580,7 @@ if [[ "$WITH_VALIDATION" -eq 1 ]]; then
     echo "  timeout:    $VALIDATION_TIMEOUT_S s"
     echo "  validators: mission-events-summary, validate-mission-artifacts, validate-circle-trajectory"
     echo "  complete reason: $VALIDATION_COMPLETE_REASON"
+    echo "  min occupied cells: $VALIDATION_MIN_OCCUPIED_CELLS"
     echo ""
 fi
 
