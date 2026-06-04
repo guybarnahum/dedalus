@@ -17,6 +17,7 @@ add_library(dedalus_core
     sensing/sensing_coverage.cpp
     perception/ghost_targets.cpp
     perception/perception_pipeline.cpp
+    runtime/camera_pointing_state_store.cpp
     runtime/config_loader.cpp
     runtime/core_stack_runner.cpp
     runtime/pipeline_profiler.cpp
