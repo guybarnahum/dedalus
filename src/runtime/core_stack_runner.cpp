@@ -167,6 +167,14 @@ bool CoreStackRunner::run_once() {
         }
     }
 
+    if (!current_sensing_volumes.empty()) {
+        start = SteadyClock::now();
+        providers_.world_model->update_obstacle_sensing_volumes(current_sensing_volumes);
+        if (timing_writer_) {
+            timing_writer_->record_stage("world_model.update_obstacle_sensing_volumes.pre_ingest", duration_us(start));
+        }
+    }
+
     start = SteadyClock::now();
     providers_.world_model->ingest(perception_output);
     if (timing_writer_) {
