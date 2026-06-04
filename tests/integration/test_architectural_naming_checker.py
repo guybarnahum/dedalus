@@ -46,11 +46,10 @@ def main() -> int:
             print("checker did not report expected pass", file=sys.stderr)
             return 1
 
-        bad = tmp_root / "validate-track4-snapshots.py"
-        bad.write_text(
-            "print('track4 volumes=1 evidence=2')\n",
-            encoding="utf-8",
-        )
+        forbidden_filename = "validate-" + "track" + "4-snapshots.py"
+        forbidden_debug_label = "print('" + "track" + "4 volumes=1 evidence=2')\n"
+        bad = tmp_root / forbidden_filename
+        bad.write_text(forbidden_debug_label, encoding="utf-8")
         bad_result = run_checker(repo_root, bad)
         if bad_result.returncode == 0:
             print(bad_result.stdout)
