@@ -218,6 +218,13 @@ set_tests_properties("perception_world_model_flow (unit)"
 )
 
 dedalus_add_native_test(
+    NAME visual_emulation_obstacle_evidence
+    LAYER unit
+    TAGS world_model validation
+    SOURCES unit/test_visual_emulation_obstacle_evidence.cpp
+)
+
+dedalus_add_native_test(
     NAME video_only_world_model_flow
     LAYER unit
     TAGS synthetic
