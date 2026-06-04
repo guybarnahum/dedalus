@@ -407,6 +407,15 @@ if(Python3_Interpreter_FOUND)
     )
 
     dedalus_add_python_test(
+        NAME airsim_visual_emulation_config_coverage
+        LAYER synthetic
+        TAGS integration sensing validation
+        COMMAND_ARGS
+            ${PROJECT_SOURCE_DIR}/tests/integration/test_airsim_visual_emulation_config_coverage.py
+            ${PROJECT_SOURCE_DIR}
+    )
+
+    dedalus_add_python_test(
         NAME architectural_naming_checker
         LAYER synthetic
         TAGS validation docs
