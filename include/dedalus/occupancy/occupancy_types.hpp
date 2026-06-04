@@ -17,9 +17,26 @@ enum class OccupancyCellState {
 enum class OccupancySourceKind {
     SyntheticFixture,
     AirSimGroundTruth,
+    AirSimGroundTruthVisualEmulation,
     VisualObstacleDetector,
     DepthProvider,
     Fused,
+};
+
+enum class ObstacleEvidenceState {
+    Unknown,
+    Free,
+    Occupied,
+    ThinStructureRisk,
+};
+
+enum class ObstacleEvidenceShape {
+    Voxel,
+    FrustumBin,
+    RaySegment,
+    SurfacePatch,
+    LineSegment,
+    Capsule,
 };
 
 enum class SweptVolumeStatus {
@@ -28,6 +45,62 @@ enum class SweptVolumeStatus {
     OccupiedBlocked,
     UnknownRisk,
     StaleMap,
+};
+
+struct ObstacleSensingVolume {
+    TimePoint timestamp;
+    FrameId source_frame_id;
+    bool has_source_frame{false};
+    std::string sensor_name{"front_center"};
+    std::string provider_name{"none"};
+    MapFrameId map_frame_id{"map_unknown"};
+
+    Vec3 origin_local;
+    Vec3 forward_axis_local{1.0, 0.0, 0.0};
+    Vec3 right_axis_local{0.0, 1.0, 0.0};
+    Vec3 up_axis_local{0.0, 0.0, -1.0};
+
+    float near_range_m{0.0F};
+    float far_range_m{0.0F};
+    float horizontal_fov_rad{0.0F};
+    float vertical_fov_rad{0.0F};
+    float min_reliable_range_m{0.0F};
+    float max_reliable_range_m{0.0F};
+
+    float min_surface_area_m2{0.0F};
+    float min_angular_size_rad{0.0F};
+    float min_confidence{0.0F};
+};
+
+struct ObstacleEvidence {
+    TimePoint timestamp;
+    FrameId source_frame_id;
+    bool has_source_frame{false};
+    std::string sensor_name{"front_center"};
+    std::string source_provider{"none"};
+    OccupancySourceKind source_kind{OccupancySourceKind::SyntheticFixture};
+    MapFrameId map_frame_id{"map_unknown"};
+
+    ObstacleEvidenceState state{ObstacleEvidenceState::Unknown};
+    ObstacleEvidenceShape shape{ObstacleEvidenceShape::Voxel};
+
+    Vec3 center_local;
+    Vec3 size_m;
+    Vec3 endpoint_a_local;
+    Vec3 endpoint_b_local;
+    float radius_m{0.0F};
+
+    float occupancy_probability{0.0F};
+    float free_probability{0.0F};
+    float confidence{0.0F};
+    float range_m{0.0F};
+    float bearing_rad{0.0F};
+    float elevation_rad{0.0F};
+
+    bool inside_sensing_volume{false};
+    bool inside_swept_volume{false};
+    bool is_static_hint{false};
+    bool is_thin_structure_hint{false};
 };
 
 struct OccupancyCellSummary {
