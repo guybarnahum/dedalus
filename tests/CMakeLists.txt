@@ -225,6 +225,13 @@ dedalus_add_native_test(
 )
 
 dedalus_add_native_test(
+    NAME sensing_coverage
+    LAYER unit
+    TAGS sensing geometry validation
+    SOURCES unit/test_sensing_coverage.cpp
+)
+
+dedalus_add_native_test(
     NAME video_only_world_model_flow
     LAYER unit
     TAGS synthetic
