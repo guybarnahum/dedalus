@@ -7,6 +7,7 @@
 #include <limits>
 #include <sstream>
 #include <string>
+#include <vector>
 
 namespace dedalus {
 namespace {
@@ -18,6 +19,7 @@ constexpr float kDefaultReliableMinRangeM = 1.0F;
 constexpr float kDefaultReliableMaxRangeM = 60.0F;
 constexpr float kDefaultHorizontalFovRad = kPi * 0.5F;
 constexpr float kDefaultVerticalFovRad = kPi / 3.0F;
+constexpr double kEpsilon = 1.0e-9;
 
 EgoState mission_ready_ego(EgoState ego) {
     if (!ego.height_valid) {
@@ -80,6 +82,22 @@ float distance_3d(const Vec3& a, const Vec3& b) {
     const auto dy = static_cast<float>(a.y - b.y);
     const auto dz = static_cast<float>(a.z - b.z);
     return std::sqrt(dx * dx + dy * dy + dz * dz);
+}
+
+double dot(const Vec3& lhs, const Vec3& rhs) {
+    return lhs.x * rhs.x + lhs.y * rhs.y + lhs.z * rhs.z;
+}
+
+double norm(const Vec3& value) {
+    return std::sqrt(dot(value, value));
+}
+
+Vec3 normalize_or(const Vec3& value, const Vec3& fallback) {
+    const double length = norm(value);
+    if (length <= kEpsilon) {
+        return fallback;
+    }
+    return Vec3{value.x / length, value.y / length, value.z / length};
 }
 
 float swept_path_lateral_distance_m(const Vec3& point, const Vec3& path_start, const Vec3& path_end) {
@@ -174,18 +192,30 @@ ObstacleSensingVolume build_forward_sensing_volume(
 }
 
 bool is_inside_sensing_volume(const Vec3& point, const ObstacleSensingVolume& volume, float* range_out, float* bearing_out, float* elevation_out) {
-    const float dx = static_cast<float>(point.x - volume.origin_local.x);
-    const float dy = static_cast<float>(point.y - volume.origin_local.y);
-    const float dz = static_cast<float>(point.z - volume.origin_local.z);
-    const float range = std::sqrt(dx * dx + dy * dy + dz * dz);
-    const float bearing = std::atan2(dy, dx);
-    const float elevation = std::atan2(-dz, std::sqrt(dx * dx + dy * dy));
+    const Vec3 delta{
+        point.x - volume.origin_local.x,
+        point.y - volume.origin_local.y,
+        point.z - volume.origin_local.z};
+    const Vec3 forward = normalize_or(volume.forward_axis_local, Vec3{1.0, 0.0, 0.0});
+    const Vec3 right = normalize_or(volume.right_axis_local, Vec3{0.0, 1.0, 0.0});
+    const Vec3 up = normalize_or(volume.up_axis_local, Vec3{0.0, 0.0, -1.0});
+
+    const float forward_m = static_cast<float>(dot(delta, forward));
+    const float right_m = static_cast<float>(dot(delta, right));
+    const float up_m = static_cast<float>(dot(delta, up));
+    const float range = static_cast<float>(norm(delta));
+    const float lateral_norm = std::sqrt(forward_m * forward_m + right_m * right_m);
+    const float bearing = std::atan2(right_m, forward_m);
+    const float elevation = std::atan2(up_m, lateral_norm);
     if (range_out != nullptr) *range_out = range;
     if (bearing_out != nullptr) *bearing_out = bearing;
     if (elevation_out != nullptr) *elevation_out = elevation;
-    return range >= volume.near_range_m && range <= volume.far_range_m &&
-           std::fabs(bearing) <= volume.horizontal_fov_rad * 0.5F &&
-           std::fabs(elevation) <= volume.vertical_fov_rad * 0.5F;
+    if (forward_m <= 1.0e-6F || range < volume.near_range_m || range > volume.far_range_m) {
+        return false;
+    }
+    const float half_width_at_forward = std::tan(volume.horizontal_fov_rad * 0.5F) * forward_m;
+    const float half_height_at_forward = std::tan(volume.vertical_fov_rad * 0.5F) * forward_m;
+    return std::fabs(right_m) <= half_width_at_forward && std::fabs(up_m) <= half_height_at_forward;
 }
 
 bool intersects_swept_volume(const Vec3& point, const Vec3& size_m, const SweptVolumeDebug& swept) {
@@ -433,32 +463,54 @@ void refresh_synthetic_obstacle_products(WorldSnapshot& snapshot) {
     }
 }
 
-void refresh_ground_truth_obstacle_products(WorldSnapshot& snapshot, const PerceptionPipelineOutput& output) {
+std::vector<ObstacleSensingVolume> visual_emulation_volumes_for(
+    const WorldSnapshot& snapshot,
+    const PerceptionPipelineOutput& output,
+    const std::vector<ObstacleSensingVolume>& configured_volumes) {
+    std::vector<ObstacleSensingVolume> volumes;
+    if (configured_volumes.empty()) {
+        volumes.push_back(build_forward_sensing_volume(
+            snapshot.ego, snapshot.timestamp, snapshot.active_map_frame_id, "airsim_gt_visual_emulation"));
+    } else {
+        volumes = configured_volumes;
+    }
+    for (auto& volume : volumes) {
+        volume.timestamp = snapshot.timestamp;
+        volume.map_frame_id = snapshot.active_map_frame_id;
+        if (volume.provider_name.empty()) {
+            volume.provider_name = "configured_camera_coverage";
+        }
+        for (const auto& observation : output.observations) {
+            if (observation.has_source_frame && !volume.has_source_frame) {
+                volume.source_frame_id = observation.source_frame_id;
+                volume.has_source_frame = true;
+            }
+        }
+    }
+    return volumes;
+}
+
+void refresh_ground_truth_obstacle_products(
+    WorldSnapshot& snapshot,
+    const PerceptionPipelineOutput& output,
+    const std::vector<ObstacleSensingVolume>& configured_volumes) {
     snapshot.has_ego_occupancy = true;
     snapshot.ego_occupancy = build_airsim_ground_truth_occupancy(snapshot.ego, output, snapshot.timestamp, snapshot.active_map_frame_id);
     snapshot.has_latest_swept_volume = true;
     snapshot.latest_swept_volume = build_swept_volume(snapshot.ego, snapshot.ego_occupancy, snapshot.timestamp, snapshot.active_map_frame_id);
-    snapshot.obstacle_sensing_volumes.clear();
+    snapshot.obstacle_sensing_volumes = visual_emulation_volumes_for(snapshot, output, configured_volumes);
     snapshot.obstacle_evidence.clear();
-    auto volume = build_forward_sensing_volume(
-        snapshot.ego, snapshot.timestamp, snapshot.active_map_frame_id, "airsim_gt_visual_emulation");
-    for (const auto& observation : output.observations) {
-        if (observation.has_source_frame && !volume.has_source_frame) {
-            volume.source_frame_id = observation.source_frame_id;
-            volume.has_source_frame = true;
-        }
-    }
-    snapshot.obstacle_sensing_volumes.push_back(volume);
-    const auto& sensing_volume = snapshot.obstacle_sensing_volumes.back();
-    for (const auto& observation : output.observations) {
-        auto evidence = evidence_from_observation(
-            observation,
-            sensing_volume,
-            snapshot.latest_swept_volume,
-            snapshot.timestamp,
-            snapshot.active_map_frame_id);
-        if (evidence.inside_sensing_volume && evidence.confidence >= sensing_volume.min_confidence) {
-            snapshot.obstacle_evidence.push_back(evidence);
+    for (const auto& sensing_volume : snapshot.obstacle_sensing_volumes) {
+        for (const auto& observation : output.observations) {
+            auto evidence = evidence_from_observation(
+                observation,
+                sensing_volume,
+                snapshot.latest_swept_volume,
+                snapshot.timestamp,
+                snapshot.active_map_frame_id);
+            if (evidence.inside_sensing_volume && evidence.confidence >= sensing_volume.min_confidence) {
+                snapshot.obstacle_evidence.push_back(evidence);
+            }
         }
     }
 }
@@ -563,7 +615,7 @@ void InMemoryWorldModel::ingest(const PerceptionPipelineOutput& perception_outpu
     snapshot_.flight_corridors = flight_map_update.flight_corridors;
     snapshot_.landmarks = flight_map_update.landmarks;
     if (config_.occupancy_source_kind == OccupancySourceKind::AirSimGroundTruth) {
-        refresh_ground_truth_obstacle_products(snapshot_, perception_output);
+        refresh_ground_truth_obstacle_products(snapshot_, perception_output, configured_obstacle_sensing_volumes_);
     } else {
         refresh_synthetic_obstacle_products(snapshot_);
     }
