@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cctype>
+#include <cmath>
 #include <cstdint>
 #include <fstream>
 #include <iostream>
@@ -9,9 +10,12 @@
 #include <sstream>
 #include <stdexcept>
 #include <string>
+#include <utility>
 
 namespace dedalus {
 namespace {
+
+constexpr double kPi = 3.14159265358979323846;
 
 std::string trim(std::string value) {
     const auto not_space = [](unsigned char ch) { return !std::isspace(ch); };
@@ -51,8 +55,83 @@ std::uint32_t parse_uint32(const std::string& value, const char* context) {
     return static_cast<std::uint32_t>(raw);
 }
 
+double deg_to_rad(double degrees) {
+    return degrees * kPi / 180.0;
+}
+
+Vec3 parse_vec3(const std::string& value) {
+    std::string normalized;
+    normalized.reserve(value.size());
+    for (const char ch : value) normalized.push_back((ch == '[' || ch == ']' || ch == ',') ? ' ' : ch);
+    std::istringstream input{normalized};
+    Vec3 result;
+    if (!(input >> result.x >> result.y >> result.z)) throw std::invalid_argument("invalid vec3 config value: " + value);
+    std::string extra;
+    if (input >> extra) throw std::invalid_argument("invalid vec3 config value with extra data: " + value);
+    return result;
+}
+
+std::pair<std::size_t, std::string> parse_indexed_field(const std::string& key, const std::string& prefix, const std::string& description) {
+    const auto remainder = key.substr(prefix.size());
+    const auto dot_pos = remainder.find('.');
+    if (dot_pos == std::string::npos || dot_pos == 0U || dot_pos + 1U >= remainder.size()) throw std::invalid_argument("invalid " + description + " key: " + key);
+    const auto index_text = remainder.substr(0U, dot_pos);
+    const auto field = remainder.substr(dot_pos + 1U);
+    std::size_t parsed_chars = 0U;
+    const auto index = std::stoul(index_text, &parsed_chars);
+    if (parsed_chars != index_text.size()) throw std::invalid_argument("invalid " + description + " index: " + key);
+    if (index >= 1024U) throw std::invalid_argument("unreasonable " + description + " index: " + key);
+    return {index, field};
+}
+
+bool parse_obstacle_sensing_camera_key(MissionOptions& opts, const std::string& key, const std::string& value) {
+    const std::string prefix = "obstacle_sensing.cameras.";
+    if (key.rfind(prefix, 0U) != 0U) return false;
+    const auto [index, field] = parse_indexed_field(key, prefix, "obstacle sensing camera");
+    if (opts.obstacle_sensing_cameras.size() <= index) opts.obstacle_sensing_cameras.resize(index + 1U);
+    auto& camera = opts.obstacle_sensing_cameras[index];
+    if (field == "name" || field == "camera_name") {
+        camera.camera_name = value;
+        camera.camera_id = CameraId{value};
+    } else if (field == "camera_id") {
+        camera.camera_id = CameraId{value};
+        if (camera.camera_name.empty() || camera.camera_name == "front_center") camera.camera_name = value;
+    } else if (field == "role") {
+        camera.role = value;
+    } else if (field == "horizontal_fov_deg") {
+        camera.horizontal_fov_rad = deg_to_rad(std::stod(value));
+    } else if (field == "vertical_fov_deg") {
+        camera.vertical_fov_rad = deg_to_rad(std::stod(value));
+    } else if (field == "horizontal_fov_rad") {
+        camera.horizontal_fov_rad = std::stod(value);
+    } else if (field == "vertical_fov_rad") {
+        camera.vertical_fov_rad = std::stod(value);
+    } else if (field == "near_range_m") {
+        camera.near_range_m = std::stod(value);
+    } else if (field == "far_range_m") {
+        camera.far_range_m = std::stod(value);
+    } else if (field == "min_reliable_range_m") {
+        camera.min_reliable_range_m = std::stod(value);
+    } else if (field == "max_reliable_range_m") {
+        camera.max_reliable_range_m = std::stod(value);
+    } else if (field == "body_T_camera_xyz_m") {
+        camera.body_T_camera_xyz_m = parse_vec3(value);
+    } else if (field == "body_T_camera_rpy_deg") {
+        const auto degrees = parse_vec3(value);
+        camera.body_T_camera_rpy_rad = Vec3{deg_to_rad(degrees.x), deg_to_rad(degrees.y), deg_to_rad(degrees.z)};
+    } else if (field == "body_T_camera_rpy_rad") {
+        camera.body_T_camera_rpy_rad = parse_vec3(value);
+    } else if (field == "pointing_source") {
+        camera.pointing_source = value;
+    } else {
+        throw std::invalid_argument("unknown obstacle sensing camera field: " + key);
+    }
+    return true;
+}
+
 // clang-format off
 void apply_mission_option(MissionOptions& opts, const std::string& key, const std::string& value) {
+    if (parse_obstacle_sensing_camera_key(opts, key, value)) return;
     if (key == "behavior_spec_path")                           { opts.behavior_spec_path = value; return; }
     if (key == "object_behavior_follow_observation_geometry_enabled") { opts.follow_observation_geometry_enabled = parse_bool(value); return; }
     if (key == "object_behavior_zero_target_velocity")         { opts.zero_target_velocity = parse_bool(value); return; }
@@ -126,34 +205,9 @@ void apply_mission_option(MissionOptions& opts, const std::string& key, const st
 }
 // clang-format on
 
-Vec3 parse_vec3(const std::string& value) {
-    std::string normalized;
-    normalized.reserve(value.size());
-    for (const char ch : value) normalized.push_back((ch == '[' || ch == ']' || ch == ',') ? ' ' : ch);
-    std::istringstream input{normalized};
-    Vec3 result;
-    if (!(input >> result.x >> result.y >> result.z)) throw std::invalid_argument("invalid vec3 config value: " + value);
-    std::string extra;
-    if (input >> extra) throw std::invalid_argument("invalid vec3 config value with extra data: " + value);
-    return result;
-}
-
 std::string mission_option_key_from(const std::string& key) {
     constexpr auto prefix = "mission_options.";
     return key.substr(std::string{prefix}.size());
-}
-
-std::pair<std::size_t, std::string> parse_indexed_field(const std::string& key, const std::string& prefix, const std::string& description) {
-    const auto remainder = key.substr(prefix.size());
-    const auto dot_pos = remainder.find('.');
-    if (dot_pos == std::string::npos || dot_pos == 0U || dot_pos + 1U >= remainder.size()) throw std::invalid_argument("invalid " + description + " key: " + key);
-    const auto index_text = remainder.substr(0U, dot_pos);
-    const auto field = remainder.substr(dot_pos + 1U);
-    std::size_t parsed_chars = 0U;
-    const auto index = std::stoul(index_text, &parsed_chars);
-    if (parsed_chars != index_text.size()) throw std::invalid_argument("invalid " + description + " index: " + key);
-    if (index >= 1024U) throw std::invalid_argument("unreasonable " + description + " index: " + key);
-    return {index, field};
 }
 
 bool parse_airsim_object_binding_key(CoreStackProviderConfig& config, const std::string& key, const std::string& value) {
@@ -202,6 +256,7 @@ void apply_config_value(CoreStackProviderConfig& config, const std::string& key,
     else if (key == "ghost_targets_scenario") config.ghost_targets_scenario = value;
     else if (key == "ghost_targets_scenario_path") config.ghost_targets_scenario_path = value;
     else if (key == "ghost_targets_airsim_scene_inventory_path") config.ghost_targets_airsim_scene_inventory_path = value;
+    else if (key == "ghost_targets_airsim_object_pose_stream_rate_hz") config.ghost_targets_airsim_object_pose_stream_rate_hz = std::stod(value);
     else if (key == "world_model") config.world_model = value;
     else if (key == "occupancy_source") config.occupancy_source = value;
     else if (key == "frame_annotator") config.frame_annotator = value;
@@ -255,12 +310,28 @@ void validate_airsim_object_bindings(const CoreStackProviderConfig& config) {
     }
 }
 
+void validate_obstacle_sensing_cameras(const MissionOptions& options) {
+    for (std::size_t index = 0; index < options.obstacle_sensing_cameras.size(); ++index) {
+        const auto& camera = options.obstacle_sensing_cameras[index];
+        const auto prefix = "mission_options.obstacle_sensing.cameras." + std::to_string(index);
+        if (camera.camera_name.empty() || camera.camera_id.value.empty()) throw std::invalid_argument(prefix + ".name is required");
+        if (camera.role.empty()) throw std::invalid_argument(prefix + ".role is required");
+        if (camera.horizontal_fov_rad <= 0.0 || camera.horizontal_fov_rad >= kPi) throw std::invalid_argument(prefix + ".horizontal_fov must be in (0, 180deg)");
+        if (camera.vertical_fov_rad <= 0.0 || camera.vertical_fov_rad >= kPi) throw std::invalid_argument(prefix + ".vertical_fov must be in (0, 180deg)");
+        if (camera.near_range_m < 0.0) throw std::invalid_argument(prefix + ".near_range_m must be >= 0");
+        if (camera.far_range_m <= camera.near_range_m) throw std::invalid_argument(prefix + ".far_range_m must be > near_range_m");
+        if (camera.min_reliable_range_m < 0.0) throw std::invalid_argument(prefix + ".min_reliable_range_m must be >= 0");
+        if (camera.max_reliable_range_m < camera.min_reliable_range_m) throw std::invalid_argument(prefix + ".max_reliable_range_m must be >= min_reliable_range_m");
+    }
+}
+
 void validate_config(const CoreStackProviderConfig& config) {
     if (config.ghost_targets_source != "trajectory_scenario" && config.ghost_targets_source != "airsim_objects") throw std::invalid_argument("unknown ghost_targets_source: " + config.ghost_targets_source);
     if (config.ghost_targets_source != "airsim_objects" && (!config.ghost_targets_airsim_objects.empty() || !config.ghost_targets_airsim_patterns.empty())) throw std::invalid_argument("ghost_targets_airsim bindings require ghost_targets_source=airsim_objects");
     if (config.occupancy_source != "synthetic_fixture" && config.occupancy_source != "airsim_ground_truth") throw std::invalid_argument("unknown occupancy_source: " + config.occupancy_source);
     if (config.occupancy_source == "airsim_ground_truth" && config.ghost_targets_source != "airsim_objects") throw std::invalid_argument("occupancy_source=airsim_ground_truth requires ghost_targets_source=airsim_objects");
     validate_airsim_object_bindings(config);
+    validate_obstacle_sensing_cameras(config.mission_options);
 }
 
 }  // namespace
