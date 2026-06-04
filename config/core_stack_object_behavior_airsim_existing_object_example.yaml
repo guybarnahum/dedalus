@@ -6,4 +6,4 @@
 #
 # The AirSim object ghost source reads selected object poses through:
 #
-#   python3 simulation/airsim/scripts/airsim-object-poses.py
+#   python3 simulation/airsim/scripts/airsim-object-poses
