@@ -232,6 +232,13 @@ dedalus_add_native_test(
 )
 
 dedalus_add_native_test(
+    NAME camera_pointing_state_store
+    LAYER unit
+    TAGS sensing runtime validation
+    SOURCES unit/test_camera_pointing_state_store.cpp
+)
+
+dedalus_add_native_test(
     NAME video_only_world_model_flow
     LAYER unit
     TAGS synthetic
