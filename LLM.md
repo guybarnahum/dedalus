@@ -156,15 +156,28 @@ config/behaviors/
 Naming and artifact convention:
 
 ```text
-Use architectural names, not arbitrary placeholder names, in docs, commands, validators, and handoffs.
+Use architectural capability names, not planning labels or arbitrary placeholders.
 
-Prefer names that expose the subsystem and scenario boundary, for example:
+Prefer names that encode the stable subsystem, runtime boundary, contract, scenario, or artifact role:
   out/object_behavior_airsim_existing_object_circle
   out/mission_loop_snapshots
-  tools/mission/validate-track4-snapshots.py
+  tools/mission/validate-obstacle-sensing-evidence-snapshots.py
   tools/mission/validate-mission-artifacts.py
+  simulation/airsim/run_mission.sh
+  obstacle_sensing_volumes
+  obstacle_evidence
+  runtime_event_stream
+  world_snapshot
 
-Avoid invented generic names such as mission_YYYY, latest_run, foo.json, temp.json, or ad-hoc simulation/artifacts/mission_* unless that is the actual architectural path produced by the repo.
+Avoid names based on planning labels or temporary session language:
+  track4
+  milestone_XXX
+  phase_YYY
+  latest_run
+  mission_YYYY
+  foo.json
+  temp.json
+  ad-hoc simulation/artifacts/mission_* unless that is the actual architectural path produced by the repo
 
 When referring to output directories, use the concrete `--output-dir` value or the named directory printed by `dedalus_mission_loop` / `run_mission.sh`.
 ```
