@@ -3,16 +3,12 @@
 
 The profiler writes one JSON object per processed frame with a `stages` object
 mapping stage names to microsecond durations. This tool aggregates those stage
-<<<<<<< HEAD
 samples so profiling baselines can be compared before and after runtime changes.
-=======
-samples so runtime baselines can be compared before and after changes.
 
 Some stages are aggregate/overlap stages, for example `runtime.post_frame_compute`
 or `runtime.frame_source_reported_io`. These are useful for diagnosis, but they
 must not be included in leaf-stage accounting checks because they intentionally
 overlap with lower-level stages.
->>>>>>> 9970b8aa4d1b88b31bc120ded14e1aef33f7b83c
 """
 
 from __future__ import annotations
