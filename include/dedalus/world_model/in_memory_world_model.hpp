@@ -1,5 +1,6 @@
 #pragma once
 
+#include <utility>
 #include <vector>
 
 #include "dedalus/perception/perception_pipeline.hpp"
@@ -22,7 +23,10 @@ public:
 
     void update_ego(const EgoState& ego);
     void update_appearance(const AppearanceCondition& appearance_condition);
-    void update_obstacle_sensing_volumes(std::vector<ObstacleSensingVolume> volumes);
+    void update_obstacle_sensing_volumes(std::vector<ObstacleSensingVolume> volumes) {
+        configured_obstacle_sensing_volumes_ = std::move(volumes);
+        snapshot_.obstacle_sensing_volumes = configured_obstacle_sensing_volumes_;
+    }
     void ingest(const PerceptionPipelineOutput& perception_output);
 
     WorldSnapshot snapshot() const;
