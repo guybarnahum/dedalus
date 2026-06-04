@@ -8,7 +8,7 @@ stream; this script renders whatever arrives.
 
 Consumed event types today:
   ghost_detections -> PLAN / PLAN* markers
-  world_snapshot   -> AG, EGO, optional OCC, and optional SWEEP markers
+  world_snapshot   -> AG, EGO, optional OCC, SWEEP, SENSE, and EVID markers
   mission_event    -> SEL marker state from target_selected events
 """
 
@@ -44,6 +44,11 @@ SWEEP_CLEAR_COLOR = [0.2, 1.0, 0.35, 0.85]
 SWEEP_BLOCKED_COLOR = [1.0, 0.05, 0.05, 0.95]
 SWEEP_UNKNOWN_COLOR = [1.0, 0.8, 0.1, 0.85]
 SWEEP_STALE_COLOR = [0.55, 0.55, 0.55, 0.8]
+
+SENSING_VOLUME_COLOR = [0.45, 0.65, 1.0, 0.55]
+EVIDENCE_OCCUPIED_COLOR = [1.0, 0.25, 0.05, 0.90]
+EVIDENCE_THIN_RISK_COLOR = [1.0, 0.0, 1.0, 0.95]
+EVIDENCE_BLOCKING_COLOR = [1.0, 0.0, 0.0, 1.0]
 
 
 class RuntimeEventStreamClient:
@@ -178,6 +183,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--osd-state-name", default="DEDALUS-STATE")
     parser.add_argument("--osd-occupancy-name", default="DEDALUS-OCC")
     parser.add_argument("--osd-swept-volume-name", default="DEDALUS-SWEEP")
+    parser.add_argument("--osd-evidence-name", default="DEDALUS-EVID")
     parser.add_argument("--osd-severity", type=int, default=0)
     parser.add_argument("--osd-arrow", action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument("--osd-arrow-scale", type=float, default=1.5, help="XY velocity arrow length in meters at 1 m/s.")
@@ -201,6 +207,14 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--swept-volume-z-lift-m", type=float, default=0.25)
     parser.add_argument("--swept-volume-line-thickness", type=float, default=5.0)
     parser.add_argument("--swept-volume-blocking-size", type=float, default=24.0)
+    parser.add_argument("--show-sensing-volumes", action="store_true")
+    parser.add_argument("--max-sensing-volumes", type=int, default=4)
+    parser.add_argument("--sensing-volume-z-lift-m", type=float, default=0.05)
+    parser.add_argument("--sensing-volume-line-thickness", type=float, default=2.0)
+    parser.add_argument("--show-obstacle-evidence", action="store_true")
+    parser.add_argument("--max-obstacle-evidence", type=int, default=96)
+    parser.add_argument("--obstacle-evidence-z-lift-m", type=float, default=0.35)
+    parser.add_argument("--obstacle-evidence-size", type=float, default=12.0)
     return parser.parse_args()
 
 
@@ -223,6 +237,30 @@ def vec_norm(value: list[float] | None) -> float | None:
     if value is None:
         return None
     return math.sqrt(sum(component * component for component in value))
+
+
+def vec_add(a: list[float], b: list[float]) -> list[float]:
+    return [a[index] + b[index] for index in range(3)]
+
+
+def vec_scale(value: list[float], scale: float) -> list[float]:
+    return [component * scale for component in value]
+
+
+def vec_lift(value: list[float], z_lift_m: float) -> list[float]:
+    return [value[0], value[1], value[2] - z_lift_m]
+
+
+def airsim_vec(value: list[float]) -> airsim.Vector3r:
+    return airsim.Vector3r(value[0], value[1], value[2])
+
+
+def unit_or_default(value: Any, default: list[float]) -> list[float]:
+    parsed = vec3(value)
+    if parsed is None:
+        return default
+    norm = vec_norm(parsed)
+    return default if norm is None or norm <= 1.0e-6 else [component / norm for component in parsed]
 
 
 def rounded(value: Any) -> Any:
@@ -292,6 +330,32 @@ def swept_volume_from_snapshot(snapshot: dict[str, Any] | None) -> dict[str, Any
     return swept if isinstance(swept, dict) and swept.get("has_valid_query") else None
 
 
+def sensing_volumes_from_snapshot(snapshot: dict[str, Any] | None, max_volumes: int) -> list[dict[str, Any]]:
+    if snapshot is None:
+        return []
+    volumes = [
+        volume for volume in snapshot.get("obstacle_sensing_volumes", [])
+        if isinstance(volume, dict) and vec3(volume.get("origin_local")) is not None
+    ]
+    return volumes[: max(0, max_volumes)]
+
+
+def obstacle_evidence_from_snapshot(snapshot: dict[str, Any] | None, max_evidence: int) -> list[dict[str, Any]]:
+    if snapshot is None:
+        return []
+    evidence = [
+        item for item in snapshot.get("obstacle_evidence", [])
+        if isinstance(item, dict) and vec3(item.get("center_local")) is not None
+    ]
+    state_rank = {"thin_structure_risk": 0, "occupied": 1, "unknown": 2, "free": 3}
+    evidence.sort(key=lambda item: (
+        not bool(item.get("inside_swept_volume", False)),
+        state_rank.get(str(item.get("state", "unknown")), 4),
+        -float(item.get("confidence", 0.0)),
+    ))
+    return evidence[: max(0, max_evidence)]
+
+
 def occupancy_cells_from_snapshot(snapshot: dict[str, Any] | None, max_cells: int) -> list[dict[str, Any]]:
     occupancy = occupancy_from_snapshot(snapshot)
     if occupancy is None:
@@ -347,6 +411,19 @@ def swept_volume_color(swept: dict[str, Any]) -> list[float]:
     if status == "stale_map":
         return SWEEP_STALE_COLOR
     return SWEEP_UNKNOWN_COLOR
+
+
+def obstacle_evidence_color(evidence: dict[str, Any]) -> list[float]:
+    if evidence.get("inside_swept_volume"):
+        return EVIDENCE_BLOCKING_COLOR
+    state = str(evidence.get("state", "unknown"))
+    if state == "thin_structure_risk":
+        return EVIDENCE_THIN_RISK_COLOR
+    if state == "occupied":
+        return EVIDENCE_OCCUPIED_COLOR
+    if state == "free":
+        return FREE_CELL_COLOR
+    return UNKNOWN_CELL_COLOR
 
 
 def label_for(agent: dict[str, Any]) -> str:
@@ -446,6 +523,124 @@ def plot_line_segments(client: Any, points: list[Any], color: list[float], thick
     except AttributeError:
         for index in range(0, len(points), 2):
             client.simPlotLineStrip(points[index : index + 2], color_rgba=color, thickness=thickness, duration=duration, is_persistent=persistent)
+
+
+def frustum_corners(volume: dict[str, Any], z_lift_m: float) -> list[list[float]] | None:
+    origin = vec3(volume.get("origin_local"))
+    if origin is None:
+        return None
+    forward = unit_or_default(volume.get("forward_axis_local"), [1.0, 0.0, 0.0])
+    right = unit_or_default(volume.get("right_axis_local"), [0.0, 1.0, 0.0])
+    up = unit_or_default(volume.get("up_axis_local"), [0.0, 0.0, -1.0])
+    try:
+        near_range = max(0.0, float(volume.get("near_range_m", 0.0)))
+        far_range = max(near_range, float(volume.get("far_range_m", near_range)))
+        h_fov = max(0.0, float(volume.get("horizontal_fov_rad", 0.0)))
+        v_fov = max(0.0, float(volume.get("vertical_fov_rad", 0.0)))
+    except (TypeError, ValueError):
+        return None
+
+    def plane_corners(range_m: float) -> list[list[float]]:
+        half_w = math.tan(h_fov * 0.5) * range_m
+        half_h = math.tan(v_fov * 0.5) * range_m
+        center = vec_add(origin, vec_scale(forward, range_m))
+        return [
+            vec_lift(vec_add(vec_add(center, vec_scale(right, -half_w)), vec_scale(up, -half_h)), z_lift_m),
+            vec_lift(vec_add(vec_add(center, vec_scale(right, half_w)), vec_scale(up, -half_h)), z_lift_m),
+            vec_lift(vec_add(vec_add(center, vec_scale(right, half_w)), vec_scale(up, half_h)), z_lift_m),
+            vec_lift(vec_add(vec_add(center, vec_scale(right, -half_w)), vec_scale(up, half_h)), z_lift_m),
+        ]
+
+    return plane_corners(near_range) + plane_corners(far_range)
+
+
+def draw_sensing_volumes(client: Any, snapshot: dict[str, Any] | None, args: argparse.Namespace) -> None:
+    if not args.show_sensing_volumes:
+        return
+    volumes = sensing_volumes_from_snapshot(snapshot, args.max_sensing_volumes)
+    if args.dry_run:
+        for volume in volumes:
+            print(
+                "  SENSE provider={provider} sensor={sensor} origin={origin} near={near} far={far} hfov={hfov} vfov={vfov}".format(
+                    provider=volume.get("provider_name", "unknown"),
+                    sensor=volume.get("sensor_name", "unknown"),
+                    origin=volume.get("origin_local"),
+                    near=volume.get("near_range_m"),
+                    far=volume.get("far_range_m"),
+                    hfov=volume.get("horizontal_fov_rad"),
+                    vfov=volume.get("vertical_fov_rad"),
+                )
+            )
+        return
+    if client is None:
+        return
+    duration = marker_duration(args)
+    for volume in volumes:
+        corners = frustum_corners(volume, args.sensing_volume_z_lift_m)
+        if corners is None or len(corners) != 8:
+            continue
+        near = [airsim_vec(point) for point in corners[0:4]]
+        far = [airsim_vec(point) for point in corners[4:8]]
+        segments: list[airsim.Vector3r] = []
+        for ring in (near, far):
+            segments.extend([ring[0], ring[1], ring[1], ring[2], ring[2], ring[3], ring[3], ring[0]])
+        for index in range(4):
+            segments.extend([near[index], far[index]])
+        plot_line_segments(
+            client,
+            segments,
+            SENSING_VOLUME_COLOR,
+            args.sensing_volume_line_thickness,
+            duration,
+            args.persistent,
+        )
+        if args.label:
+            label_point = far[0]
+            label = f"SENSE {volume.get('provider_name', 'unknown')}"
+            client.simPlotStrings(
+                [label],
+                [airsim.Vector3r(label_point.x_val, label_point.y_val, label_point.z_val - 0.5)],
+                scale=0.8,
+                color_rgba=SENSING_VOLUME_COLOR,
+                duration=duration,
+            )
+
+
+def draw_obstacle_evidence(client: Any, snapshot: dict[str, Any] | None, args: argparse.Namespace) -> None:
+    if not args.show_obstacle_evidence:
+        return
+    evidence_items = obstacle_evidence_from_snapshot(snapshot, args.max_obstacle_evidence)
+    if args.dry_run:
+        for evidence in evidence_items:
+            print(
+                "  EVID state={state} shape={shape} pos={pos} conf={conf} src={src} in_sense={sense} in_sweep={sweep}".format(
+                    state=evidence.get("state", "unknown"),
+                    shape=evidence.get("shape", "unknown"),
+                    pos=evidence.get("center_local"),
+                    conf=evidence.get("confidence", 0.0),
+                    src=evidence.get("source_provider", "-"),
+                    sense=evidence.get("inside_sensing_volume", False),
+                    sweep=evidence.get("inside_swept_volume", False),
+                )
+            )
+        return
+    if client is None:
+        return
+    duration = marker_duration(args)
+    points_by_color: dict[tuple[float, float, float, float], list[airsim.Vector3r]] = {}
+    for evidence in evidence_items:
+        center = vec3(evidence.get("center_local"))
+        if center is None:
+            continue
+        point = airsim.Vector3r(center[0], center[1], center[2] - args.obstacle_evidence_z_lift_m)
+        color = tuple(obstacle_evidence_color(evidence))
+        points_by_color.setdefault(color, []).append(point)
+        if args.label and evidence.get("inside_swept_volume"):
+            label = f"EVID {evidence.get('state', 'unknown')} {evidence.get('source_provider', '-')}"
+            client.simPlotStrings([label], [airsim.Vector3r(point.x_val, point.y_val, point.z_val - 0.45)], scale=0.8, color_rgba=list(color), duration=duration)
+    for color, points in points_by_color.items():
+        size = args.obstacle_evidence_size * (1.6 if list(color) == EVIDENCE_BLOCKING_COLOR else 1.0)
+        client.simPlotPoints(points, color_rgba=list(color), size=size, duration=duration, is_persistent=args.persistent)
 
 
 def draw_swept_volume(client: Any, snapshot: dict[str, Any] | None, args: argparse.Namespace) -> None:
@@ -662,6 +857,35 @@ def format_osd_swept_volume_line(snapshot: dict[str, Any] | None) -> str | None:
     return f"status={short_text(status, 16)} ttc={ttc}s clear={clear}m r={radius} blockers={blockers}"
 
 
+def format_osd_obstacle_evidence_line(snapshot: dict[str, Any] | None) -> str | None:
+    if snapshot is None:
+        return None
+    evidence_items = [
+        item for item in snapshot.get("obstacle_evidence", [])
+        if isinstance(item, dict)
+    ]
+    if not evidence_items:
+        return None
+    counts = {"occupied": 0, "free": 0, "unknown": 0, "thin_structure_risk": 0}
+    in_sense = 0
+    in_sweep = 0
+    source = "-"
+    for item in evidence_items:
+        state = str(item.get("state", "unknown"))
+        counts[state] = counts.get(state, 0) + 1
+        if item.get("inside_sensing_volume"):
+            in_sense += 1
+        if item.get("inside_swept_volume"):
+            in_sweep += 1
+        if source == "-" and item.get("source_provider"):
+            source = str(item.get("source_provider"))
+    return (
+        f"src={short_text(source.replace('_', '-'), 18)} "
+        f"occ={counts.get('occupied', 0)} free={counts.get('free', 0)} unk={counts.get('unknown', 0)} "
+        f"thin={counts.get('thin_structure_risk', 0)} sense={in_sense} sweep={in_sweep}"
+    )
+
+
 def draw_ego_velocity_arrow(client: Any, stats: dict[str, Any], args: argparse.Namespace) -> None:
     if client is None or not args.osd_arrow:
         return
@@ -696,6 +920,7 @@ def maybe_draw_osd(client: Any, snapshot: dict[str, Any] | None, mission_event: 
         return
     occupancy_line = format_osd_occupancy_line(snapshot) if args.show_occupancy_summary else None
     swept_volume_line = format_osd_swept_volume_line(snapshot) if args.show_swept_volume else None
+    evidence_line = format_osd_obstacle_evidence_line(snapshot) if args.show_obstacle_evidence else None
     if args.dry_run:
         print(f"OSD {args.osd_name}: {format_osd_line(stats)}")
         print(f"OSD {args.osd_state_name}: {format_osd_state_line(stats, mission_event)}")
@@ -703,6 +928,8 @@ def maybe_draw_osd(client: Any, snapshot: dict[str, Any] | None, mission_event: 
             print(f"OSD {args.osd_occupancy_name}: {occupancy_line}")
         if swept_volume_line is not None:
             print(f"OSD {args.osd_swept_volume_name}: {swept_volume_line}")
+        if evidence_line is not None:
+            print(f"OSD {args.osd_evidence_name}: {evidence_line}")
         return
     if client is None:
         return
@@ -717,6 +944,8 @@ def maybe_draw_osd(client: Any, snapshot: dict[str, Any] | None, mission_event: 
             client.simPrintLogMessage(args.osd_occupancy_name, occupancy_line, severity=args.osd_severity)
         if swept_volume_line is not None:
             client.simPrintLogMessage(args.osd_swept_volume_name, swept_volume_line, severity=args.osd_severity)
+        if evidence_line is not None:
+            client.simPrintLogMessage(args.osd_evidence_name, evidence_line, severity=args.osd_severity)
     draw_ego_velocity_arrow(client, stats, args)
 
 
@@ -733,7 +962,7 @@ def build_debug_report(ghost_event: dict[str, Any] | None, ghost_seq: int | None
         world_position = vec3(world.get("position_local")) if world else None
         delta_plan_minus_world = vec_delta(planned_position, world_position)
         tracks.append({"source_track_id": track, "selected": bool(world.get("selected")) if world else False, "planned_position_local": planned_position, "world_position_local": world_position, "delta_plan_minus_world": delta_plan_minus_world, "delta_plan_minus_world_norm_m": vec_norm(delta_plan_minus_world), "world_minus_ego": vec_delta(world_position, ego_position)})
-    return {"ghost_seq": ghost_seq, "world_seq": snapshot_seq, "mission_seq": mission_seq, "selected_target": selected_target, "ghost_timestamp_ns": ghost_event.get("timestamp_ns") if ghost_event else None, "world_timestamp_ns": snapshot.get("timestamp_ns") if snapshot else None, "ghost_elapsed_s": ghost_event.get("scenario_elapsed_s") if ghost_event else None, "ego": {"position_local": ego_position, "height_m": ego.get("height_m"), "map_frame_id": ego.get("map_frame_id")}, "occupancy": occupancy_from_snapshot(snapshot), "swept_volume": swept_volume_from_snapshot(snapshot), "tracks": tracks}
+    return {"ghost_seq": ghost_seq, "world_seq": snapshot_seq, "mission_seq": mission_seq, "selected_target": selected_target, "ghost_timestamp_ns": ghost_event.get("timestamp_ns") if ghost_event else None, "world_timestamp_ns": snapshot.get("timestamp_ns") if snapshot else None, "ghost_elapsed_s": ghost_event.get("scenario_elapsed_s") if ghost_event else None, "ego": {"position_local": ego_position, "height_m": ego.get("height_m"), "map_frame_id": ego.get("map_frame_id")}, "occupancy": occupancy_from_snapshot(snapshot), "swept_volume": swept_volume_from_snapshot(snapshot), "obstacle_sensing_volumes": sensing_volumes_from_snapshot(snapshot, 8), "obstacle_evidence": obstacle_evidence_from_snapshot(snapshot, 128), "tracks": tracks}
 
 
 def maybe_print_debug_report(report: dict[str, Any], args: argparse.Namespace, state: dict[str, float]) -> None:
@@ -754,6 +983,13 @@ def maybe_print_debug_report(report: dict[str, Any], args: argparse.Namespace, s
     swept = report.get("swept_volume")
     if isinstance(swept, dict):
         print(f"  swept_volume status={swept.get('status')} ttc={swept.get('time_to_collision_s')} clear={swept.get('min_clearance_m')} blockers={len(swept.get('blocking_cell_centers', []) or [])}", file=sys.stderr)
+    sensing = report.get("obstacle_sensing_volumes", [])
+    evidence = report.get("obstacle_evidence", [])
+    if isinstance(sensing, list) or isinstance(evidence, list):
+        in_sweep = sum(1 for item in evidence if isinstance(item, dict) and item.get("inside_swept_volume"))
+        in_sense = sum(1 for item in evidence if isinstance(item, dict) and item.get("inside_sensing_volume"))
+        thin = sum(1 for item in evidence if isinstance(item, dict) and item.get("state") == "thin_structure_risk")
+        print(f"  track4 volumes={len(sensing) if isinstance(sensing, list) else 0} evidence={len(evidence) if isinstance(evidence, list) else 0} in_sense={in_sense} in_sweep={in_sweep} thin={thin}", file=sys.stderr)
     for track in report.get("tracks", []):
         print("  track={track} selected={selected} plan={plan} ag={ag} delta={delta} norm={norm} ag_minus_ego={rel}".format(track=track.get("source_track_id"), selected=track.get("selected"), plan=rounded(track.get("planned_position_local")), ag=rounded(track.get("world_position_local")), delta=rounded(track.get("delta_plan_minus_world")), norm=rounded(track.get("delta_plan_minus_world_norm_m")), rel=rounded(track.get("world_minus_ego"))), file=sys.stderr)
 
@@ -806,6 +1042,8 @@ def main() -> int:
         draw_agents(client, dynamic_planned, args)
         draw_agents(client, world_agents, args)
         draw_occupancy(client, stream.latest_world_snapshot, args)
+        draw_sensing_volumes(client, stream.latest_world_snapshot, args)
+        draw_obstacle_evidence(client, stream.latest_world_snapshot, args)
         draw_swept_volume(client, stream.latest_world_snapshot, args)
         draw_reference_markers(client, stream.latest_world_snapshot, args)
         maybe_draw_osd(client, stream.latest_world_snapshot, stream.latest_mission_event, args, osd_state)
