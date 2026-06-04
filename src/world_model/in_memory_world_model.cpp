@@ -11,6 +11,14 @@
 namespace dedalus {
 namespace {
 
+constexpr float kPi = 3.14159265358979323846F;
+constexpr float kDefaultSensingNearRangeM = 0.5F;
+constexpr float kDefaultSensingFarRangeM = 80.0F;
+constexpr float kDefaultReliableMinRangeM = 1.0F;
+constexpr float kDefaultReliableMaxRangeM = 60.0F;
+constexpr float kDefaultHorizontalFovRad = kPi * 0.5F;
+constexpr float kDefaultVerticalFovRad = kPi / 3.0F;
+
 EgoState mission_ready_ego(EgoState ego) {
     if (!ego.height_valid) {
         ego.height_m = -ego.local_T_body.position.z;
@@ -55,6 +63,10 @@ std::string track_suffix_or_fallback(const TrackId& track_id, std::size_t observ
 
 Vec2 bbox_center(const Rect2& bbox) {
     return Vec2{bbox.x + bbox.width * 0.5, bbox.y + bbox.height * 0.5};
+}
+
+float clamp01(float value) {
+    return std::max(0.0F, std::min(1.0F, value));
 }
 
 float distance_xy(const Vec3& a, const Vec3& b) {
@@ -126,6 +138,143 @@ Vec3 class_default_size(ClassLabel label) {
     }
 }
 
+ObstacleEvidenceState evidence_state_from_occupancy(OccupancyCellState state) {
+    switch (state) {
+        case OccupancyCellState::Free: return ObstacleEvidenceState::Free;
+        case OccupancyCellState::Occupied: return ObstacleEvidenceState::Occupied;
+        case OccupancyCellState::Unknown:
+        default: return ObstacleEvidenceState::Unknown;
+    }
+}
+
+ObstacleSensingVolume build_forward_sensing_volume(
+    const EgoState& ego,
+    TimePoint timestamp,
+    const MapFrameId& map_frame_id,
+    std::string provider_name) {
+    ObstacleSensingVolume volume;
+    volume.timestamp = timestamp;
+    volume.sensor_name = "front_center";
+    volume.provider_name = std::move(provider_name);
+    volume.map_frame_id = map_frame_id;
+    volume.origin_local = ego.local_T_body.position;
+    volume.forward_axis_local = Vec3{1.0, 0.0, 0.0};
+    volume.right_axis_local = Vec3{0.0, 1.0, 0.0};
+    volume.up_axis_local = Vec3{0.0, 0.0, -1.0};
+    volume.near_range_m = kDefaultSensingNearRangeM;
+    volume.far_range_m = kDefaultSensingFarRangeM;
+    volume.horizontal_fov_rad = kDefaultHorizontalFovRad;
+    volume.vertical_fov_rad = kDefaultVerticalFovRad;
+    volume.min_reliable_range_m = kDefaultReliableMinRangeM;
+    volume.max_reliable_range_m = kDefaultReliableMaxRangeM;
+    volume.min_surface_area_m2 = 0.25F;
+    volume.min_angular_size_rad = 0.01F;
+    volume.min_confidence = 0.30F;
+    return volume;
+}
+
+bool is_inside_sensing_volume(const Vec3& point, const ObstacleSensingVolume& volume, float* range_out, float* bearing_out, float* elevation_out) {
+    const float dx = static_cast<float>(point.x - volume.origin_local.x);
+    const float dy = static_cast<float>(point.y - volume.origin_local.y);
+    const float dz = static_cast<float>(point.z - volume.origin_local.z);
+    const float range = std::sqrt(dx * dx + dy * dy + dz * dz);
+    const float bearing = std::atan2(dy, dx);
+    const float elevation = std::atan2(-dz, std::sqrt(dx * dx + dy * dy));
+    if (range_out != nullptr) *range_out = range;
+    if (bearing_out != nullptr) *bearing_out = bearing;
+    if (elevation_out != nullptr) *elevation_out = elevation;
+    return range >= volume.near_range_m && range <= volume.far_range_m &&
+           std::fabs(bearing) <= volume.horizontal_fov_rad * 0.5F &&
+           std::fabs(elevation) <= volume.vertical_fov_rad * 0.5F;
+}
+
+bool intersects_swept_volume(const Vec3& point, const Vec3& size_m, const SweptVolumeDebug& swept) {
+    if (!swept.has_valid_query) {
+        return false;
+    }
+    const auto dx = static_cast<float>(point.x - swept.start_local.x);
+    const auto path_dx = static_cast<float>(swept.end_local.x - swept.start_local.x);
+    if (dx < 0.0F || dx > path_dx) {
+        return false;
+    }
+    const float lateral = swept_path_lateral_distance_m(point, swept.start_local, swept.end_local);
+    const float inflated_clearance = lateral - swept.radius_m - static_cast<float>(std::max(size_m.x, size_m.y)) * 0.5F;
+    return inflated_clearance <= 0.0F;
+}
+
+ObstacleEvidence evidence_from_cell(
+    const OccupancyCellSummary& cell,
+    const ObstacleSensingVolume& volume,
+    const SweptVolumeDebug& swept,
+    OccupancySourceKind source_kind,
+    TimePoint timestamp,
+    const MapFrameId& map_frame_id,
+    std::string provider_name) {
+    float range = 0.0F;
+    float bearing = 0.0F;
+    float elevation = 0.0F;
+    const bool inside_sensing = is_inside_sensing_volume(cell.center_local, volume, &range, &bearing, &elevation);
+    ObstacleEvidence evidence;
+    evidence.timestamp = timestamp;
+    evidence.sensor_name = volume.sensor_name;
+    evidence.source_provider = std::move(provider_name);
+    evidence.source_kind = source_kind;
+    evidence.map_frame_id = map_frame_id;
+    evidence.state = evidence_state_from_occupancy(cell.state);
+    evidence.shape = ObstacleEvidenceShape::Voxel;
+    evidence.center_local = cell.center_local;
+    evidence.size_m = cell.size_m;
+    evidence.radius_m = static_cast<float>(std::max({cell.size_m.x, cell.size_m.y, cell.size_m.z})) * 0.5F;
+    evidence.occupancy_probability = cell.state == OccupancyCellState::Occupied ? clamp01(cell.confidence) : 0.0F;
+    evidence.free_probability = cell.state == OccupancyCellState::Free ? clamp01(cell.confidence) : 0.0F;
+    evidence.confidence = clamp01(cell.confidence);
+    evidence.range_m = range;
+    evidence.bearing_rad = bearing;
+    evidence.elevation_rad = elevation;
+    evidence.inside_sensing_volume = inside_sensing;
+    evidence.inside_swept_volume = intersects_swept_volume(cell.center_local, cell.size_m, swept);
+    evidence.is_static_hint = true;
+    evidence.is_thin_structure_hint = false;
+    return evidence;
+}
+
+ObstacleEvidence evidence_from_observation(
+    const Observation3D& observation,
+    const ObstacleSensingVolume& volume,
+    const SweptVolumeDebug& swept,
+    TimePoint timestamp,
+    const MapFrameId& map_frame_id) {
+    const auto size = class_default_size(observation.class_label);
+    float range = 0.0F;
+    float bearing = 0.0F;
+    float elevation = 0.0F;
+    const bool inside_sensing = is_inside_sensing_volume(observation.position_local, volume, &range, &bearing, &elevation);
+    ObstacleEvidence evidence;
+    evidence.timestamp = timestamp;
+    evidence.source_frame_id = observation.source_frame_id;
+    evidence.has_source_frame = observation.has_source_frame;
+    evidence.sensor_name = volume.sensor_name;
+    evidence.source_provider = "airsim_gt_visual_emulation";
+    evidence.source_kind = OccupancySourceKind::AirSimGroundTruthVisualEmulation;
+    evidence.map_frame_id = map_frame_id;
+    evidence.state = ObstacleEvidenceState::Occupied;
+    evidence.shape = ObstacleEvidenceShape::Voxel;
+    evidence.center_local = observation.position_local;
+    evidence.size_m = size;
+    evidence.radius_m = static_cast<float>(std::max({size.x, size.y, size.z})) * 0.5F;
+    evidence.occupancy_probability = clamp01(observation.confidence);
+    evidence.free_probability = 0.0F;
+    evidence.confidence = clamp01(observation.confidence);
+    evidence.range_m = range;
+    evidence.bearing_rad = bearing;
+    evidence.elevation_rad = elevation;
+    evidence.inside_sensing_volume = inside_sensing;
+    evidence.inside_swept_volume = intersects_swept_volume(observation.position_local, size, swept);
+    evidence.is_static_hint = true;
+    evidence.is_thin_structure_hint = false;
+    return evidence;
+}
+
 EgoOccupancyMapSnapshot build_synthetic_ego_occupancy(
     const EgoState& ego,
     TimePoint timestamp,
@@ -190,7 +339,7 @@ EgoOccupancyMapSnapshot build_airsim_ground_truth_occupancy(
             observation.position_local,
             size,
             OccupancyCellState::Occupied,
-            std::max(0.0F, std::min(1.0F, observation.confidence)),
+            clamp01(observation.confidence),
             0.0F,
             "airsim_ground_truth_named_objects",
             observation.track_id.value));
@@ -267,6 +416,21 @@ void refresh_synthetic_track4_products(WorldSnapshot& snapshot) {
     snapshot.ego_occupancy = build_synthetic_ego_occupancy(snapshot.ego, snapshot.timestamp, snapshot.active_map_frame_id);
     snapshot.has_latest_swept_volume = true;
     snapshot.latest_swept_volume = build_swept_volume(snapshot.ego, snapshot.ego_occupancy, snapshot.timestamp, snapshot.active_map_frame_id);
+    snapshot.obstacle_sensing_volumes.clear();
+    snapshot.obstacle_evidence.clear();
+    snapshot.obstacle_sensing_volumes.push_back(build_forward_sensing_volume(
+        snapshot.ego, snapshot.timestamp, snapshot.active_map_frame_id, "synthetic_track4_fixture"));
+    const auto& volume = snapshot.obstacle_sensing_volumes.back();
+    for (const auto& cell : snapshot.ego_occupancy.debug_cells) {
+        snapshot.obstacle_evidence.push_back(evidence_from_cell(
+            cell,
+            volume,
+            snapshot.latest_swept_volume,
+            OccupancySourceKind::SyntheticFixture,
+            snapshot.timestamp,
+            snapshot.active_map_frame_id,
+            "synthetic_track4_fixture"));
+    }
 }
 
 void refresh_ground_truth_track4_products(WorldSnapshot& snapshot, const PerceptionPipelineOutput& output) {
@@ -274,6 +438,29 @@ void refresh_ground_truth_track4_products(WorldSnapshot& snapshot, const Percept
     snapshot.ego_occupancy = build_airsim_ground_truth_occupancy(snapshot.ego, output, snapshot.timestamp, snapshot.active_map_frame_id);
     snapshot.has_latest_swept_volume = true;
     snapshot.latest_swept_volume = build_swept_volume(snapshot.ego, snapshot.ego_occupancy, snapshot.timestamp, snapshot.active_map_frame_id);
+    snapshot.obstacle_sensing_volumes.clear();
+    snapshot.obstacle_evidence.clear();
+    auto volume = build_forward_sensing_volume(
+        snapshot.ego, snapshot.timestamp, snapshot.active_map_frame_id, "airsim_gt_visual_emulation");
+    for (const auto& observation : output.observations) {
+        if (observation.has_source_frame && !volume.has_source_frame) {
+            volume.source_frame_id = observation.source_frame_id;
+            volume.has_source_frame = true;
+        }
+    }
+    snapshot.obstacle_sensing_volumes.push_back(volume);
+    const auto& sensing_volume = snapshot.obstacle_sensing_volumes.back();
+    for (const auto& observation : output.observations) {
+        auto evidence = evidence_from_observation(
+            observation,
+            sensing_volume,
+            snapshot.latest_swept_volume,
+            snapshot.timestamp,
+            snapshot.active_map_frame_id);
+        if (evidence.inside_sensing_volume && evidence.confidence >= sensing_volume.min_confidence) {
+            snapshot.obstacle_evidence.push_back(evidence);
+        }
+    }
 }
 
 }  // namespace

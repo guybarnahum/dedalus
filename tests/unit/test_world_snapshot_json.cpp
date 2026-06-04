@@ -65,6 +65,55 @@ int main() {
     snapshot.latest_swept_volume.has_valid_query = true;
     snapshot.latest_swept_volume.blocking_cell_centers.push_back(dedalus::Vec3{6.0, 2.0, -8.0});
 
+    dedalus::ObstacleSensingVolume sensing_volume;
+    sensing_volume.timestamp = snapshot.timestamp;
+    sensing_volume.source_frame_id = dedalus::FrameId{"frame_0007"};
+    sensing_volume.has_source_frame = true;
+    sensing_volume.sensor_name = "front_center";
+    sensing_volume.provider_name = "airsim_gt_visual_emulation";
+    sensing_volume.map_frame_id = snapshot.active_map_frame_id;
+    sensing_volume.origin_local = dedalus::Vec3{1.0, 2.0, -8.0};
+    sensing_volume.forward_axis_local = dedalus::Vec3{1.0, 0.0, 0.0};
+    sensing_volume.right_axis_local = dedalus::Vec3{0.0, 1.0, 0.0};
+    sensing_volume.up_axis_local = dedalus::Vec3{0.0, 0.0, -1.0};
+    sensing_volume.near_range_m = 0.5F;
+    sensing_volume.far_range_m = 80.0F;
+    sensing_volume.horizontal_fov_rad = 1.5708F;
+    sensing_volume.vertical_fov_rad = 1.0472F;
+    sensing_volume.min_reliable_range_m = 1.0F;
+    sensing_volume.max_reliable_range_m = 60.0F;
+    sensing_volume.min_surface_area_m2 = 0.25F;
+    sensing_volume.min_angular_size_rad = 0.01F;
+    sensing_volume.min_confidence = 0.30F;
+    snapshot.obstacle_sensing_volumes.push_back(sensing_volume);
+
+    dedalus::ObstacleEvidence evidence;
+    evidence.timestamp = snapshot.timestamp;
+    evidence.source_frame_id = dedalus::FrameId{"frame_0007"};
+    evidence.has_source_frame = true;
+    evidence.sensor_name = "front_center";
+    evidence.source_provider = "airsim_gt_visual_emulation";
+    evidence.source_kind = dedalus::OccupancySourceKind::AirSimGroundTruthVisualEmulation;
+    evidence.map_frame_id = snapshot.active_map_frame_id;
+    evidence.state = dedalus::ObstacleEvidenceState::ThinStructureRisk;
+    evidence.shape = dedalus::ObstacleEvidenceShape::Capsule;
+    evidence.center_local = dedalus::Vec3{6.0, 2.0, -8.0};
+    evidence.size_m = dedalus::Vec3{1.0, 1.0, 1.0};
+    evidence.endpoint_a_local = dedalus::Vec3{6.0, 1.5, -8.0};
+    evidence.endpoint_b_local = dedalus::Vec3{6.0, 2.5, -8.0};
+    evidence.radius_m = 0.10F;
+    evidence.occupancy_probability = 0.90F;
+    evidence.free_probability = 0.05F;
+    evidence.confidence = 0.88F;
+    evidence.range_m = 5.0F;
+    evidence.bearing_rad = 0.0F;
+    evidence.elevation_rad = 0.0F;
+    evidence.inside_sensing_volume = true;
+    evidence.inside_swept_volume = true;
+    evidence.is_static_hint = true;
+    evidence.is_thin_structure_hint = true;
+    snapshot.obstacle_evidence.push_back(evidence);
+
     dedalus::AgentState agent;
     agent.agent_id = dedalus::AgentId{"agent_track_0007"};
     agent.identity_id = dedalus::IdentityId{"identity_track_0007"};
@@ -158,6 +207,61 @@ int main() {
     for (const auto& token : required_swept_tokens) {
         if (!contains(json, token)) {
             std::cerr << "missing serialized swept-volume token: " << token << "\n";
+            std::cerr << json << "\n";
+            return 1;
+        }
+    }
+
+    const std::string required_obstacle_sensing_tokens[] = {
+        "\"obstacle_sensing_volumes\"",
+        "\"sensor_name\": \"front_center\"",
+        "\"provider_name\": \"airsim_gt_visual_emulation\"",
+        "\"source_frame_id\": \"frame_0007\"",
+        "\"origin_local\": [1,2,-8]",
+        "\"forward_axis_local\": [1,0,0]",
+        "\"right_axis_local\": [0,1,0]",
+        "\"up_axis_local\": [0,0,-1]",
+        "\"near_range_m\": 0.5",
+        "\"far_range_m\": 80",
+        "\"horizontal_fov_rad\": 1.5708",
+        "\"vertical_fov_rad\": 1.0472",
+        "\"min_reliable_range_m\": 1",
+        "\"max_reliable_range_m\": 60",
+        "\"min_surface_area_m2\": 0.25",
+        "\"min_angular_size_rad\": 0.01",
+        "\"min_confidence\": 0.3"};
+
+    for (const auto& token : required_obstacle_sensing_tokens) {
+        if (!contains(json, token)) {
+            std::cerr << "missing serialized obstacle-sensing token: " << token << "\n";
+            std::cerr << json << "\n";
+            return 1;
+        }
+    }
+
+    const std::string required_obstacle_evidence_tokens[] = {
+        "\"obstacle_evidence\"",
+        "\"source_provider\": \"airsim_gt_visual_emulation\"",
+        "\"source_kind\": \"airsim_gt_visual_emulation\"",
+        "\"state\": \"thin_structure_risk\"",
+        "\"shape\": \"capsule\"",
+        "\"endpoint_a_local\": [6,1.5,-8]",
+        "\"endpoint_b_local\": [6,2.5,-8]",
+        "\"radius_m\": 0.1",
+        "\"occupancy_probability\": 0.9",
+        "\"free_probability\": 0.05",
+        "\"confidence\": 0.88",
+        "\"range_m\": 5",
+        "\"bearing_rad\": 0",
+        "\"elevation_rad\": 0",
+        "\"inside_sensing_volume\": true",
+        "\"inside_swept_volume\": true",
+        "\"is_static_hint\": true",
+        "\"is_thin_structure_hint\": true"};
+
+    for (const auto& token : required_obstacle_evidence_tokens) {
+        if (!contains(json, token)) {
+            std::cerr << "missing serialized obstacle-evidence token: " << token << "\n";
             std::cerr << json << "\n";
             return 1;
         }
