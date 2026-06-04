@@ -18,7 +18,7 @@ Current handoff state:
 2.28B.1 is complete: generated third-party dependencies are staged under third_party/ and validated from empty-state setup.
 2.28C is complete: camera/gimbal target-stare policy, runtime dispatch, hardware/simulation sinks, and one-command AirSim mission workflow are validated.
 2.29A-E are complete: multi-stage behavior sequence parsing/runtime, AirSim sequence configs, far-person SEL run, active step observability, canonical per-step yaw/camera mode validation, and mixed-mode yaw/camera validation are complete.
-2.30A-B are complete: slow moving far-animal SEL validation and moving-target stress matrix are validated. See docs/milestone_2_30a_slow_moving_sel_animal_validation.md and docs/milestone_2_30b_results.md.
+2.30A-B are complete: slow moving far-animal SEL validation and moving-target stress matrix are validated. See docs/selected_entity_slow_moving_animal_validation.md and docs/moving_target_behavior_validation_results.md.
 
 Active next work: choose the next bounded post-2.30B slice. Recommended options are native moving AirSim actor validation or validator hardening for expected target_velocity_mps / behavior_complete reason.
 
@@ -236,7 +236,7 @@ Behavior is robust to imperfect insertion geometry:
 
 For known static AirSim existing-object bindings, object_behavior_zero_target_velocity may be enabled so the controller does not velocity-match synthetic/static-object velocity noise. This zeroes target_velocity only; tangent velocity remains active.
 
-Moving-target validation through 2.30B shows the orbit law is not direction-specific across +X, +Y, and diagonal target-center motion. Medium, side-motion, and diagonal far-animal trajectories all completed sequence behavior with stable orbit radius and correct target velocity propagation. See `docs/milestone_2_30b_results.md`.
+Moving-target validation through 2.30B shows the orbit law is not direction-specific across +X, +Y, and diagonal target-center motion. Medium, side-motion, and diagonal far-animal trajectories all completed sequence behavior with stable orbit radius and correct target velocity propagation. See `docs/moving_target_behavior_validation_results.md`.
 ```
 
 Sequence behavior:
@@ -761,7 +761,7 @@ docs/world_model_reprojection_validation_plan.md reprojection and world-model ev
 docs/mission_pipeline_current_state.md      mission loop architecture
 docs/core_stack_current_state.md            broader core-stack status
 docs/llm_connector_patch_policy.md         connector/manual patch safety policy
-docs/milestone_2_30b_results.md            validated moving-target stress matrix evidence
+docs/moving_target_behavior_validation_results.md  validated moving-target stress matrix evidence
 WHITEPAPER.md                               architectural rationale
 HANDOFF.md                                  handoff prompt template
 LLM.back.md                                 historical context only

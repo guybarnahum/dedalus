@@ -97,7 +97,7 @@ multi-frame broom/sweep integration into voxels or occupancy cells
 Canonical Track 4.x plan:
 
 ```text
-docs/track_4_obstacle_avoidance_and_mapping_plan.md
+docs/classless_geometric_occupancy_and_avoidance_plan.md
 ```
 
 Track 4.x must preserve these boundaries:

@@ -1,6 +1,6 @@
 # Track 4.x — Visualization, Ground Truth, and 4.0A Implementation Plan
 
-This document records the Track 4.x implementation plan with world-model visualization in mind. It complements `docs/track_4_obstacle_avoidance_and_mapping_plan.md` and `docs/erodf_reflexive_avoidance_whitepaper.md`.
+This document records the implementation plan with world-model visualization in mind. It complements `docs/classless_geometric_occupancy_and_avoidance_plan.md` and `docs/reflexive_obstacle_avoidance_architecture.md`.
 
 Track 4.x is the classless geometric safety layer. It must remain independent of semantic object detection for collision safety, but it should support multiple selectable obstacle evidence sources for validation and comparison.
 

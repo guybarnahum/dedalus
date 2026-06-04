@@ -17,7 +17,7 @@ To generate a current handoff, read `LLM.md` and the current repo state, then fi
 5. Read `docs/mission_scenario_runner.md` for the scenario/campaign harness workflow.
 6. Read `docs/world_model_reprojection_validation_plan.md` before reprojection, annotation, or world-model evidence work.
 7. Read `WHITEPAPER.md` when architectural rationale is needed.
-8. Read `docs/milestone_2_30a_slow_moving_sel_animal_validation.md` and `docs/milestone_2_30b_results.md` when continuing moving-target/object-conditioned behavior work.
+8. Read `docs/selected_entity_slow_moving_animal_validation.md` and `docs/moving_target_behavior_validation_results.md` when continuing moving-target/object-conditioned behavior work.
 9. Read `LLM.back.md` only for historical context when needed; `LLM.md` is authoritative.
 10. Run `git log --oneline -1` to get the current commit SHA.
 11. Substitute all `<PLACEHOLDER>` values below with current state.
