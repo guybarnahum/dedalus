@@ -92,7 +92,7 @@ int main() {
     const std::string required_sidecar_tokens[] = {
         "\"occupancy\"",
         "\"source_kind\": \"synthetic_fixture\"",
-        "\"source_provider\": \"synthetic_track4_fixture\"",
+        "\"source_provider\": \"synthetic_obstacle_fixture\"",
         "\"occupied_count\": 1",
         "\"projected_cells\"",
         "\"state\": \"occupied\"",

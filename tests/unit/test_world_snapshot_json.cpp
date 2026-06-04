@@ -31,7 +31,7 @@ int main() {
     snapshot.ego_occupancy.timestamp = snapshot.timestamp;
     snapshot.ego_occupancy.map_frame_id = snapshot.active_map_frame_id;
     snapshot.ego_occupancy.source_kind = dedalus::OccupancySourceKind::SyntheticFixture;
-    snapshot.ego_occupancy.source_provider = "synthetic_track4_fixture";
+    snapshot.ego_occupancy.source_provider = "synthetic_obstacle_fixture";
     snapshot.ego_occupancy.resolution_m = 1.0F;
     snapshot.ego_occupancy.size_m = dedalus::Vec3{12.0, 8.0, 4.0};
     snapshot.ego_occupancy.occupied_count = 1U;
@@ -45,7 +45,7 @@ int main() {
     occupied_cell.size_m = dedalus::Vec3{1.0, 1.0, 1.0};
     occupied_cell.state = dedalus::OccupancyCellState::Occupied;
     occupied_cell.confidence = 0.85F;
-    occupied_cell.source_provider = "synthetic_track4_fixture";
+    occupied_cell.source_provider = "synthetic_obstacle_fixture";
     occupied_cell.source_object_name = "synthetic_forward_obstacle";
     snapshot.ego_occupancy.debug_cells.push_back(occupied_cell);
 
@@ -53,7 +53,7 @@ int main() {
     snapshot.latest_swept_volume.timestamp = snapshot.timestamp;
     snapshot.latest_swept_volume.map_frame_id = snapshot.active_map_frame_id;
     snapshot.latest_swept_volume.status = dedalus::SweptVolumeStatus::OccupiedBlocked;
-    snapshot.latest_swept_volume.source_provider = "synthetic_track4_swept_volume";
+    snapshot.latest_swept_volume.source_provider = "synthetic_obstacle_fixture_swept_volume";
     snapshot.latest_swept_volume.reason = "synthetic_occupied_cell_intersects_forward_swept_volume";
     snapshot.latest_swept_volume.start_local = dedalus::Vec3{1.0, 2.0, -8.0};
     snapshot.latest_swept_volume.end_local = dedalus::Vec3{9.0, 2.0, -8.0};
@@ -167,7 +167,7 @@ int main() {
     const std::string required_occupancy_tokens[] = {
         "\"ego_occupancy\"",
         "\"source_kind\": \"synthetic_fixture\"",
-        "\"source_provider\": \"synthetic_track4_fixture\"",
+        "\"source_provider\": \"synthetic_obstacle_fixture\"",
         "\"resolution_m\": 1",
         "\"size_m\": [12,8,4]",
         "\"occupied_count\": 1",
@@ -192,7 +192,7 @@ int main() {
     const std::string required_swept_tokens[] = {
         "\"latest_swept_volume\"",
         "\"status\": \"occupied_blocked\"",
-        "\"source_provider\": \"synthetic_track4_swept_volume\"",
+        "\"source_provider\": \"synthetic_obstacle_fixture_swept_volume\"",
         "\"reason\": \"synthetic_occupied_cell_intersects_forward_swept_volume\"",
         "\"start_local\": [1,2,-8]",
         "\"end_local\": [9,2,-8]",

@@ -283,7 +283,7 @@ EgoOccupancyMapSnapshot build_synthetic_ego_occupancy(
     occupancy.map_frame_id = map_frame_id;
     occupancy.timestamp = timestamp;
     occupancy.source_kind = OccupancySourceKind::SyntheticFixture;
-    occupancy.source_provider = "synthetic_track4_fixture";
+    occupancy.source_provider = "synthetic_obstacle_fixture";
     occupancy.resolution_m = 1.0F;
     occupancy.size_m = Vec3{12.0, 8.0, 4.0};
     occupancy.has_valid_occupancy = true;
@@ -292,13 +292,13 @@ EgoOccupancyMapSnapshot build_synthetic_ego_occupancy(
     const Vec3 cell_size{1.0, 1.0, 1.0};
     occupancy.debug_cells.push_back(occupancy_cell(
         Vec3{p.x + 5.0, p.y, p.z}, cell_size, OccupancyCellState::Occupied, 0.85F, 0.0F,
-        "synthetic_track4_fixture", "synthetic_forward_obstacle"));
+        "synthetic_obstacle_fixture", "synthetic_forward_obstacle"));
     occupancy.debug_cells.push_back(occupancy_cell(
         Vec3{p.x + 3.0, p.y + 2.0, p.z}, cell_size, OccupancyCellState::Free, 0.70F, 2.8F,
-        "synthetic_track4_fixture"));
+        "synthetic_obstacle_fixture"));
     occupancy.debug_cells.push_back(occupancy_cell(
         Vec3{p.x + 7.0, p.y - 2.5, p.z}, Vec3{2.0, 2.0, 1.5}, OccupancyCellState::Unknown, 0.55F, 2.5F,
-        "synthetic_track4_fixture", "synthetic_unknown_sector"));
+        "synthetic_obstacle_fixture", "synthetic_unknown_sector"));
     occupancy.occupied_count = 1U;
     occupancy.free_count = 1U;
     occupancy.unknown_count = 1U;
@@ -411,7 +411,7 @@ SweptVolumeDebug build_swept_volume(
     return swept;
 }
 
-void refresh_synthetic_track4_products(WorldSnapshot& snapshot) {
+void refresh_synthetic_obstacle_products(WorldSnapshot& snapshot) {
     snapshot.has_ego_occupancy = true;
     snapshot.ego_occupancy = build_synthetic_ego_occupancy(snapshot.ego, snapshot.timestamp, snapshot.active_map_frame_id);
     snapshot.has_latest_swept_volume = true;
@@ -419,7 +419,7 @@ void refresh_synthetic_track4_products(WorldSnapshot& snapshot) {
     snapshot.obstacle_sensing_volumes.clear();
     snapshot.obstacle_evidence.clear();
     snapshot.obstacle_sensing_volumes.push_back(build_forward_sensing_volume(
-        snapshot.ego, snapshot.timestamp, snapshot.active_map_frame_id, "synthetic_track4_fixture"));
+        snapshot.ego, snapshot.timestamp, snapshot.active_map_frame_id, "synthetic_obstacle_fixture"));
     const auto& volume = snapshot.obstacle_sensing_volumes.back();
     for (const auto& cell : snapshot.ego_occupancy.debug_cells) {
         snapshot.obstacle_evidence.push_back(evidence_from_cell(
@@ -429,11 +429,11 @@ void refresh_synthetic_track4_products(WorldSnapshot& snapshot) {
             OccupancySourceKind::SyntheticFixture,
             snapshot.timestamp,
             snapshot.active_map_frame_id,
-            "synthetic_track4_fixture"));
+            "synthetic_obstacle_fixture"));
     }
 }
 
-void refresh_ground_truth_track4_products(WorldSnapshot& snapshot, const PerceptionPipelineOutput& output) {
+void refresh_ground_truth_obstacle_products(WorldSnapshot& snapshot, const PerceptionPipelineOutput& output) {
     snapshot.has_ego_occupancy = true;
     snapshot.ego_occupancy = build_airsim_ground_truth_occupancy(snapshot.ego, output, snapshot.timestamp, snapshot.active_map_frame_id);
     snapshot.has_latest_swept_volume = true;
@@ -478,7 +478,7 @@ InMemoryWorldModel::InMemoryWorldModel(InMemoryWorldModelConfig config)
     snapshot_.ego.height_m = 0.0;
     snapshot_.ego.height_valid = true;
     snapshot_.ego.flight_status = EgoFlightStatus::Landed;
-    refresh_synthetic_track4_products(snapshot_);
+    refresh_synthetic_obstacle_products(snapshot_);
 
     MapFrame frame;
     frame.map_frame_id = config_.map_frame_id;
@@ -504,7 +504,7 @@ void InMemoryWorldModel::update_ego(const EgoState& ego) {
     snapshot_.ego = updated_ego;
     snapshot_.active_map_frame_id = updated_ego.map_frame_id;
     if (config_.occupancy_source_kind == OccupancySourceKind::SyntheticFixture) {
-        refresh_synthetic_track4_products(snapshot_);
+        refresh_synthetic_obstacle_products(snapshot_);
     }
     if (!snapshot_.map_frames.empty()) {
         snapshot_.map_frames.front().map_frame_id = updated_ego.map_frame_id;
@@ -563,9 +563,9 @@ void InMemoryWorldModel::ingest(const PerceptionPipelineOutput& perception_outpu
     snapshot_.flight_corridors = flight_map_update.flight_corridors;
     snapshot_.landmarks = flight_map_update.landmarks;
     if (config_.occupancy_source_kind == OccupancySourceKind::AirSimGroundTruth) {
-        refresh_ground_truth_track4_products(snapshot_, perception_output);
+        refresh_ground_truth_obstacle_products(snapshot_, perception_output);
     } else {
-        refresh_synthetic_track4_products(snapshot_);
+        refresh_synthetic_obstacle_products(snapshot_);
     }
 
     snapshot_.containers.clear();
