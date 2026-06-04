@@ -39,9 +39,20 @@ BINARY_SUFFIXES = {
     ".gz",
 }
 
+FORBIDDEN_EXAMPLE_LINES = {
+    "track4",
+    "milestone_XXX",
+    "phase_YYY",
+    "latest_run",
+    "mission_YYYY",
+    "foo.json",
+    "temp.json",
+    "ad-hoc simulation/artifacts/mission_* unless that is the actual architectural path produced by the repo",
+}
+
 # Planning labels that should not be used as durable repo artifact names or
-# operator-facing labels.  Existing historical prose may use milestones for
-# chronology, so this checker is best used on changed files or focused roots.
+# operator-facing labels. Historical milestone prose is outside this check; this
+# checker guards durable artifact names and operator-facing debug labels.
 PLANNING_LABEL_PATTERNS = (
     re.compile(r"\bvalidate-track\d+[-_]", re.IGNORECASE),
     re.compile(r"\btrack\d+\s+volumes=", re.IGNORECASE),
@@ -51,7 +62,7 @@ PLANNING_LABEL_PATTERNS = (
 )
 
 ALLOWLIST_PATTERNS = (
-    # Documentation can explicitly describe examples of forbidden names.
+    # Documentation can explicitly describe the convention and forbidden examples.
     re.compile(r"Avoid names based on planning labels", re.IGNORECASE),
     re.compile(r"planning labels such as", re.IGNORECASE),
     re.compile(r"do not name .* planning labels", re.IGNORECASE),
@@ -81,6 +92,9 @@ def should_skip(path: pathlib.Path) -> bool:
 
 
 def is_allowlisted(line: str) -> bool:
+    stripped = line.strip()
+    if stripped in FORBIDDEN_EXAMPLE_LINES:
+        return True
     return any(pattern.search(line) for pattern in ALLOWLIST_PATTERNS)
 
 
