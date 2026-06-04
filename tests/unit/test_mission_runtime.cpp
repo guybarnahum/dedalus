@@ -1,3 +1,4 @@
+#include <cmath>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
@@ -8,6 +9,7 @@
 
 #include "dedalus/behavior/latest_world_snapshot.hpp"
 #include "dedalus/behavior/mission_runtime.hpp"
+#include "dedalus/runtime/camera_pointing_state_store.hpp"
 #include "dedalus/runtime/core_stack_runner.hpp"
 #include "dedalus/runtime/provider_registry.hpp"
 #include "dedalus/world_model/world_snapshot_subscribers.hpp"
@@ -35,6 +37,27 @@ public:
     std::optional<dedalus::FlightCommandResult> last_result;
 };
 
+class CameraPointingController final : public dedalus::MissionController {
+public:
+    dedalus::MissionTickOutput tick(const dedalus::MissionTickInput& input) override {
+        ++ticks;
+        dedalus::MissionTickOutput output;
+        output.state = dedalus::MissionLifecycleState::ExecuteMission;
+        output.status = "camera_pointing";
+        dedalus::CameraPointingCommand command;
+        command.timestamp = input.now;
+        command.cameras = {"front_center", "0"};
+        command.mode = "target";
+        command.pitch_rad = 0.42;
+        command.pitch_valid = true;
+        command.source_track_id = "ghost_person_001";
+        output.camera_pointing = command;
+        return output;
+    }
+
+    int ticks{0};
+};
+
 class RecordingSink final : public dedalus::FlightCommandSink {
 public:
     dedalus::FlightCommandResult send(const dedalus::VelocityCommand& command) override {
@@ -43,6 +66,16 @@ public:
     }
 
     std::vector<dedalus::VelocityCommand> commands;
+};
+
+class RecordingCameraPointingSink final : public dedalus::CameraPointingSink {
+public:
+    dedalus::CameraPointingResult send(const dedalus::CameraPointingCommand& command) override {
+        commands.push_back(command);
+        return dedalus::CameraPointingResult{true, "OK camera sink"};
+    }
+
+    std::vector<dedalus::CameraPointingCommand> commands;
 };
 
 class RecordingMissionEventSubscriber final : public dedalus::MissionEventSubscriber {
@@ -71,6 +104,10 @@ bool any_event_contains(const std::vector<std::string>& events, const std::strin
         }
     }
     return false;
+}
+
+bool near(double lhs, double rhs) {
+    return std::abs(lhs - rhs) <= 1.0e-9;
 }
 
 }  // namespace
@@ -119,8 +156,10 @@ int main() {
     auto mission_event_subscriber = std::make_shared<RecordingMissionEventSubscriber>();
     mission_event_publisher->subscribe(mission_event_subscriber);
     const auto event_log_path = std::filesystem::temp_directory_path() / "dedalus_mission_runtime_events_test.jsonl";
+    const auto camera_event_log_path = std::filesystem::temp_directory_path() / "dedalus_mission_runtime_camera_events_test.jsonl";
     const auto lifecycle_log_path = std::filesystem::temp_directory_path() / "dedalus_mission_runtime_lifecycle_test.jsonl";
     std::filesystem::remove(event_log_path);
+    std::filesystem::remove(camera_event_log_path);
     std::filesystem::remove(lifecycle_log_path);
 
     {
@@ -166,6 +205,53 @@ int main() {
         }
     }
 
+    auto camera_controller = std::make_unique<CameraPointingController>();
+    auto* camera_controller_ptr = camera_controller.get();
+    auto flight_sink = std::make_unique<RecordingSink>();
+    auto camera_sink = std::make_unique<RecordingCameraPointingSink>();
+    auto* camera_sink_ptr = camera_sink.get();
+    dedalus::CameraPointingStateStore pointing_state_store;
+    {
+        dedalus::MissionRuntime runtime{
+            dedalus::MissionRuntimeConfig{
+                .tick_hz = 10.0,
+                .verbosity = 0,
+                .event_log_path = camera_event_log_path.string()},
+            latest_snapshot,
+            std::move(camera_controller),
+            std::move(flight_sink),
+            nullptr,
+            std::move(camera_sink),
+            [&](const dedalus::CameraPointingCommand& command) {
+                pointing_state_store.apply(command);
+                runner.update_camera_pointing_states(pointing_state_store.states());
+            }};
+
+        if (!runtime.tick_once()) {
+            std::cerr << "MissionRuntime did not tick camera-pointing controller\n";
+            return 1;
+        }
+        if (camera_controller_ptr->ticks != 1) {
+            std::cerr << "MissionRuntime did not tick camera-pointing controller exactly once\n";
+            return 1;
+        }
+        if (camera_sink_ptr->commands.size() != 1U) {
+            std::cerr << "MissionRuntime did not send camera pointing command to sink\n";
+            return 1;
+        }
+    }
+
+    const auto front_state = pointing_state_store.state_for_camera_name("front_center");
+    const auto numeric_state = pointing_state_store.state_for_camera(dedalus::CameraId{"0"});
+    if (!front_state.has_value() || !numeric_state.has_value()) {
+        std::cerr << "MissionRuntime camera pointing handoff did not populate store for all cameras\n";
+        return 1;
+    }
+    if (!front_state->valid || front_state->source != "camera_pointing_intent" || !near(front_state->pitch_rad, 0.42)) {
+        std::cerr << "MissionRuntime camera pointing handoff did not preserve front camera state\n";
+        return 1;
+    }
+
     if (!file_contains(event_log_path, "\"event\":\"command_dispatch\"")) {
         std::cerr << "MissionRuntime event log missing command_dispatch\n";
         return 1;
@@ -176,6 +262,14 @@ int main() {
     }
     if (!file_contains(event_log_path, "\"event\":\"runtime_stop\"")) {
         std::cerr << "MissionRuntime event log missing runtime_stop\n";
+        return 1;
+    }
+    if (!file_contains(camera_event_log_path, "\"event\":\"camera_pointing_dispatch\"")) {
+        std::cerr << "MissionRuntime camera event log missing camera_pointing_dispatch\n";
+        return 1;
+    }
+    if (!file_contains(camera_event_log_path, "\"event\":\"camera_pointing_result\"")) {
+        std::cerr << "MissionRuntime camera event log missing camera_pointing_result\n";
         return 1;
     }
     if (!any_event_contains(mission_event_subscriber->events, "\"event\":\"command_dispatch\"")) {
@@ -192,6 +286,7 @@ int main() {
     }
 
     std::filesystem::remove(event_log_path);
+    std::filesystem::remove(camera_event_log_path);
     std::filesystem::remove(lifecycle_log_path);
     return 0;
 }
