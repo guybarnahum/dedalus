@@ -12,7 +12,7 @@ std::optional<FramePacket> SyntheticFrameSource::next_frame() {
     FramePacket frame;
     frame.frame_id = FrameId{"frame_0001"};
     frame.timestamp = TimePoint{123456789};
-    frame.camera_id = CameraId{"synthetic_front_center"};
+    frame.camera_id = CameraId{"front_center"};
     frame.image.width = 640;
     frame.image.height = 480;
     frame.image.channels = 3;

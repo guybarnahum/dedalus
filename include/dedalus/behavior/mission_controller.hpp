@@ -6,6 +6,7 @@
 #include <vector>
 
 #include "dedalus/core/types.hpp"
+#include "dedalus/sensing/sensing_coverage.hpp"
 #include "dedalus/world_model/world_snapshot.hpp"
 
 namespace dedalus {
@@ -62,6 +63,9 @@ struct MissionOptions {
     std::uint32_t camera_pointing_mavlink_flags{0};
     double camera_pointing_deadband_rad{0.004363323129985824};
     double camera_pointing_resend_s{0.25};
+
+    // ── obstacle sensing coverage ─────────────────────────────────────────────
+    std::vector<CameraSensingConfig> obstacle_sensing_cameras;
 
     // ── flight lifecycle ──────────────────────────────────────────────────────
     double safe_height_m{8.0};                // takeoff/transit altitude floor
@@ -259,6 +263,7 @@ struct MissionTickOutput {
     std::optional<CameraPointingCommand> camera_pointing;
     std::string status;
     std::vector<ControllerEvent> events;
+    bool finished{false};
 };
 
 class MissionController {

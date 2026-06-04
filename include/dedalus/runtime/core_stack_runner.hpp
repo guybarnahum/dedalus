@@ -7,6 +7,7 @@
 #include "dedalus/perception/ghost_targets.hpp"
 #include "dedalus/runtime/pipeline_profiler.hpp"
 #include "dedalus/runtime/provider_registry.hpp"
+#include "dedalus/sensing/sensing_coverage.hpp"
 #include "dedalus/world_model/world_snapshot.hpp"
 #include "dedalus/world_model/world_snapshot_publisher.hpp"
 
@@ -31,6 +32,8 @@ public:
     CoreStackRunner(CoreStackRunner&&) = delete;
     CoreStackRunner& operator=(CoreStackRunner&&) = delete;
 
+    void update_camera_pointing_states(std::vector<CameraPointingState> states);
+
     [[nodiscard]] bool run_once();
     [[nodiscard]] WorldSnapshot snapshot() const;
 
@@ -40,6 +43,8 @@ private:
     std::shared_ptr<WorldSnapshotPublisher> snapshot_publisher_;
     std::shared_ptr<GhostDetectionsPublisher> ghost_detections_publisher_;
     std::vector<std::shared_ptr<WorldSnapshotSubscriber>> snapshot_subscriber_handles_;
+    SensingCoverageProvider sensing_coverage_provider_;
+    std::vector<CameraPointingState> camera_pointing_states_;
     std::optional<TimePoint> ghost_scenario_start_;
 };
 

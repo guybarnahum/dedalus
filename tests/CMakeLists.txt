@@ -218,6 +218,27 @@ set_tests_properties("perception_world_model_flow (unit)"
 )
 
 dedalus_add_native_test(
+    NAME visual_emulation_obstacle_evidence
+    LAYER unit
+    TAGS world_model validation
+    SOURCES unit/test_visual_emulation_obstacle_evidence.cpp
+)
+
+dedalus_add_native_test(
+    NAME sensing_coverage
+    LAYER unit
+    TAGS sensing geometry validation
+    SOURCES unit/test_sensing_coverage.cpp
+)
+
+dedalus_add_native_test(
+    NAME camera_pointing_state_store
+    LAYER unit
+    TAGS sensing runtime validation
+    SOURCES unit/test_camera_pointing_state_store.cpp
+)
+
+dedalus_add_native_test(
     NAME video_only_world_model_flow
     LAYER unit
     TAGS synthetic

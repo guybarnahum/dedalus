@@ -7,6 +7,7 @@
 #include "dedalus/behavior/mission_controller.hpp"
 #include "dedalus/perception/ghost_targets.hpp"
 #include "dedalus/perception/perception_pipeline.hpp"
+#include "dedalus/sensing/sensing_coverage.hpp"
 #include "dedalus/sensors/ego_state_provider.hpp"
 #include "dedalus/sensors/frame_source.hpp"
 #include "dedalus/visualization/frame_annotator.hpp"
@@ -65,6 +66,7 @@ struct CoreStackProviders {
     std::unique_ptr<GhostTargetProvider> ghost_targets;
     std::unique_ptr<InMemoryWorldModel> world_model;
     std::unique_ptr<FrameAnnotationSink> frame_annotator;
+    std::vector<CameraSensingConfig> obstacle_sensing_cameras;
 };
 
 class ProviderRegistry {

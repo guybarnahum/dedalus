@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <chrono>
 #include <utility>
+#include <vector>
 
 namespace dedalus {
 namespace {
@@ -17,6 +18,15 @@ std::int64_t duration_between_us(const SteadyClock::time_point start, const Stea
     return std::chrono::duration_cast<std::chrono::microseconds>(end - start).count();
 }
 
+std::vector<ObstacleSensingVolume> obstacle_sensing_volumes_from(const SensingCoverageSnapshot& coverage) {
+    std::vector<ObstacleSensingVolume> volumes;
+    volumes.reserve(coverage.camera_volumes.size());
+    for (const auto& camera_volume : coverage.camera_volumes) {
+        volumes.push_back(to_obstacle_sensing_volume(camera_volume));
+    }
+    return volumes;
+}
+
 }  // namespace
 
 CoreStackRunner::CoreStackRunner(CoreStackProviders providers, CoreStackRunnerConfig config)
@@ -24,7 +34,8 @@ CoreStackRunner::CoreStackRunner(CoreStackProviders providers, CoreStackRunnerCo
       timing_writer_(std::move(config.timing_writer)),
       snapshot_publisher_(std::move(config.snapshot_publisher)),
       ghost_detections_publisher_(std::move(config.ghost_detections_publisher)),
-      snapshot_subscriber_handles_(std::move(config.snapshot_subscribers)) {
+      snapshot_subscriber_handles_(std::move(config.snapshot_subscribers)),
+      sensing_coverage_provider_(providers_.obstacle_sensing_cameras) {
     if (!snapshot_subscriber_handles_.empty()) {
         if (!snapshot_publisher_) {
             snapshot_publisher_ = std::make_shared<WorldSnapshotPublisher>();
@@ -36,6 +47,10 @@ CoreStackRunner::CoreStackRunner(CoreStackProviders providers, CoreStackRunnerCo
 }
 
 CoreStackRunner::~CoreStackRunner() = default;
+
+void CoreStackRunner::update_camera_pointing_states(std::vector<CameraPointingState> states) {
+    camera_pointing_states_ = std::move(states);
+}
 
 bool CoreStackRunner::run_once() {
     const auto run_once_start = SteadyClock::now();
@@ -77,6 +92,16 @@ bool CoreStackRunner::run_once() {
             timing_writer_->end_frame();
         }
         return false;
+    }
+
+    std::vector<ObstacleSensingVolume> current_sensing_volumes;
+    if (!providers_.obstacle_sensing_cameras.empty()) {
+        start = SteadyClock::now();
+        const auto coverage = sensing_coverage_provider_.snapshot({*frame}, *ego_estimate.ego, camera_pointing_states_);
+        current_sensing_volumes = obstacle_sensing_volumes_from(coverage);
+        if (timing_writer_) {
+            timing_writer_->record_stage("sensing_coverage.snapshot", duration_us(start));
+        }
     }
 
     start = SteadyClock::now();
@@ -146,6 +171,14 @@ bool CoreStackRunner::run_once() {
     providers_.world_model->ingest(perception_output);
     if (timing_writer_) {
         timing_writer_->record_stage("world_model.ingest", duration_us(start));
+    }
+
+    if (!current_sensing_volumes.empty()) {
+        start = SteadyClock::now();
+        providers_.world_model->update_obstacle_sensing_volumes(std::move(current_sensing_volumes));
+        if (timing_writer_) {
+            timing_writer_->record_stage("world_model.update_obstacle_sensing_volumes", duration_us(start));
+        }
     }
 
     start = SteadyClock::now();

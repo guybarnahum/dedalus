@@ -1,5 +1,8 @@
 #pragma once
 
+#include <utility>
+#include <vector>
+
 #include "dedalus/perception/perception_pipeline.hpp"
 #include "dedalus/world_model/effective_world_view.hpp"
 #include "dedalus/world_model/rough_flight_map_builder.hpp"
@@ -20,6 +23,10 @@ public:
 
     void update_ego(const EgoState& ego);
     void update_appearance(const AppearanceCondition& appearance_condition);
+    void update_obstacle_sensing_volumes(std::vector<ObstacleSensingVolume> volumes) {
+        configured_obstacle_sensing_volumes_ = std::move(volumes);
+        snapshot_.obstacle_sensing_volumes = configured_obstacle_sensing_volumes_;
+    }
     void ingest(const PerceptionPipelineOutput& perception_output);
 
     WorldSnapshot snapshot() const;
@@ -28,6 +35,7 @@ public:
 private:
     InMemoryWorldModelConfig config_;
     WorldSnapshot snapshot_;
+    std::vector<ObstacleSensingVolume> configured_obstacle_sensing_volumes_;
     ConeExclusionMapper cone_exclusion_mapper_;
     RoughFlightMapBuilder rough_flight_map_builder_;
 };
