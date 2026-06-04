@@ -7,10 +7,10 @@
 
 namespace {
 
-constexpr double kPi = 3.14159265358979323846;
-
-bool near(double lhs, double rhs, double tolerance = 1.0e-9) {
-    return std::abs(lhs - rhs) <= tolerance;
+bool near(double lhs, double rhs) {
+    return std::abs(lhs - rhs) < 1.0e-9;
 }
 
-dedalus::ObstacleS
+dedalus::ObstacleSensingVolume explicit_front_coverage(
+    dedalus::TimePoint timestamp,
+    const dedalus::MapFrameId&
