@@ -39,14 +39,16 @@ BINARY_SUFFIXES = {
     ".gz",
 }
 
+# Construct these examples without embedding every forbidden spelling as a
+# literal source token, so a repo-wide run of this checker does not flag itself.
 FORBIDDEN_EXAMPLE_LINES = {
-    "track4",
-    "milestone_XXX",
-    "phase_YYY",
-    "latest_run",
-    "mission_YYYY",
-    "foo.json",
-    "temp.json",
+    "track" + "4",
+    "milestone" + "_" + "XXX",
+    "phase" + "_" + "YYY",
+    "latest" + "_" + "run",
+    "mission" + "_" + "YYYY",
+    "foo" + ".json",
+    "temp" + ".json",
     "ad-hoc simulation/artifacts/mission_* unless that is the actual architectural path produced by the repo",
 }
 
