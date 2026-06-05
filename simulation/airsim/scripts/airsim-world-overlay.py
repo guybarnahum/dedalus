@@ -8,7 +8,7 @@ stream; this script renders whatever arrives.
 
 Consumed event types today:
   ghost_detections -> PLAN / PLAN* markers
-  world_snapshot   -> AG, EGO, optional OCC wireframes, SWEEP, SENSE, and EVID markers
+  world_snapshot   -> AG, EGO, optional OCC wireframes, SWEEP, SENSE, and volumetric EVID markers
   mission_event    -> SEL marker state from target_selected events
 """
 
@@ -215,6 +215,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--show-obstacle-evidence", action="store_true")
     parser.add_argument("--max-obstacle-evidence", type=int, default=96)
     parser.add_argument("--obstacle-evidence-z-lift-m", type=float, default=0.35)
+    parser.add_argument("--obstacle-evidence-line-thickness", type=float, default=3.0)
     parser.add_argument("--obstacle-evidence-size", type=float, default=12.0)
     return parser.parse_args()
 
@@ -347,6 +348,7 @@ def obstacle_evidence_from_snapshot(snapshot: dict[str, Any] | None, max_evidenc
     evidence = [
         item for item in snapshot.get("obstacle_evidence", [])
         if isinstance(item, dict) and vec3(item.get("center_local")) is not None
+        and item.get("inside_sensing_volume") is True
     ]
     state_rank = {"thin_structure_risk": 0, "occupied": 1, "unknown": 2, "free": 3}
     evidence.sort(key=lambda item: (
@@ -460,12 +462,8 @@ def connect_airsim(args: argparse.Namespace) -> Any | None:
             time.sleep(1.0 / max(args.rate_hz, 0.1))
 
 
-def occupancy_cell_wireframe_segments(cell: dict[str, Any], z_lift_m: float) -> list[airsim.Vector3r]:
-    center = vec3(cell.get("center_local"))
-    if center is None:
-        return []
-    size = vec3(cell.get("size_m")) or [1.0, 1.0, 1.0]
-    half = [max(0.05, abs(component) * 0.5) for component in size]
+def box_wireframe_segments(center: list[float], size_m: list[float], z_lift_m: float) -> list[airsim.Vector3r]:
+    half = [max(0.05, abs(component) * 0.5) for component in size_m]
     corners: list[airsim.Vector3r] = []
     for dz in (-half[2], half[2]):
         for dy in (-half[1], half[1]):
@@ -480,6 +478,40 @@ def occupancy_cell_wireframe_segments(cell: dict[str, Any], z_lift_m: float) -> 
     for start, end in edge_indices:
         segments.extend([corners[start], corners[end]])
     return segments
+
+
+def obstacle_evidence_size_m(evidence: dict[str, Any]) -> list[float]:
+    size = vec3(evidence.get("size_m"))
+    if size is not None:
+        return [max(0.15, abs(component)) for component in size]
+
+    extent = vec3(evidence.get("extent_m"))
+    if extent is not None:
+        return [max(0.15, abs(component)) for component in extent]
+
+    try:
+        radius = max(0.15, float(evidence.get("radius_m", 0.0)))
+        if radius > 0.15:
+            diameter = 2.0 * radius
+            return [diameter, diameter, diameter]
+    except (TypeError, ValueError):
+        pass
+
+    # Default visual detector evidence footprint. This is intentionally
+    # volumetric, not a text label or point marker, so GT visual-emulation,
+    # depth, stereo, and learned visual detectors share one overlay contract.
+    state = str(evidence.get("state", "unknown"))
+    if state == "thin_structure_risk":
+        return [0.25, 0.25, 2.0]
+    return [0.75, 0.75, 0.75]
+
+
+def occupancy_cell_wireframe_segments(cell: dict[str, Any], z_lift_m: float) -> list[airsim.Vector3r]:
+    center = vec3(cell.get("center_local"))
+    if center is None:
+        return []
+    size = vec3(cell.get("size_m")) or [1.0, 1.0, 1.0]
+    return box_wireframe_segments(center, size, z_lift_m)
 
 
 def draw_agents(client: Any, agents: list[dict[str, Any]], args: argparse.Namespace, static_once: bool = False) -> None:
@@ -647,20 +679,18 @@ def draw_obstacle_evidence(client: Any, snapshot: dict[str, Any] | None, args: a
     if client is None:
         return
     duration = marker_duration(args)
-    points_by_color: dict[tuple[float, float, float, float], list[airsim.Vector3r]] = {}
     for evidence in evidence_items:
         center = vec3(evidence.get("center_local"))
         if center is None:
             continue
-        point = airsim.Vector3r(center[0], center[1], center[2] - args.obstacle_evidence_z_lift_m)
         color = tuple(obstacle_evidence_color(evidence))
-        points_by_color.setdefault(color, []).append(point)
-        if args.label and evidence.get("inside_swept_volume"):
-            label = f"EVID {evidence.get('state', 'unknown')} {evidence.get('source_provider', '-')}"
-            client.simPlotStrings([label], [airsim.Vector3r(point.x_val, point.y_val, point.z_val - 0.45)], scale=0.8, color_rgba=list(color), duration=duration)
-    for color, points in points_by_color.items():
-        size = args.obstacle_evidence_size * (1.6 if list(color) == EVIDENCE_BLOCKING_COLOR else 1.0)
-        client.simPlotPoints(points, color_rgba=list(color), size=size, duration=duration, is_persistent=args.persistent)
+        size_m = obstacle_evidence_size_m(evidence)
+        segments = box_wireframe_segments(center, size_m, args.obstacle_evidence_z_lift_m)
+        if segments:
+            thickness = args.obstacle_evidence_line_thickness
+            if list(color) == EVIDENCE_BLOCKING_COLOR:
+                thickness *= 1.5
+            plot_line_segments(client, segments, list(color), thickness, duration, args.persistent)
 
 
 def draw_swept_volume(client: Any, snapshot: dict[str, Any] | None, args: argparse.Namespace) -> None:

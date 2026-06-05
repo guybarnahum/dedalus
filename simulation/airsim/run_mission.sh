@@ -47,8 +47,8 @@ CAMERA_RESEND_S="0.25"
 CAMERA_CAPTURE_EVERY_S="1.0"
 WITH_CAMERA=1
 WITH_OVERLAY=1
-WITH_OCCUPANCY_OVERLAY=1
-WITH_SWEPT_VOLUME_OVERLAY=1
+WITH_OCCUPANCY_OVERLAY=0
+WITH_SWEPT_VOLUME_OVERLAY=0
 WITH_SENSING_EVIDENCE_OVERLAY=1
 WITH_OVERLAY_DEBUG=0
 WITH_VALIDATION=1
@@ -494,6 +494,9 @@ OVERLAY_CMD=(
     python3 "$REPO_ROOT_ABS/simulation/airsim/scripts/airsim-world-overlay.py"
     --stream-host "$STREAM_HOST" --stream-port "$STREAM_PORT"
     --follow --rate-hz "$OVERLAY_RATE_HZ" --clear --label --osd
+    --hide-world
+    --hide-planned
+    --hide-selected
 )
 if [[ "$WITH_OVERLAY_DEBUG" -eq 1 ]]; then OVERLAY_CMD+=(--debug --debug-json "$OVERLAY_DEBUG_JSON"); fi
 if [[ "$WITH_OCCUPANCY_OVERLAY" -eq 1 ]]; then
