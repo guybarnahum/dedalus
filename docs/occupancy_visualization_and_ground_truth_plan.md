@@ -111,10 +111,18 @@ simulation/airsim/scripts/airsim-world-overlay.py
 Render rules:
 
 ```text
-occupied debug cells: red/orange sparse points or boxes
-unknown debug cells: yellow/grey sparse points or outline
-free debug cells: optional low-density green/blue samples
+occupied debug cells: red/orange semi-transparent wireframe cuboids
+unknown debug cells: yellow semi-transparent wireframe cuboids
+free debug cells: blue semi-transparent wireframe cuboids
+occupancy cells are spatial/debug context only; do not label them as visual detections
 summary OSD: OCC src=<source> occ=<n> free=<n> unk=<n> clear=<m>
+```
+
+For AirSim visual validation, render current camera coverage and visual obstacle evidence together:
+
+```bash
+simulation/airsim/run_mission.sh
+# passes --show-sensing-volumes --show-obstacle-evidence to airsim-world-overlay.py by default
 ```
 
 MP4/offline annotation:

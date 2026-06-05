@@ -48,6 +48,7 @@ WITH_CAMERA=1
 WITH_OVERLAY=1
 WITH_OCCUPANCY_OVERLAY=1
 WITH_SWEPT_VOLUME_OVERLAY=1
+WITH_SENSING_EVIDENCE_OVERLAY=1
 WITH_OVERLAY_DEBUG=0
 WITH_VALIDATION=1
 OVERLAY_RATE_HZ="5"
@@ -117,6 +118,8 @@ Options:
   --overlay-debug             Enable verbose overlay debug logs/debug JSON. Default: off
   --no-occupancy-overlay      Do not pass occupancy render flags to overlay
   --no-swept-volume-overlay   Do not pass swept-volume render flags to overlay
+  --no-sensing-evidence-overlay
+                                Do not pass sensing-volume + obstacle-evidence render flags to overlay
   --max-occupancy-cells N     Max occupancy cells for overlay. Default: 32
   --no-validation             Do not start post-run validators
   --overlay-rate-hz HZ        overlay update rate. Default: 5
@@ -251,6 +254,7 @@ while [[ $# -gt 0 ]]; do
         --overlay-debug) WITH_OVERLAY_DEBUG=1; shift ;;
         --no-occupancy-overlay) WITH_OCCUPANCY_OVERLAY=0; shift ;;
         --no-swept-volume-overlay) WITH_SWEPT_VOLUME_OVERLAY=0; shift ;;
+        --no-sensing-evidence-overlay) WITH_SENSING_EVIDENCE_OVERLAY=0; shift ;;
         --max-occupancy-cells) OVERLAY_MAX_OCCUPANCY_CELLS="$2"; shift 2 ;;
         --no-validation) WITH_VALIDATION=0; shift ;;
         --overlay-rate-hz) OVERLAY_RATE_HZ="$2"; shift 2 ;;
@@ -412,6 +416,9 @@ if [[ "$WITH_OCCUPANCY_OVERLAY" -eq 1 ]]; then
     OVERLAY_CMD+=(--show-occupancy-summary --show-occupancy-cells --max-occupancy-cells "$OVERLAY_MAX_OCCUPANCY_CELLS")
 fi
 if [[ "$WITH_SWEPT_VOLUME_OVERLAY" -eq 1 ]]; then OVERLAY_CMD+=(--show-swept-volume); fi
+if [[ "$WITH_SENSING_EVIDENCE_OVERLAY" -eq 1 ]]; then
+    OVERLAY_CMD+=(--show-sensing-volumes --show-obstacle-evidence)
+fi
 if [[ "$EXIT_ON_COMPLETE" -eq 1 ]]; then OVERLAY_CMD+=(--exit-on-runtime-stop); fi
 if [[ "$OVERLAY_DURATION_S" != "0" ]]; then OVERLAY_CMD+=(--duration-s "$OVERLAY_DURATION_S"); fi
 
@@ -570,6 +577,7 @@ if [[ "$WITH_OVERLAY" -eq 1 ]]; then
     echo "  debug:      $([[ "$WITH_OVERLAY_DEBUG" -eq 1 ]] && echo enabled || echo disabled)"
     echo "  occupancy:  $([[ "$WITH_OCCUPANCY_OVERLAY" -eq 1 ]] && echo enabled || echo disabled)"
     echo "  swept vol:  $([[ "$WITH_SWEPT_VOLUME_OVERLAY" -eq 1 ]] && echo enabled || echo disabled)"
+    echo "  sense/evid: $([[ "$WITH_SENSING_EVIDENCE_OVERLAY" -eq 1 ]] && echo enabled || echo disabled)"
     if [[ "$WITH_OCCUPANCY_OVERLAY" -eq 1 ]]; then echo "  max cells:  $OVERLAY_MAX_OCCUPANCY_CELLS"; fi
     echo ""
 fi

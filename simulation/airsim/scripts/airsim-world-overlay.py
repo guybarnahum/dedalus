@@ -8,7 +8,7 @@ stream; this script renders whatever arrives.
 
 Consumed event types today:
   ghost_detections -> PLAN / PLAN* markers
-  world_snapshot   -> AG, EGO, optional OCC, SWEEP, SENSE, and EVID markers
+  world_snapshot   -> AG, EGO, optional OCC wireframes, SWEEP, SENSE, and EVID markers
   mission_event    -> SEL marker state from target_selected events
 """
 
@@ -203,6 +203,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--show-occupancy-cells", action="store_true")
     parser.add_argument("--max-occupancy-cells", type=int, default=64)
     parser.add_argument("--occupancy-z-lift-m", type=float, default=0.15)
+    parser.add_argument("--occupancy-cell-line-thickness", type=float, default=1.5)
     parser.add_argument("--show-swept-volume", action="store_true")
     parser.add_argument("--swept-volume-z-lift-m", type=float, default=0.25)
     parser.add_argument("--swept-volume-line-thickness", type=float, default=5.0)
@@ -459,6 +460,28 @@ def connect_airsim(args: argparse.Namespace) -> Any | None:
             time.sleep(1.0 / max(args.rate_hz, 0.1))
 
 
+def occupancy_cell_wireframe_segments(cell: dict[str, Any], z_lift_m: float) -> list[airsim.Vector3r]:
+    center = vec3(cell.get("center_local"))
+    if center is None:
+        return []
+    size = vec3(cell.get("size_m")) or [1.0, 1.0, 1.0]
+    half = [max(0.05, abs(component) * 0.5) for component in size]
+    corners: list[airsim.Vector3r] = []
+    for dz in (-half[2], half[2]):
+        for dy in (-half[1], half[1]):
+            for dx in (-half[0], half[0]):
+                corners.append(airsim_vec(vec_lift([center[0] + dx, center[1] + dy, center[2] + dz], z_lift_m)))
+    edge_indices = (
+        (0, 1), (1, 3), (3, 2), (2, 0),
+        (4, 5), (5, 7), (7, 6), (6, 4),
+        (0, 4), (1, 5), (2, 6), (3, 7),
+    )
+    segments: list[airsim.Vector3r] = []
+    for start, end in edge_indices:
+        segments.extend([corners[start], corners[end]])
+    return segments
+
+
 def draw_agents(client: Any, agents: list[dict[str, Any]], args: argparse.Namespace, static_once: bool = False) -> None:
     duration = marker_duration(args)
     if args.dry_run:
@@ -501,13 +524,10 @@ def draw_occupancy(client: Any, snapshot: dict[str, Any] | None, args: argparse.
         center = vec3(cell.get("center_local"))
         if center is None:
             continue
-        point = airsim.Vector3r(center[0], center[1], center[2] - args.occupancy_z_lift_m)
         state = str(cell.get("state", "unknown"))
-        size = 16.0 if state == "occupied" else (10.0 if state == "unknown" else 7.0)
-        client.simPlotPoints([point], color_rgba=occupancy_cell_color(cell), size=size, duration=duration, is_persistent=args.persistent)
-        if args.label and state == "occupied":
-            label = f"OCC {cell.get('source_object_name') or cell.get('source_provider') or state}"
-            client.simPlotStrings([label], [airsim.Vector3r(point.x_val, point.y_val, point.z_val - 0.4)], scale=0.85, color_rgba=occupancy_cell_color(cell), duration=duration)
+        segments = occupancy_cell_wireframe_segments(cell, args.occupancy_z_lift_m)
+        if segments:
+            plot_line_segments(client, segments, occupancy_cell_color(cell), args.occupancy_cell_line_thickness, duration, args.persistent)
 
 
 def lifted_vector(position: Any, z_lift_m: float) -> airsim.Vector3r | None:
