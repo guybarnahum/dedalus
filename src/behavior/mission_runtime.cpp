@@ -293,6 +293,9 @@ void MissionRuntime::dispatch_camera_pointing(
         ",\"pitch_rad\":" + std::to_string(camera_pointing.pitch_rad) +
         ",\"pitch_deg\":" + std::to_string(camera_pointing.pitch_rad * 180.0 / 3.14159265358979323846) +
         ",\"pitch_clamped\":" + (camera_pointing.pitch_clamped ? std::string{"true"} : std::string{"false"}) +
+        ",\"yaw_valid\":" + (camera_pointing.yaw_valid ? std::string{"true"} : std::string{"false"}) +
+        ",\"yaw_rad\":" + std::to_string(camera_pointing.yaw_rad) +
+        ",\"yaw_deg\":" + std::to_string(camera_pointing.yaw_rad * 180.0 / 3.14159265358979323846) +
         ",\"source_track_id\":" + q(camera_pointing.source_track_id) +
         ",\"agent_id\":" + q(camera_pointing.agent_id) +
         ",\"identity_id\":" + q(camera_pointing.identity_id) +

@@ -20,9 +20,9 @@ CameraPointingState camera_pointing_state_from_command(
     state.camera_name = camera_name;
     state.timestamp = command.timestamp;
     state.pitch_rad = command.pitch_rad;
-    state.yaw_rad = 0.0;
+    state.yaw_rad = command.yaw_rad;
     state.roll_rad = 0.0;
-    state.valid = command.pitch_valid;
+    state.valid = command.pitch_valid || command.yaw_valid;
     state.measured = false;
     state.source = "camera_pointing_intent";
     return state;

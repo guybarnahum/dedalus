@@ -151,11 +151,14 @@ struct CameraPointingCommand {
     double pitch_min_rad{0.0};
     double pitch_max_rad{0.0};
     double target_elevation_rad{0.0};
+    double target_bearing_rad{0.0};
+    double yaw_rad{0.0};
     double range_xy_m{0.0};
     double delta_z_m{0.0};
     double pitch_sign{-1.0};
     double pitch_offset_rad{0.0};
     bool pitch_valid{false};
+    bool yaw_valid{false};
     bool pitch_clamped{false};
 };
 
