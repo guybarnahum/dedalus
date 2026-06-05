@@ -8,6 +8,7 @@
 
 set -euo pipefail
 
+CALLER_CWD="$(pwd)"
 cd "$(dirname "$0")"
 
 REPO_ROOT_ABS="$(cd ../.. && pwd)"
@@ -150,14 +151,29 @@ EOF
 
 abs_path() {
     local path="$1"
-    if [[ "$path" = /* ]]; then
-        printf '%s\n' "$path"
-    else
-        local dir base
-        dir="$(dirname "$path")"
-        base="$(basename "$path")"
-        printf '%s/%s\n' "$(cd "$dir" && pwd)" "$base"
+    if [[ "$path" != /* ]]; then
+        path="$CALLER_CWD/$path"
     fi
+    local dir base
+    dir="$(dirname "$path")"
+    base="$(basename "$path")"
+    if [[ -d "$dir" ]]; then
+        printf '%s/%s\n' "$(cd "$dir" && pwd)" "$base"
+    else
+        printf '%s\n' "$path"
+    fi
+}
+
+creatable_abs_path() {
+    local path="$1"
+    if [[ "$path" != /* ]]; then
+        path="$CALLER_CWD/$path"
+    fi
+    local dir base
+    dir="$(dirname "$path")"
+    base="$(basename "$path")"
+    mkdir -p "$dir"
+    printf '%s/%s\n' "$(cd "$dir" && pwd)" "$base"
 }
 
 quote_cmd() {
@@ -288,7 +304,7 @@ while [[ $# -gt 0 ]]; do
         --build-dir) BUILD_DIR="$(abs_path "$2")"; shift 2 ;;
         --config) CONFIG_PATH="$(abs_path "$2")"; shift 2 ;;
         --sim-config) SIM_CONFIG_PATH="$(abs_path "$2")"; shift 2 ;;
-        --output-dir) OUTPUT_DIR="$(abs_path "$2")"; shift 2 ;;
+        --output-dir) OUTPUT_DIR="$(creatable_abs_path "$2")"; shift 2 ;;
         --stream-host) STREAM_HOST="$2"; shift 2 ;;
         --stream-port) STREAM_PORT="$2"; shift 2 ;;
         --max-frames) MAX_FRAMES="$2"; shift 2 ;;
@@ -301,12 +317,12 @@ while [[ $# -gt 0 ]]; do
         --airsim-rpc-port) AIRSIM_RPC_PORT="$2"; shift 2 ;;
         --source-frame-rate-hz) SOURCE_FRAME_RATE_HZ="$2"; shift 2 ;;
         --frame-producer-timing) WITH_FRAME_PRODUCER_TIMING=1; shift ;;
-        --frame-producer-timing-path) FRAME_PRODUCER_TIMING_PATH="$(abs_path "$2")"; WITH_FRAME_PRODUCER_TIMING=1; shift 2 ;;
+        --frame-producer-timing-path) FRAME_PRODUCER_TIMING_PATH="$(creatable_abs_path "$2")"; WITH_FRAME_PRODUCER_TIMING=1; shift 2 ;;
         --pipeline-timing) WITH_PIPELINE_TIMING=1; shift ;;
-        --pipeline-timing-path) PIPELINE_TIMING_PATH="$(abs_path "$2")"; WITH_PIPELINE_TIMING=1; shift 2 ;;
+        --pipeline-timing-path) PIPELINE_TIMING_PATH="$(creatable_abs_path "$2")"; WITH_PIPELINE_TIMING=1; shift 2 ;;
         --no-airsim-preflight) AIRSIM_PREFLIGHT=0; shift ;;
         --scene-id) SCENE_ID="$2"; shift 2 ;;
-        --scene-inventory) SCENE_INVENTORY_PATH="$(abs_path "$2")"; shift 2 ;;
+        --scene-inventory) SCENE_INVENTORY_PATH="$(creatable_abs_path "$2")"; shift 2 ;;
         --refresh-scene-inventory) REFRESH_SCENE_INVENTORY=1; shift ;;
         --no-scene-inventory) WITH_SCENE_INVENTORY=0; shift ;;
         --camera)
