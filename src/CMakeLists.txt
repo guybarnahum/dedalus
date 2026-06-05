@@ -15,6 +15,7 @@ add_library(dedalus_core
     sensors/synthetic_frame_source.cpp
     sensors/synthetic_mission_frame_source.cpp
     sensing/sensing_coverage.cpp
+    sensing/airsim_depth_obstacle_detector.cpp
     perception/ghost_targets.cpp
     perception/perception_pipeline.cpp
     runtime/camera_pointing_state_store.cpp

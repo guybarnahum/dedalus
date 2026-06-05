@@ -11,6 +11,30 @@ The core point:
 
 AirSim GT visual-emulation remains useful, but only as a validation oracle clipped by explicit camera sensing coverage. It must not become the detector architecture.
 
+## 3.x object-GT versus 4.x obstacle sensing
+
+AirSim object-GT is not the 4.x obstacle detector.
+
+```text
+3.x perception / object world model:
+  object detection
+  class labels
+  re-ID
+  target selection
+  approximate 3D object pose
+  AirSim named-object GT for semantic/object validation
+
+4.x obstacle sensing / avoidance:
+  classless geometry
+  depth/ray/mesh returns
+  occupied/free/unknown evidence volumes
+  ego occupancy
+  swept-volume risk
+  obstacle avoidance
+```
+
+Do not expand 4.x obstacle detection by adding more AirSim object patterns for trees, cars, roofs, floors, walls, or terrain. Those are semantic/object approximations and still miss geometry. The 4.x simulation detector must consume classless geometry inside the current sensing volume.
+
 ## Current state after 4.1B
 
 The 4.1B stack now has the required detector-side geometry boundary:
@@ -40,13 +64,13 @@ AirSim GT global oracle:
   all configured/query-scope GT objects
 
 AirSim GT visual-emulation:
-  only GT objects inside current explicit camera sensing coverage
+  only named GT objects inside current explicit camera sensing coverage
 
 No sensing coverage:
   no visual-emulation evidence
 ```
 
-That is the correct precondition for implementing the real detector.
+That was useful to validate sensing coverage, but it is not a 4.x obstacle detector because it does not include arbitrary scene geometry such as floor, roofs, walls, terrain, tree geometry, or unlabeled structures.
 
 ## What actual visual obstacle detection means
 
@@ -71,6 +95,7 @@ The detector must not:
 
 ```text
 infer coverage from ego yaw
+use AirSim named-object GT as obstacle geometry
 query global AirSim GT as if it were visual perception
 require YOLO/DETR/semantic class labels
 emit evidence for pixels/rays outside current camera coverage
@@ -148,6 +173,8 @@ tests/unit/test_visual_obstacle_detector_contract.cpp
 
 ### 4.1C.2 — AirSim depth obstacle detector
 
+Status: active.
+
 Implement a simulation provider that uses depth frames/rays to create classless obstacle evidence.
 
 Minimum viable behavior:
@@ -172,6 +199,25 @@ inside_sensing_volume = true by construction
 ```
 
 Do not start with dense occupancy mapping. First prove evidence emission.
+
+The first implementation slice should be the detector core, independent of the AirSim RPC transport:
+
+```text
+DepthFrame + ObstacleSensingVolume
+  -> airsim_depth_obstacle_detector
+  -> std::vector<ObstacleEvidence>
+```
+
+The live AirSim integration follows after the core contract compiles and validates:
+
+```text
+AirSim depth image request
+  -> DepthFrame
+  -> airsim_depth_obstacle_detector
+  -> CoreStackRunner obstacle evidence handoff
+  -> WorldSnapshot.obstacle_evidence
+  -> OSD volumetric evidence renderer
+```
 
 ### 4.1C.3 — CoreStackRunner integration
 

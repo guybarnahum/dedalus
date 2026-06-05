@@ -123,6 +123,9 @@ Do not:
   - Do not continue expanding AirSim GT visual-emulation as if it were the real detector. Visual-emulation is now a validation oracle clipped by sensing coverage.
   - Do not implement the first real visual obstacle detector as a semantic YOLO/DETR/classifier path. The first detector should be classless geometric evidence, preferably AirSim depth-frame based for deterministic validation.
   - Do not let a visual detector infer or fake camera coverage. It must consume `EgoSensingFrame` / current sensing coverage.
+  - Do not use AirSim object-GT as the 4.x obstacle detector. Object-GT belongs to 3.x semantic/object perception, re-ID, target behavior, and approximate object pose validation.
+  - Do not broaden 4.x obstacle detection by adding more named AirSim object classes or patterns. Use depth/ray/mesh geometry inside the sensing volume.
+  - Do not render object-GT as obstacle-detector output unless it has first been normalized through the same classless `ObstacleEvidence` geometry contract.
   - Do not emit visual obstacle evidence when no valid sensing coverage exists for the frame/camera.
   - Do not put obstacle avoidance, map-building policy, sensing coverage, or detector semantics inside a flight command sink.
   - Do not duplicate occupancy logic for GT and visual sources; normalize them into the same obstacle evidence / occupancy contract.

@@ -225,6 +225,13 @@ dedalus_add_native_test(
 )
 
 dedalus_add_native_test(
+    NAME airsim_depth_obstacle_detector
+    LAYER unit
+    TAGS sensing obstacle_detector validation
+    SOURCES unit/test_airsim_depth_obstacle_detector.cpp
+)
+
+dedalus_add_native_test(
     NAME sensing_coverage
     LAYER unit
     TAGS sensing geometry validation
