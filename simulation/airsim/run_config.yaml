@@ -1,0 +1,19 @@
+# simulation/airsim/run_config.yaml
+#
+# Sim-layer orchestration defaults for run.sh.
+#
+# Precedence: hardcoded defaults < this file < CLI arguments
+#
+# All keys are optional. Omit any key to keep the hardcoded default.
+
+# ── Capture ──────────────────────────────────────────────────────────────────
+core_sampling_fps: 5
+# core_max_frames: 0
+
+# ── Flight ───────────────────────────────────────────────────────────────────
+flight_safe_height_m: 8
+control_start_delay_s: 10
+
+# ── AirSim camera resolution (requires simulator restart) ────────────────────
+# airsim_camera_width: 640
+# airsim_camera_height: 360

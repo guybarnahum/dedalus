@@ -1,0 +1,44 @@
+# simulation/airsim/run_mission_config.yaml
+#
+# Sim-layer orchestration defaults for run_mission.sh.
+#
+# Precedence: hardcoded defaults < this file < CLI arguments
+#
+# Settings here control how run_mission.sh orchestrates AirSim, the overlay,
+# and post-run validators. They do NOT belong in mission model config.
+#
+# Mission model settings (detector, tracker, behavior type, obstacle sensing
+# parameters) belong in config/core_stack_*.yaml and work identically on
+# real hardware — keep them simulation-independent.
+#
+# All keys are optional. Omit any key to keep the hardcoded default.
+
+# ── AirSim connection ────────────────────────────────────────────────────────
+airsim_host: 127.0.0.1
+airsim_rpc_port: 41451
+vehicle_name: PX4
+stream_host: 127.0.0.1
+stream_port: 47770
+scene_id: AirSimNH
+
+# ── Mission run bounds ───────────────────────────────────────────────────────
+# max_frames: 5400
+# shutdown_max_frames: 1800
+# behavior_duration_s: 360
+
+# ── Overlay ──────────────────────────────────────────────────────────────────
+with_occupancy_overlay: true
+with_swept_volume_overlay: true
+with_sensing_evidence_overlay: true
+overlay_rate_hz: 5
+overlay_max_occupancy_cells: 32
+
+# ── Validation ───────────────────────────────────────────────────────────────
+validation_timeout_s: 300
+validation_min_orbits: 2.95
+validation_radius: 10.0
+validation_min_occupied_cells: 48
+validation_complete_reason: orbit_count_elapsed
+validation_expect_sequence: true
+validation_sequence_steps: approach,circle
+validation_sequence_step_modes: approach:target:target,circle:target:target

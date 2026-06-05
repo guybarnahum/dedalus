@@ -30,6 +30,7 @@ FLIGHT_SAFE_HEIGHT_M="8"
 AIRSIM_CAMERA_WIDTH=""
 AIRSIM_CAMERA_HEIGHT=""
 AIRSIM_SETTINGS_BACKUP_ABS=""
+SIM_CONFIG_PATH="$(pwd)/run_config.yaml"
 
 usage() {
     cat <<'EOF'
@@ -73,9 +74,49 @@ Options:
                                 run.sh derives frames from trajectory duration * core-sampling-fps,
                                 so capture ends with velocity-control. If N=0 without flight-control,
                                 capture runs until the stream ends. Default: 0
+  --sim-config PATH             Sim/validation run config YAML. Default: run_config.yaml (auto-loaded if present)
   -h, --help                    Show this help.
 EOF
 }
+
+sim_cfg() {
+    local key="$1" file="$2"
+    [[ -f "$file" ]] || return 0
+    python3 -c "import sys, re
+key = sys.argv[1]
+with open(sys.argv[2]) as f:
+    for line in f:
+        s = line.strip()
+        if not s or s.startswith('#'):
+            continue
+        m = re.match(r'^' + re.escape(key) + r'\s*:\s*(.+)$', s)
+        if m:
+            print(m.group(1).strip().strip('\"\"'))
+            sys.exit(0)" "$key" "$file" 2>/dev/null || true
+}
+
+apply_sim_config() {
+    local f="$SIM_CONFIG_PATH"
+    [[ -f "$f" ]] || return 0
+    local v
+    v=$(sim_cfg core_sampling_fps "$f");     [[ -n "$v" ]] && CORE_SAMPLING_FPS="$v"
+    v=$(sim_cfg core_max_frames "$f");       [[ -n "$v" ]] && CORE_MAX_FRAMES="$v"
+    v=$(sim_cfg flight_safe_height_m "$f");  [[ -n "$v" ]] && FLIGHT_SAFE_HEIGHT_M="$v"
+    v=$(sim_cfg control_start_delay_s "$f"); [[ -n "$v" ]] && CONTROL_START_DELAY_S="$v"
+    v=$(sim_cfg airsim_camera_width "$f");   [[ -n "$v" ]] && AIRSIM_CAMERA_WIDTH="$v"
+    v=$(sim_cfg airsim_camera_height "$f");  [[ -n "$v" ]] && AIRSIM_CAMERA_HEIGHT="$v"
+}
+
+# Pre-scan for --sim-config so the config file is applied before the main arg
+# loop runs. CLI args in the main loop then override config values.
+for (( _i=1; _i<=$#; _i++ )); do
+    if [[ "${!_i}" == "--sim-config" ]]; then
+        _next=$(( _i + 1 ))
+        SIM_CONFIG_PATH="${!_next}"
+        break
+    fi
+done
+apply_sim_config
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -137,6 +178,10 @@ while [[ $# -gt 0 ]]; do
             ;;
         --core-max-frames)
             CORE_MAX_FRAMES="$2"
+            shift 2
+            ;;
+        --sim-config)
+            SIM_CONFIG_PATH="$2"
             shift 2
             ;;
         --core-start-delay-s)

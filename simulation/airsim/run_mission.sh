@@ -68,6 +68,7 @@ ATTACH=0
 EXIT_ON_COMPLETE=1
 KILL_EXISTING=1
 PROGRESS_FLAG="--progress"
+SIM_CONFIG_PATH="$(dirname "$0")/run_mission_config.yaml"
 
 usage() {
     cat <<'EOF'
@@ -90,6 +91,7 @@ Options:
   --session NAME              tmux session name. Default: dedalus-mission
   --build-dir PATH            build dir. Default: ../../build-staging
   --config PATH               mission config. Default: ../../config/core_stack_object_behavior_airsim_existing_object_circle.yml
+  --sim-config PATH           sim/validation run config YAML. Default: run_mission_config.yaml (auto-loaded if present)
   --output-dir PATH           output dir. Default: ../../out/object_behavior_airsim_existing_object_circle
   --stream-host HOST          runtime stream host. Default: 127.0.0.1
   --stream-port PORT          runtime stream port. Default: 47770
@@ -117,9 +119,12 @@ Options:
   --no-overlay                Do not start overlay
   --overlay-debug             Enable verbose overlay debug logs/debug JSON. Default: off
   --no-occupancy-overlay      Do not pass occupancy render flags to overlay
+  --occupancy-overlay         Re-enable occupancy overlay (overrides sim config default off)
   --no-swept-volume-overlay   Do not pass swept-volume render flags to overlay
+  --swept-volume-overlay      Re-enable swept-volume overlay (overrides sim config default off)
   --no-sensing-evidence-overlay
                                 Do not pass sensing-volume + obstacle-evidence render flags to overlay
+  --sensing-evidence-overlay  Re-enable sensing/evidence overlay (overrides sim config default off)
   --max-occupancy-cells N     Max occupancy cells for overlay. Default: 32
   --no-validation             Do not start post-run validators
   --overlay-rate-hz HZ        overlay update rate. Default: 5
@@ -218,11 +223,71 @@ EOF
     return 1
 }
 
+sim_cfg() {
+    local key="$1" file="$2"
+    [[ -f "$file" ]] || return 0
+    python3 -c "import sys, re
+key = sys.argv[1]
+with open(sys.argv[2]) as f:
+    for line in f:
+        s = line.strip()
+        if not s or s.startswith('#'):
+            continue
+        m = re.match(r'^' + re.escape(key) + r'\s*:\s*(.+)$', s)
+        if m:
+            print(m.group(1).strip().strip('\"\"'))
+            sys.exit(0)" "$key" "$file" 2>/dev/null || true
+}
+
+apply_sim_config() {
+    local f="$SIM_CONFIG_PATH"
+    [[ -f "$f" ]] || return 0
+    local v
+    v=$(sim_cfg airsim_host "$f");                   [[ -n "$v" ]] && AIRSIM_HOST="$v"
+    v=$(sim_cfg airsim_rpc_port "$f");               [[ -n "$v" ]] && AIRSIM_RPC_PORT="$v"
+    v=$(sim_cfg vehicle_name "$f");                  [[ -n "$v" ]] && VEHICLE_NAME="$v"
+    v=$(sim_cfg stream_host "$f");                   [[ -n "$v" ]] && STREAM_HOST="$v"
+    v=$(sim_cfg stream_port "$f");                   [[ -n "$v" ]] && STREAM_PORT="$v"
+    v=$(sim_cfg max_frames "$f");                    [[ -n "$v" ]] && MAX_FRAMES="$v"
+    v=$(sim_cfg shutdown_max_frames "$f");           [[ -n "$v" ]] && SHUTDOWN_MAX_FRAMES="$v"
+    v=$(sim_cfg behavior_duration_s "$f");           [[ -n "$v" ]] && BEHAVIOR_DURATION_S="$v"
+    v=$(sim_cfg overlay_rate_hz "$f");               [[ -n "$v" ]] && OVERLAY_RATE_HZ="$v"
+    v=$(sim_cfg overlay_max_occupancy_cells "$f");   [[ -n "$v" ]] && OVERLAY_MAX_OCCUPANCY_CELLS="$v"
+    v=$(sim_cfg with_occupancy_overlay "$f")
+    [[ "$v" == "false" ]] && WITH_OCCUPANCY_OVERLAY=0; [[ "$v" == "true" ]] && WITH_OCCUPANCY_OVERLAY=1
+    v=$(sim_cfg with_swept_volume_overlay "$f")
+    [[ "$v" == "false" ]] && WITH_SWEPT_VOLUME_OVERLAY=0; [[ "$v" == "true" ]] && WITH_SWEPT_VOLUME_OVERLAY=1
+    v=$(sim_cfg with_sensing_evidence_overlay "$f")
+    [[ "$v" == "false" ]] && WITH_SENSING_EVIDENCE_OVERLAY=0; [[ "$v" == "true" ]] && WITH_SENSING_EVIDENCE_OVERLAY=1
+    v=$(sim_cfg scene_id "$f");                     [[ -n "$v" ]] && SCENE_ID="$v"
+    v=$(sim_cfg validation_timeout_s "$f");          [[ -n "$v" ]] && VALIDATION_TIMEOUT_S="$v"
+    v=$(sim_cfg validation_min_orbits "$f");         [[ -n "$v" ]] && VALIDATION_MIN_ORBITS="$v"
+    v=$(sim_cfg validation_radius "$f");             [[ -n "$v" ]] && VALIDATION_RADIUS="$v"
+    v=$(sim_cfg validation_min_occupied_cells "$f"); [[ -n "$v" ]] && VALIDATION_MIN_OCCUPIED_CELLS="$v"
+    v=$(sim_cfg validation_complete_reason "$f");    [[ -n "$v" ]] && VALIDATION_COMPLETE_REASON="$v"
+    v=$(sim_cfg validation_expect_sequence "$f")
+    [[ "$v" == "true" ]] && VALIDATION_EXPECT_SEQUENCE=1; [[ "$v" == "false" ]] && VALIDATION_EXPECT_SEQUENCE=0
+    v=$(sim_cfg validation_sequence_steps "$f");     [[ -n "$v" ]] && VALIDATION_SEQUENCE_STEPS="$v"
+    v=$(sim_cfg validation_sequence_step_modes "$f"); [[ -n "$v" ]] && VALIDATION_SEQUENCE_STEP_MODES="$v"
+}
+
+# Pre-scan for --sim-config so the config file is applied before the main arg
+# loop runs. CLI args in the main loop then override config values.
+for (( _i=1; _i<=$#; _i++ )); do
+    if [[ "${!_i}" == "--sim-config" ]]; then
+        _next=$(( _i + 1 ))
+        SIM_CONFIG_PATH="$(abs_path "${!_next}")"
+        break
+    fi
+done
+apply_sim_config
+
 while [[ $# -gt 0 ]]; do
     case "$1" in
         --session) SESSION_NAME="$2"; shift 2 ;;
         --build-dir) BUILD_DIR="$(abs_path "$2")"; shift 2 ;;
         --config) CONFIG_PATH="$(abs_path "$2")"; shift 2 ;;
+        --sim-config) SIM_CONFIG_PATH="$(abs_path "$2")"; shift 2 ;;
         --output-dir) OUTPUT_DIR="$(abs_path "$2")"; shift 2 ;;
         --stream-host) STREAM_HOST="$2"; shift 2 ;;
         --stream-port) STREAM_PORT="$2"; shift 2 ;;
@@ -253,8 +318,11 @@ while [[ $# -gt 0 ]]; do
         --no-overlay) WITH_OVERLAY=0; shift ;;
         --overlay-debug) WITH_OVERLAY_DEBUG=1; shift ;;
         --no-occupancy-overlay) WITH_OCCUPANCY_OVERLAY=0; shift ;;
+        --occupancy-overlay) WITH_OCCUPANCY_OVERLAY=1; shift ;;
         --no-swept-volume-overlay) WITH_SWEPT_VOLUME_OVERLAY=0; shift ;;
+        --swept-volume-overlay) WITH_SWEPT_VOLUME_OVERLAY=1; shift ;;
         --no-sensing-evidence-overlay) WITH_SENSING_EVIDENCE_OVERLAY=0; shift ;;
+        --sensing-evidence-overlay) WITH_SENSING_EVIDENCE_OVERLAY=1; shift ;;
         --max-occupancy-cells) OVERLAY_MAX_OCCUPANCY_CELLS="$2"; shift 2 ;;
         --no-validation) WITH_VALIDATION=0; shift ;;
         --overlay-rate-hz) OVERLAY_RATE_HZ="$2"; shift 2 ;;
@@ -536,6 +604,11 @@ tmux new-window -t "$SESSION_NAME" -n mission-loop "bash -lc $(printf '%q' "$(tm
 tmux select-window -t "$SESSION_NAME:mission-loop"
 
 echo "✅ AirSim mission stack started in tmux session '$SESSION_NAME'"
+if [[ -f "$SIM_CONFIG_PATH" ]]; then
+    echo "  sim config: $SIM_CONFIG_PATH"
+else
+    echo "  sim config: none (create $(dirname "$0")/run_mission_config.yaml to set project defaults)"
+fi
 echo ""
 echo "Mission loop:"
 echo "  log:     $MISSION_LOG"
