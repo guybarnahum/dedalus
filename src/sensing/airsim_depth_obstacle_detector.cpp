@@ -7,8 +7,6 @@
 namespace dedalus {
 namespace {
 
-constexpr double kPi = 3.14159265358979323846;
-
 Vec3 add(const Vec3& lhs, const Vec3& rhs) {
     return Vec3{lhs.x + rhs.x, lhs.y + rhs.y, lhs.z + rhs.z};
 }
