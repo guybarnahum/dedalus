@@ -8,6 +8,7 @@
 #include <iomanip>
 #include <iostream>
 #include <memory>
+#include <mutex>
 #include <sstream>
 #include <string>
 #include <thread>
@@ -20,6 +21,7 @@
 #include "dedalus/behavior/object_behavior_mission_controller.hpp"
 #include "dedalus/behavior/trajectory_mission_controller.hpp"
 #include "dedalus/perception/ghost_targets.hpp"
+#include "dedalus/runtime/camera_pointing_state_store.hpp"
 #include "dedalus/runtime/config_loader.hpp"
 #include "dedalus/runtime/core_stack_runner.hpp"
 #include "dedalus/runtime/pipeline_profiler.hpp"
@@ -475,6 +477,16 @@ int main(int argc, char** argv) {
                 .snapshot_subscribers = {latest_snapshot_subscriber, artifact_snapshot_writer}}};
 
         const auto mission_events_path = args.output_dir / "mission_events.jsonl";
+        dedalus::CameraPointingStateStore camera_pointing_state_store;
+        std::vector<dedalus::CameraPointingState> latest_camera_pointing_states;
+        std::mutex camera_pointing_state_mutex;
+
+        auto camera_pointing_handoff = [&](const dedalus::CameraPointingCommand& command) {
+            std::lock_guard<std::mutex> lock(camera_pointing_state_mutex);
+            camera_pointing_state_store.apply(command);
+            latest_camera_pointing_states = camera_pointing_state_store.states();
+        };
+
         std::unique_ptr<dedalus::MissionRuntime> mission_runtime;
         auto controller = create_mission_controller(config);
         if (controller) {
@@ -487,7 +499,8 @@ int main(int argc, char** argv) {
                 std::move(controller),
                 create_flight_command_sink(config, args.verbosity),
                 mission_event_publisher,
-                create_camera_pointing_sink(config, args.verbosity));
+                create_camera_pointing_sink(config, args.verbosity),
+                camera_pointing_handoff);
             mission_runtime->start();
             std::cout << "Mission runtime: " << config.mission_controller
                       << " @ " << config.mission_tick_hz << " Hz"
@@ -542,6 +555,11 @@ int main(int argc, char** argv) {
                     break;
                 }
                 ++shutdown_wait_ticks;
+            }
+
+            {
+                std::lock_guard<std::mutex> lock(camera_pointing_state_mutex);
+                runner.update_camera_pointing_states(latest_camera_pointing_states);
             }
 
             if (!runner.run_once()) {
