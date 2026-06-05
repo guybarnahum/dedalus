@@ -19,6 +19,7 @@ To generate a current handoff, read `LLM.md` and the current repo state, then fi
 7. Read `WHITEPAPER.md` when architectural rationale is needed.
 8. For classless geometric occupancy / avoidance / sensing coverage / volume detection work, read these together before coding:
    - `docs/sensing_coverage_architecture.md`
+   - `docs/visual_obstacle_detection_transition_plan.md`
    - `docs/classless_geometric_occupancy_and_avoidance_plan.md`
    - `docs/reflexive_obstacle_avoidance_architecture.md`
    - `docs/geometric_volume_detection_and_spatial_mapping_plan.md`
@@ -85,6 +86,7 @@ Then read:
 
 For classless geometric occupancy / avoidance / sensing coverage / volume detection work, also read:
   docs/sensing_coverage_architecture.md
+  docs/visual_obstacle_detection_transition_plan.md
   docs/classless_geometric_occupancy_and_avoidance_plan.md
   docs/reflexive_obstacle_avoidance_architecture.md
   docs/geometric_volume_detection_and_spatial_mapping_plan.md
@@ -118,6 +120,10 @@ Do not:
   - Do not derive visual obstacle coverage from vehicle yaw alone. It is camera optical coverage composed from camera config, ego pose, and current camera/gimbal pointing state.
   - Do not judge a visual/volume detector against global AirSim GT objects outside the configured sensing volume.
   - Do not make AirSim GT global-oracle output mean the same thing as visual detector capability; add/use GT visual-emulation clipping when comparing sources.
+  - Do not continue expanding AirSim GT visual-emulation as if it were the real detector. Visual-emulation is now a validation oracle clipped by sensing coverage.
+  - Do not implement the first real visual obstacle detector as a semantic YOLO/DETR/classifier path. The first detector should be classless geometric evidence, preferably AirSim depth-frame based for deterministic validation.
+  - Do not let a visual detector infer or fake camera coverage. It must consume `EgoSensingFrame` / current sensing coverage.
+  - Do not emit visual obstacle evidence when no valid sensing coverage exists for the frame/camera.
   - Do not put obstacle avoidance, map-building policy, sensing coverage, or detector semantics inside a flight command sink.
   - Do not duplicate occupancy logic for GT and visual sources; normalize them into the same obstacle evidence / occupancy contract.
   - Do not make `rough_flight_map_builder.cpp` a second perception pipeline; it should consume normalized reflexive occupancy / obstacle evidence.

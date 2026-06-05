@@ -257,18 +257,18 @@ AirSim global ground truth and visual emulation are different sources:
 ```text
 AirSim global oracle:
   all named objects that exist in the scene or configured query scope
-
-AirSim visual-emulation adapter:
-  only objects inside the current CameraSensingVolume for the configured camera
 ```
 
-The adapter should consume:
+Current 4.1B status:
 
 ```text
-AirSim named-object candidates
-+ SensingCoverageSnapshot
--> ObstacleEvidence(source_kind = airsim_gt_visual_emulation)
+AirSim GT visual-emulation is now only a coverage-clipped validation adapter.
+It is not the real visual obstacle detector.
+No configured/current camera sensing coverage means no visual-emulation obstacle evidence.
 ```
+
+The next implementation stage is the real classless visual obstacle detector path. See
+`docs/visual_obstacle_detection_transition_plan.md`.
 
 It should not compare a visual detector against global scene objects outside the sensing volume.
 
