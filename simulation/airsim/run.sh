@@ -99,12 +99,12 @@ apply_sim_config() {
     local f="$SIM_CONFIG_PATH"
     [[ -f "$f" ]] || return 0
     local v
-    v=$(sim_cfg core_sampling_fps "$f");     [[ -n "$v" ]] && CORE_SAMPLING_FPS="$v"
-    v=$(sim_cfg core_max_frames "$f");       [[ -n "$v" ]] && CORE_MAX_FRAMES="$v"
-    v=$(sim_cfg flight_safe_height_m "$f");  [[ -n "$v" ]] && FLIGHT_SAFE_HEIGHT_M="$v"
-    v=$(sim_cfg control_start_delay_s "$f"); [[ -n "$v" ]] && CONTROL_START_DELAY_S="$v"
-    v=$(sim_cfg airsim_camera_width "$f");   [[ -n "$v" ]] && AIRSIM_CAMERA_WIDTH="$v"
-    v=$(sim_cfg airsim_camera_height "$f");  [[ -n "$v" ]] && AIRSIM_CAMERA_HEIGHT="$v"
+    v=$(sim_cfg core_sampling_fps "$f");     [[ -z "$v" ]] || CORE_SAMPLING_FPS="$v"
+    v=$(sim_cfg core_max_frames "$f");       [[ -z "$v" ]] || CORE_MAX_FRAMES="$v"
+    v=$(sim_cfg flight_safe_height_m "$f");  [[ -z "$v" ]] || FLIGHT_SAFE_HEIGHT_M="$v"
+    v=$(sim_cfg control_start_delay_s "$f"); [[ -z "$v" ]] || CONTROL_START_DELAY_S="$v"
+    v=$(sim_cfg airsim_camera_width "$f");   [[ -z "$v" ]] || AIRSIM_CAMERA_WIDTH="$v"
+    v=$(sim_cfg airsim_camera_height "$f");  [[ -z "$v" ]] || AIRSIM_CAMERA_HEIGHT="$v"
 }
 
 # Pre-scan for --sim-config so the config file is applied before the main arg

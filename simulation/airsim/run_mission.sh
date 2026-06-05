@@ -243,32 +243,32 @@ apply_sim_config() {
     local f="$SIM_CONFIG_PATH"
     [[ -f "$f" ]] || return 0
     local v
-    v=$(sim_cfg airsim_host "$f");                   [[ -n "$v" ]] && AIRSIM_HOST="$v"
-    v=$(sim_cfg airsim_rpc_port "$f");               [[ -n "$v" ]] && AIRSIM_RPC_PORT="$v"
-    v=$(sim_cfg vehicle_name "$f");                  [[ -n "$v" ]] && VEHICLE_NAME="$v"
-    v=$(sim_cfg stream_host "$f");                   [[ -n "$v" ]] && STREAM_HOST="$v"
-    v=$(sim_cfg stream_port "$f");                   [[ -n "$v" ]] && STREAM_PORT="$v"
-    v=$(sim_cfg max_frames "$f");                    [[ -n "$v" ]] && MAX_FRAMES="$v"
-    v=$(sim_cfg shutdown_max_frames "$f");           [[ -n "$v" ]] && SHUTDOWN_MAX_FRAMES="$v"
-    v=$(sim_cfg behavior_duration_s "$f");           [[ -n "$v" ]] && BEHAVIOR_DURATION_S="$v"
-    v=$(sim_cfg overlay_rate_hz "$f");               [[ -n "$v" ]] && OVERLAY_RATE_HZ="$v"
-    v=$(sim_cfg overlay_max_occupancy_cells "$f");   [[ -n "$v" ]] && OVERLAY_MAX_OCCUPANCY_CELLS="$v"
+    v=$(sim_cfg airsim_host "$f");                   [[ -z "$v" ]] || AIRSIM_HOST="$v"
+    v=$(sim_cfg airsim_rpc_port "$f");               [[ -z "$v" ]] || AIRSIM_RPC_PORT="$v"
+    v=$(sim_cfg vehicle_name "$f");                  [[ -z "$v" ]] || VEHICLE_NAME="$v"
+    v=$(sim_cfg stream_host "$f");                   [[ -z "$v" ]] || STREAM_HOST="$v"
+    v=$(sim_cfg stream_port "$f");                   [[ -z "$v" ]] || STREAM_PORT="$v"
+    v=$(sim_cfg max_frames "$f");                    [[ -z "$v" ]] || MAX_FRAMES="$v"
+    v=$(sim_cfg shutdown_max_frames "$f");           [[ -z "$v" ]] || SHUTDOWN_MAX_FRAMES="$v"
+    v=$(sim_cfg behavior_duration_s "$f");           [[ -z "$v" ]] || BEHAVIOR_DURATION_S="$v"
+    v=$(sim_cfg overlay_rate_hz "$f");               [[ -z "$v" ]] || OVERLAY_RATE_HZ="$v"
+    v=$(sim_cfg overlay_max_occupancy_cells "$f");   [[ -z "$v" ]] || OVERLAY_MAX_OCCUPANCY_CELLS="$v"
     v=$(sim_cfg with_occupancy_overlay "$f")
-    [[ "$v" == "false" ]] && WITH_OCCUPANCY_OVERLAY=0; [[ "$v" == "true" ]] && WITH_OCCUPANCY_OVERLAY=1
+    [[ "$v" != "false" ]] || WITH_OCCUPANCY_OVERLAY=0; [[ "$v" != "true" ]] || WITH_OCCUPANCY_OVERLAY=1
     v=$(sim_cfg with_swept_volume_overlay "$f")
-    [[ "$v" == "false" ]] && WITH_SWEPT_VOLUME_OVERLAY=0; [[ "$v" == "true" ]] && WITH_SWEPT_VOLUME_OVERLAY=1
+    [[ "$v" != "false" ]] || WITH_SWEPT_VOLUME_OVERLAY=0; [[ "$v" != "true" ]] || WITH_SWEPT_VOLUME_OVERLAY=1
     v=$(sim_cfg with_sensing_evidence_overlay "$f")
-    [[ "$v" == "false" ]] && WITH_SENSING_EVIDENCE_OVERLAY=0; [[ "$v" == "true" ]] && WITH_SENSING_EVIDENCE_OVERLAY=1
-    v=$(sim_cfg scene_id "$f");                     [[ -n "$v" ]] && SCENE_ID="$v"
-    v=$(sim_cfg validation_timeout_s "$f");          [[ -n "$v" ]] && VALIDATION_TIMEOUT_S="$v"
-    v=$(sim_cfg validation_min_orbits "$f");         [[ -n "$v" ]] && VALIDATION_MIN_ORBITS="$v"
-    v=$(sim_cfg validation_radius "$f");             [[ -n "$v" ]] && VALIDATION_RADIUS="$v"
-    v=$(sim_cfg validation_min_occupied_cells "$f"); [[ -n "$v" ]] && VALIDATION_MIN_OCCUPIED_CELLS="$v"
-    v=$(sim_cfg validation_complete_reason "$f");    [[ -n "$v" ]] && VALIDATION_COMPLETE_REASON="$v"
+    [[ "$v" != "false" ]] || WITH_SENSING_EVIDENCE_OVERLAY=0; [[ "$v" != "true" ]] || WITH_SENSING_EVIDENCE_OVERLAY=1
+    v=$(sim_cfg scene_id "$f");                     [[ -z "$v" ]] || SCENE_ID="$v"
+    v=$(sim_cfg validation_timeout_s "$f");          [[ -z "$v" ]] || VALIDATION_TIMEOUT_S="$v"
+    v=$(sim_cfg validation_min_orbits "$f");         [[ -z "$v" ]] || VALIDATION_MIN_ORBITS="$v"
+    v=$(sim_cfg validation_radius "$f");             [[ -z "$v" ]] || VALIDATION_RADIUS="$v"
+    v=$(sim_cfg validation_min_occupied_cells "$f"); [[ -z "$v" ]] || VALIDATION_MIN_OCCUPIED_CELLS="$v"
+    v=$(sim_cfg validation_complete_reason "$f");    [[ -z "$v" ]] || VALIDATION_COMPLETE_REASON="$v"
     v=$(sim_cfg validation_expect_sequence "$f")
-    [[ "$v" == "true" ]] && VALIDATION_EXPECT_SEQUENCE=1; [[ "$v" == "false" ]] && VALIDATION_EXPECT_SEQUENCE=0
-    v=$(sim_cfg validation_sequence_steps "$f");     [[ -n "$v" ]] && VALIDATION_SEQUENCE_STEPS="$v"
-    v=$(sim_cfg validation_sequence_step_modes "$f"); [[ -n "$v" ]] && VALIDATION_SEQUENCE_STEP_MODES="$v"
+    [[ "$v" != "true" ]] || VALIDATION_EXPECT_SEQUENCE=1; [[ "$v" != "false" ]] || VALIDATION_EXPECT_SEQUENCE=0
+    v=$(sim_cfg validation_sequence_steps "$f");     [[ -z "$v" ]] || VALIDATION_SEQUENCE_STEPS="$v"
+    v=$(sim_cfg validation_sequence_step_modes "$f"); [[ -z "$v" ]] || VALIDATION_SEQUENCE_STEP_MODES="$v"
 }
 
 # Pre-scan for --sim-config so the config file is applied before the main arg
