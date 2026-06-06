@@ -614,6 +614,12 @@ void InMemoryWorldModel::ingest(const PerceptionPipelineOutput& perception_outpu
         refresh_synthetic_obstacle_products(snapshot_);
     }
 
+    if (!perception_output.obstacle_evidence.empty()) {
+        // Sensor-derived classless obstacle evidence is the 4.x detector path.
+        // Prefer it over object-GT visual-emulation evidence when present.
+        snapshot_.obstacle_evidence = perception_output.obstacle_evidence;
+    }
+
     snapshot_.containers.clear();
     ContainerState car;
     car.container_id = AgentId{"agent_car_0001"};

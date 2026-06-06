@@ -7,6 +7,7 @@
 #include <vector>
 
 #include "dedalus/core/types.hpp"
+#include "dedalus/sensing/airsim_depth_obstacle_detector.hpp"
 #include "dedalus/world_model/world_snapshot.hpp"
 
 namespace dedalus {
@@ -40,6 +41,7 @@ struct FramePacket {
     CameraIntrinsics intrinsics;
 
     std::optional<Pose3> camera_T_world;
+    std::optional<AirSimDepthFrame> depth_frame;
     std::optional<Pose3> camera_T_body;
     std::optional<EgoState> ego_hint;
     std::optional<AppearanceCondition> appearance_condition;

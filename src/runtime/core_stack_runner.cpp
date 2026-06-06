@@ -5,6 +5,8 @@
 #include <utility>
 #include <vector>
 
+#include "dedalus/sensing/airsim_depth_obstacle_detector.hpp"
+
 namespace dedalus {
 namespace {
 
@@ -119,6 +121,26 @@ bool CoreStackRunner::run_once() {
     auto perception_output = pipeline.process(*frame, *ego_estimate.ego);
     if (timing_writer_) {
         timing_writer_->record_stage("perception_pipeline.process", duration_us(start));
+    }
+
+    if (frame->depth_frame.has_value() && !current_sensing_volumes.empty()) {
+        start = SteadyClock::now();
+        AirSimDepthObstacleDetector depth_detector;
+        for (const auto& sensing_volume : current_sensing_volumes) {
+            if (!frame->depth_frame->sensor_name.empty() &&
+                !sensing_volume.sensor_name.empty() &&
+                frame->depth_frame->sensor_name != sensing_volume.sensor_name) {
+                continue;
+            }
+            const auto depth_evidence = depth_detector.detect(*frame->depth_frame, sensing_volume);
+            perception_output.obstacle_evidence.insert(
+                perception_output.obstacle_evidence.end(),
+                depth_evidence.begin(),
+                depth_evidence.end());
+        }
+        if (timing_writer_) {
+            timing_writer_->record_stage("airsim_depth_obstacle_detector.detect", duration_us(start));
+        }
     }
 
     if (providers_.ghost_targets) {

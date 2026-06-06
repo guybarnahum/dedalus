@@ -60,6 +60,7 @@ struct PerceptionPipelineOutput {
     std::vector<Track2D> tracks;
     std::vector<IdentityHypothesis> identities;
     std::vector<Observation3D> observations;
+    std::vector<ObstacleEvidence> obstacle_evidence;
 };
 
 class PerceptionPipeline {

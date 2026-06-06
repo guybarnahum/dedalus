@@ -334,6 +334,68 @@ std::optional<bool> parse_json_bool_optional(const std::string& json, const std:
     return std::nullopt;
 }
 
+std::optional<int> parse_json_int_optional(const std::string& json, const std::string& key) {
+    const std::string marker = "\"" + key + "\":";
+    const auto marker_pos = json.find(marker);
+    if (marker_pos == std::string::npos) {
+        return std::nullopt;
+    }
+    const auto value_start = marker_pos + marker.size();
+    const auto value_end = json.find_first_of(",}\n\r\t ", value_start);
+    const auto token = json.substr(value_start, value_end == std::string::npos ? std::string::npos : value_end - value_start);
+    return std::stoi(token);
+}
+
+std::optional<std::vector<float>> parse_json_float_array_optional(const std::string& json, const std::string& key) {
+    const std::string marker = "\"" + key + "\":";
+    const auto marker_pos = json.find(marker);
+    if (marker_pos == std::string::npos) {
+        return std::nullopt;
+    }
+    const auto open_pos = json.find('[', marker_pos + marker.size());
+    const auto close_pos = json.find(']', open_pos);
+    if (open_pos == std::string::npos || close_pos == std::string::npos || close_pos <= open_pos) {
+        return std::nullopt;
+    }
+
+    std::string body = json.substr(open_pos + 1U, close_pos - open_pos - 1U);
+    std::replace(body.begin(), body.end(), ',', ' ');
+    std::istringstream input{body};
+    std::vector<float> values;
+    float value = 0.0F;
+    while (input >> value) {
+        values.push_back(value);
+    }
+    return values;
+}
+
+std::optional<AirSimDepthFrame> parse_depth_frame_optional(
+    const std::string& json,
+    const FramePacket& frame,
+    const MapFrameId& map_frame_id) {
+    const auto width = parse_json_int_optional(json, "depth_width");
+    const auto height = parse_json_int_optional(json, "depth_height");
+    const auto depth = parse_json_float_array_optional(json, "depth_m");
+    if (!width.has_value() || !height.has_value() || !depth.has_value()) {
+        return std::nullopt;
+    }
+    if (*width <= 0 || *height <= 0 ||
+        depth->size() < static_cast<std::size_t>(*width) * static_cast<std::size_t>(*height)) {
+        return std::nullopt;
+    }
+
+    AirSimDepthFrame depth_frame;
+    depth_frame.timestamp = frame.timestamp;
+    depth_frame.source_frame_id = frame.frame_id;
+    depth_frame.has_source_frame = true;
+    depth_frame.sensor_name = frame.camera_id.value;
+    depth_frame.map_frame_id = map_frame_id;
+    depth_frame.width = *width;
+    depth_frame.height = *height;
+    depth_frame.depth_m = *depth;
+    return depth_frame;
+}
+
 Vec3 to_vec3(const std::vector<double>& values) {
     return Vec3{values.at(0), values.at(1), values.at(2)};
 }
@@ -469,6 +531,7 @@ std::optional<FramePacket> AirSimFrameSource::next_stream_binary_frame() {
     if (!sidecar_payload.empty()) {
         start = SteadyClock::now();
         frame.ego_hint = parse_ego_json(sidecar_payload, config_.map_frame_id, frame.timestamp);
+        frame.depth_frame = parse_depth_frame_optional(sidecar_payload, frame, config_.map_frame_id);
         timings.push_back(FrameSourceTiming{"frame_source.detail.parse_sidecar", elapsed_us(start)});
     }
     frame.source_timings = std::move(timings);
