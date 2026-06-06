@@ -223,12 +223,20 @@ def downsample_depth_response(response: object, stride: int) -> dict[str, object
         sampled_height += 1
 
     valid = [value for value in sampled if math.isfinite(value) and value > 0.0]
+    usable_0_5m = [value for value in valid if value <= 5.0]
+    usable_5_20m = [value for value in valid if 5.0 < value <= 20.0]
+    usable_20_80m = [value for value in valid if 20.0 < value <= 80.0]
+    far_over_80m = [value for value in valid if value > 80.0]
     return {
         "depth_width": sampled_width,
         "depth_height": sampled_height,
         "depth_stride": stride,
         "depth_m": sampled,
         "depth_valid_count": len(valid),
+        "depth_0_5m_count": len(usable_0_5m),
+        "depth_5_20m_count": len(usable_5_20m),
+        "depth_20_80m_count": len(usable_20_80m),
+        "depth_over_80m_count": len(far_over_80m),
         "depth_min_m": min(valid) if valid else 0.0,
         "depth_max_m": max(valid) if valid else 0.0,
     }
@@ -422,6 +430,10 @@ def main() -> int:
                     "depth_width": int(depth_payload.get("depth_width", 0)) if depth_payload else 0,
                     "depth_height": int(depth_payload.get("depth_height", 0)) if depth_payload else 0,
                     "depth_valid_count": int(depth_payload.get("depth_valid_count", 0)) if depth_payload else 0,
+                    "depth_0_5m_count": int(depth_payload.get("depth_0_5m_count", 0)) if depth_payload else 0,
+                    "depth_5_20m_count": int(depth_payload.get("depth_5_20m_count", 0)) if depth_payload else 0,
+                    "depth_20_80m_count": int(depth_payload.get("depth_20_80m_count", 0)) if depth_payload else 0,
+                    "depth_over_80m_count": int(depth_payload.get("depth_over_80m_count", 0)) if depth_payload else 0,
                     "depth_min_m": float(depth_payload.get("depth_min_m", 0.0)) if depth_payload else 0.0,
                     "depth_max_m": float(depth_payload.get("depth_max_m", 0.0)) if depth_payload else 0.0,
                     "target_period_ms": target_period_ms,
