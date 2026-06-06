@@ -195,7 +195,15 @@ def downsample_depth_response(response: object, stride: int) -> dict[str, object
     stride = max(1, int(stride))
     raw = list(getattr(response, "image_data_float", []) or [])
     if width <= 0 or height <= 0 or len(raw) < width * height:
-        return {"depth_width": 0, "depth_height": 0, "depth_stride": stride, "depth_m": []}
+        return {
+            "depth_width": 0,
+            "depth_height": 0,
+            "depth_stride": stride,
+            "depth_m": [],
+            "depth_valid_count": 0,
+            "depth_min_m": 0.0,
+            "depth_max_m": 0.0,
+        }
 
     sampled: list[float] = []
     sampled_width = 0
@@ -205,17 +213,24 @@ def downsample_depth_response(response: object, stride: int) -> dict[str, object
         for x in range(0, width, stride):
             value = float(raw[y * width + x])
             if not math.isfinite(value) or value <= 0.0:
-                value = float("inf")
+                # Keep the sidecar strict JSON and parser-friendly. The C++
+                # detector rejects non-positive depth, so 0.0 represents
+                # invalid/no-return depth without JSON Infinity/NaN.
+                value = 0.0
             sampled.append(value)
             row_count += 1
         sampled_width = max(sampled_width, row_count)
         sampled_height += 1
 
+    valid = [value for value in sampled if math.isfinite(value) and value > 0.0]
     return {
         "depth_width": sampled_width,
         "depth_height": sampled_height,
         "depth_stride": stride,
         "depth_m": sampled,
+        "depth_valid_count": len(valid),
+        "depth_min_m": min(valid) if valid else 0.0,
+        "depth_max_m": max(valid) if valid else 0.0,
     }
 
 
@@ -267,7 +282,7 @@ def ego_json_bytes(
     if depth_payload:
         payload.update(depth_payload)
 
-    return json.dumps(payload, separators=(",", ":")).encode("utf-8")
+    return json.dumps(payload, separators=(",", ":"), allow_nan=False).encode("utf-8")
 
 
 def write_frame(
@@ -404,6 +419,11 @@ def main() -> int:
                     "include_ego": bool(args.include_ego),
                     "include_depth": bool(args.include_depth),
                     "depth_stride": int(args.depth_stride),
+                    "depth_width": int(depth_payload.get("depth_width", 0)) if depth_payload else 0,
+                    "depth_height": int(depth_payload.get("depth_height", 0)) if depth_payload else 0,
+                    "depth_valid_count": int(depth_payload.get("depth_valid_count", 0)) if depth_payload else 0,
+                    "depth_min_m": float(depth_payload.get("depth_min_m", 0.0)) if depth_payload else 0.0,
+                    "depth_max_m": float(depth_payload.get("depth_max_m", 0.0)) if depth_payload else 0.0,
                     "target_period_ms": target_period_ms,
                     "sim_get_images_ms": elapsed_ms(image_start_ns, image_end_ns),
                     "rgb_convert_ms": elapsed_ms(rgb_start_ns, rgb_end_ns),

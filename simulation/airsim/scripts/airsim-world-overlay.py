@@ -662,6 +662,12 @@ def draw_obstacle_evidence(client: Any, snapshot: dict[str, Any] | None, args: a
     if not args.show_obstacle_evidence:
         return
     evidence_items = obstacle_evidence_from_snapshot(snapshot, args.max_obstacle_evidence)
+    if args.debug:
+        providers: dict[str, int] = {}
+        for item in evidence_items:
+            provider = str(item.get("source_provider", ""))
+            providers[provider] = providers.get(provider, 0) + 1
+        print(f"obstacle_evidence render providers={providers}", file=sys.stderr)
     if args.dry_run:
         for evidence in evidence_items:
             print(

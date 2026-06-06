@@ -126,21 +126,37 @@ bool CoreStackRunner::run_once() {
     if (frame->depth_frame.has_value() && !current_sensing_volumes.empty()) {
         start = SteadyClock::now();
         AirSimDepthObstacleDetector depth_detector;
+        if (timing_writer_) {
+            timing_writer_->record_stage("airsim_depth_obstacle_detector.depth_samples", frame->depth_frame->depth_m.size());
+            timing_writer_->record_stage("airsim_depth_obstacle_detector.sensing_volumes", current_sensing_volumes.size());
+        }
+        std::size_t matched_sensing_volumes = 0U;
+        std::size_t produced_depth_evidence = 0U;
         for (const auto& sensing_volume : current_sensing_volumes) {
             if (!frame->depth_frame->sensor_name.empty() &&
                 !sensing_volume.sensor_name.empty() &&
                 frame->depth_frame->sensor_name != sensing_volume.sensor_name) {
                 continue;
             }
+            ++matched_sensing_volumes;
             const auto depth_evidence = depth_detector.detect(*frame->depth_frame, sensing_volume);
+            produced_depth_evidence += depth_evidence.size();
             perception_output.obstacle_evidence.insert(
                 perception_output.obstacle_evidence.end(),
                 depth_evidence.begin(),
                 depth_evidence.end());
         }
         if (timing_writer_) {
+            timing_writer_->record_stage("airsim_depth_obstacle_detector.matched_sensing_volumes", matched_sensing_volumes);
+            timing_writer_->record_stage("airsim_depth_obstacle_detector.evidence_count", produced_depth_evidence);
             timing_writer_->record_stage("airsim_depth_obstacle_detector.detect", duration_us(start));
         }
+    } else if (timing_writer_) {
+        timing_writer_->record_stage(
+            frame->depth_frame.has_value()
+                ? "airsim_depth_obstacle_detector.skipped_no_sensing_volume"
+                : "airsim_depth_obstacle_detector.skipped_no_depth_frame",
+            current_sensing_volumes.size());
     }
 
     if (providers_.ghost_targets) {

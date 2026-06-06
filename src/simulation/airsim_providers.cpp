@@ -2,10 +2,12 @@
 
 #include <algorithm>
 #include <chrono>
+#include <cmath>
 #include <cctype>
 #include <cstdint>
 #include <cstring>
 #include <memory>
+#include <limits>
 #include <sstream>
 #include <stdexcept>
 #include <string>
@@ -533,6 +535,28 @@ std::optional<FramePacket> AirSimFrameSource::next_stream_binary_frame() {
         frame.ego_hint = parse_ego_json(sidecar_payload, config_.map_frame_id, frame.timestamp);
         frame.depth_frame = parse_depth_frame_optional(sidecar_payload, frame, config_.map_frame_id);
         timings.push_back(FrameSourceTiming{"frame_source.detail.parse_sidecar", elapsed_us(start)});
+        timings.push_back(FrameSourceTiming{
+            frame.depth_frame.has_value()
+                ? "frame_source.detail.depth_sidecar.present"
+                : "frame_source.detail.depth_sidecar.missing",
+            frame.depth_frame.has_value() ? static_cast<std::int64_t>(frame.depth_frame->depth_m.size()) : 0});
+        if (frame.depth_frame.has_value()) {
+            std::int64_t valid_samples = 0;
+            float min_depth = std::numeric_limits<float>::infinity();
+            float max_depth = 0.0F;
+            for (const auto depth : frame.depth_frame->depth_m) {
+                if (std::isfinite(depth) && depth > 0.0F) {
+                    ++valid_samples;
+                    min_depth = std::min(min_depth, depth);
+                    max_depth = std::max(max_depth, depth);
+                }
+            }
+            timings.push_back(FrameSourceTiming{"frame_source.detail.depth_sidecar.width", frame.depth_frame->width});
+            timings.push_back(FrameSourceTiming{"frame_source.detail.depth_sidecar.height", frame.depth_frame->height});
+            timings.push_back(FrameSourceTiming{"frame_source.detail.depth_sidecar.valid_samples", valid_samples});
+            timings.push_back(FrameSourceTiming{"frame_source.detail.depth_sidecar.min_mm", valid_samples > 0 ? static_cast<std::int64_t>(min_depth * 1000.0F) : 0});
+            timings.push_back(FrameSourceTiming{"frame_source.detail.depth_sidecar.max_mm", valid_samples > 0 ? static_cast<std::int64_t>(max_depth * 1000.0F) : 0});
+        }
     }
     frame.source_timings = std::move(timings);
     return frame;
