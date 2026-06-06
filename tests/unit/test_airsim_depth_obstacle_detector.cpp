@@ -118,5 +118,34 @@ int main() {
         return 1;
     }
 
+    dedalus::AirSimDepthFrame sidecar_frame;
+    sidecar_frame.timestamp = dedalus::TimePoint{3000000};
+    sidecar_frame.source_frame_id = dedalus::FrameId{"frame_depth_sidecar_0001"};
+    sidecar_frame.has_source_frame = true;
+    sidecar_frame.sensor_name = "front_center";
+    sidecar_frame.map_frame_id = dedalus::MapFrameId{"map_local_0001"};
+    sidecar_frame.width = 16;
+    sidecar_frame.height = 9;
+    sidecar_frame.depth_m.assign(
+        static_cast<std::size_t>(sidecar_frame.width) * static_cast<std::size_t>(sidecar_frame.height),
+        0.0F);
+    sidecar_frame.depth_m[0] = 10.0F;
+    sidecar_frame.depth_m[1] = 11.0F;
+    sidecar_frame.depth_m[static_cast<std::size_t>(sidecar_frame.width) + 1U] = 12.0F;
+    sidecar_frame.depth_m[static_cast<std::size_t>(sidecar_frame.width) * 4U + 8U] = 13.0F;
+
+    dedalus::AirSimDepthObstacleDetectorConfig default_config;
+    default_config.min_depth_m = 0.5F;
+    default_config.max_depth_m = 30.0F;
+    default_config.max_evidence = 32U;
+
+    const auto sidecar_evidence =
+        dedalus::detect_airsim_depth_obstacles(sidecar_frame, volume, default_config);
+    if (sidecar_evidence.size() != 4U) {
+        std::cerr << "default detector config should consume every sidecar depth sample; got "
+                  << sidecar_evidence.size() << "\n";
+        return 1;
+    }
+
     return 0;
 }

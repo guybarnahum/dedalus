@@ -20,7 +20,13 @@ struct AirSimDepthFrame {
 };
 
 struct AirSimDepthObstacleDetectorConfig {
-    std::size_t pixel_stride{16U};
+    // Detector-side stride over the already-acquired depth frame.
+    //
+    // AirSim live transport may downsample the full DepthPlanar image before it
+    // enters CoreStackRunner. The detector default must consume every sample it
+    // receives; upstream acquisition controls transport density. Raise this
+    // only for an intentional second decimation pass.
+    std::size_t pixel_stride{1U};
     float min_depth_m{0.2F};
     float max_depth_m{80.0F};
     float voxel_size_m{0.75F};

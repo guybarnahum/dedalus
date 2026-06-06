@@ -212,10 +212,12 @@ def downsample_depth_response(response: object, stride: int) -> dict[str, object
         row_count = 0
         for x in range(0, width, stride):
             value = float(raw[y * width + x])
-            if not math.isfinite(value) or value <= 0.0:
+            if not math.isfinite(value) or value <= 0.0 or value >= 60000.0:
                 # Keep the sidecar strict JSON and parser-friendly. The C++
                 # detector rejects non-positive depth, so 0.0 represents
-                # invalid/no-return depth without JSON Infinity/NaN.
+                # invalid/no-return depth without JSON Infinity/NaN. AirSim
+                # commonly uses very large finite values, e.g. 65504m, as a
+                # far/no-return sentinel; those are not obstacle geometry.
                 value = 0.0
             sampled.append(value)
             row_count += 1
