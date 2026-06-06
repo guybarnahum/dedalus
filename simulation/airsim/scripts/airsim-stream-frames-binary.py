@@ -26,6 +26,7 @@ from __future__ import annotations
 import argparse
 from contextlib import redirect_stdout
 import json
+import math
 import os
 from pathlib import Path
 import struct
@@ -187,11 +188,43 @@ def rgb_bytes_from_response(response: object) -> bytes:
     )
 
 
+
+def downsample_depth_response(response: object, stride: int) -> dict[str, object]:
+    width = int(getattr(response, "width", 0))
+    height = int(getattr(response, "height", 0))
+    stride = max(1, int(stride))
+    raw = list(getattr(response, "image_data_float", []) or [])
+    if width <= 0 or height <= 0 or len(raw) < width * height:
+        return {"depth_width": 0, "depth_height": 0, "depth_stride": stride, "depth_m": []}
+
+    sampled: list[float] = []
+    sampled_width = 0
+    sampled_height = 0
+    for y in range(0, height, stride):
+        row_count = 0
+        for x in range(0, width, stride):
+            value = float(raw[y * width + x])
+            if not math.isfinite(value) or value <= 0.0:
+                value = float("inf")
+            sampled.append(value)
+            row_count += 1
+        sampled_width = max(sampled_width, row_count)
+        sampled_height += 1
+
+    return {
+        "depth_width": sampled_width,
+        "depth_height": sampled_height,
+        "depth_stride": stride,
+        "depth_m": sampled,
+    }
+
+
 def ego_json_bytes(
     client: airsim.MultirotorClient,
     vehicle_name: str,
     timestamp_ns: int,
     mavlink_ego_reader: MavlinkEgoTelemetryReader | None = None,
+    depth_payload: dict[str, object] | None = None,
 ) -> bytes:
     state = client.getMultirotorState(vehicle_name=vehicle_name)
     kin = state.kinematics_estimated
@@ -230,6 +263,9 @@ def ego_json_bytes(
 
     if mavlink_ego_reader is not None:
         payload.update(mavlink_ego_reader.sample())
+
+    if depth_payload:
+        payload.update(depth_payload)
 
     return json.dumps(payload, separators=(",", ":")).encode("utf-8")
 
@@ -280,6 +316,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--mavlink-armed-endpoints", default=os.environ.get("DEDALUS_MAVLINK_ARMED_ENDPOINTS", ""), help="Deprecated alias for --mavlink-ego-endpoints.")
     parser.add_argument("--mavlink-ego-endpoints", default=os.environ.get("DEDALUS_MAVLINK_EGO_ENDPOINTS", ""), help="Comma-separated pymavlink endpoints used to derive ego telemetry from HEARTBEAT and LOCAL_POSITION_NED.")
     parser.add_argument("--timing-jsonl", default="", help="Optional path for bridge-internal timing JSONL records.")
+    parser.add_argument("--include-depth", action="store_true", help="Append a downsampled AirSim DepthPlanar grid to the sidecar JSON.")
+    parser.add_argument("--depth-stride", type=int, default=16, help="Depth pixel stride used when --include-depth is enabled.")
     return parser.parse_args()
 
 
@@ -300,8 +338,11 @@ def main() -> int:
             loop_start_ns = time.perf_counter_ns()
 
             image_start_ns = time.perf_counter_ns()
+            requests = [airsim.ImageRequest(args.camera_name, airsim.ImageType.Scene, False, False)]
+            if args.include_depth:
+                requests.append(airsim.ImageRequest(args.camera_name, airsim.ImageType.DepthPlanar, True, False))
             responses = client.simGetImages(
-                [airsim.ImageRequest(args.camera_name, airsim.ImageType.Scene, False, False)],
+                requests,
                 vehicle_name=args.vehicle_name,
             )
             image_end_ns = time.perf_counter_ns()
@@ -316,8 +357,18 @@ def main() -> int:
             payload = rgb_bytes_from_response(response)
             rgb_end_ns = time.perf_counter_ns()
 
+            depth_payload = (
+                downsample_depth_response(responses[1], args.depth_stride)
+                if args.include_depth and len(responses) > 1
+                else None
+            )
+
             ego_start_ns = time.perf_counter_ns()
-            ego_payload = ego_json_bytes(client, args.vehicle_name, timestamp_ns, mavlink_ego_reader) if args.include_ego else b""
+            ego_payload = (
+                ego_json_bytes(client, args.vehicle_name, timestamp_ns, mavlink_ego_reader, depth_payload)
+                if args.include_ego
+                else b""
+            )
             ego_end_ns = time.perf_counter_ns()
 
             write_start_ns = time.perf_counter_ns()
@@ -351,6 +402,8 @@ def main() -> int:
                     "payload_bytes": len(payload),
                     "ego_bytes": len(ego_payload),
                     "include_ego": bool(args.include_ego),
+                    "include_depth": bool(args.include_depth),
+                    "depth_stride": int(args.depth_stride),
                     "target_period_ms": target_period_ms,
                     "sim_get_images_ms": elapsed_ms(image_start_ns, image_end_ns),
                     "rgb_convert_ms": elapsed_ms(rgb_start_ns, rgb_end_ns),
