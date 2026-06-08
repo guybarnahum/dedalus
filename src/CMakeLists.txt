@@ -1,4 +1,5 @@
 add_library(dedalus_core
+    behavior/behavior_osd.cpp
     behavior/behavior_spec.cpp
     behavior/follow_geometry_policy.cpp
     behavior/mission_runtime.cpp
