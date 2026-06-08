@@ -504,7 +504,14 @@ if [[ "$WITH_OCCUPANCY_OVERLAY" -eq 1 ]]; then
 fi
 if [[ "$WITH_SWEPT_VOLUME_OVERLAY" -eq 1 ]]; then OVERLAY_CMD+=(--show-swept-volume); fi
 if [[ "$WITH_SENSING_EVIDENCE_OVERLAY" -eq 1 ]]; then
-    OVERLAY_CMD+=(--show-sensing-volumes --show-obstacle-evidence)
+    OVERLAY_CMD+=(
+        --show-sensing-volumes
+        --show-obstacle-evidence
+        --no-sensing-volume-labels
+        --obstacle-evidence-shape surfel_patch
+        --obstacle-evidence-display-voxel-m 0.50
+        --max-obstacle-evidence 160
+    )
 fi
 if [[ "$EXIT_ON_COMPLETE" -eq 1 ]]; then OVERLAY_CMD+=(--exit-on-runtime-stop); fi
 if [[ "$OVERLAY_DURATION_S" != "0" ]]; then OVERLAY_CMD+=(--duration-s "$OVERLAY_DURATION_S"); fi

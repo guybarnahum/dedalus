@@ -45,10 +45,14 @@ SWEEP_BLOCKED_COLOR = [1.0, 0.05, 0.05, 0.95]
 SWEEP_UNKNOWN_COLOR = [1.0, 0.8, 0.1, 0.85]
 SWEEP_STALE_COLOR = [0.55, 0.55, 0.55, 0.8]
 
-SENSING_VOLUME_COLOR = [0.45, 0.65, 1.0, 0.55]
-EVIDENCE_OCCUPIED_COLOR = [1.0, 0.25, 0.05, 0.90]
+SENSING_VOLUME_COLOR = [0.45, 0.65, 1.0, 0.35]
+EVIDENCE_OCCUPIED_COLOR = [0.2, 1.0, 0.85, 0.72]
+EVIDENCE_FREE_COLOR = [0.1, 0.8, 1.0, 0.22]
+EVIDENCE_UNKNOWN_COLOR = [1.0, 0.8, 0.1, 0.32]
 EVIDENCE_THIN_RISK_COLOR = [1.0, 0.0, 1.0, 0.95]
 EVIDENCE_BLOCKING_COLOR = [1.0, 0.0, 0.0, 1.0]
+EVIDENCE_SURFEL_MIN_M = 0.18
+EVIDENCE_SURFEL_MAX_M = 0.65
 
 
 class RuntimeEventStreamClient:
@@ -211,12 +215,19 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--show-sensing-volumes", action="store_true")
     parser.add_argument("--max-sensing-volumes", type=int, default=4)
     parser.add_argument("--sensing-volume-z-lift-m", type=float, default=0.05)
-    parser.add_argument("--sensing-volume-line-thickness", type=float, default=2.0)
+    parser.add_argument("--sensing-volume-line-thickness", type=float, default=1.25)
+    parser.add_argument("--sensing-volume-labels", action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument("--show-obstacle-evidence", action="store_true")
     parser.add_argument("--max-obstacle-evidence", type=int, default=96)
     parser.add_argument("--obstacle-evidence-z-lift-m", type=float, default=0.35)
-    parser.add_argument("--obstacle-evidence-line-thickness", type=float, default=3.0)
+    parser.add_argument("--obstacle-evidence-line-thickness", type=float, default=2.0)
     parser.add_argument("--obstacle-evidence-size", type=float, default=12.0)
+    parser.add_argument(
+        "--obstacle-evidence-shape",
+        choices=("surfel_patch", "crosshair_3d", "vertical_tick", "wireframe_box", "voxel_cube"),
+        default="surfel_patch",
+    )
+    parser.add_argument("--obstacle-evidence-display-voxel-m", type=float, default=0.0)
     return parser.parse_args()
 
 
@@ -247,6 +258,10 @@ def vec_add(a: list[float], b: list[float]) -> list[float]:
 
 def vec_scale(value: list[float], scale: float) -> list[float]:
     return [component * scale for component in value]
+
+
+def clamp(value: float, low: float, high: float) -> float:
+    return max(low, min(high, value))
 
 
 def vec_lift(value: list[float], z_lift_m: float) -> list[float]:
@@ -342,7 +357,7 @@ def sensing_volumes_from_snapshot(snapshot: dict[str, Any] | None, max_volumes: 
     return volumes[: max(0, max_volumes)]
 
 
-def obstacle_evidence_from_snapshot(snapshot: dict[str, Any] | None, max_evidence: int) -> list[dict[str, Any]]:
+def obstacle_evidence_from_snapshot(snapshot: dict[str, Any] | None, max_evidence: int, display_voxel_m: float = 0.0) -> list[dict[str, Any]]:
     if snapshot is None:
         return []
     evidence = [
@@ -356,6 +371,26 @@ def obstacle_evidence_from_snapshot(snapshot: dict[str, Any] | None, max_evidenc
         state_rank.get(str(item.get("state", "unknown")), 4),
         -float(item.get("confidence", 0.0)),
     ))
+    if display_voxel_m > 0.0:
+        voxel_m = max(0.05, display_voxel_m)
+        seen: set[tuple[Any, ...]] = set()
+        thinned: list[dict[str, Any]] = []
+        for item in evidence:
+            center = vec3(item.get("center_local"))
+            if center is None:
+                continue
+            key = (
+                str(item.get("state", "unknown")),
+                bool(item.get("inside_swept_volume", False)),
+                int(math.floor(center[0] / voxel_m)),
+                int(math.floor(center[1] / voxel_m)),
+                int(math.floor(center[2] / voxel_m)),
+            )
+            if key in seen:
+                continue
+            seen.add(key)
+            thinned.append(item)
+        evidence = thinned
     return evidence[: max(0, max_evidence)]
 
 
@@ -425,8 +460,8 @@ def obstacle_evidence_color(evidence: dict[str, Any]) -> list[float]:
     if state == "occupied":
         return EVIDENCE_OCCUPIED_COLOR
     if state == "free":
-        return FREE_CELL_COLOR
-    return UNKNOWN_CELL_COLOR
+        return EVIDENCE_FREE_COLOR
+    return EVIDENCE_UNKNOWN_COLOR
 
 
 def label_for(agent: dict[str, Any]) -> str:
@@ -480,30 +515,101 @@ def box_wireframe_segments(center: list[float], size_m: list[float], z_lift_m: f
     return segments
 
 
-def obstacle_evidence_size_m(evidence: dict[str, Any]) -> list[float]:
+def obstacle_evidence_size_m(evidence: dict[str, Any], args: argparse.Namespace) -> list[float]:
     size = vec3(evidence.get("size_m"))
     if size is not None:
-        return [max(0.15, abs(component)) for component in size]
+        raw = [abs(component) for component in size]
+    else:
+        extent = vec3(evidence.get("extent_m"))
+        if extent is not None:
+            raw = [abs(component) for component in extent]
+        else:
+            try:
+                radius = max(0.0, float(evidence.get("radius_m", 0.0)))
+            except (TypeError, ValueError):
+                radius = 0.0
+            if radius > 0.0:
+                raw = [2.0 * radius, 2.0 * radius, 2.0 * radius]
+            else:
+                raw = [EVIDENCE_SURFEL_MAX_M, EVIDENCE_SURFEL_MAX_M, EVIDENCE_SURFEL_MAX_M]
 
-    extent = vec3(evidence.get("extent_m"))
-    if extent is not None:
-        return [max(0.15, abs(component)) for component in extent]
-
-    try:
-        radius = max(0.15, float(evidence.get("radius_m", 0.0)))
-        if radius > 0.15:
-            diameter = 2.0 * radius
-            return [diameter, diameter, diameter]
-    except (TypeError, ValueError):
-        pass
-
-    # Default visual detector evidence footprint. This is intentionally
-    # volumetric, not a text label or point marker, so GT visual-emulation,
-    # depth, stereo, and learned visual detectors share one overlay contract.
     state = str(evidence.get("state", "unknown"))
     if state == "thin_structure_risk":
-        return [0.25, 0.25, 2.0]
-    return [0.75, 0.75, 0.75]
+        return [
+            clamp(raw[0], 0.12, 0.35),
+            clamp(raw[1], 0.12, 0.35),
+            clamp(max(raw[2], 1.25), 1.25, 3.0),
+        ]
+
+    max_size = max(EVIDENCE_SURFEL_MIN_M, EVIDENCE_SURFEL_MAX_M)
+    return [clamp(component, EVIDENCE_SURFEL_MIN_M, max_size) for component in raw]
+
+
+def crosshair_segments(center: list[float], size_m: list[float], z_lift_m: float) -> list[airsim.Vector3r]:
+    half = [max(0.05, abs(component) * 0.5) for component in size_m]
+    lifted = vec_lift(center, z_lift_m)
+    axes = (
+        ([half[0], 0.0, 0.0], [-half[0], 0.0, 0.0]),
+        ([0.0, half[1], 0.0], [0.0, -half[1], 0.0]),
+        ([0.0, 0.0, half[2]], [0.0, 0.0, -half[2]]),
+    )
+    points: list[airsim.Vector3r] = []
+    for a, b in axes:
+        points.extend([
+            airsim_vec(vec_add(lifted, a)),
+            airsim_vec(vec_add(lifted, b)),
+        ])
+    return points
+
+
+def surfel_patch_segments(center: list[float], size_m: list[float], z_lift_m: float) -> list[airsim.Vector3r]:
+    half_x = max(0.08, abs(size_m[0]) * 0.5)
+    half_y = max(0.08, abs(size_m[1]) * 0.5)
+    lifted = vec_lift(center, z_lift_m)
+    corners = [
+        vec_add(lifted, [-half_x, -half_y, 0.0]),
+        vec_add(lifted, [ half_x, -half_y, 0.0]),
+        vec_add(lifted, [ half_x,  half_y, 0.0]),
+        vec_add(lifted, [-half_x,  half_y, 0.0]),
+    ]
+    return [
+        airsim_vec(corners[0]), airsim_vec(corners[1]),
+        airsim_vec(corners[1]), airsim_vec(corners[2]),
+        airsim_vec(corners[2]), airsim_vec(corners[3]),
+        airsim_vec(corners[3]), airsim_vec(corners[0]),
+        airsim_vec(corners[0]), airsim_vec(corners[2]),
+        airsim_vec(corners[1]), airsim_vec(corners[3]),
+    ]
+
+
+def vertical_tick_segments(center: list[float], size_m: list[float], z_lift_m: float) -> list[airsim.Vector3r]:
+    lifted = vec_lift(center, z_lift_m)
+    half_z = max(0.35, abs(size_m[2]) * 0.5)
+    radius = max(0.06, min(abs(size_m[0]), abs(size_m[1])) * 0.5)
+    return [
+        airsim_vec(vec_add(lifted, [0.0, 0.0, -half_z])),
+        airsim_vec(vec_add(lifted, [0.0, 0.0,  half_z])),
+        airsim_vec(vec_add(lifted, [-radius, 0.0, 0.0])),
+        airsim_vec(vec_add(lifted, [ radius, 0.0, 0.0])),
+        airsim_vec(vec_add(lifted, [0.0, -radius, 0.0])),
+        airsim_vec(vec_add(lifted, [0.0,  radius, 0.0])),
+    ]
+
+
+def obstacle_evidence_segments(evidence: dict[str, Any], args: argparse.Namespace) -> list[airsim.Vector3r]:
+    center = vec3(evidence.get("center_local"))
+    if center is None:
+        return []
+    size_m = obstacle_evidence_size_m(evidence, args)
+    state = str(evidence.get("state", "unknown"))
+    shape = "vertical_tick" if state == "thin_structure_risk" else args.obstacle_evidence_shape
+    if shape == "wireframe_box" or shape == "voxel_cube":
+        return box_wireframe_segments(center, size_m, args.obstacle_evidence_z_lift_m)
+    if shape == "crosshair_3d":
+        return crosshair_segments(center, size_m, args.obstacle_evidence_z_lift_m)
+    if shape == "vertical_tick":
+        return vertical_tick_segments(center, size_m, args.obstacle_evidence_z_lift_m)
+    return surfel_patch_segments(center, size_m, args.obstacle_evidence_z_lift_m)
 
 
 def occupancy_cell_wireframe_segments(cell: dict[str, Any], z_lift_m: float) -> list[airsim.Vector3r]:
@@ -646,7 +752,7 @@ def draw_sensing_volumes(client: Any, snapshot: dict[str, Any] | None, args: arg
             duration,
             args.persistent,
         )
-        if args.label:
+        if args.label and args.sensing_volume_labels:
             label_point = far[0]
             label = f"SENSE {volume.get('provider_name', 'unknown')}"
             client.simPlotStrings(
@@ -661,7 +767,11 @@ def draw_sensing_volumes(client: Any, snapshot: dict[str, Any] | None, args: arg
 def draw_obstacle_evidence(client: Any, snapshot: dict[str, Any] | None, args: argparse.Namespace) -> None:
     if not args.show_obstacle_evidence:
         return
-    evidence_items = obstacle_evidence_from_snapshot(snapshot, args.max_obstacle_evidence)
+    evidence_items = obstacle_evidence_from_snapshot(
+        snapshot,
+        args.max_obstacle_evidence,
+        args.obstacle_evidence_display_voxel_m,
+    )
     if args.debug:
         providers: dict[str, int] = {}
         for item in evidence_items:
@@ -686,16 +796,14 @@ def draw_obstacle_evidence(client: Any, snapshot: dict[str, Any] | None, args: a
         return
     duration = marker_duration(args)
     for evidence in evidence_items:
-        center = vec3(evidence.get("center_local"))
-        if center is None:
-            continue
         color = tuple(obstacle_evidence_color(evidence))
-        size_m = obstacle_evidence_size_m(evidence)
-        segments = box_wireframe_segments(center, size_m, args.obstacle_evidence_z_lift_m)
+        segments = obstacle_evidence_segments(evidence, args)
         if segments:
             thickness = args.obstacle_evidence_line_thickness
             if list(color) == EVIDENCE_BLOCKING_COLOR:
                 thickness *= 1.5
+            if str(evidence.get("state", "unknown")) == "thin_structure_risk":
+                thickness *= 1.35
             plot_line_segments(client, segments, list(color), thickness, duration, args.persistent)
 
 
