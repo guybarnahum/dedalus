@@ -127,6 +127,8 @@ private:
     bool update_circle_orbit_progress(const BehaviorSpec& behavior, bool circling, double orbit_angle_rad);
     void reset_sequence_step(TimePoint now);
     void reset_behavior_run(TimePoint now);
+    void tick_execute_mission(const MissionTickInput& input, const EgoState& ego, double height_m, MissionTickOutput& output);
+    void tick_go_home(const MissionTickInput& input, const EgoState& ego, double height_m, MissionTickOutput& output);
 
     ObjectBehaviorMissionConfig config_;
     TargetSelector selector_;
