@@ -3,6 +3,11 @@
 #include <algorithm>
 #include <cmath>
 #include <cstddef>
+#include <cstdint>
+#include <string>
+#include <unordered_map>
+#include <utility>
+#include <vector>
 
 namespace dedalus {
 namespace {
@@ -31,6 +36,10 @@ Vec3 normalize_or_zero(const Vec3& value) {
     return Vec3{value.x / length, value.y / length, value.z / length};
 }
 
+Vec3 zero_vec3() {
+    return Vec3{0.0, 0.0, 0.0};
+}
+
 bool finite_vec3(const Vec3& value) {
     return std::isfinite(value.x) &&
            std::isfinite(value.y) &&
@@ -43,6 +52,75 @@ bool finite_positive(float value) {
 
 float clamp_positive(float value, float fallback) {
     return value > 0.0F ? value : fallback;
+}
+
+std::int64_t bucket_index(double value, float resolution_m) {
+    return static_cast<std::int64_t>(std::floor(value / static_cast<double>(resolution_m)));
+}
+
+std::string bucket_key(const Vec3& center, float resolution_m) {
+    return std::to_string(bucket_index(center.x, resolution_m)) + ":" +
+           std::to_string(bucket_index(center.y, resolution_m)) + ":" +
+           std::to_string(bucket_index(center.z, resolution_m));
+}
+
+struct SurfacePatchBucket {
+    ObstacleEvidence item;
+    Vec3 center_sum;
+    Vec3 normal_sum;
+    double range_sum{0.0};
+    double bearing_sum{0.0};
+    double elevation_sum{0.0};
+    std::size_t count{0U};
+    std::size_t normal_count{0U};
+};
+
+void accumulate_bucket(SurfacePatchBucket& bucket, const ObstacleEvidence& item) {
+    if (bucket.count == 0U) {
+        bucket.item = item;
+        bucket.center_sum = zero_vec3();
+        bucket.normal_sum = zero_vec3();
+        bucket.range_sum = 0.0;
+        bucket.bearing_sum = 0.0;
+        bucket.elevation_sum = 0.0;
+        bucket.normal_count = 0U;
+    }
+
+    bucket.center_sum = add(bucket.center_sum, item.center_local);
+    bucket.range_sum += item.range_m;
+    bucket.bearing_sum += item.bearing_rad;
+    bucket.elevation_sum += item.elevation_rad;
+    if (item.has_surface_normal) {
+        bucket.normal_sum = add(bucket.normal_sum, item.surface_normal_local);
+        ++bucket.normal_count;
+    }
+    ++bucket.count;
+}
+
+ObstacleEvidence finalize_bucket(const SurfacePatchBucket& bucket) {
+    ObstacleEvidence item = bucket.item;
+    if (bucket.count == 0U) {
+        return item;
+    }
+
+    const double inv_count = 1.0 / static_cast<double>(bucket.count);
+    item.center_local = scale(bucket.center_sum, inv_count);
+    item.range_m = static_cast<float>(bucket.range_sum * inv_count);
+    item.bearing_rad = static_cast<float>(bucket.bearing_sum * inv_count);
+    item.elevation_rad = static_cast<float>(bucket.elevation_sum * inv_count);
+
+    if (bucket.normal_count > 0U) {
+        item.surface_normal_local = normalize_or_zero(bucket.normal_sum);
+        item.has_surface_normal = norm3(item.surface_normal_local) > 0.0;
+    } else {
+        item.has_surface_normal = false;
+        item.surface_normal_local = zero_vec3();
+        item.normal_confidence = 0.0F;
+    }
+
+    item.confidence = std::clamp(item.confidence, 0.0F, 1.0F);
+    item.occupancy_probability = item.confidence;
+    return item;
 }
 
 }  // namespace
@@ -97,10 +175,15 @@ std::vector<ObstacleEvidence> detect_airsim_depth_obstacles(
 
     const float patch_depth_m = std::max(0.05F, voxel * 0.25F);
     const float patch_side_m = std::max(0.10F, voxel);
+    std::unordered_map<std::string, std::size_t> bucket_indexes;
+    std::vector<std::string> bucket_order;
+    std::vector<SurfacePatchBucket> buckets;
 
     for (int y = 0; y < frame.height; y += static_cast<int>(stride)) {
         for (int x = 0; x < frame.width; x += static_cast<int>(stride)) {
-            if (config.max_evidence > 0U && evidence.size() >= config.max_evidence) {
+            if (!config.coalesce_surface_patches &&
+                config.max_evidence > 0U &&
+                evidence.size() >= config.max_evidence) {
                 return evidence;
             }
             const auto index = static_cast<std::size_t>(y) * static_cast<std::size_t>(frame.width) +
@@ -133,6 +216,7 @@ std::vector<ObstacleEvidence> detect_airsim_depth_obstacles(
             item.shape = ObstacleEvidenceShape::SurfacePatch;
             item.center_local = center;
             item.size_m = Vec3{patch_side_m, patch_side_m, patch_depth_m};
+
             if (normals_available) {
                 const auto normal_index = index * 3U;
                 const Vec3 normal_camera{
@@ -161,7 +245,33 @@ std::vector<ObstacleEvidence> detect_airsim_depth_obstacles(
             item.inside_sensing_volume = true;
             item.inside_swept_volume = false;
             item.is_static_hint = true;
-            evidence.push_back(item);
+
+            if (!config.coalesce_surface_patches) {
+                evidence.push_back(item);
+                continue;
+            }
+
+            const auto key = bucket_key(item.center_local, voxel);
+            const auto existing = bucket_indexes.find(key);
+            if (existing == bucket_indexes.end()) {
+                const std::size_t bucket_index = buckets.size();
+                bucket_indexes.emplace(key, bucket_index);
+                bucket_order.push_back(key);
+                buckets.emplace_back();
+                accumulate_bucket(buckets.back(), item);
+            } else {
+                accumulate_bucket(buckets[existing->second], item);
+            }
+        }
+    }
+
+    if (config.coalesce_surface_patches) {
+        evidence.reserve(buckets.size());
+        for (const auto& key : bucket_order) {
+            if (config.max_evidence > 0U && evidence.size() >= config.max_evidence) {
+                break;
+            }
+            evidence.push_back(finalize_bucket(buckets[bucket_indexes.at(key)]));
         }
     }
 
