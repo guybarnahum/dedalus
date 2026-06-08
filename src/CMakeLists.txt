@@ -1,5 +1,6 @@
 add_library(dedalus_core
     behavior/behavior_spec.cpp
+    behavior/follow_geometry_policy.cpp
     behavior/mission_runtime.cpp
     behavior/object_behavior_mission_controller.cpp
     behavior/px4_bridge_command_sink.cpp
