@@ -17,6 +17,15 @@ struct AirSimDepthFrame {
     int width{0};
     int height{0};
     std::vector<float> depth_m;
+
+    // Optional surface normals sampled on the same grid as depth_m.
+    //
+    // Normals are camera-frame unit vectors using the same axis convention as
+    // the detector's back-projection: +x=forward, +y=right, +z=up. The detector
+    // transforms them into the sensing-volume local/map frame before publishing
+    // ObstacleEvidence.
+    bool has_surface_normals{false};
+    std::vector<float> surface_normal_camera_xyz;
 };
 
 struct AirSimDepthObstacleDetectorConfig {
@@ -32,6 +41,7 @@ struct AirSimDepthObstacleDetectorConfig {
     float voxel_size_m{0.75F};
     float confidence{0.75F};
     std::size_t max_evidence{512U};
+    float normal_confidence{0.85F};
 };
 
 class AirSimDepthObstacleDetector {

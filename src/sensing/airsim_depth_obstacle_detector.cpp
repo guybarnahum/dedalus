@@ -19,6 +19,24 @@ double norm_xy(double x, double y) {
     return std::sqrt(x * x + y * y);
 }
 
+double norm3(const Vec3& value) {
+    return std::sqrt(value.x * value.x + value.y * value.y + value.z * value.z);
+}
+
+Vec3 normalize_or_zero(const Vec3& value) {
+    const double length = norm3(value);
+    if (!std::isfinite(length) || length <= 1.0e-6) {
+        return Vec3{};
+    }
+    return Vec3{value.x / length, value.y / length, value.z / length};
+}
+
+bool finite_vec3(const Vec3& value) {
+    return std::isfinite(value.x) &&
+           std::isfinite(value.y) &&
+           std::isfinite(value.z);
+}
+
 bool finite_positive(float value) {
     return std::isfinite(value) && value > 0.0F;
 }
@@ -72,6 +90,13 @@ std::vector<ObstacleEvidence> detect_airsim_depth_obstacles(
     const double height_minus_one = std::max(1, frame.height - 1);
     const float voxel = clamp_positive(config.voxel_size_m, 0.75F);
     const float confidence = std::clamp(config.confidence, 0.0F, 1.0F);
+    const float normal_confidence = std::clamp(config.normal_confidence, 0.0F, 1.0F);
+    const bool normals_available =
+        frame.has_surface_normals &&
+        frame.surface_normal_camera_xyz.size() >= expected_size * 3U;
+
+    const float patch_depth_m = std::max(0.05F, voxel * 0.25F);
+    const float patch_side_m = std::max(0.10F, voxel);
 
     for (int y = 0; y < frame.height; y += static_cast<int>(stride)) {
         for (int x = 0; x < frame.width; x += static_cast<int>(stride)) {
@@ -107,7 +132,27 @@ std::vector<ObstacleEvidence> detect_airsim_depth_obstacles(
             item.state = ObstacleEvidenceState::Occupied;
             item.shape = ObstacleEvidenceShape::SurfacePatch;
             item.center_local = center;
-            item.size_m = Vec3{voxel, voxel, voxel};
+            item.size_m = Vec3{patch_side_m, patch_side_m, patch_depth_m};
+            if (normals_available) {
+                const auto normal_index = index * 3U;
+                const Vec3 normal_camera{
+                    frame.surface_normal_camera_xyz[normal_index],
+                    frame.surface_normal_camera_xyz[normal_index + 1U],
+                    frame.surface_normal_camera_xyz[normal_index + 2U],
+                };
+                if (finite_vec3(normal_camera)) {
+                    Vec3 normal_local = Vec3{};
+                    normal_local = add(normal_local, scale(sensing_volume.forward_axis_local, normal_camera.x));
+                    normal_local = add(normal_local, scale(sensing_volume.right_axis_local, normal_camera.y));
+                    normal_local = add(normal_local, scale(sensing_volume.up_axis_local, normal_camera.z));
+                    normal_local = normalize_or_zero(normal_local);
+                    if (norm3(normal_local) > 0.0) {
+                        item.has_surface_normal = true;
+                        item.surface_normal_local = normal_local;
+                        item.normal_confidence = normal_confidence;
+                    }
+                }
+            }
             item.occupancy_probability = confidence;
             item.confidence = confidence;
             item.range_m = static_cast<float>(std::sqrt(forward_m * forward_m + right_m * right_m + up_m * up_m));

@@ -260,6 +260,29 @@ def vec_scale(value: list[float], scale: float) -> list[float]:
     return [component * scale for component in value]
 
 
+def vec_dot(a: list[float], b: list[float]) -> float:
+    return sum(a[index] * b[index] for index in range(3))
+
+
+def vec_cross(a: list[float], b: list[float]) -> list[float]:
+    return [
+        a[1] * b[2] - a[2] * b[1],
+        a[2] * b[0] - a[0] * b[2],
+        a[0] * b[1] - a[1] * b[0],
+    ]
+
+
+def vec_normalize(value: list[float] | None) -> list[float] | None:
+    norm = vec_norm(value)
+    if value is None or norm is None or norm <= 1.0e-6:
+        return None
+    return [component / norm for component in value]
+
+
+def vec_sub(a: list[float], b: list[float]) -> list[float]:
+    return [a[index] - b[index] for index in range(3)]
+
+
 def clamp(value: float, low: float, high: float) -> float:
     return max(low, min(high, value))
 
@@ -515,7 +538,7 @@ def box_wireframe_segments(center: list[float], size_m: list[float], z_lift_m: f
     return segments
 
 
-def obstacle_evidence_size_m(evidence: dict[str, Any], args: argparse.Namespace) -> list[float]:
+def obstacle_evidence_size_m(evidence: dict[str, Any]) -> list[float]:
     size = vec3(evidence.get("size_m"))
     if size is not None:
         raw = [abs(component) for component in size]
@@ -545,21 +568,50 @@ def obstacle_evidence_size_m(evidence: dict[str, Any], args: argparse.Namespace)
     return [clamp(component, EVIDENCE_SURFEL_MIN_M, max_size) for component in raw]
 
 
-def crosshair_segments(center: list[float], size_m: list[float], z_lift_m: float) -> list[airsim.Vector3r]:
-    half = [max(0.05, abs(component) * 0.5) for component in size_m]
-    lifted = vec_lift(center, z_lift_m)
-    axes = (
-        ([half[0], 0.0, 0.0], [-half[0], 0.0, 0.0]),
-        ([0.0, half[1], 0.0], [0.0, -half[1], 0.0]),
-        ([0.0, 0.0, half[2]], [0.0, 0.0, -half[2]]),
-    )
-    points: list[airsim.Vector3r] = []
-    for a, b in axes:
-        points.extend([
-            airsim_vec(vec_add(lifted, a)),
-            airsim_vec(vec_add(lifted, b)),
-        ])
-    return points
+def surface_patch_segments(center: list[float], size_m: list[float], normal: list[float] | None, z_lift_m: float) -> list[airsim.Vector3r]:
+    normal_unit = vec_normalize(normal)
+    if normal_unit is None:
+        # Fallback is a horizontal-ish patch in local XY, preserving the old
+        # provider-neutral behavior for evidence without normals.
+        normal_unit = [0.0, 0.0, -1.0]
+
+    reference = [0.0, 0.0, -1.0]
+    if abs(vec_dot(normal_unit, reference)) > 0.92:
+        reference = [0.0, 1.0, 0.0]
+    tangent_u = vec_normalize(vec_cross(reference, normal_unit))
+    if tangent_u is None:
+        tangent_u = [1.0, 0.0, 0.0]
+    tangent_v = vec_normalize(vec_cross(normal_unit, tangent_u)) or [0.0, 1.0, 0.0]
+
+    half_u = max(0.05, abs(size_m[0]) * 0.5)
+    half_v = max(0.05, abs(size_m[1]) * 0.5)
+    lifted_center = vec_lift(center, z_lift_m)
+
+    a = vec_sub(vec_sub(lifted_center, vec_scale(tangent_u, half_u)), vec_scale(tangent_v, half_v))
+    b = vec_add(vec_sub(lifted_center, vec_scale(tangent_v, half_v)), vec_scale(tangent_u, half_u))
+    c = vec_add(vec_add(lifted_center, vec_scale(tangent_u, half_u)), vec_scale(tangent_v, half_v))
+    d = vec_add(vec_sub(lifted_center, vec_scale(tangent_u, half_u)), vec_scale(tangent_v, half_v))
+
+    return [
+        airsim_vec(a), airsim_vec(b),
+        airsim_vec(b), airsim_vec(c),
+        airsim_vec(c), airsim_vec(d),
+        airsim_vec(d), airsim_vec(a),
+        airsim_vec(a), airsim_vec(c),
+        airsim_vec(b), airsim_vec(d),
+    ]
+
+
+def obstacle_evidence_segments(evidence: dict[str, Any], z_lift_m: float) -> list[airsim.Vector3r]:
+    center = vec3(evidence.get("center_local"))
+    if center is None:
+        return []
+    size_m = obstacle_evidence_size_m(evidence)
+    shape = str(evidence.get("shape", "voxel"))
+    normal = vec3(evidence.get("surface_normal_local")) if evidence.get("has_surface_normal") else None
+    if shape == "surface_patch":
+        return surface_patch_segments(center, size_m, normal, z_lift_m)
+    return box_wireframe_segments(center, size_m, z_lift_m)
 
 
 def surfel_patch_segments(center: list[float], size_m: list[float], z_lift_m: float) -> list[airsim.Vector3r]:
@@ -594,22 +646,6 @@ def vertical_tick_segments(center: list[float], size_m: list[float], z_lift_m: f
         airsim_vec(vec_add(lifted, [0.0, -radius, 0.0])),
         airsim_vec(vec_add(lifted, [0.0,  radius, 0.0])),
     ]
-
-
-def obstacle_evidence_segments(evidence: dict[str, Any], args: argparse.Namespace) -> list[airsim.Vector3r]:
-    center = vec3(evidence.get("center_local"))
-    if center is None:
-        return []
-    size_m = obstacle_evidence_size_m(evidence, args)
-    state = str(evidence.get("state", "unknown"))
-    shape = "vertical_tick" if state == "thin_structure_risk" else args.obstacle_evidence_shape
-    if shape == "wireframe_box" or shape == "voxel_cube":
-        return box_wireframe_segments(center, size_m, args.obstacle_evidence_z_lift_m)
-    if shape == "crosshair_3d":
-        return crosshair_segments(center, size_m, args.obstacle_evidence_z_lift_m)
-    if shape == "vertical_tick":
-        return vertical_tick_segments(center, size_m, args.obstacle_evidence_z_lift_m)
-    return surfel_patch_segments(center, size_m, args.obstacle_evidence_z_lift_m)
 
 
 def occupancy_cell_wireframe_segments(cell: dict[str, Any], z_lift_m: float) -> list[airsim.Vector3r]:
@@ -781,10 +817,11 @@ def draw_obstacle_evidence(client: Any, snapshot: dict[str, Any] | None, args: a
     if args.dry_run:
         for evidence in evidence_items:
             print(
-                "  EVID state={state} shape={shape} pos={pos} conf={conf} src={src} in_sense={sense} in_sweep={sweep}".format(
+                "  EVID state={state} shape={shape} pos={pos} normal={normal} conf={conf} src={src} in_sense={sense} in_sweep={sweep}".format(
                     state=evidence.get("state", "unknown"),
                     shape=evidence.get("shape", "unknown"),
                     pos=evidence.get("center_local"),
+                    normal=evidence.get("surface_normal_local") if evidence.get("has_surface_normal") else None,
                     conf=evidence.get("confidence", 0.0),
                     src=evidence.get("source_provider", "-"),
                     sense=evidence.get("inside_sensing_volume", False),
@@ -797,7 +834,7 @@ def draw_obstacle_evidence(client: Any, snapshot: dict[str, Any] | None, args: a
     duration = marker_duration(args)
     for evidence in evidence_items:
         color = tuple(obstacle_evidence_color(evidence))
-        segments = obstacle_evidence_segments(evidence, args)
+        segments = obstacle_evidence_segments(evidence, args.obstacle_evidence_z_lift_m)
         if segments:
             thickness = args.obstacle_evidence_line_thickness
             if list(color) == EVIDENCE_BLOCKING_COLOR:

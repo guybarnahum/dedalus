@@ -188,7 +188,6 @@ def rgb_bytes_from_response(response: object) -> bytes:
     )
 
 
-
 def downsample_depth_response(response: object, stride: int) -> dict[str, object]:
     width = int(getattr(response, "width", 0))
     height = int(getattr(response, "height", 0))
@@ -244,12 +243,75 @@ def downsample_depth_response(response: object, stride: int) -> dict[str, object
     }
 
 
+def _normal_from_rgb(r: int, g: int, b: int) -> tuple[float, float, float]:
+    # AirSim SurfaceNormals are returned as RGB-style encoded normal images.
+    # Decode to a camera-frame vector in approximately [-1, 1].
+    nx = (float(r) / 127.5) - 1.0
+    ny = (float(g) / 127.5) - 1.0
+    nz = (float(b) / 127.5) - 1.0
+    length = math.sqrt(nx * nx + ny * ny + nz * nz)
+    if not math.isfinite(length) or length <= 1.0e-6:
+        return (0.0, 0.0, 0.0)
+    return (nx / length, ny / length, nz / length)
+
+
+def downsample_surface_normals_response(response: object, stride: int) -> dict[str, object]:
+    width = int(getattr(response, "width", 0))
+    height = int(getattr(response, "height", 0))
+    stride = max(1, int(stride))
+    raw = bytes(getattr(response, "image_data_uint8", b"") or b"")
+    if width <= 0 or height <= 0:
+        return {
+            "surface_normal_width": 0,
+            "surface_normal_height": 0,
+            "surface_normal_stride": stride,
+            "surface_normal_camera_xyz": [],
+            "surface_normal_valid_count": 0,
+        }
+
+    pixel_count = width * height
+    if len(raw) < pixel_count * 3:
+        return {
+            "surface_normal_width": 0,
+            "surface_normal_height": 0,
+            "surface_normal_stride": stride,
+            "surface_normal_camera_xyz": [],
+            "surface_normal_valid_count": 0,
+        }
+
+    channels = 4 if len(raw) >= pixel_count * 4 else 3
+    sampled: list[float] = []
+    sampled_width = 0
+    sampled_height = 0
+    valid_count = 0
+    for y in range(0, height, stride):
+        row_count = 0
+        for x in range(0, width, stride):
+            offset = (y * width + x) * channels
+            nx, ny, nz = _normal_from_rgb(raw[offset], raw[offset + 1], raw[offset + 2])
+            if nx != 0.0 or ny != 0.0 or nz != 0.0:
+                valid_count += 1
+            sampled.extend([nx, ny, nz])
+            row_count += 1
+        sampled_width = max(sampled_width, row_count)
+        sampled_height += 1
+
+    return {
+        "surface_normal_width": sampled_width,
+        "surface_normal_height": sampled_height,
+        "surface_normal_stride": stride,
+        "surface_normal_camera_xyz": sampled,
+        "surface_normal_valid_count": valid_count,
+    }
+
+
 def ego_json_bytes(
     client: airsim.MultirotorClient,
     vehicle_name: str,
     timestamp_ns: int,
     mavlink_ego_reader: MavlinkEgoTelemetryReader | None = None,
     depth_payload: dict[str, object] | None = None,
+    surface_normal_payload: dict[str, object] | None = None,
 ) -> bytes:
     state = client.getMultirotorState(vehicle_name=vehicle_name)
     kin = state.kinematics_estimated
@@ -291,6 +353,8 @@ def ego_json_bytes(
 
     if depth_payload:
         payload.update(depth_payload)
+    if surface_normal_payload:
+        payload.update(surface_normal_payload)
 
     return json.dumps(payload, separators=(",", ":"), allow_nan=False).encode("utf-8")
 
@@ -343,6 +407,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--timing-jsonl", default="", help="Optional path for bridge-internal timing JSONL records.")
     parser.add_argument("--include-depth", action="store_true", help="Append a downsampled AirSim DepthPlanar grid to the sidecar JSON.")
     parser.add_argument("--depth-stride", type=int, default=16, help="Depth pixel stride used when --include-depth is enabled.")
+    parser.add_argument("--include-surface-normals", action="store_true", help="Append downsampled AirSim SurfaceNormals aligned to the depth grid.")
     return parser.parse_args()
 
 
@@ -366,6 +431,8 @@ def main() -> int:
             requests = [airsim.ImageRequest(args.camera_name, airsim.ImageType.Scene, False, False)]
             if args.include_depth:
                 requests.append(airsim.ImageRequest(args.camera_name, airsim.ImageType.DepthPlanar, True, False))
+            if args.include_surface_normals:
+                requests.append(airsim.ImageRequest(args.camera_name, airsim.ImageType.SurfaceNormals, False, False))
             responses = client.simGetImages(
                 requests,
                 vehicle_name=args.vehicle_name,
@@ -382,15 +449,23 @@ def main() -> int:
             payload = rgb_bytes_from_response(response)
             rgb_end_ns = time.perf_counter_ns()
 
+            response_index = 1
             depth_payload = (
-                downsample_depth_response(responses[1], args.depth_stride)
-                if args.include_depth and len(responses) > 1
+                downsample_depth_response(responses[response_index], args.depth_stride)
+                if args.include_depth and len(responses) > response_index
+                else None
+            )
+            if args.include_depth:
+                response_index += 1
+            surface_normal_payload = (
+                downsample_surface_normals_response(responses[response_index], args.depth_stride)
+                if args.include_surface_normals and len(responses) > response_index
                 else None
             )
 
             ego_start_ns = time.perf_counter_ns()
             ego_payload = (
-                ego_json_bytes(client, args.vehicle_name, timestamp_ns, mavlink_ego_reader, depth_payload)
+                ego_json_bytes(client, args.vehicle_name, timestamp_ns, mavlink_ego_reader, depth_payload, surface_normal_payload)
                 if args.include_ego
                 else b""
             )
@@ -438,6 +513,9 @@ def main() -> int:
                     "depth_over_80m_count": int(depth_payload.get("depth_over_80m_count", 0)) if depth_payload else 0,
                     "depth_min_m": float(depth_payload.get("depth_min_m", 0.0)) if depth_payload else 0.0,
                     "depth_max_m": float(depth_payload.get("depth_max_m", 0.0)) if depth_payload else 0.0,
+                    "include_surface_normals": bool(args.include_surface_normals),
+                    "surface_normal_valid_count": int(surface_normal_payload.get("surface_normal_valid_count", 0)) if surface_normal_payload else 0,
+                    "surface_normal_samples": int(len(surface_normal_payload.get("surface_normal_camera_xyz", [])) // 3) if surface_normal_payload else 0,
                     "target_period_ms": target_period_ms,
                     "sim_get_images_ms": elapsed_ms(image_start_ns, image_end_ns),
                     "rgb_convert_ms": elapsed_ms(rgb_start_ns, rgb_end_ns),

@@ -90,6 +90,10 @@ struct ObstacleEvidence {
     Vec3 endpoint_b_local;
     float radius_m{0.0F};
 
+    bool has_surface_normal{false};
+    Vec3 surface_normal_local;
+    float normal_confidence{0.0F};
+
     float occupancy_probability{0.0F};
     float free_probability{0.0F};
     float confidence{0.0F};

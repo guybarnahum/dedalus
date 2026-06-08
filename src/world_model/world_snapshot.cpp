@@ -339,6 +339,9 @@ void write_obstacle_evidence(std::ostringstream& out, const std::vector<Obstacle
         out << "      \"endpoint_a_local\": "; write_vec3(out, evidence.endpoint_a_local); out << ",\n";
         out << "      \"endpoint_b_local\": "; write_vec3(out, evidence.endpoint_b_local); out << ",\n";
         out << "      \"radius_m\": " << evidence.radius_m << ",\n";
+        out << "      \"has_surface_normal\": " << bool_string(evidence.has_surface_normal) << ",\n";
+        out << "      \"surface_normal_local\": "; write_vec3(out, evidence.surface_normal_local); out << ",\n";
+        out << "      \"normal_confidence\": " << evidence.normal_confidence << ",\n";
         out << "      \"occupancy_probability\": " << evidence.occupancy_probability << ",\n";
         out << "      \"free_probability\": " << evidence.free_probability << ",\n";
         out << "      \"confidence\": " << evidence.confidence << ",\n";
