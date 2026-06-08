@@ -173,7 +173,7 @@ tests/unit/test_visual_obstacle_detector_contract.cpp
 
 ### 4.1C.2 — AirSim depth obstacle detector
 
-Status: active.
+Status: validated end-to-end for the AirSim depth sidecar path. See `docs/airsim_depth_obstacle_detector_validation.md`.
 
 Implement a simulation provider that uses depth frames/rays to create classless obstacle evidence.
 
@@ -219,6 +219,64 @@ AirSim depth image request
   -> OSD volumetric evidence renderer
 ```
 
+Validated live dataflow:
+
+```text
+AirSim DepthPlanar
+  -> simulation/airsim/scripts/airsim-stream-frames-binary.py --include-depth
+  -> RGB binary frame + JSON sidecar depth grid
+  -> AirSimFrameSource FramePacket.depth_frame
+  -> CoreStackRunner current obstacle_sensing_volumes
+  -> AirSimDepthObstacleDetector
+  -> PerceptionPipelineOutput.obstacle_evidence
+  -> InMemoryWorldModel
+  -> WorldSnapshot.obstacle_evidence
+  -> RuntimeEventStreamServer
+  -> simulation/airsim/scripts/airsim-world-overlay.py volumetric evidence renderer
+```
+
+Representative validated run:
+
+```text
+out/object_behavior_airsim_existing_object_circle_depth_probe
+```
+
+Observed validation summary:
+
+```text
+bridge:
+  include_depth=True
+  stride=16
+  sidecar grid=16x9
+  valid samples ~= 118-126 per frame
+
+snapshots:
+  count=908
+  obstacle evidence provider:
+    airsim_depth_obstacle_detector: 112275
+  obstacle evidence source kind:
+    depth_provider: 112275
+  depth evidence first=snapshot_0001.json
+  depth evidence last=snapshot_0908.json
+
+latest snapshots:
+  provider=airsim_depth_obstacle_detector only
+  evidence count ~= 46-53 per frame
+
+OSD:
+  obstacle_evidence render providers={'airsim_depth_obstacle_detector': 46-96}
+```
+
+Sampling invariant:
+
+```text
+Bridge --depth-stride controls acquisition / transport downsampling.
+Detector pixel_stride controls optional detector-side second-pass decimation.
+Detector default pixel_stride must be 1 so every received sidecar sample is consumed.
+```
+
+The first implementation incorrectly double-strided a 16x9 sidecar grid with detector `pixel_stride=16`, producing only one stable corner sample per frame. The validated fix consumes every received sidecar sample by default.
+
 ### 4.1C.3 — CoreStackRunner integration
 
 Insert the real visual detector after sensing coverage is computed and before world-model ingest:
@@ -233,6 +291,37 @@ FramePacket + EgoState
 ```
 
 AirSim GT visual-emulation remains a parallel validation source, not the detector.
+
+For 4.x obstacle sensing, fallback semantics must be explicit:
+
+```text
+If airsim_depth_obstacle_detector is enabled:
+  WorldSnapshot.obstacle_evidence should represent the depth detector result.
+  Empty depth evidence means no observed depth evidence for that frame.
+  Do not silently replace empty depth evidence with AirSim named-object GT boxes.
+```
+
+AirSim object-GT remains useful for:
+
+```text
+3.x semantic/object perception validation
+target behavior validation
+approximate object pose validation
+debugging object-conditioned behaviors
+```
+
+It is not the 4.x obstacle detector.
+
+Next configuration work:
+
+```text
+obstacle_sensing.detectors.airsim_depth.enabled
+obstacle_sensing.detectors.airsim_depth.depth_stride
+obstacle_sensing.detectors.airsim_depth.max_range_m
+obstacle_sensing.detectors.airsim_depth.voxel_size_m
+obstacle_sensing.detectors.airsim_depth.max_evidence
+obstacle_sensing.detectors.airsim_depth.disable_object_gt_fallback
+```
 
 ### 4.1C.4 — artifact validation
 

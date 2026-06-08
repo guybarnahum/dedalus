@@ -20,7 +20,9 @@ Current handoff state:
 2.29A-E are complete: multi-stage behavior sequence parsing/runtime, AirSim sequence configs, far-person SEL run, active step observability, canonical per-step yaw/camera mode validation, and mixed-mode yaw/camera validation are complete.
 2.30A-B are complete: slow moving far-animal SEL validation and moving-target stress matrix are validated. See docs/selected_entity_slow_moving_animal_validation.md and docs/moving_target_behavior_validation_results.md.
 
-Active next work: choose the next bounded post-2.30B slice. Recommended options are native moving AirSim actor validation or validator hardening for expected target_velocity_mps / behavior_complete reason.
+4.1C AirSim depth obstacle detector dataflow is live-validated: AirSim DepthPlanar now reaches FramePacket.depth_frame, CoreStackRunner, WorldSnapshot.obstacle_evidence, and the AirSim OSD as classless `airsim_depth_obstacle_detector` volumetric evidence. See docs/airsim_depth_obstacle_detector_validation.md.
+
+Active next work: expose and validate stable AirSim depth detector configuration knobs: enabled, depth_stride, max_range_m, voxel_size_m, max_evidence, and explicit disable_object_gt_fallback semantics for 4.x obstacle sensing.
 
 GitHub status checks may be absent; continue to run local build/tests after code changes.
 ```
@@ -46,7 +48,8 @@ Milestone 2.29D: far static SEL and observability validation. Complete: BRPlayer
 Milestone 2.29E: mixed-mode sequence validation. Complete: static far-person approach target/target -> circle trajectory/target validated.
 Milestone 2.30A: slow moving SEL animal sequence validation. Complete: ghost_far_animal_001 at 0.20 m/s validated.
 Milestone 2.30B: moving-target stress matrix. Complete: medium, side-motion, and diagonal far-animal trajectories validated.
-Active next slice: post-2.30B follow-up, preferably native moving AirSim actor validation or validator hardening.
+Milestone 4.1C.2/4.1C.3: AirSim depth-frame classless obstacle detector core, sidecar acquisition, CoreStackRunner handoff, sampling fix, and OSD visualization are live-validated.
+Active next slice: AirSim depth detector configuration knobs and explicit 4.x no-object-GT-fallback semantics.
 ```
 
 ---
@@ -60,7 +63,13 @@ AirSim live frame + ego sidecar
   -> CoreStackRunner
        -> optional GhostTargetProvider::frame_at(...)
             -> GhostDetectionsPublisher
-            -> PerceptionPipelineOutput.observations
+        -> SensingCoverageProvider
+             -> obstacle_sensing_volumes
+        -> optional FramePacket.depth_frame
+             -> AirSimDepthObstacleDetector
+             -> PerceptionPipelineOutput.obstacle_evidence
+             -> classless airsim_depth_obstacle_detector evidence
+           -> PerceptionPipelineOutput.observations
   -> InMemoryWorldModel
   -> WorldSnapshotPublisher
        -> LatestWorldSnapshotSubscriber

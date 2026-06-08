@@ -23,6 +23,7 @@ To generate a current handoff, read `LLM.md` and the current repo state, then fi
    - `docs/classless_geometric_occupancy_and_avoidance_plan.md`
    - `docs/reflexive_obstacle_avoidance_architecture.md`
    - `docs/geometric_volume_detection_and_spatial_mapping_plan.md`
+   - `docs/airsim_depth_obstacle_detector_validation.md`
 9. Read `docs/selected_entity_slow_moving_animal_validation.md` and `docs/moving_target_behavior_validation_results.md` when continuing moving-target/object-conditioned behavior work.
 10. Read `LLM.back.md` only for historical context when needed; `LLM.md` is authoritative.
 11. Use architectural capability names in handoffs, docs, commands, validators, files, directories, and symbols. Do not name repo artifacts after planning labels such as `track4`, `milestone_XXX`, temporary phase names, or session-only shorthand. Prefer names that describe the stable subsystem or contract, such as `obstacle_sensing_evidence`, `world_snapshot`, `object_behavior`, `runtime_event_stream`, or `mission_artifact`.
@@ -90,6 +91,7 @@ For classless geometric occupancy / avoidance / sensing coverage / volume detect
   docs/classless_geometric_occupancy_and_avoidance_plan.md
   docs/reflexive_obstacle_avoidance_architecture.md
   docs/geometric_volume_detection_and_spatial_mapping_plan.md
+  docs/airsim_depth_obstacle_detector_validation.md
 
 Historical context, only if needed:
   LLM.back.md
@@ -128,6 +130,7 @@ Do not:
   - Do not render object-GT as obstacle-detector output unless it has first been normalized through the same classless `ObstacleEvidence` geometry contract.
   - Do not emit visual obstacle evidence when no valid sensing coverage exists for the frame/camera.
   - Do not put obstacle avoidance, map-building policy, sensing coverage, or detector semantics inside a flight command sink.
+  - Do not silently fall back to AirSim named-object GT boxes when the classless AirSim depth detector is enabled; empty depth evidence means no observed depth evidence for that frame.
   - Do not duplicate occupancy logic for GT and visual sources; normalize them into the same obstacle evidence / occupancy contract.
   - Do not make `rough_flight_map_builder.cpp` a second perception pipeline; it should consume normalized reflexive occupancy / obstacle evidence.
   - Do not use arbitrary placeholder artifact names when an architectural path or exact `--output-dir` exists.
