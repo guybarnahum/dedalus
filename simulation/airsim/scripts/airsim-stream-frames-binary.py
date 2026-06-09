@@ -243,71 +243,19 @@ def downsample_depth_response(response: object, stride: int) -> dict[str, object
     }
 
 
-def parse_surface_normal_channel_order(value: str) -> str:
-    normalized = value.strip().lower()
-    if len(normalized) != 3 or sorted(normalized) != ["b", "g", "r"]:
-        raise argparse.ArgumentTypeError(
-            "surface normal channel order must be a permutation of rgb, "
-            "for example rgb, bgr, rbg, grb, gbr, or brg"
-        )
-    return normalized
-
-
-def parse_surface_normal_signs(value: str) -> tuple[float, float, float]:
-    parts = [part.strip() for part in value.split(",")]
-    if len(parts) != 3:
-        raise argparse.ArgumentTypeError("surface normal signs must have three comma-separated values, e.g. 1,1,-1")
-
-    signs: list[float] = []
-    for part in parts:
-        try:
-            parsed = float(part)
-        except ValueError as exc:
-            raise argparse.ArgumentTypeError(
-                "surface normal signs must be numeric +/-1 values, e.g. 1,1,-1"
-            ) from exc
-        if parsed not in (-1.0, 1.0):
-            raise argparse.ArgumentTypeError(
-                "surface normal signs must be exactly +/-1 values, e.g. 1,1,-1"
-            )
-        signs.append(parsed)
-    return (signs[0], signs[1], signs[2])
-
-
-def _normal_from_rgb(
-    r: int,
-    g: int,
-    b: int,
-    channel_order: str,
-    signs: tuple[float, float, float],
-) -> tuple[float, float, float]:
+def _normal_from_rgb(r: int, g: int, b: int) -> tuple[float, float, float]:
     # AirSim SurfaceNormals are returned as RGB-style encoded normal images.
-    # Decode to approximately [-1, 1], then map encoded channels into the
-    # detector's camera-frame normal contract: +x=forward, +y=right, +z=up.
-    #
-    # Different AirSim builds / render paths can expose SurfaceNormals in a
-    # slightly different channel or sign convention. Keep calibration in this
-    # bridge so validation can iterate without rebuilding the C++ core stack.
-    encoded = {
-        "r": (float(r) / 127.5) - 1.0,
-        "g": (float(g) / 127.5) - 1.0,
-        "b": (float(b) / 127.5) - 1.0,
-    }
-    nx = signs[0] * encoded[channel_order[0]]
-    ny = signs[1] * encoded[channel_order[1]]
-    nz = signs[2] * encoded[channel_order[2]]
+    # Decode to a camera-frame vector in approximately [-1, 1].
+    nx = (float(r) / 127.5) - 1.0
+    ny = (float(g) / 127.5) - 1.0
+    nz = (float(b) / 127.5) - 1.0
     length = math.sqrt(nx * nx + ny * ny + nz * nz)
     if not math.isfinite(length) or length <= 1.0e-6:
         return (0.0, 0.0, 0.0)
     return (nx / length, ny / length, nz / length)
 
 
-def downsample_surface_normals_response(
-    response: object,
-    stride: int,
-    channel_order: str,
-    signs: tuple[float, float, float],
-) -> dict[str, object]:
+def downsample_surface_normals_response(response: object, stride: int) -> dict[str, object]:
     width = int(getattr(response, "width", 0))
     height = int(getattr(response, "height", 0))
     stride = max(1, int(stride))
@@ -319,8 +267,6 @@ def downsample_surface_normals_response(
             "surface_normal_stride": stride,
             "surface_normal_camera_xyz": [],
             "surface_normal_valid_count": 0,
-            "surface_normal_channel_order": channel_order,
-            "surface_normal_signs": list(signs),
         }
 
     pixel_count = width * height
@@ -331,8 +277,6 @@ def downsample_surface_normals_response(
             "surface_normal_stride": stride,
             "surface_normal_camera_xyz": [],
             "surface_normal_valid_count": 0,
-            "surface_normal_channel_order": channel_order,
-            "surface_normal_signs": list(signs),
         }
 
     channels = 4 if len(raw) >= pixel_count * 4 else 3
@@ -344,13 +288,7 @@ def downsample_surface_normals_response(
         row_count = 0
         for x in range(0, width, stride):
             offset = (y * width + x) * channels
-            nx, ny, nz = _normal_from_rgb(
-                raw[offset],
-                raw[offset + 1],
-                raw[offset + 2],
-                channel_order,
-                signs,
-            )
+            nx, ny, nz = _normal_from_rgb(raw[offset], raw[offset + 1], raw[offset + 2])
             if nx != 0.0 or ny != 0.0 or nz != 0.0:
                 valid_count += 1
             sampled.extend([nx, ny, nz])
@@ -364,8 +302,6 @@ def downsample_surface_normals_response(
         "surface_normal_stride": stride,
         "surface_normal_camera_xyz": sampled,
         "surface_normal_valid_count": valid_count,
-        "surface_normal_channel_order": channel_order,
-        "surface_normal_signs": list(signs),
     }
 
 
@@ -472,18 +408,6 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--include-depth", action="store_true", help="Append a downsampled AirSim DepthPlanar grid to the sidecar JSON.")
     parser.add_argument("--depth-stride", type=int, default=16, help="Depth pixel stride used when --include-depth is enabled.")
     parser.add_argument("--include-surface-normals", action="store_true", help="Append downsampled AirSim SurfaceNormals aligned to the depth grid.")
-    parser.add_argument(
-        "--surface-normal-channel-order",
-        type=parse_surface_normal_channel_order,
-        default="rgb",
-        help="Map AirSim encoded RGB normal channels into detector camera XYZ. Must be a permutation of rgb; default rgb.",
-    )
-    parser.add_argument(
-        "--surface-normal-signs",
-        type=parse_surface_normal_signs,
-        default=(1.0, 1.0, 1.0),
-        help="Comma-separated +/-1 signs applied after channel mapping into detector camera XYZ; default 1,1,1.",
-    )
     return parser.parse_args()
 
 
@@ -534,12 +458,7 @@ def main() -> int:
             if args.include_depth:
                 response_index += 1
             surface_normal_payload = (
-                downsample_surface_normals_response(
-                    responses[response_index],
-                    args.depth_stride,
-                    args.surface_normal_channel_order,
-                    args.surface_normal_signs,
-                )
+                downsample_surface_normals_response(responses[response_index], args.depth_stride)
                 if args.include_surface_normals and len(responses) > response_index
                 else None
             )
@@ -597,8 +516,6 @@ def main() -> int:
                     "include_surface_normals": bool(args.include_surface_normals),
                     "surface_normal_valid_count": int(surface_normal_payload.get("surface_normal_valid_count", 0)) if surface_normal_payload else 0,
                     "surface_normal_samples": int(len(surface_normal_payload.get("surface_normal_camera_xyz", [])) // 3) if surface_normal_payload else 0,
-                    "surface_normal_channel_order": str(surface_normal_payload.get("surface_normal_channel_order", "")) if surface_normal_payload else "",
-                    "surface_normal_signs": surface_normal_payload.get("surface_normal_signs", []) if surface_normal_payload else [],
                     "target_period_ms": target_period_ms,
                     "sim_get_images_ms": elapsed_ms(image_start_ns, image_end_ns),
                     "rgb_convert_ms": elapsed_ms(rgb_start_ns, rgb_end_ns),

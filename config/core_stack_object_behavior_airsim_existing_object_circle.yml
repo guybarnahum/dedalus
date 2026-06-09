@@ -28,7 +28,7 @@ vehicle_name: PX4
 vehicle_camera_name: front_center
 bridge_transport: pipe
 bridge_mode: stream_binary_ego
-bridge_command: python3 simulation/airsim/scripts/airsim-stream-frames-binary.py --include-ego --include-depth --include-surface-normals --surface-normal-channel-order rgb --surface-normal-signs 1,1,1 --depth-stride 16 --rate-hz 5 --mavlink-armed-endpoints udpin:127.0.0.1:14540
+bridge_command: python3 simulation/airsim/scripts/airsim-stream-frames-binary.py --include-ego --include-depth --include-surface-normals --depth-stride 16 --rate-hz 5 --mavlink-armed-endpoints udpin:127.0.0.1:14540
 
 # AirSim GT visual-emulation requires explicit camera sensing coverage.
 # The obstacle evidence path clips global GT objects against this camera volume.
