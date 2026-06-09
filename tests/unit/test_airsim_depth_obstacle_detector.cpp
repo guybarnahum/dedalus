@@ -47,6 +47,9 @@ int main() {
     frame.depth_m.assign(9, std::numeric_limits<float>::infinity());
     frame.depth_m[4] = 10.0F;
 
+    dedalus::AirSimDepthFrame dense_frame = frame;
+    dense_frame.depth_m.assign(9, 10.0F);
+
     dedalus::AirSimDepthObstacleDetectorConfig config;
     config.pixel_stride = 1;
     config.min_depth_m = 0.5F;
@@ -54,6 +57,7 @@ int main() {
     config.voxel_size_m = 0.5F;
     config.confidence = 0.8F;
     config.max_evidence = 32U;
+    config.coalesce_surface_patches = false;
 
     const auto volume = front_volume();
     const auto evidence = dedalus::detect_airsim_depth_obstacles(frame, volume, config);
@@ -89,6 +93,25 @@ int main() {
     if (!near(item.range_m, 10.0F) || !near(item.bearing_rad, 0.0F) ||
         !near(item.elevation_rad, 0.0F)) {
         std::cerr << "center pixel range/bearing/elevation are wrong\n";
+        return 1;
+    }
+
+    const auto dense_evidence = dedalus::detect_airsim_depth_obstacles(dense_frame, volume, config);
+    if (dense_evidence.size() != 9U) {
+        std::cerr << "dense depth grid should emit one evidence item per valid sample when coalescing is disabled\n";
+        return 1;
+    }
+    const auto& dense_center = dense_evidence[4];
+    if (!dense_center.has_surface_normal) {
+        std::cerr << "center sample in dense depth grid should derive a normal from neighboring depth samples\n";
+        return 1;
+    }
+    const double dense_len2 =
+        dense_center.surface_normal_local.x * dense_center.surface_normal_local.x +
+        dense_center.surface_normal_local.y * dense_center.surface_normal_local.y +
+        dense_center.surface_normal_local.z * dense_center.surface_normal_local.z;
+    if (!near(dense_len2, 1.0)) {
+        std::cerr << "depth-derived local normal should be unit length\n";
         return 1;
     }
 
@@ -138,12 +161,85 @@ int main() {
     default_config.min_depth_m = 0.5F;
     default_config.max_depth_m = 30.0F;
     default_config.max_evidence = 32U;
+    default_config.coalesce_surface_patches = false;
 
     const auto sidecar_evidence =
         dedalus::detect_airsim_depth_obstacles(sidecar_frame, volume, default_config);
     if (sidecar_evidence.size() != 4U) {
         std::cerr << "default detector config should consume every sidecar depth sample; got "
                   << sidecar_evidence.size() << "\n";
+        return 1;
+    }
+
+    dedalus::AirSimDepthFrame airsim_normal_only_frame = frame;
+    airsim_normal_only_frame.depth_m.assign(9, std::numeric_limits<float>::infinity());
+    airsim_normal_only_frame.depth_m[4] = 10.0F;
+    airsim_normal_only_frame.has_surface_normals = true;
+    airsim_normal_only_frame.surface_normal_camera_xyz.assign(27, 0.0F);
+    airsim_normal_only_frame.surface_normal_camera_xyz[4U * 3U + 2U] = 1.0F;
+
+    const auto ignored_airsim_normal =
+        dedalus::detect_airsim_depth_obstacles(airsim_normal_only_frame, volume, default_config);
+    if (ignored_airsim_normal.size() != 1U) {
+        std::cerr << "single valid depth sample should still emit one evidence item\n";
+        return 1;
+    }
+    if (ignored_airsim_normal.front().has_surface_normal) {
+        std::cerr << "AirSim SurfaceNormals should not be trusted by default without a depth-derived normal\n";
+        return 1;
+    }
+
+    default_config.use_airsim_surface_normals = true;
+    const auto diagnostic_airsim_normal =
+        dedalus::detect_airsim_depth_obstacles(airsim_normal_only_frame, volume, default_config);
+    if (!diagnostic_airsim_normal.front().has_surface_normal) {
+        std::cerr << "AirSim SurfaceNormals fallback should remain available for explicit diagnostics\n";
+        return 1;
+    }
+
+    dedalus::AirSimDepthFrame coalesce_frame;
+    coalesce_frame.timestamp = dedalus::TimePoint{4000000};
+    coalesce_frame.source_frame_id = dedalus::FrameId{"frame_depth_coalesce_0001"};
+    coalesce_frame.has_source_frame = true;
+    coalesce_frame.sensor_name = "front_center";
+    coalesce_frame.map_frame_id = dedalus::MapFrameId{"map_local_0001"};
+    coalesce_frame.width = 3;
+    coalesce_frame.height = 3;
+    coalesce_frame.depth_m.assign(9, 1.0F);
+
+    dedalus::AirSimDepthObstacleDetectorConfig coalesce_config;
+    coalesce_config.pixel_stride = 1;
+    coalesce_config.min_depth_m = 0.5F;
+    coalesce_config.max_depth_m = 30.0F;
+    coalesce_config.voxel_size_m = 20.0F;
+    coalesce_config.confidence = 0.8F;
+    coalesce_config.max_evidence = 32U;
+    coalesce_config.coalesce_surface_patches = true;
+
+    const auto coalesced =
+        dedalus::detect_airsim_depth_obstacles(coalesce_frame, volume, coalesce_config);
+    if (coalesced.size() != 1U) {
+        std::cerr << "coalesced neighboring surface samples should emit one patch, got "
+                  << coalesced.size() << "\n";
+        return 1;
+    }
+    const auto& coalesced_item = coalesced.front();
+    if (!coalesced_item.has_surface_normal) {
+        std::cerr << "coalesced surface patch should preserve averaged depth-derived local normal\n";
+        return 1;
+    }
+    const double coalesced_len2 =
+        coalesced_item.surface_normal_local.x * coalesced_item.surface_normal_local.x +
+        coalesced_item.surface_normal_local.y * coalesced_item.surface_normal_local.y +
+        coalesced_item.surface_normal_local.z * coalesced_item.surface_normal_local.z;
+    if (!near(coalesced_len2, 1.0)) {
+        std::cerr << "coalesced depth-derived normal should remain unit length\n";
+        return 1;
+    }
+    if (!near(coalesced_item.size_m.x, 20.0) ||
+        !near(coalesced_item.size_m.y, 20.0) ||
+        !near(coalesced_item.size_m.z, 5.0)) {
+        std::cerr << "coalesced patch size should derive from voxel_size_m\n";
         return 1;
     }
 

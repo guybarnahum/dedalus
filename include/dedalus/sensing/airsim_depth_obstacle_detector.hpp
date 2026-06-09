@@ -20,10 +20,10 @@ struct AirSimDepthFrame {
 
     // Optional surface normals sampled on the same grid as depth_m.
     //
-    // Normals are camera-frame unit vectors using the same axis convention as
-    // the detector's back-projection: +x=forward, +y=right, +z=up. The detector
-    // transforms them into the sensing-volume local/map frame before publishing
-    // ObstacleEvidence.
+    // These come from AirSim's rendered SurfaceNormals image target and are kept
+    // as optional debug/provenance data. Published obstacle evidence normals are
+    // derived from neighboring back-projected depth samples in local coordinates
+    // by default, avoiding AirSim/Unreal normal-frame ambiguity.
     bool has_surface_normals{false};
     std::vector<float> surface_normal_camera_xyz;
 };
@@ -42,6 +42,27 @@ struct AirSimDepthObstacleDetectorConfig {
     float confidence{0.75F};
     std::size_t max_evidence{512U};
     float normal_confidence{0.85F};
+
+    // Prefer local-frame normals derived from neighboring back-projected depth
+    // samples. This keeps the normal in the same frame as center_local by
+    // construction and avoids depending on AirSim/Unreal SurfaceNormals channel,
+    // sign, or coordinate-frame conventions.
+    bool derive_surface_normals_from_depth{true};
+
+    // Diagnostic-only fallback. Disabled by default because AirSim
+    // SurfaceNormals are a rendered image product and their coordinate frame is
+    // not part of the detector contract. Enable only for explicit comparison
+    // experiments.
+    bool use_airsim_surface_normals{false};
+
+    // Display/planning-facing evidence coalescing.
+    //
+    // The AirSim bridge samples camera depth/normals on an image grid. Without
+    // coalescing, large continuous surfaces such as ground during landing emit
+    // one SurfacePatch per sampled pixel. When enabled, the detector aggregates
+    // neighboring samples into local-space buckets of voxel_size_m and emits one
+    // averaged SurfacePatch per bucket without changing the upstream sidecar.
+    bool coalesce_surface_patches{false};
 };
 
 class AirSimDepthObstacleDetector {
