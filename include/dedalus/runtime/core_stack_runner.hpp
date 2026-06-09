@@ -7,6 +7,7 @@
 #include "dedalus/perception/ghost_targets.hpp"
 #include "dedalus/runtime/pipeline_profiler.hpp"
 #include "dedalus/runtime/provider_registry.hpp"
+#include "dedalus/sensing/airsim_depth_obstacle_detector.hpp"
 #include "dedalus/sensing/sensing_coverage.hpp"
 #include "dedalus/world_model/world_snapshot.hpp"
 #include "dedalus/world_model/world_snapshot_publisher.hpp"
@@ -20,6 +21,7 @@ struct CoreStackRunnerConfig {
     // Subscribers subscribed to snapshot_publisher at construction time.
     // CoreStackRunner retains these shared_ptrs (the publisher holds weak refs).
     std::vector<std::shared_ptr<WorldSnapshotSubscriber>> snapshot_subscribers;
+    AirSimDepthObstacleDetectorConfig airsim_depth_obstacle_detector;
 };
 
 class CoreStackRunner {
@@ -43,6 +45,7 @@ private:
     std::shared_ptr<WorldSnapshotPublisher> snapshot_publisher_;
     std::shared_ptr<GhostDetectionsPublisher> ghost_detections_publisher_;
     std::vector<std::shared_ptr<WorldSnapshotSubscriber>> snapshot_subscriber_handles_;
+    AirSimDepthObstacleDetectorConfig airsim_depth_obstacle_detector_config_;
     SensingCoverageProvider sensing_coverage_provider_;
     std::vector<CameraPointingState> camera_pointing_states_;
     std::optional<TimePoint> ghost_scenario_start_;

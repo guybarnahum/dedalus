@@ -153,7 +153,8 @@ int main(int argc, char** argv) {
         const auto args = parse_args(argc, argv);
         std::filesystem::create_directories(args.output_dir);
 
-        const auto config = dedalus::load_core_stack_config(args.config_path);
+        const auto app_config = dedalus::load_core_stack_app_config(args.config_path);
+        auto& config = app_config.providers;
         dedalus::ProviderRegistry registry;
 
         std::unique_ptr<dedalus::PipelineProfiler> timing_writer;

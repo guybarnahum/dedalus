@@ -49,10 +49,11 @@ CliOptions options_from_args(int argc, char** argv) {
 int main(int argc, char** argv) {
     try {
         const auto options = options_from_args(argc, argv);
-        const auto config = dedalus::load_core_stack_config(options.config_path);
+        auto app_config = dedalus::load_core_stack_app_config(options.config_path);
+        const auto& config = app_config.providers;
 
         dedalus::ProviderRegistry registry;
-        dedalus::CoreStackRunner runner{registry.create(config)};
+        dedalus::CoreStackRunner runner{registry.create(config), std::move(app_config.runner)};
         int frames_processed = 0;
         for (; frames_processed < options.max_frames; ++frames_processed) {
             if (!runner.run_once()) {

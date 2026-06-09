@@ -241,46 +241,83 @@ bool parse_airsim_pattern_binding_key(CoreStackProviderConfig& config, const std
     return true;
 }
 
-void apply_config_value(CoreStackProviderConfig& config, const std::string& key, const std::string& value) {
-    if (parse_airsim_object_binding_key(config, key, value)) return;
-    if (parse_airsim_pattern_binding_key(config, key, value)) return;
-    if (key == "frame_source") config.frame_source = value;
-    else if (key == "ego_provider") config.ego_provider = value;
-    else if (key == "detector") config.detector = value;
-    else if (key == "camera_stabilizer") config.camera_stabilizer = value;
-    else if (key == "tracker") config.tracker = value;
-    else if (key == "identity_resolver") config.identity_resolver = value;
-    else if (key == "projector") config.projector = value;
-    else if (key == "ghost_targets_enabled") config.ghost_targets_enabled = parse_bool(value);
-    else if (key == "ghost_targets_source") config.ghost_targets_source = value;
-    else if (key == "ghost_targets_scenario") config.ghost_targets_scenario = value;
-    else if (key == "ghost_targets_scenario_path") config.ghost_targets_scenario_path = value;
-    else if (key == "ghost_targets_airsim_scene_inventory_path") config.ghost_targets_airsim_scene_inventory_path = value;
-    else if (key == "ghost_targets_airsim_object_pose_stream_rate_hz") config.ghost_targets_airsim_object_pose_stream_rate_hz = std::stod(value);
-    else if (key == "world_model") config.world_model = value;
-    else if (key == "occupancy_source") config.occupancy_source = value;
-    else if (key == "frame_annotator") config.frame_annotator = value;
-    else if (key == "annotation_output_path") config.annotation_output_path = value;
-    else if (key == "annotation_output_fps") config.annotation_output_fps = std::stod(value);
-    else if (key == "pipeline_timing_enabled") config.pipeline_timing_enabled = parse_bool(value);
-    else if (key == "pipeline_timing_output_path") config.pipeline_timing_output_path = value;
-    else if (key == "recorded_manifest_path") config.recorded_manifest_path = value;
-    else if (key == "source_host") config.source_host = value;
-    else if (key == "source_rpc_port") config.source_rpc_port = std::stoi(value);
-    else if (key == "vehicle_name") config.vehicle_name = value;
-    else if (key == "vehicle_camera_name") config.vehicle_camera_name = value;
-    else if (key == "bridge_transport") config.bridge_transport = value;
-    else if (key == "bridge_command") config.bridge_command = value;
-    else if (key == "bridge_mode") config.bridge_mode = value;
-    else if (key == "ego_bridge_command") config.ego_bridge_command = value;
-    else if (key == "fallback_map_frame_id") config.fallback_map_frame_id = MapFrameId{value};
-    else if (key == "mission_controller") config.mission_controller = value;
-    else if (key == "mission_tick_hz") config.mission_tick_hz = std::stod(value);
-    else if (key == "flight_command_sink") config.flight_command_sink = value;
+
+bool parse_airsim_depth_obstacle_detector_key(
+    CoreStackRunnerConfig& config,
+    const std::string& key,
+    const std::string& value) {
+    const std::string prefix = "airsim_depth_obstacle_detector.";
+    if (key.rfind(prefix, 0U) != 0U) return false;
+
+    const auto field = key.substr(prefix.size());
+    auto& detector = config.airsim_depth_obstacle_detector;
+
+    if (field == "pixel_stride") {
+        detector.pixel_stride = static_cast<std::size_t>(std::stoul(value));
+    } else if (field == "min_depth_m") {
+        detector.min_depth_m = std::stof(value);
+    } else if (field == "max_depth_m") {
+        detector.max_depth_m = std::stof(value);
+    } else if (field == "voxel_size_m") {
+        detector.voxel_size_m = std::stof(value);
+    } else if (field == "confidence") {
+        detector.confidence = std::stof(value);
+    } else if (field == "max_evidence") {
+        detector.max_evidence = static_cast<std::size_t>(std::stoul(value));
+    } else if (field == "normal_confidence") {
+        detector.normal_confidence = std::stof(value);
+    } else if (field == "derive_surface_normals_from_depth") {
+        detector.derive_surface_normals_from_depth = parse_bool(value);
+    } else if (field == "coalesce_surface_patches") {
+        detector.coalesce_surface_patches = parse_bool(value);
+    } else {
+        throw std::invalid_argument("unknown AirSim depth obstacle detector field: " + key);
+    }
+
+    return true;
+}
+
+void apply_config_value(CoreStackConfig& config, const std::string& key, const std::string& value) {
+    if (parse_airsim_depth_obstacle_detector_key(config.runner, key, value)) return;
+    if (parse_airsim_object_binding_key(config.providers, key, value)) return;
+    if (parse_airsim_pattern_binding_key(config.providers, key, value)) return;
+    if (key == "frame_source") config.providers.frame_source = value;
+    else if (key == "ego_provider") config.providers.ego_provider = value;
+    else if (key == "detector") config.providers.detector = value;
+    else if (key == "camera_stabilizer") config.providers.camera_stabilizer = value;
+    else if (key == "tracker") config.providers.tracker = value;
+    else if (key == "identity_resolver") config.providers.identity_resolver = value;
+    else if (key == "projector") config.providers.projector = value;
+    else if (key == "ghost_targets_enabled") config.providers.ghost_targets_enabled = parse_bool(value);
+    else if (key == "ghost_targets_source") config.providers.ghost_targets_source = value;
+    else if (key == "ghost_targets_scenario") config.providers.ghost_targets_scenario = value;
+    else if (key == "ghost_targets_scenario_path") config.providers.ghost_targets_scenario_path = value;
+    else if (key == "ghost_targets_airsim_scene_inventory_path") config.providers.ghost_targets_airsim_scene_inventory_path = value;
+    else if (key == "ghost_targets_airsim_object_pose_stream_rate_hz") config.providers.ghost_targets_airsim_object_pose_stream_rate_hz = std::stod(value);
+    else if (key == "world_model") config.providers.world_model = value;
+    else if (key == "occupancy_source") config.providers.occupancy_source = value;
+    else if (key == "frame_annotator") config.providers.frame_annotator = value;
+    else if (key == "annotation_output_path") config.providers.annotation_output_path = value;
+    else if (key == "annotation_output_fps") config.providers.annotation_output_fps = std::stod(value);
+    else if (key == "pipeline_timing_enabled") config.providers.pipeline_timing_enabled = parse_bool(value);
+    else if (key == "pipeline_timing_output_path") config.providers.pipeline_timing_output_path = value;
+    else if (key == "recorded_manifest_path") config.providers.recorded_manifest_path = value;
+    else if (key == "source_host") config.providers.source_host = value;
+    else if (key == "source_rpc_port") config.providers.source_rpc_port = std::stoi(value);
+    else if (key == "vehicle_name") config.providers.vehicle_name = value;
+    else if (key == "vehicle_camera_name") config.providers.vehicle_camera_name = value;
+    else if (key == "bridge_transport") config.providers.bridge_transport = value;
+    else if (key == "bridge_command") config.providers.bridge_command = value;
+    else if (key == "bridge_mode") config.providers.bridge_mode = value;
+    else if (key == "ego_bridge_command") config.providers.ego_bridge_command = value;
+    else if (key == "fallback_map_frame_id") config.providers.fallback_map_frame_id = MapFrameId{value};
+    else if (key == "mission_controller") config.providers.mission_controller = value;
+    else if (key == "mission_tick_hz") config.providers.mission_tick_hz = std::stod(value);
+    else if (key == "flight_command_sink") config.providers.flight_command_sink = value;
     else if (key.rfind("mission_options.", 0U) == 0U) {
         const auto option_key = mission_option_key_from(key);
         if (option_key.empty()) throw std::invalid_argument("empty mission_options key");
-        apply_mission_option(config.mission_options, option_key, value);
+        apply_mission_option(config.providers.mission_options, option_key, value);
     } else {
         throw std::invalid_argument("unknown core-stack config key: " + key);
     }
@@ -336,6 +373,13 @@ void validate_config(const CoreStackProviderConfig& config) {
 
 }  // namespace
 
+
+CoreStackProviderConfig load_core_stack_config(const std::string& path) {
+    auto config = load_core_stack_app_config(path);
+    return std::move(config.providers);
+}
+
+
 void validate_provider_names(const CoreStackProviderConfig& config, const ProviderRegistry& registry) {
     const auto check = [](const std::string& field, const std::string& value, const std::vector<std::string>& valid) {
         if (std::find(valid.begin(), valid.end(), value) == valid.end()) throw std::invalid_argument("unknown " + field + ": " + value);
@@ -353,10 +397,10 @@ void validate_provider_names(const CoreStackProviderConfig& config, const Provid
     check("flight_command_sink", config.flight_command_sink, registry.flight_command_sinks());
 }
 
-CoreStackProviderConfig load_core_stack_config(const std::string& path) {
+CoreStackConfig load_core_stack_app_config(const std::string& path) {
     std::ifstream input{path};
     if (!input) throw std::runtime_error("failed to open core-stack config: " + path);
-    CoreStackProviderConfig config;
+    CoreStackConfig config;
     std::string line;
     int line_number = 0;
     while (std::getline(input, line)) {
@@ -373,7 +417,7 @@ CoreStackProviderConfig load_core_stack_config(const std::string& path) {
         try { apply_config_value(config, key, value); }
         catch (const std::exception& ex) { throw std::runtime_error("invalid core-stack config line " + std::to_string(line_number) + ": " + ex.what()); }
     }
-    validate_config(config);
+    validate_config(config.providers);
     return config;
 }
 

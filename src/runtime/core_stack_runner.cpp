@@ -37,6 +37,7 @@ CoreStackRunner::CoreStackRunner(CoreStackProviders providers, CoreStackRunnerCo
       snapshot_publisher_(std::move(config.snapshot_publisher)),
       ghost_detections_publisher_(std::move(config.ghost_detections_publisher)),
       snapshot_subscriber_handles_(std::move(config.snapshot_subscribers)),
+      airsim_depth_obstacle_detector_config_(config.airsim_depth_obstacle_detector),
       sensing_coverage_provider_(providers_.obstacle_sensing_cameras) {
     if (!snapshot_subscriber_handles_.empty()) {
         if (!snapshot_publisher_) {
@@ -125,7 +126,7 @@ bool CoreStackRunner::run_once() {
 
     if (frame->depth_frame.has_value() && !current_sensing_volumes.empty()) {
         start = SteadyClock::now();
-        AirSimDepthObstacleDetector depth_detector;
+        AirSimDepthObstacleDetector depth_detector{airsim_depth_obstacle_detector_config_};
         if (timing_writer_) {
             timing_writer_->record_stage("airsim_depth_obstacle_detector.depth_samples", frame->depth_frame->depth_m.size());
             timing_writer_->record_stage("airsim_depth_obstacle_detector.sensing_volumes", current_sensing_volumes.size());

@@ -417,7 +417,8 @@ int main(int argc, char** argv) {
         const auto args = parse_args(argc, argv);
         std::filesystem::create_directories(args.output_dir);
 
-        auto config = dedalus::load_core_stack_config(args.config_path);
+        auto app_config = dedalus::load_core_stack_app_config(args.config_path);
+        auto& config = app_config.providers;
         apply_cli_overrides(config, args);
         dedalus::ProviderRegistry registry;
 
@@ -468,13 +469,14 @@ int main(int argc, char** argv) {
                       << args.world_snapshot_stream_host << ":" << runtime_event_stream_server->port() << "\n";
         }
 
+        app_config.runner.timing_writer = std::move(timing_writer);
+        app_config.runner.snapshot_publisher = snapshot_publisher;
+        app_config.runner.ghost_detections_publisher = ghost_detections_publisher;
+        app_config.runner.snapshot_subscribers = {latest_snapshot_subscriber, artifact_snapshot_writer};
+
         dedalus::CoreStackRunner runner{
             registry.create(config),
-            dedalus::CoreStackRunnerConfig{
-                .timing_writer = std::move(timing_writer),
-                .snapshot_publisher = snapshot_publisher,
-                .ghost_detections_publisher = ghost_detections_publisher,
-                .snapshot_subscribers = {latest_snapshot_subscriber, artifact_snapshot_writer}}};
+            std::move(app_config.runner)};
 
         const auto mission_events_path = args.output_dir / "mission_events.jsonl";
         dedalus::CameraPointingStateStore camera_pointing_state_store;
