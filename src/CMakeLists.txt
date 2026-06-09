@@ -34,6 +34,7 @@ add_library(dedalus_core
     visualization/world_overlay_sidecar.cpp
     visualization/world_to_image_projector.cpp
     world_model/in_memory_world_model.cpp
+    world_model/obstacle_products.cpp
     world_model/rough_flight_map_builder.cpp
     world_model/tactical_obstacle_mapper.cpp
     world_model/world_snapshot.cpp
