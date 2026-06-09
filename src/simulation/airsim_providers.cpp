@@ -385,8 +385,6 @@ std::optional<AirSimDepthFrame> parse_depth_frame_optional(
         depth->size() < static_cast<std::size_t>(*width) * static_cast<std::size_t>(*height)) {
         return std::nullopt;
     }
-
-    const auto normal = parse_json_float_array_optional(json, "surface_normal_camera_xyz");
     bool has_normals = false;
     std::vector<float> normal_values;
     if (normal.has_value() &&
@@ -404,8 +402,6 @@ std::optional<AirSimDepthFrame> parse_depth_frame_optional(
     depth_frame.width = *width;
     depth_frame.height = *height;
     depth_frame.depth_m = *depth;
-    depth_frame.has_surface_normals = has_normals;
-    depth_frame.surface_normal_camera_xyz = std::move(normal_values);
     return depth_frame;
 }
 
@@ -567,13 +563,6 @@ std::optional<FramePacket> AirSimFrameSource::next_stream_binary_frame() {
             timings.push_back(FrameSourceTiming{"frame_source.detail.depth_sidecar.valid_samples", valid_samples});
             timings.push_back(FrameSourceTiming{"frame_source.detail.depth_sidecar.min_mm", valid_samples > 0 ? static_cast<std::int64_t>(min_depth * 1000.0F) : 0});
             timings.push_back(FrameSourceTiming{"frame_source.detail.depth_sidecar.max_mm", valid_samples > 0 ? static_cast<std::int64_t>(max_depth * 1000.0F) : 0});
-            timings.push_back(FrameSourceTiming{
-                frame.depth_frame->has_surface_normals
-                    ? "frame_source.detail.surface_normals.present"
-                    : "frame_source.detail.surface_normals.missing",
-                frame.depth_frame->has_surface_normals
-                    ? static_cast<std::int64_t>(frame.depth_frame->surface_normal_camera_xyz.size() / 3U)
-                    : 0});
         }
     }
     frame.source_timings = std::move(timings);

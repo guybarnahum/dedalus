@@ -48,12 +48,6 @@ Vec3 zero_vec3() {
     return Vec3{0.0, 0.0, 0.0};
 }
 
-bool finite_vec3(const Vec3& value) {
-    return std::isfinite(value.x) &&
-           std::isfinite(value.y) &&
-           std::isfinite(value.z);
-}
-
 bool finite_positive(float value) {
     return std::isfinite(value) && value > 0.0F;
 }
@@ -248,11 +242,6 @@ std::vector<ObstacleEvidence> detect_airsim_depth_obstacles(
     const float voxel = clamp_positive(config.voxel_size_m, 0.75F);
     const float confidence = std::clamp(config.confidence, 0.0F, 1.0F);
     const float normal_confidence = std::clamp(config.normal_confidence, 0.0F, 1.0F);
-    const bool normals_available =
-        frame.has_surface_normals &&
-        config.use_airsim_surface_normals &&
-        frame.surface_normal_camera_xyz.size() >= expected_size * 3U;
-
     const float patch_depth_m = std::max(0.05F, voxel * 0.25F);
     const float patch_side_m = std::max(0.10F, voxel);
     std::unordered_map<std::string, std::size_t> bucket_indexes;
@@ -325,25 +314,6 @@ std::vector<ObstacleEvidence> detect_airsim_depth_obstacles(
                 item.has_surface_normal = true;
                 item.surface_normal_local = normal_local;
                 item.normal_confidence = normal_confidence;
-            } else if (normals_available) {
-                const auto normal_index = index * 3U;
-                const Vec3 normal_camera{
-                    frame.surface_normal_camera_xyz[normal_index],
-                    frame.surface_normal_camera_xyz[normal_index + 1U],
-                    frame.surface_normal_camera_xyz[normal_index + 2U],
-                };
-                if (finite_vec3(normal_camera)) {
-                    Vec3 normal_local = Vec3{};
-                    normal_local = add(normal_local, scale(sensing_volume.forward_axis_local, normal_camera.x));
-                    normal_local = add(normal_local, scale(sensing_volume.right_axis_local, normal_camera.y));
-                    normal_local = add(normal_local, scale(sensing_volume.up_axis_local, normal_camera.z));
-                    normal_local = normalize_or_zero(normal_local);
-                    if (norm3(normal_local) > 0.0) {
-                        item.has_surface_normal = true;
-                        item.surface_normal_local = normal_local;
-                        item.normal_confidence = normal_confidence;
-                    }
-                }
             }
             item.occupancy_probability = confidence;
             item.confidence = confidence;

@@ -171,32 +171,6 @@ int main() {
         return 1;
     }
 
-    dedalus::AirSimDepthFrame airsim_normal_only_frame = frame;
-    airsim_normal_only_frame.depth_m.assign(9, std::numeric_limits<float>::infinity());
-    airsim_normal_only_frame.depth_m[4] = 10.0F;
-    airsim_normal_only_frame.has_surface_normals = true;
-    airsim_normal_only_frame.surface_normal_camera_xyz.assign(27, 0.0F);
-    airsim_normal_only_frame.surface_normal_camera_xyz[4U * 3U + 2U] = 1.0F;
-
-    const auto ignored_airsim_normal =
-        dedalus::detect_airsim_depth_obstacles(airsim_normal_only_frame, volume, default_config);
-    if (ignored_airsim_normal.size() != 1U) {
-        std::cerr << "single valid depth sample should still emit one evidence item\n";
-        return 1;
-    }
-    if (ignored_airsim_normal.front().has_surface_normal) {
-        std::cerr << "AirSim SurfaceNormals should not be trusted by default without a depth-derived normal\n";
-        return 1;
-    }
-
-    default_config.use_airsim_surface_normals = true;
-    const auto diagnostic_airsim_normal =
-        dedalus::detect_airsim_depth_obstacles(airsim_normal_only_frame, volume, default_config);
-    if (!diagnostic_airsim_normal.front().has_surface_normal) {
-        std::cerr << "AirSim SurfaceNormals fallback should remain available for explicit diagnostics\n";
-        return 1;
-    }
-
     dedalus::AirSimDepthFrame coalesce_frame;
     coalesce_frame.timestamp = dedalus::TimePoint{4000000};
     coalesce_frame.source_frame_id = dedalus::FrameId{"frame_depth_coalesce_0001"};

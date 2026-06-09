@@ -16,17 +16,7 @@ struct AirSimDepthFrame {
 
     int width{0};
     int height{0};
-    std::vector<float> depth_m;
-
-    // Optional surface normals sampled on the same grid as depth_m.
-    //
-    // These come from AirSim's rendered SurfaceNormals image target and are kept
-    // as optional debug/provenance data. Published obstacle evidence normals are
-    // derived from neighboring back-projected depth samples in local coordinates
-    // by default, avoiding AirSim/Unreal normal-frame ambiguity.
-    bool has_surface_normals{false};
-    std::vector<float> surface_normal_camera_xyz;
-};
+    std::vector<float> depth_m;};
 
 struct AirSimDepthObstacleDetectorConfig {
     // Detector-side stride over the already-acquired depth frame.
@@ -48,12 +38,6 @@ struct AirSimDepthObstacleDetectorConfig {
     // construction and avoids depending on AirSim/Unreal SurfaceNormals channel,
     // sign, or coordinate-frame conventions.
     bool derive_surface_normals_from_depth{true};
-
-    // Diagnostic-only fallback. Disabled by default because AirSim
-    // SurfaceNormals are a rendered image product and their coordinate frame is
-    // not part of the detector contract. Enable only for explicit comparison
-    // experiments.
-    bool use_airsim_surface_normals{false};
 
     // Display/planning-facing evidence coalescing.
     //
