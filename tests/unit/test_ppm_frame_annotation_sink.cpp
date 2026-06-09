@@ -139,6 +139,26 @@ int main() {
         trk.class_label = dedalus::ClassLabel::Drone;
         ctx.perception.tracks.push_back(trk);
 
+        // One projected depth-derived surface patch.  The test primarily guards
+        // that OSD obstacle evidence rendering remains bounds-safe on low-res frames.
+        dedalus::ObstacleEvidence obstacle;
+        obstacle.timestamp = ctx.frame.timestamp;
+        obstacle.source_frame_id = ctx.frame.frame_id;
+        obstacle.has_source_frame = true;
+        obstacle.sensor_name = "front_center";
+        obstacle.source_provider = "airsim_depth_obstacle_detector";
+        obstacle.source_kind = dedalus::OccupancySourceKind::DepthProvider;
+        obstacle.state = dedalus::ObstacleEvidenceState::Occupied;
+        obstacle.shape = dedalus::ObstacleEvidenceShape::SurfacePatch;
+        obstacle.center_local = dedalus::Vec3{8.0, 0.0, 0.0};
+        obstacle.size_m = dedalus::Vec3{1.5, 1.5, 0.2};
+        obstacle.has_surface_normal = true;
+        obstacle.surface_normal_local = dedalus::Vec3{-1.0, 0.0, 0.0};
+        obstacle.normal_confidence = 0.85F;
+        obstacle.confidence = 0.75F;
+        obstacle.range_m = 8.0F;
+        ctx.world_snapshot.obstacle_evidence.push_back(obstacle);
+
         dedalus::PpmFrameAnnotationSink lowres_sink{lowres_dir.string(), 5.0};
         lowres_sink.annotate(ctx);
 

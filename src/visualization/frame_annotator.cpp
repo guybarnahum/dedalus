@@ -107,6 +107,30 @@ void draw_rect(ImageView& image, int x, int y, int width, int height, const RgbC
     fill_rect(image, x + width - thickness, y, thickness, height, color);
 }
 
+void draw_line(ImageView& image, int x0, int y0, int x1, int y1, const RgbColor color) {
+    const int dx = std::abs(x1 - x0);
+    const int sx = x0 < x1 ? 1 : -1;
+    const int dy = -std::abs(y1 - y0);
+    const int sy = y0 < y1 ? 1 : -1;
+    int err = dx + dy;
+
+    while (true) {
+        set_pixel(image, x0, y0, color);
+        if (x0 == x1 && y0 == y1) {
+            break;
+        }
+        const int e2 = 2 * err;
+        if (e2 >= dy) {
+            err += dy;
+            x0 += sx;
+        }
+        if (e2 <= dx) {
+            err += dx;
+            y0 += sy;
+        }
+    }
+}
+
 void draw_label_bar(ImageView& image, int x, int y, const std::string& text, const RgbColor fg, const RgbColor bg) {
     const int safe_x = clamp_int(x, 0, std::max(0, image.width - 1));
     const int safe_y = clamp_int(y, 0, std::max(0, image.height - 1));
@@ -271,6 +295,120 @@ void draw_occupancy_overlay(ImageView& image, const WorldSnapshot& snapshot) {
     }
 }
 
+const char* obstacle_shape_to_string(const ObstacleEvidenceShape shape) {
+    switch (shape) {
+        case ObstacleEvidenceShape::SurfacePatch: return "surf";
+        case ObstacleEvidenceShape::Voxel: return "vox";
+        case ObstacleEvidenceShape::FrustumBin: return "frustum";
+        case ObstacleEvidenceShape::RaySegment: return "ray";
+        case ObstacleEvidenceShape::LineSegment: return "line";
+        case ObstacleEvidenceShape::Capsule: return "cap";
+        default: return "obs";
+    }
+}
+
+bool is_depth_surface_patch(const ObstacleEvidence& evidence) {
+    return evidence.shape == ObstacleEvidenceShape::SurfacePatch &&
+           evidence.source_provider == "airsim_depth_obstacle_detector";
+}
+
+RgbColor obstacle_evidence_color(const ObstacleEvidence& evidence) {
+    if (is_depth_surface_patch(evidence)) {
+        return RgbColor{210U, 120U, 255U};
+    }
+    if (evidence.state == ObstacleEvidenceState::ThinStructureRisk) {
+        return RgbColor{255U, 70U, 70U};
+    }
+    if (evidence.source_kind == OccupancySourceKind::DepthProvider) {
+        return RgbColor{120U, 180U, 255U};
+    }
+    return RgbColor{255U, 150U, 60U};
+}
+
+void draw_diamond_marker(ImageView& image, const int u, const int v, const int radius, const RgbColor color) {
+    draw_line(image, u, v - radius, u + radius, v, color);
+    draw_line(image, u + radius, v, u, v + radius, color);
+    draw_line(image, u, v + radius, u - radius, v, color);
+    draw_line(image, u - radius, v, u, v - radius, color);
+    fill_rect(image, u - 1, v - 1, 3, 3, color);
+}
+
+void draw_obstacle_evidence_overlay(ImageView& image, const WorldSnapshot& snapshot) {
+    if (snapshot.obstacle_evidence.empty()) {
+        return;
+    }
+
+    const auto projection_config = projection_config_for(image);
+    constexpr int kMaxDrawn = 140;
+    int drawn = 0;
+    int depth_surface_count = 0;
+    int other_count = 0;
+
+    for (const auto& evidence : snapshot.obstacle_evidence) {
+        if (is_depth_surface_patch(evidence)) {
+            ++depth_surface_count;
+        } else {
+            ++other_count;
+        }
+
+        if (drawn >= kMaxDrawn) {
+            continue;
+        }
+
+        const auto projected = project_local_point_to_image(evidence.center_local, snapshot.ego, projection_config);
+        if (!projected.visible) {
+            continue;
+        }
+
+        const int u = clamp_int(rounded_int(projected.u_px), 0, image.width - 1);
+        const int v = clamp_int(rounded_int(projected.v_px), 0, image.height - 1);
+        const auto color = obstacle_evidence_color(evidence);
+
+        if (evidence.shape == ObstacleEvidenceShape::SurfacePatch) {
+            draw_diamond_marker(image, u, v, is_depth_surface_patch(evidence) ? 5 : 4, color);
+            if (evidence.has_surface_normal && drawn < 40) {
+                Vec3 normal_tip = evidence.center_local;
+                normal_tip.x += evidence.surface_normal_local.x * 0.75;
+                normal_tip.y += evidence.surface_normal_local.y * 0.75;
+                normal_tip.z += evidence.surface_normal_local.z * 0.75;
+                const auto projected_tip = project_local_point_to_image(normal_tip, snapshot.ego, projection_config);
+                if (projected_tip.visible) {
+                    draw_line(
+                        image,
+                        u,
+                        v,
+                        clamp_int(rounded_int(projected_tip.u_px), 0, image.width - 1),
+                        clamp_int(rounded_int(projected_tip.v_px), 0, image.height - 1),
+                        color);
+                }
+            }
+        } else {
+            fill_rect(image, u - 3, v - 3, 7, 7, color);
+        }
+
+        if (drawn < 8) {
+            draw_label_bar(
+                image,
+                u + 7,
+                v - 6,
+                std::string{"OBS:"} + obstacle_shape_to_string(evidence.shape),
+                color,
+                RgbColor{0U, 0U, 0U});
+        }
+
+        ++drawn;
+    }
+
+    if (depth_surface_count > 0 || other_count > 0) {
+        std::ostringstream summary;
+        summary << "OBS depth_surf=" << depth_surface_count << " other=" << other_count;
+        if (static_cast<int>(snapshot.obstacle_evidence.size()) > kMaxDrawn) {
+            summary << " drawn=" << kMaxDrawn;
+        }
+        draw_label_bar(image, 4, 40, summary.str(), RgbColor{210U, 120U, 255U}, RgbColor{0U, 0U, 0U});
+    }
+}
+
 void draw_world_debug_shapes(ImageView& image, const WorldSnapshot& snapshot) {
     int y = 44;
     const RgbColor zone_color{255U, 80U, 80U};
@@ -322,6 +460,7 @@ void PpmFrameAnnotationSink::annotate(const AnnotationContext& context) {
         draw_track_overlay(annotated, track);
     }
     draw_projected_agent_overlays(annotated, context.world_snapshot);
+    draw_obstacle_evidence_overlay(annotated, context.world_snapshot);
     draw_occupancy_overlay(annotated, context.world_snapshot);
     draw_world_debug_shapes(annotated, context.world_snapshot);
 
