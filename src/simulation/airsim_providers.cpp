@@ -385,13 +385,7 @@ std::optional<AirSimDepthFrame> parse_depth_frame_optional(
         depth->size() < static_cast<std::size_t>(*width) * static_cast<std::size_t>(*height)) {
         return std::nullopt;
     }
-    bool has_normals = false;
     std::vector<float> normal_values;
-    if (normal.has_value() &&
-        normal->size() >= static_cast<std::size_t>(*width) * static_cast<std::size_t>(*height) * 3U) {
-        has_normals = true;
-        normal_values = *normal;
-    }
 
     AirSimDepthFrame depth_frame;
     depth_frame.timestamp = frame.timestamp;
