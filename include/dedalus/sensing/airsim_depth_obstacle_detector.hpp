@@ -42,15 +42,6 @@ struct AirSimDepthObstacleDetectorConfig {
     float confidence{0.75F};
     std::size_t max_evidence{512U};
     float normal_confidence{0.85F};
-
-    // Display/planning-facing evidence coalescing.
-    //
-    // The AirSim bridge samples camera depth/normals on an image grid. Without
-    // coalescing, large continuous surfaces such as ground during landing emit
-    // one SurfacePatch per sampled pixel. When enabled, the detector aggregates
-    // neighboring samples into local-space buckets of voxel_size_m and emits one
-    // averaged SurfacePatch per bucket without changing the upstream sidecar.
-    bool coalesce_surface_patches{false};
 };
 
 class AirSimDepthObstacleDetector {

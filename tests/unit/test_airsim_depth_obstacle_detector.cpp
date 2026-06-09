@@ -54,7 +54,6 @@ int main() {
     config.voxel_size_m = 0.5F;
     config.confidence = 0.8F;
     config.max_evidence = 32U;
-    config.coalesce_surface_patches = false;
 
     const auto volume = front_volume();
     const auto evidence = dedalus::detect_airsim_depth_obstacles(frame, volume, config);
@@ -139,65 +138,12 @@ int main() {
     default_config.min_depth_m = 0.5F;
     default_config.max_depth_m = 30.0F;
     default_config.max_evidence = 32U;
-    default_config.coalesce_surface_patches = false;
 
     const auto sidecar_evidence =
         dedalus::detect_airsim_depth_obstacles(sidecar_frame, volume, default_config);
     if (sidecar_evidence.size() != 4U) {
         std::cerr << "default detector config should consume every sidecar depth sample; got "
                   << sidecar_evidence.size() << "\n";
-        return 1;
-    }
-
-    dedalus::AirSimDepthFrame coalesce_frame;
-    coalesce_frame.timestamp = dedalus::TimePoint{4000000};
-    coalesce_frame.source_frame_id = dedalus::FrameId{"frame_depth_normals_0001"};
-    coalesce_frame.has_source_frame = true;
-    coalesce_frame.sensor_name = "front_center";
-    coalesce_frame.map_frame_id = dedalus::MapFrameId{"map_local_0001"};
-    coalesce_frame.width = 3;
-    coalesce_frame.height = 3;
-    coalesce_frame.depth_m.assign(9, std::numeric_limits<float>::infinity());
-    coalesce_frame.depth_m[3] = 1.0F;
-    coalesce_frame.depth_m[4] = 1.0F;
-    coalesce_frame.depth_m[5] = 1.0F;
-    coalesce_frame.has_surface_normals = true;
-    coalesce_frame.surface_normal_camera_xyz.assign(27, 0.0F);
-    for (const auto index : {3U, 4U, 5U}) {
-        const auto offset = index * 3U;
-        coalesce_frame.surface_normal_camera_xyz[offset] = 0.0F;
-        coalesce_frame.surface_normal_camera_xyz[offset + 1U] = 0.0F;
-        coalesce_frame.surface_normal_camera_xyz[offset + 2U] = 1.0F;
-    }
-
-    dedalus::AirSimDepthObstacleDetectorConfig coalesce_config;
-    coalesce_config.pixel_stride = 1;
-    coalesce_config.min_depth_m = 0.5F;
-    coalesce_config.max_depth_m = 30.0F;
-    coalesce_config.voxel_size_m = 20.0F;
-    coalesce_config.confidence = 0.8F;
-    coalesce_config.max_evidence = 32U;
-    coalesce_config.coalesce_surface_patches = true;
-
-    const auto coalesced =
-        dedalus::detect_airsim_depth_obstacles(coalesce_frame, volume, coalesce_config);
-    if (coalesced.size() != 1U) {
-        std::cerr << "coalesced neighboring surface samples should emit one patch, got "
-                  << coalesced.size() << "\n";
-        return 1;
-    }
-    const auto& coalesced_item = coalesced.front();
-    if (!coalesced_item.has_surface_normal ||
-        !near(coalesced_item.surface_normal_local.x, 0.0) ||
-        !near(coalesced_item.surface_normal_local.y, 0.0) ||
-        !near(coalesced_item.surface_normal_local.z, -1.0)) {
-        std::cerr << "coalesced surface patch should preserve averaged local normal\n";
-        return 1;
-    }
-    if (!near(coalesced_item.size_m.x, 20.0) ||
-        !near(coalesced_item.size_m.y, 20.0) ||
-        !near(coalesced_item.size_m.z, 5.0)) {
-        std::cerr << "coalesced patch size should derive from voxel_size_m\n";
         return 1;
     }
 
