@@ -204,9 +204,16 @@ bool CoreStackRunner::run_once() {
     }
 
     start = SteadyClock::now();
-    const auto snapshot_for_annotation = providers_.world_model->snapshot();
+    auto snapshot_for_annotation = providers_.world_model->snapshot();
     if (timing_writer_) {
         timing_writer_->record_stage("world_model.snapshot", duration_us(start));
+    }
+
+    start = SteadyClock::now();
+    snapshot_for_annotation.local_flight_map = local_flight_map_accumulator_.update(snapshot_for_annotation);
+    snapshot_for_annotation.has_local_flight_map = true;
+    if (timing_writer_) {
+        timing_writer_->record_stage("local_flight_map.update", duration_us(start));
     }
 
     if (snapshot_publisher_) {

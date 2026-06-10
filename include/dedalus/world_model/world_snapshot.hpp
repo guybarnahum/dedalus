@@ -6,6 +6,7 @@
 
 #include "dedalus/core/types.hpp"
 #include "dedalus/occupancy/occupancy_types.hpp"
+#include "dedalus/avoidance/local_flight_map.hpp"
 
 namespace dedalus {
 
@@ -206,6 +207,9 @@ struct WorldSnapshot {
     EgoOccupancyMapSnapshot ego_occupancy;
     bool has_latest_swept_volume{false};
     SweptVolumeDebug latest_swept_volume;
+
+    bool has_local_flight_map{false};
+    LocalFlightMapSnapshot local_flight_map;
 
     std::vector<ObstacleSensingVolume> obstacle_sensing_volumes;
     std::vector<ObstacleEvidence> obstacle_evidence;

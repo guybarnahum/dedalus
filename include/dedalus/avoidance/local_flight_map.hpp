@@ -8,9 +8,10 @@
 
 #include "dedalus/core/types.hpp"
 #include "dedalus/occupancy/occupancy_types.hpp"
-#include "dedalus/world_model/world_snapshot.hpp"
 
 namespace dedalus {
+
+struct WorldSnapshot;
 
 struct LocalFlightMapConfig {
     float cell_size_m{0.5F};

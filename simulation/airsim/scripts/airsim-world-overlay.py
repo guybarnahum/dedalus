@@ -39,6 +39,8 @@ EGO_VELOCITY_COLOR = [1.0, 0.2, 1.0, 1.0]
 OCCUPIED_CELL_COLOR = [1.0, 0.25, 0.05, 0.85]
 FREE_CELL_COLOR = [0.1, 0.8, 1.0, 0.45]
 UNKNOWN_CELL_COLOR = [1.0, 0.8, 0.1, 0.45]
+FLIGHT_MAP_BLOCKED_COLOR = [1.0, 0.1, 0.05, 0.62]
+FLIGHT_MAP_OCCUPIED_COLOR = [1.0, 0.45, 0.05, 0.82]
 OCCUPANCY_TEXT_COLOR = [1.0, 0.8, 0.1, 1.0]
 SWEEP_CLEAR_COLOR = [0.2, 1.0, 0.35, 0.85]
 SWEEP_BLOCKED_COLOR = [1.0, 0.05, 0.05, 0.95]
@@ -204,6 +206,10 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--hide-origin", action="store_true")
     parser.add_argument("--hide-selected", action="store_true")
     parser.add_argument("--show-occupancy-summary", action="store_true")
+    parser.add_argument("--show-local-flight-map", action="store_true")
+    parser.add_argument("--max-local-flight-map-cells", type=int, default=48)
+    parser.add_argument("--local-flight-map-z-lift-m", type=float, default=0.08)
+    parser.add_argument("--local-flight-map-line-thickness", type=float, default=1.2)
     parser.add_argument("--show-occupancy-cells", action="store_true")
     parser.add_argument("--max-occupancy-cells", type=int, default=64)
     parser.add_argument("--occupancy-z-lift-m", type=float, default=0.15)
@@ -356,6 +362,30 @@ def world_agents_from_snapshot(snapshot: dict[str, Any] | None, max_agents: int,
     return agents[: max(0, max_agents)]
 
 
+def local_flight_map_from_snapshot(snapshot: dict[str, Any] | None) -> dict[str, Any] | None:
+    if snapshot is None:
+        return None
+    flight_map = snapshot.get("local_flight_map")
+    return flight_map if isinstance(flight_map, dict) else None
+
+
+def local_flight_map_cells_from_snapshot(snapshot: dict[str, Any] | None, max_cells: int) -> list[dict[str, Any]]:
+    flight_map = local_flight_map_from_snapshot(snapshot)
+    if flight_map is None:
+        return []
+    cells = [
+        cell for cell in flight_map.get("debug_cells", [])
+        if isinstance(cell, dict) and vec3(cell.get("center_local")) is not None
+    ]
+    cells.sort(key=lambda cell: (
+        not bool(cell.get("occupied", False)),
+        not bool(cell.get("inflated_blocked", False)),
+        float(cell.get("nearest_range_m") or 1.0e9),
+        -float(cell.get("occupied_score", 0.0)),
+    ))
+    return cells[: max(0, max_cells)]
+
+
 def occupancy_from_snapshot(snapshot: dict[str, Any] | None) -> dict[str, Any] | None:
     if snapshot is None:
         return None
@@ -453,6 +483,12 @@ def marker_color(agent: dict[str, Any]) -> list[float]:
     if str(agent.get("lifecycle", "active")) not in {"new", "active"}:
         return STALE_COLOR
     return WORLD_AGENT_COLOR
+
+
+def local_flight_map_cell_color(cell: dict[str, Any]) -> list[float]:
+    if cell.get("occupied"):
+        return FLIGHT_MAP_OCCUPIED_COLOR
+    return FLIGHT_MAP_BLOCKED_COLOR
 
 
 def occupancy_cell_color(cell: dict[str, Any]) -> list[float]:
@@ -830,6 +866,50 @@ def draw_sensing_volumes(client: Any, snapshot: dict[str, Any] | None, args: arg
             )
 
 
+def draw_local_flight_map(client: Any, snapshot: dict[str, Any] | None, args: argparse.Namespace) -> None:
+    if not args.show_local_flight_map:
+        return
+
+    flight_map = local_flight_map_from_snapshot(snapshot)
+    cells = local_flight_map_cells_from_snapshot(snapshot, args.max_local_flight_map_cells)
+
+    if args.dry_run:
+        if flight_map is not None:
+            print(
+                "  FLIGHT_MAP occ={occ} blocked={blocked} near={near} cells={cells}".format(
+                    occ=flight_map.get("occupied_count", 0),
+                    blocked=flight_map.get("inflated_blocked_count", 0),
+                    near=flight_map.get("nearest_obstacle_m", "n/a"),
+                    cells=len(cells),
+                )
+            )
+        return
+
+    if client is None or flight_map is None or not cells:
+        return
+
+    duration = marker_duration(args)
+    for cell in cells:
+        center = vec3(cell.get("center_local"))
+        size = vec3(cell.get("size_m"))
+        if center is None:
+            continue
+        if size is None:
+            cell_size = float(flight_map.get("cell_size_m", 0.5))
+            size = [cell_size, cell_size, 0.12]
+
+        # Draw as a low, flat wireframe tile just below obstacle surfels.
+        segments = box_wireframe_segments(center, [size[0], size[1], max(0.08, size[2])], args.local_flight_map_z_lift_m)
+        plot_line_segments(
+            client,
+            segments,
+            local_flight_map_cell_color(cell),
+            args.local_flight_map_line_thickness,
+            duration,
+            args.persistent,
+        )
+
+
 def draw_obstacle_evidence(client: Any, snapshot: dict[str, Any] | None, args: argparse.Namespace) -> None:
     if not args.show_obstacle_evidence:
         return
@@ -1066,6 +1146,17 @@ def format_osd_state_line(stats: dict[str, Any], mission_event: dict[str, Any] |
     return f"state={vertical:<5} xy={motion:<6}"
 
 
+def format_osd_local_flight_map_line(snapshot: dict[str, Any] | None) -> str | None:
+    flight_map = local_flight_map_from_snapshot(snapshot)
+    if flight_map is None:
+        return None
+    nearest = fixed_osd_value(flight_map.get("nearest_obstacle_m"), ".1f", "n/a")
+    return (
+        f"FLIGHT_MAP occ={flight_map.get('occupied_count', 0)} "
+        f"blocked={flight_map.get('inflated_blocked_count', 0)} near={nearest}m"
+    )
+
+
 def format_osd_occupancy_line(snapshot: dict[str, Any] | None) -> str | None:
     occupancy = occupancy_from_snapshot(snapshot)
     if occupancy is None:
@@ -1153,6 +1244,7 @@ def maybe_draw_osd(client: Any, snapshot: dict[str, Any] | None, mission_event: 
     if stats is None:
         return
     occupancy_line = format_osd_occupancy_line(snapshot) if args.show_occupancy_summary else None
+    local_flight_map_line = format_osd_local_flight_map_line(snapshot) if args.show_local_flight_map else None
     swept_volume_line = format_osd_swept_volume_line(snapshot) if args.show_swept_volume else None
     evidence_line = format_osd_obstacle_evidence_line(snapshot) if args.show_obstacle_evidence else None
     if args.dry_run:
@@ -1160,6 +1252,8 @@ def maybe_draw_osd(client: Any, snapshot: dict[str, Any] | None, mission_event: 
         print(f"OSD {args.osd_state_name}: {format_osd_state_line(stats, mission_event)}")
         if occupancy_line is not None:
             print(f"OSD {args.osd_occupancy_name}: {occupancy_line}")
+        if local_flight_map_line is not None:
+            print(f"OSD LOCAL-FLIGHT-MAP: {local_flight_map_line}")
         if swept_volume_line is not None:
             print(f"OSD {args.osd_swept_volume_name}: {swept_volume_line}")
         if evidence_line is not None:
@@ -1176,6 +1270,8 @@ def maybe_draw_osd(client: Any, snapshot: dict[str, Any] | None, mission_event: 
         client.simPrintLogMessage(args.osd_state_name, format_osd_state_line(stats, mission_event), severity=args.osd_severity)
         if occupancy_line is not None:
             client.simPrintLogMessage(args.osd_occupancy_name, occupancy_line, severity=args.osd_severity)
+        if local_flight_map_line is not None:
+            client.simPrintLogMessage("DEDALUS-FLIGHT-MAP", local_flight_map_line, severity=args.osd_severity)
         if swept_volume_line is not None:
             client.simPrintLogMessage(args.osd_swept_volume_name, swept_volume_line, severity=args.osd_severity)
         if evidence_line is not None:
@@ -1196,7 +1292,8 @@ def build_debug_report(ghost_event: dict[str, Any] | None, ghost_seq: int | None
         world_position = vec3(world.get("position_local")) if world else None
         delta_plan_minus_world = vec_delta(planned_position, world_position)
         tracks.append({"source_track_id": track, "selected": bool(world.get("selected")) if world else False, "planned_position_local": planned_position, "world_position_local": world_position, "delta_plan_minus_world": delta_plan_minus_world, "delta_plan_minus_world_norm_m": vec_norm(delta_plan_minus_world), "world_minus_ego": vec_delta(world_position, ego_position)})
-    return {"ghost_seq": ghost_seq, "world_seq": snapshot_seq, "mission_seq": mission_seq, "selected_target": selected_target, "ghost_timestamp_ns": ghost_event.get("timestamp_ns") if ghost_event else None, "world_timestamp_ns": snapshot.get("timestamp_ns") if snapshot else None, "ghost_elapsed_s": ghost_event.get("scenario_elapsed_s") if ghost_event else None, "ego": {"position_local": ego_position, "height_m": ego.get("height_m"), "map_frame_id": ego.get("map_frame_id")}, "occupancy": occupancy_from_snapshot(snapshot), "swept_volume": swept_volume_from_snapshot(snapshot), "obstacle_sensing_volumes": sensing_volumes_from_snapshot(snapshot, 8), "obstacle_evidence": obstacle_evidence_from_snapshot(snapshot, 128), "tracks": tracks}
+    # Include the local flight map summary in debug JSON without forcing extra rendering.
+    return {"ghost_seq": ghost_seq, "world_seq": snapshot_seq, "mission_seq": mission_seq, "selected_target": selected_target, "ghost_timestamp_ns": ghost_event.get("timestamp_ns") if ghost_event else None, "world_timestamp_ns": snapshot.get("timestamp_ns") if snapshot else None, "ghost_elapsed_s": ghost_event.get("scenario_elapsed_s") if ghost_event else None, "ego": {"position_local": ego_position, "height_m": ego.get("height_m"), "map_frame_id": ego.get("map_frame_id")}, "occupancy": occupancy_from_snapshot(snapshot), "local_flight_map": local_flight_map_from_snapshot(snapshot), "swept_volume": swept_volume_from_snapshot(snapshot), "obstacle_sensing_volumes": sensing_volumes_from_snapshot(snapshot, 8), "obstacle_evidence": obstacle_evidence_from_snapshot(snapshot, 128), "tracks": tracks}
 
 
 def maybe_print_debug_report(report: dict[str, Any], args: argparse.Namespace, state: dict[str, float]) -> None:
@@ -1276,6 +1373,7 @@ def main() -> int:
         draw_agents(client, dynamic_planned, args)
         draw_agents(client, world_agents, args)
         draw_occupancy(client, stream.latest_world_snapshot, args)
+        draw_local_flight_map(client, stream.latest_world_snapshot, args)
         draw_sensing_volumes(client, stream.latest_world_snapshot, args)
         draw_obstacle_evidence(client, stream.latest_world_snapshot, args)
         draw_swept_volume(client, stream.latest_world_snapshot, args)

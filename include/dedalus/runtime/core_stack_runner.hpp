@@ -4,6 +4,8 @@
 #include <optional>
 #include <vector>
 
+#include "dedalus/avoidance/local_flight_map.hpp"
+
 #include "dedalus/perception/ghost_targets.hpp"
 #include "dedalus/runtime/pipeline_profiler.hpp"
 #include "dedalus/runtime/provider_registry.hpp"
@@ -47,6 +49,7 @@ private:
     std::vector<std::shared_ptr<WorldSnapshotSubscriber>> snapshot_subscriber_handles_;
     AirSimDepthObstacleDetectorConfig airsim_depth_obstacle_detector_config_;
     SensingCoverageProvider sensing_coverage_provider_;
+    LocalFlightMapAccumulator local_flight_map_accumulator_;
     std::vector<CameraPointingState> camera_pointing_states_;
     std::optional<TimePoint> ghost_scenario_start_;
 };

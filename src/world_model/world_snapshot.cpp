@@ -1,5 +1,8 @@
 #include "dedalus/world_model/world_snapshot.hpp"
 
+#include <algorithm>
+#include <cmath>
+#include <vector>
 #include <sstream>
 #include <string_view>
 
@@ -202,6 +205,18 @@ void write_pose3(std::ostringstream& out, const Pose3& value) {
     out << "}";
 }
 
+void write_float_or_null(std::ostringstream& out, const float value) {
+    if (std::isfinite(value)) {
+        out << value;
+    } else {
+        out << "null";
+    }
+}
+
+void write_bool_field(std::ostringstream& out, std::string_view name, const bool value) {
+    out << "        \"" << name << "\": " << bool_string(value);
+}
+
 void write_bounds3(std::ostringstream& out, const Bounds3& value) {
     out << "{\"min\":";
     write_vec3(out, value.min);
@@ -258,6 +273,74 @@ void write_ego_occupancy(std::ostringstream& out, const EgoOccupancyMapSnapshot&
         out << "\n      }";
     }
     if (!occupancy.debug_cells.empty()) out << "\n    ";
+    out << "]\n";
+    out << "  },\n";
+}
+
+void write_local_flight_map(std::ostringstream& out, const LocalFlightMapSnapshot& map) {
+    constexpr std::size_t kMaxDebugCells = 96U;
+
+    out << "  \"local_flight_map\": {\n";
+    out << "    \"timestamp_ns\": " << map.timestamp.timestamp_ns << ",\n";
+    if (map.has_source_frame) {
+        out << "    \"source_frame_id\": \"" << escape_json(map.source_frame_id.value) << "\",\n";
+    }
+    out << "    \"cell_size_m\": " << map.cell_size_m << ",\n";
+    out << "    \"x_cells\": " << map.x_cells << ",\n";
+    out << "    \"y_cells\": " << map.y_cells << ",\n";
+    out << "    \"forward_range_m\": " << map.forward_range_m << ",\n";
+    out << "    \"rear_range_m\": " << map.rear_range_m << ",\n";
+    out << "    \"lateral_range_m\": " << map.lateral_range_m << ",\n";
+    out << "    \"occupied_count\": " << map.occupied_count << ",\n";
+    out << "    \"inflated_blocked_count\": " << map.inflated_blocked_count << ",\n";
+    out << "    \"nearest_obstacle_m\": ";
+    write_float_or_null(out, map.nearest_obstacle_m);
+    out << ",\n";
+
+    std::vector<const LocalFlightMapCell*> debug_cells;
+    debug_cells.reserve(std::min<std::size_t>(map.cells.size(), kMaxDebugCells));
+    for (const auto& cell : map.cells) {
+        if (!cell.occupied && !cell.inflated_blocked) {
+            continue;
+        }
+        debug_cells.push_back(&cell);
+    }
+
+    std::sort(debug_cells.begin(), debug_cells.end(), [](const auto* a, const auto* b) {
+        if (a->occupied != b->occupied) return a->occupied > b->occupied;
+        if (a->inflated_blocked != b->inflated_blocked) return a->inflated_blocked > b->inflated_blocked;
+        if (a->nearest_range_m != b->nearest_range_m) return a->nearest_range_m < b->nearest_range_m;
+        const auto ar = (a->center_local.x * a->center_local.x) + (a->center_local.y * a->center_local.y);
+        const auto br = (b->center_local.x * b->center_local.x) + (b->center_local.y * b->center_local.y);
+        return ar < br;
+    });
+
+    if (debug_cells.size() > kMaxDebugCells) {
+        debug_cells.resize(kMaxDebugCells);
+    }
+
+    out << "    \"debug_cell_limit\": " << kMaxDebugCells << ",\n";
+    out << "    \"debug_cells\": [";
+    for (std::size_t i = 0; i < debug_cells.size(); ++i) {
+        const auto& cell = *debug_cells[i];
+        if (i != 0) out << ",";
+        out << "\n      {\n";
+        out << "        \"center_local\": "; write_vec3(out, cell.center_local); out << ",\n";
+        out << "        \"size_m\": [" << map.cell_size_m << "," << map.cell_size_m << ",0.12],\n";
+        write_bool_field(out, "occupied", cell.occupied); out << ",\n";
+        write_bool_field(out, "inflated_blocked", cell.inflated_blocked); out << ",\n";
+        write_bool_field(out, "recently_observed", cell.recently_observed); out << ",\n";
+        out << "        \"occupied_score\": " << cell.occupied_score << ",\n";
+        out << "        \"free_score\": " << cell.free_score << ",\n";
+        out << "        \"risk_score\": " << cell.risk_score << ",\n";
+        out << "        \"nearest_range_m\": ";
+        write_float_or_null(out, cell.nearest_range_m);
+        out << ",\n";
+        out << "        \"min_z_m\": " << cell.min_z_m << ",\n";
+        out << "        \"max_z_m\": " << cell.max_z_m << "\n";
+        out << "      }";
+    }
+    if (!debug_cells.empty()) out << "\n    ";
     out << "]\n";
     out << "  },\n";
 }
@@ -398,6 +481,7 @@ std::string to_json(const WorldSnapshot& snapshot) {
 
     if (snapshot.has_ego_occupancy) write_ego_occupancy(out, snapshot.ego_occupancy);
     if (snapshot.has_latest_swept_volume) write_swept_volume(out, snapshot.latest_swept_volume);
+    if (snapshot.has_local_flight_map) write_local_flight_map(out, snapshot.local_flight_map);
     write_obstacle_sensing_volumes(out, snapshot.obstacle_sensing_volumes);
     write_obstacle_evidence(out, snapshot.obstacle_evidence);
 
