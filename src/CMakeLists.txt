@@ -31,6 +31,7 @@ add_library(dedalus_core
     runtime/camera_pointing_state_store.cpp
     runtime/config_loader.cpp
     runtime/core_stack_runner.cpp
+    runtime/core_stack_runner_run.cpp
     runtime/pipeline_profiler.cpp
     runtime/provider_registry.cpp
     runtime/world_snapshot_stream_server.cpp
