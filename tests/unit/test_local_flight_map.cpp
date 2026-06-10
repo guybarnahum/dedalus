@@ -1,4 +1,5 @@
 #include "dedalus/avoidance/local_flight_map.hpp"
+#include "dedalus/world_model/world_snapshot.hpp"
 
 #include <cassert>
 #include <chrono>
