@@ -53,6 +53,13 @@ EVIDENCE_THIN_RISK_COLOR = [1.0, 0.0, 1.0, 0.95]
 EVIDENCE_BLOCKING_COLOR = [1.0, 0.0, 0.0, 1.0]
 EVIDENCE_SURFEL_MIN_M = 0.18
 EVIDENCE_SURFEL_MAX_M = 0.65
+DEPTH_SURFACE_CLUSTER_COLOR = [0.95, 0.95, 1.0, 0.82]
+DEPTH_SURFACE_CLUSTER_MIN_COUNT = 3
+DEPTH_SURFACE_CLUSTER_JOIN_M = 2.2
+DEPTH_SURFACE_CLUSTER_MAX_DRAWN = 8
+DEPTH_SURFACE_CLUSTER_NORMAL_DOT_MIN = 0.62
+DEPTH_SURFACE_CLUSTER_MIN_EXTENT_M = 0.9
+DEPTH_SURFACE_CLUSTER_MAX_EXTENT_M = 7.5
 
 
 class RuntimeEventStreamClient:
@@ -830,6 +837,152 @@ def draw_sensing_volumes(client: Any, snapshot: dict[str, Any] | None, args: arg
             )
 
 
+def depth_surface_patch_items(snapshot: dict[str, Any] | None) -> list[dict[str, Any]]:
+    if snapshot is None:
+        return []
+
+    items: list[dict[str, Any]] = []
+    for item in snapshot.get("obstacle_evidence", []):
+        if not isinstance(item, dict):
+            continue
+        if not is_depth_surface_patch(item):
+            continue
+        if str(item.get("state", "unknown")) != "occupied":
+            continue
+        if item.get("inside_sensing_volume") is not True:
+            continue
+
+        center = vec3(item.get("center_local"))
+        if center is None:
+            continue
+
+        normal = None
+        if item.get("has_surface_normal"):
+            normal = vec_normalize(vec3(item.get("surface_normal_local")))
+
+        enriched = dict(item)
+        enriched["_overlay_center_local"] = center
+        enriched["_overlay_normal_local"] = normal
+        items.append(enriched)
+
+    return items
+
+
+def normals_compatible(a: list[float] | None, b: list[float] | None) -> bool:
+    if a is None or b is None:
+        return True
+    return abs(vec_dot(a, b)) >= DEPTH_SURFACE_CLUSTER_NORMAL_DOT_MIN
+
+
+def cluster_depth_surface_patches(snapshot: dict[str, Any] | None) -> list[dict[str, Any]]:
+    clusters: list[dict[str, Any]] = []
+
+    for item in depth_surface_patch_items(snapshot):
+        center = item["_overlay_center_local"]
+        normal = item["_overlay_normal_local"]
+
+        best_cluster: dict[str, Any] | None = None
+        best_distance = DEPTH_SURFACE_CLUSTER_JOIN_M
+
+        for cluster in clusters:
+            if not normals_compatible(normal, cluster.get("normal")):
+                continue
+            delta = vec_sub(center, cluster["centroid"])
+            distance = vec_norm(delta) or float("inf")
+            if distance < best_distance:
+                best_distance = distance
+                best_cluster = cluster
+
+        if best_cluster is None:
+            clusters.append({
+                "items": [item],
+                "centroid": list(center),
+                "normal_sum": list(normal) if normal is not None else [0.0, 0.0, 0.0],
+                "normal_count": 1 if normal is not None else 0,
+                "normal": normal,
+            })
+            continue
+
+        best_cluster["items"].append(item)
+        count = float(len(best_cluster["items"]))
+        best_cluster["centroid"] = [
+            best_cluster["centroid"][i] + (center[i] - best_cluster["centroid"][i]) / count
+            for i in range(3)
+        ]
+        if normal is not None:
+            best_cluster["normal_sum"] = vec_add(best_cluster["normal_sum"], normal)
+            best_cluster["normal_count"] += 1
+            best_cluster["normal"] = vec_normalize(best_cluster["normal_sum"])
+
+    enriched_clusters: list[dict[str, Any]] = []
+    for cluster in clusters:
+        if len(cluster["items"]) < DEPTH_SURFACE_CLUSTER_MIN_COUNT:
+            continue
+
+        centers = [item["_overlay_center_local"] for item in cluster["items"]]
+        min_xyz = [min(center[i] for center in centers) for i in range(3)]
+        max_xyz = [max(center[i] for center in centers) for i in range(3)]
+
+        extent_x = clamp(max_xyz[0] - min_xyz[0], DEPTH_SURFACE_CLUSTER_MIN_EXTENT_M, DEPTH_SURFACE_CLUSTER_MAX_EXTENT_M)
+        extent_y = clamp(max_xyz[1] - min_xyz[1], DEPTH_SURFACE_CLUSTER_MIN_EXTENT_M, DEPTH_SURFACE_CLUSTER_MAX_EXTENT_M)
+        extent_z = clamp(max_xyz[2] - min_xyz[2], 0.12, 1.2)
+
+        cluster["size_m"] = [
+            max(extent_x, DEPTH_SURFACE_CLUSTER_MIN_EXTENT_M),
+            max(extent_y, DEPTH_SURFACE_CLUSTER_MIN_EXTENT_M),
+            max(extent_z, 0.12),
+        ]
+        cluster["count"] = len(cluster["items"])
+        enriched_clusters.append(cluster)
+
+    enriched_clusters.sort(key=lambda cluster: (-cluster["count"], vec_norm(cluster["centroid"]) or float("inf")))
+    return enriched_clusters[:DEPTH_SURFACE_CLUSTER_MAX_DRAWN]
+
+
+def depth_surface_cluster_segments(cluster: dict[str, Any], z_lift_m: float) -> list[airsim.Vector3r]:
+    centroid = cluster["centroid"]
+    size_m = cluster.get("size_m", [1.0, 1.0, 0.2])
+    normal = cluster.get("normal")
+
+    # Draw one broad aggregate footprint, plus a thin bounding footprint.
+    segments = surface_patch_segments(centroid, size_m, normal, z_lift_m + 0.04)
+    segments.extend(box_wireframe_segments(centroid, [
+        clamp(size_m[0], DEPTH_SURFACE_CLUSTER_MIN_EXTENT_M, DEPTH_SURFACE_CLUSTER_MAX_EXTENT_M),
+        clamp(size_m[1], DEPTH_SURFACE_CLUSTER_MIN_EXTENT_M, DEPTH_SURFACE_CLUSTER_MAX_EXTENT_M),
+        clamp(max(size_m[2], 0.16), 0.16, 1.2),
+    ], z_lift_m + 0.02))
+    return segments
+
+
+def draw_depth_surface_clusters(client: Any, snapshot: dict[str, Any] | None, args: argparse.Namespace) -> int:
+    if client is None or not args.show_obstacle_evidence:
+        return 0
+
+    clusters = cluster_depth_surface_patches(snapshot)
+    if not clusters:
+        return 0
+
+    duration = marker_duration(args)
+    thickness = max(args.obstacle_evidence_line_thickness * 1.35, 2.5)
+
+    drawn = 0
+    for cluster in clusters:
+        segments = depth_surface_cluster_segments(cluster, args.obstacle_evidence_z_lift_m + 0.04)
+        if not segments:
+            continue
+        plot_line_segments(
+            client,
+            segments,
+            list(DEPTH_SURFACE_CLUSTER_COLOR),
+            thickness,
+            duration,
+            args.persistent,
+        )
+        drawn += 1
+
+    return drawn
+
+
 def draw_obstacle_evidence(client: Any, snapshot: dict[str, Any] | None, args: argparse.Namespace) -> None:
     if not args.show_obstacle_evidence:
         return
@@ -872,6 +1025,10 @@ def draw_obstacle_evidence(client: Any, snapshot: dict[str, Any] | None, args: a
             if str(evidence.get("state", "unknown")) == "thin_structure_risk":
                 thickness *= 1.35
             plot_line_segments(client, segments, list(color), thickness, duration, args.persistent)
+
+    cluster_count = draw_depth_surface_clusters(client, snapshot, args)
+    if args.debug and cluster_count:
+        print(f"[overlay] drew {cluster_count} depth surface clusters", file=sys.stderr)
 
 
 def draw_swept_volume(client: Any, snapshot: dict[str, Any] | None, args: argparse.Namespace) -> None:
@@ -1113,8 +1270,9 @@ def format_osd_obstacle_evidence_line(snapshot: dict[str, Any] | None) -> str | 
             in_sweep += 1
         if source == "-" and item.get("source_provider"):
             source = str(item.get("source_provider"))
+    clusters = cluster_depth_surface_patches(snapshot)
     return (
-        f"OBS depth_surf={depth_surface} "
+        f"OBS depth_surf={depth_surface} clusters={len(clusters)} "
         f"src={short_text(source.replace('_', '-'), 16)} "
         f"occ={counts.get('occupied', 0)} sense={in_sense} sweep={in_sweep}"
     )
