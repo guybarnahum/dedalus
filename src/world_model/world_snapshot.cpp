@@ -345,6 +345,20 @@ void write_local_flight_map(std::ostringstream& out, const LocalFlightMapSnapsho
     out << "  },\n";
 }
 
+void write_trajectory_safety(std::ostringstream& out, const TrajectorySafetyResult& safety) {
+    out << "  \"trajectory_safety\": {\n";
+    out << "    \"clear\": " << bool_string(safety.clear) << ",\n";
+    out << "    \"blocked\": " << bool_string(safety.blocked) << ",\n";
+    out << "    \"has_valid_query\": " << bool_string(safety.has_valid_query) << ",\n";
+    out << "    \"sample_count\": " << safety.sample_count << ",\n";
+    out << "    \"blocked_sample_count\": " << safety.blocked_sample_count << ",\n";
+    out << "    \"first_blocked_sample_index\": " << safety.first_blocked_sample_index << ",\n";
+    out << "    \"first_blocked_position_local\": "; write_vec3(out, safety.first_blocked_position_local); out << ",\n";
+    out << "    \"minimum_clearance_m\": "; write_float_or_null(out, safety.minimum_clearance_m); out << ",\n";
+    out << "    \"nearest_obstacle_m\": "; write_float_or_null(out, safety.nearest_obstacle_m); out << "\n";
+    out << "  },\n";
+}
+
 void write_swept_volume(std::ostringstream& out, const SweptVolumeDebug& swept) {
     out << "  \"latest_swept_volume\": {\n";
     out << "    \"timestamp_ns\": " << swept.timestamp.timestamp_ns << ",\n";
@@ -482,6 +496,7 @@ std::string to_json(const WorldSnapshot& snapshot) {
     if (snapshot.has_ego_occupancy) write_ego_occupancy(out, snapshot.ego_occupancy);
     if (snapshot.has_latest_swept_volume) write_swept_volume(out, snapshot.latest_swept_volume);
     if (snapshot.has_local_flight_map) write_local_flight_map(out, snapshot.local_flight_map);
+    if (snapshot.has_trajectory_safety) write_trajectory_safety(out, snapshot.trajectory_safety);
     write_obstacle_sensing_volumes(out, snapshot.obstacle_sensing_volumes);
     write_obstacle_evidence(out, snapshot.obstacle_evidence);
 

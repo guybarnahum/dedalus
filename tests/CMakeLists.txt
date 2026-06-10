@@ -232,6 +232,14 @@ dedalus_add_native_test(
 )
 
 
+
+dedalus_add_native_test(
+    NAME trajectory_safety_evaluator
+    LAYER unit
+    TAGS avoidance trajectory_safety
+    SOURCES unit/test_trajectory_safety_evaluator.cpp
+)
+
 dedalus_add_native_test(
     NAME local_flight_map
     LAYER unit

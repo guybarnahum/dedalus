@@ -7,6 +7,7 @@
 #include "dedalus/core/types.hpp"
 #include "dedalus/occupancy/occupancy_types.hpp"
 #include "dedalus/avoidance/local_flight_map.hpp"
+#include "dedalus/avoidance/trajectory_safety_evaluator.hpp"
 
 namespace dedalus {
 
@@ -210,6 +211,9 @@ struct WorldSnapshot {
 
     bool has_local_flight_map{false};
     LocalFlightMapSnapshot local_flight_map;
+
+    bool has_trajectory_safety{false};
+    TrajectorySafetyResult trajectory_safety;
 
     std::vector<ObstacleSensingVolume> obstacle_sensing_volumes;
     std::vector<ObstacleEvidence> obstacle_evidence;

@@ -5,6 +5,7 @@
 #include <vector>
 
 #include "dedalus/avoidance/local_flight_map.hpp"
+#include "dedalus/avoidance/trajectory_safety_evaluator.hpp"
 
 #include "dedalus/perception/ghost_targets.hpp"
 #include "dedalus/runtime/pipeline_profiler.hpp"
@@ -50,6 +51,7 @@ private:
     AirSimDepthObstacleDetectorConfig airsim_depth_obstacle_detector_config_;
     SensingCoverageProvider sensing_coverage_provider_;
     LocalFlightMapAccumulator local_flight_map_accumulator_;
+    TrajectorySafetyEvaluator trajectory_safety_evaluator_;
     std::vector<CameraPointingState> camera_pointing_states_;
     std::optional<TimePoint> ghost_scenario_start_;
 };

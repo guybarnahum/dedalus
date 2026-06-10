@@ -4,6 +4,7 @@
 
 #include <iostream>
 #include <string>
+#include <sstream>
 
 namespace dedalus {
 namespace {
@@ -100,6 +101,20 @@ std::string display_fields(const std::string& primary, const std::string& detail
     return ",\"display_state\":" + q(primary) + ",\"display_detail\":" + q(detail);
 }
 
+std::string trajectory_safety_event_fields(const TrajectorySafetyResult& safety) {
+    std::ostringstream out;
+    out << "\"event\":\"trajectory_safety\""
+        << ",\"clear\":" << (safety.clear ? "true" : "false")
+        << ",\"blocked\":" << (safety.blocked ? "true" : "false")
+        << ",\"has_valid_query\":" << (safety.has_valid_query ? "true" : "false")
+        << ",\"sample_count\":" << safety.sample_count
+        << ",\"blocked_sample_count\":" << safety.blocked_sample_count
+        << ",\"first_blocked_sample_index\":" << safety.first_blocked_sample_index
+        << ",\"minimum_clearance_m\":" << safety.minimum_clearance_m
+        << ",\"nearest_obstacle_m\":" << safety.nearest_obstacle_m;
+    return out.str();
+}
+
 }  // namespace
 
 bool MissionRuntime::tick_once() {
@@ -149,6 +164,14 @@ bool MissionRuntime::tick_once() {
             ",\"state\":" + q(to_string(output.state)) +
             event.json_fields);
     }
+    if (input.snapshot.has_trajectory_safety &&
+        (state_changed || detailed_tick || input.snapshot.trajectory_safety.blocked)) {
+        write_event(
+            trajectory_safety_event_fields(input.snapshot.trajectory_safety) +
+            ",\"tick\":" + std::to_string(tick_count_) +
+            ",\"state\":" + q(to_string(output.state)));
+    }
+
     if (state_changed || detailed_tick) {
         std::cerr << "dedalus_mission: tick=" << tick_count_
                   << " state=" << to_string(output.state)

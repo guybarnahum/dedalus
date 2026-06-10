@@ -4,6 +4,7 @@
 
 #include <algorithm>
 #include <chrono>
+#include <cmath>
 #include <vector>
 
 namespace dedalus {
@@ -214,6 +215,19 @@ bool CoreStackRunner::run_once() {
     snapshot_for_annotation.has_local_flight_map = true;
     if (timing_writer_) {
         timing_writer_->record_stage("local_flight_map.update", duration_us(start));
+    }
+
+    start = SteadyClock::now();
+    const auto ego_speed_mps = std::sqrt(
+        (snapshot_for_annotation.ego.velocity_local.x * snapshot_for_annotation.ego.velocity_local.x) +
+        (snapshot_for_annotation.ego.velocity_local.y * snapshot_for_annotation.ego.velocity_local.y));
+    const auto diagnostic_speed_mps = std::max(ego_speed_mps, 2.0);
+    const auto diagnostic_trajectory = make_forward_trajectory_samples(diagnostic_speed_mps, 3.0, 0.25);
+    snapshot_for_annotation.trajectory_safety =
+        trajectory_safety_evaluator_.evaluate(snapshot_for_annotation.local_flight_map, diagnostic_trajectory);
+    snapshot_for_annotation.has_trajectory_safety = true;
+    if (timing_writer_) {
+        timing_writer_->record_stage("trajectory_safety.evaluate", duration_us(start));
     }
 
     if (snapshot_publisher_) {
