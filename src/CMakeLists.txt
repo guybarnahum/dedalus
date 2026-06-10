@@ -8,6 +8,7 @@ add_library(dedalus_core
     behavior/mission_runtime.cpp
     behavior/mission_runtime_dispatch.cpp
     behavior/object_behavior_mission_controller.cpp
+    behavior/object_behavior_mission_controller_sequence.cpp
     behavior/object_behavior_mission_controller_camera.cpp
     behavior/object_behavior_mission_controller_tick.cpp
     behavior/px4_bridge_command_sink.cpp
