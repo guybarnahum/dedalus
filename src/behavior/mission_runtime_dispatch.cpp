@@ -5,6 +5,7 @@
 #include <iostream>
 #include <string>
 #include <sstream>
+#include <cmath>
 
 namespace dedalus {
 namespace {
@@ -103,6 +104,15 @@ std::string display_fields(const std::string& primary, const std::string& detail
 
 std::string trajectory_safety_event_fields(const TrajectorySafetyResult& safety) {
     std::ostringstream out;
+
+    const auto append_float_or_null = [&out](const float value) {
+        if (std::isfinite(value)) {
+            out << value;
+        } else {
+            out << "null";
+        }
+    };
+
     out << "\"event\":\"trajectory_safety\""
         << ",\"clear\":" << (safety.clear ? "true" : "false")
         << ",\"blocked\":" << (safety.blocked ? "true" : "false")
@@ -110,8 +120,11 @@ std::string trajectory_safety_event_fields(const TrajectorySafetyResult& safety)
         << ",\"sample_count\":" << safety.sample_count
         << ",\"blocked_sample_count\":" << safety.blocked_sample_count
         << ",\"first_blocked_sample_index\":" << safety.first_blocked_sample_index
-        << ",\"minimum_clearance_m\":" << safety.minimum_clearance_m
-        << ",\"nearest_obstacle_m\":" << safety.nearest_obstacle_m;
+        << ",\"minimum_clearance_m\":";
+    append_float_or_null(safety.minimum_clearance_m);
+    out << ",\"nearest_obstacle_m\":";
+    append_float_or_null(safety.nearest_obstacle_m);
+
     return out.str();
 }
 

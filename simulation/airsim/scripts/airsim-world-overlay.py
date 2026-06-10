@@ -362,6 +362,13 @@ def world_agents_from_snapshot(snapshot: dict[str, Any] | None, max_agents: int,
     return agents[: max(0, max_agents)]
 
 
+def trajectory_safety_from_snapshot(snapshot: dict[str, Any] | None) -> dict[str, Any] | None:
+    if snapshot is None:
+        return None
+    safety = snapshot.get("trajectory_safety")
+    return safety if isinstance(safety, dict) else None
+
+
 def local_flight_map_from_snapshot(snapshot: dict[str, Any] | None) -> dict[str, Any] | None:
     if snapshot is None:
         return None
@@ -1146,6 +1153,18 @@ def format_osd_state_line(stats: dict[str, Any], mission_event: dict[str, Any] |
     return f"state={vertical:<5} xy={motion:<6}"
 
 
+def format_osd_trajectory_safety_line(snapshot: dict[str, Any] | None) -> str | None:
+    safety = trajectory_safety_from_snapshot(snapshot)
+    if safety is None:
+        return None
+    status = "BLOCKED" if safety.get("blocked") else "clear"
+    clearance = fixed_osd_value(safety.get("minimum_clearance_m"), ".1f", "n/a")
+    nearest = fixed_osd_value(safety.get("nearest_obstacle_m"), ".1f", "n/a")
+    blocked = safety.get("blocked_sample_count", 0)
+    samples = safety.get("sample_count", 0)
+    return f"TRAJ {status} clearance={clearance}m near={nearest}m blocked={blocked}/{samples}"
+
+
 def format_osd_local_flight_map_line(snapshot: dict[str, Any] | None) -> str | None:
     flight_map = local_flight_map_from_snapshot(snapshot)
     if flight_map is None:
@@ -1245,6 +1264,7 @@ def maybe_draw_osd(client: Any, snapshot: dict[str, Any] | None, mission_event: 
         return
     occupancy_line = format_osd_occupancy_line(snapshot) if args.show_occupancy_summary else None
     local_flight_map_line = format_osd_local_flight_map_line(snapshot) if args.show_local_flight_map else None
+    trajectory_safety_line = format_osd_trajectory_safety_line(snapshot) if args.show_local_flight_map else None
     swept_volume_line = format_osd_swept_volume_line(snapshot) if args.show_swept_volume else None
     evidence_line = format_osd_obstacle_evidence_line(snapshot) if args.show_obstacle_evidence else None
     if args.dry_run:
@@ -1254,6 +1274,8 @@ def maybe_draw_osd(client: Any, snapshot: dict[str, Any] | None, mission_event: 
             print(f"OSD {args.osd_occupancy_name}: {occupancy_line}")
         if local_flight_map_line is not None:
             print(f"OSD LOCAL-FLIGHT-MAP: {local_flight_map_line}")
+        if trajectory_safety_line is not None:
+            print(f"OSD TRAJECTORY-SAFETY: {trajectory_safety_line}")
         if swept_volume_line is not None:
             print(f"OSD {args.osd_swept_volume_name}: {swept_volume_line}")
         if evidence_line is not None:
@@ -1272,6 +1294,8 @@ def maybe_draw_osd(client: Any, snapshot: dict[str, Any] | None, mission_event: 
             client.simPrintLogMessage(args.osd_occupancy_name, occupancy_line, severity=args.osd_severity)
         if local_flight_map_line is not None:
             client.simPrintLogMessage("DEDALUS-FLIGHT-MAP", local_flight_map_line, severity=args.osd_severity)
+        if trajectory_safety_line is not None:
+            client.simPrintLogMessage("DEDALUS-TRAJECTORY", trajectory_safety_line, severity=args.osd_severity)
         if swept_volume_line is not None:
             client.simPrintLogMessage(args.osd_swept_volume_name, swept_volume_line, severity=args.osd_severity)
         if evidence_line is not None:
@@ -1293,7 +1317,7 @@ def build_debug_report(ghost_event: dict[str, Any] | None, ghost_seq: int | None
         delta_plan_minus_world = vec_delta(planned_position, world_position)
         tracks.append({"source_track_id": track, "selected": bool(world.get("selected")) if world else False, "planned_position_local": planned_position, "world_position_local": world_position, "delta_plan_minus_world": delta_plan_minus_world, "delta_plan_minus_world_norm_m": vec_norm(delta_plan_minus_world), "world_minus_ego": vec_delta(world_position, ego_position)})
     # Include the local flight map summary in debug JSON without forcing extra rendering.
-    return {"ghost_seq": ghost_seq, "world_seq": snapshot_seq, "mission_seq": mission_seq, "selected_target": selected_target, "ghost_timestamp_ns": ghost_event.get("timestamp_ns") if ghost_event else None, "world_timestamp_ns": snapshot.get("timestamp_ns") if snapshot else None, "ghost_elapsed_s": ghost_event.get("scenario_elapsed_s") if ghost_event else None, "ego": {"position_local": ego_position, "height_m": ego.get("height_m"), "map_frame_id": ego.get("map_frame_id")}, "occupancy": occupancy_from_snapshot(snapshot), "local_flight_map": local_flight_map_from_snapshot(snapshot), "swept_volume": swept_volume_from_snapshot(snapshot), "obstacle_sensing_volumes": sensing_volumes_from_snapshot(snapshot, 8), "obstacle_evidence": obstacle_evidence_from_snapshot(snapshot, 128), "tracks": tracks}
+    return {"ghost_seq": ghost_seq, "world_seq": snapshot_seq, "mission_seq": mission_seq, "selected_target": selected_target, "ghost_timestamp_ns": ghost_event.get("timestamp_ns") if ghost_event else None, "world_timestamp_ns": snapshot.get("timestamp_ns") if snapshot else None, "ghost_elapsed_s": ghost_event.get("scenario_elapsed_s") if ghost_event else None, "ego": {"position_local": ego_position, "height_m": ego.get("height_m"), "map_frame_id": ego.get("map_frame_id")}, "occupancy": occupancy_from_snapshot(snapshot), "local_flight_map": local_flight_map_from_snapshot(snapshot), "trajectory_safety": trajectory_safety_from_snapshot(snapshot), "swept_volume": swept_volume_from_snapshot(snapshot), "obstacle_sensing_volumes": sensing_volumes_from_snapshot(snapshot, 8), "obstacle_evidence": obstacle_evidence_from_snapshot(snapshot, 128), "tracks": tracks}
 
 
 def maybe_print_debug_report(report: dict[str, Any], args: argparse.Namespace, state: dict[str, float]) -> None:
