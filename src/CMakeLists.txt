@@ -6,6 +6,7 @@ add_library(dedalus_core
     behavior/object_behavior_config.cpp
     behavior/mission_runtime.cpp
     behavior/object_behavior_mission_controller.cpp
+    behavior/object_behavior_mission_controller_camera.cpp
     behavior/px4_bridge_command_sink.cpp
     behavior/mavlink_gimbal_pointing_sink.cpp
     behavior/px4_mavlink_command_sink.cpp
