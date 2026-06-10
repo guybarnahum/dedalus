@@ -7,6 +7,7 @@ add_library(dedalus_core
     behavior/behavior_spec_strings.cpp
     behavior/follow_geometry_policy.cpp
     behavior/follow_geometry_policy_circle.cpp
+    behavior/follow_geometry_policy_follow.cpp
     behavior/object_behavior_config.cpp
     behavior/mission_runtime.cpp
     behavior/mission_runtime_dispatch.cpp
