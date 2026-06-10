@@ -37,6 +37,7 @@ add_library(dedalus_core
     simulation/bridge_transport.cpp
     simulation/ghost_scenario.cpp
     visualization/frame_annotator.cpp
+    visualization/frame_annotator_annotate.cpp
     visualization/world_overlay_sidecar.cpp
     visualization/world_to_image_projector.cpp
     world_model/in_memory_world_model.cpp
