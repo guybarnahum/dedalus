@@ -18,11 +18,6 @@ std::uint64_t elapsed_us(const SteadyClock::time_point start) {
         std::chrono::duration_cast<std::chrono::microseconds>(SteadyClock::now() - start).count());
 }
 
-bool output_is_terminal_settled(const MissionTickOutput& output) {
-    return (output.state == MissionLifecycleState::Complete && output.status == "complete") ||
-           (output.state == MissionLifecycleState::Abort && output.status == "abort");
-}
-
 std::string display_primary_for_state(MissionLifecycleState state) {
     switch (state) {
         case MissionLifecycleState::Prepare:
@@ -43,67 +38,6 @@ std::string display_primary_for_state(MissionLifecycleState state) {
         default:
             return "Unknown";
     }
-}
-
-std::string display_primary_for_command(FlightCommandKind command) {
-    switch (command) {
-        case FlightCommandKind::Arm:
-            return "Arm";
-        case FlightCommandKind::Takeoff:
-            return "Takeoff";
-        case FlightCommandKind::Land:
-            return "Land";
-        case FlightCommandKind::Disarm:
-            return "Disarm";
-        case FlightCommandKind::Velocity:
-            return "Mission";
-        default:
-            return "Unknown";
-    }
-}
-
-std::string compact_display_detail(const std::string& status) {
-    if (status.empty()) {
-        return "-";
-    }
-    if (status.find("failed") != std::string::npos ||
-        status.find("error") != std::string::npos ||
-        status.find("exception") != std::string::npos ||
-        status.find("timeout") != std::string::npos ||
-        status.find("abort") != std::string::npos) {
-        return "failed";
-    }
-    if (status.find("arm") != std::string::npos) {
-        return "arming";
-    }
-    if (status.find("takeoff") != std::string::npos || status.find("climb") != std::string::npos) {
-        return "climbing";
-    }
-    if (status.find("land") != std::string::npos) {
-        return "landing";
-    }
-    if (status.find("home") != std::string::npos) {
-        return "returning";
-    }
-    if (status.find("complete") != std::string::npos) {
-        return "done";
-    }
-    if (status.find("object_behavior_arriving") != std::string::npos) {
-        return "arriving";
-    }
-    if (status.find("object_behavior_following") != std::string::npos) {
-        return "following";
-    }
-    if (status.find("object_behavior_positioned") != std::string::npos) {
-        return "positioned";
-    }
-    if (status.find("object_behavior_circling") != std::string::npos) {
-        return "circling";
-    }
-    if (status == "ok") {
-        return "ok";
-    }
-    return status.size() > 12 ? status.substr(0, 11) + "~" : status;
 }
 
 std::string display_fields(const std::string& primary, const std::string& detail) {

@@ -9,26 +9,6 @@
 namespace dedalus {
 namespace {
 
-std::string parse_json_string(const std::string& json, const std::string& key) {
-    const std::string marker = "\"" + key + "\":";
-    const auto marker_pos = json.find(marker);
-    if (marker_pos == std::string::npos) {
-        throw std::runtime_error("AirSim stream JSON missing key: " + key);
-    }
-
-    const auto open_pos = json.find('"', marker_pos + marker.size());
-    if (open_pos == std::string::npos) {
-        throw std::runtime_error("AirSim stream JSON has invalid string for key: " + key);
-    }
-
-    const auto close_pos = json.find('"', open_pos + 1U);
-    if (close_pos == std::string::npos) {
-        throw std::runtime_error("AirSim stream JSON has unterminated string for key: " + key);
-    }
-
-    return json.substr(open_pos + 1U, close_pos - open_pos - 1U);
-}
-
 std::vector<double> parse_json_number_array(const std::string& json, const std::string& key, std::size_t expected_size) {
     const std::string marker = "\"" + key + "\":";
     const auto marker_pos = json.find(marker);
