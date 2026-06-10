@@ -112,6 +112,7 @@ private:
     LocalFlightMapConfig config_;
     LocalFlightMapSnapshot latest_;
     std::uint64_t last_update_ns_{0U};
+    bool has_last_update_{false};
 };
 
 }  // namespace dedalus

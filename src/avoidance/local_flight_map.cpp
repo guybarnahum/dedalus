@@ -70,6 +70,7 @@ LocalFlightMapSnapshot LocalFlightMapAccumulator::update(const WorldSnapshot& sn
     update_summary();
 
     last_update_ns_ = timestamp_ns(snapshot.timestamp);
+    has_last_update_ = true;
     return latest_;
 }
 
@@ -89,7 +90,7 @@ void LocalFlightMapAccumulator::reset_cells() {
 }
 
 void LocalFlightMapAccumulator::decay_scores(const TimePoint timestamp) {
-    if (last_update_ns_ == 0U) {
+    if (!has_last_update_) {
         return;
     }
 
