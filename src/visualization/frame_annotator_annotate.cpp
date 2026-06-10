@@ -314,7 +314,7 @@ bool is_depth_surface_patch(const ObstacleEvidence& evidence) {
 
 RgbColor obstacle_evidence_color(const ObstacleEvidence& evidence) {
     if (is_depth_surface_patch(evidence)) {
-        return RgbColor{210U, 120U, 255U};
+        return RgbColor{255U, 0U, 255U};
     }
     if (evidence.state == ObstacleEvidenceState::ThinStructureRisk) {
         return RgbColor{255U, 70U, 70U};
@@ -325,12 +325,26 @@ RgbColor obstacle_evidence_color(const ObstacleEvidence& evidence) {
     return RgbColor{255U, 150U, 60U};
 }
 
-void draw_diamond_marker(ImageView& image, const int u, const int v, const int radius, const RgbColor color) {
-    draw_line(image, u, v - radius, u + radius, v, color);
-    draw_line(image, u + radius, v, u, v + radius, color);
-    draw_line(image, u, v + radius, u - radius, v, color);
-    draw_line(image, u - radius, v, u, v - radius, color);
-    fill_rect(image, u - 1, v - 1, 3, 3, color);
+void draw_surface_patch_marker(
+    ImageView& image,
+    const int u,
+    const int v,
+    const int radius,
+    const RgbColor color) {
+    const int r = std::max(6, radius);
+
+    // Bold diamond footprint.
+    draw_line(image, u, v - r, u + r, v, color);
+    draw_line(image, u + r, v, u, v + r, color);
+    draw_line(image, u, v + r, u - r, v, color);
+    draw_line(image, u - r, v, u, v - r, color);
+
+    // Internal X makes it visually different from object boxes and occupancy squares.
+    draw_line(image, u - r / 2, v - r / 2, u + r / 2, v + r / 2, color);
+    draw_line(image, u - r / 2, v + r / 2, u + r / 2, v - r / 2, color);
+
+    // Center anchor.
+    fill_rect(image, u - 2, v - 2, 5, 5, color);
 }
 
 void draw_obstacle_evidence_overlay(ImageView& image, const WorldSnapshot& snapshot) {
@@ -365,8 +379,16 @@ void draw_obstacle_evidence_overlay(ImageView& image, const WorldSnapshot& snaps
         const auto color = obstacle_evidence_color(evidence);
 
         if (evidence.shape == ObstacleEvidenceShape::SurfacePatch) {
-            draw_diamond_marker(image, u, v, is_depth_surface_patch(evidence) ? 5 : 4, color);
-            if (evidence.has_surface_normal && drawn < 40) {
+            int radius = is_depth_surface_patch(evidence) ? 10 : 6;
+            if (evidence.range_m > 0.1F) {
+                const float patch_m = std::max(evidence.size_m.x, evidence.size_m.y);
+                radius = clamp_int(
+                    static_cast<int>(std::round(120.0F * patch_m / std::max(2.0F, evidence.range_m))),
+                    is_depth_surface_patch(evidence) ? 7 : 5,
+                    is_depth_surface_patch(evidence) ? 22 : 12);
+            }
+            draw_surface_patch_marker(image, u, v, radius, color);
+            if (evidence.has_surface_normal && drawn < 60) {
                 Vec3 normal_tip = evidence.center_local;
                 normal_tip.x += evidence.surface_normal_local.x * 0.75;
                 normal_tip.y += evidence.surface_normal_local.y * 0.75;
@@ -405,7 +427,7 @@ void draw_obstacle_evidence_overlay(ImageView& image, const WorldSnapshot& snaps
         if (static_cast<int>(snapshot.obstacle_evidence.size()) > kMaxDrawn) {
             summary << " drawn=" << kMaxDrawn;
         }
-        draw_label_bar(image, 4, 40, summary.str(), RgbColor{210U, 120U, 255U}, RgbColor{0U, 0U, 0U});
+        draw_label_bar(image, 4, 52, summary.str(), RgbColor{255U, 0U, 255U}, RgbColor{0U, 0U, 0U});
     }
 }
 
@@ -446,9 +468,9 @@ void PpmFrameAnnotationSink::annotate(const AnnotationContext& context) {
         draw_track_overlay(annotated, track);
     }
     draw_projected_agent_overlays(annotated, context.world_snapshot);
-    draw_obstacle_evidence_overlay(annotated, context.world_snapshot);
     draw_occupancy_overlay(annotated, context.world_snapshot);
     draw_world_debug_shapes(annotated, context.world_snapshot);
+    draw_obstacle_evidence_overlay(annotated, context.world_snapshot);
 
     ++frame_index_;
     const auto frame_path = std::filesystem::path{output_dir_} / frame_file_name(frame_index_);
