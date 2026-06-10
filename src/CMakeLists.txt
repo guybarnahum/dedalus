@@ -29,6 +29,7 @@ add_library(dedalus_core
     runtime/provider_registry.cpp
     runtime/world_snapshot_stream_server.cpp
     simulation/airsim_providers.cpp
+    simulation/airsim_sidecar_parser.cpp
     simulation/bridge_transport.cpp
     simulation/ghost_scenario.cpp
     visualization/frame_annotator.cpp
