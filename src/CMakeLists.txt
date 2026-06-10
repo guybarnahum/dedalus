@@ -15,6 +15,7 @@ add_library(dedalus_core
     behavior/px4_mavlink_command_sink.cpp
     behavior/target_selector.cpp
     behavior/trajectory_mission_controller.cpp
+    behavior/trajectory_mission_controller_tick.cpp
     behavior/velocity_trajectory.cpp
     sensors/ego_state_provider.cpp
     sensors/async_prefetch_frame_source.cpp
