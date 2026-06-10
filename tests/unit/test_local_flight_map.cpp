@@ -10,7 +10,7 @@ namespace {
 using namespace dedalus;
 
 TimePoint at_ms(const std::int64_t ms) {
-    return TimePoint{std::chrono::nanoseconds{ms * 1'000'000LL}};
+    return TimePoint{ms * 1'000'000LL};
 }
 
 ObstacleEvidence occupied_depth_evidence(const Vec3& center, const float range_m = 8.0F) {

@@ -10,7 +10,7 @@ namespace {
 constexpr double kNanosecondsPerSecond = 1'000'000'000.0;
 
 std::uint64_t timestamp_ns(const TimePoint& time) {
-    return time.ticks;
+    return static_cast<std::uint64_t>(time.timestamp_ns);
 }
 
 float clamp_non_negative(const float value) {
