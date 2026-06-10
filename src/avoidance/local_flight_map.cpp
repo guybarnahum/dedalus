@@ -10,7 +10,7 @@ namespace {
 constexpr double kNanosecondsPerSecond = 1'000'000'000.0;
 
 std::uint64_t timestamp_ns(const TimePoint& time) {
-    return static_cast<std::uint64_t>(time.time_since_epoch().count());
+    return time.ticks;
 }
 
 float clamp_non_negative(const float value) {
@@ -332,7 +332,8 @@ Vec3 LocalFlightMapAccumulator::cell_center_local(const int ix, const int iy) co
 
 float LocalFlightMapAccumulator::evidence_footprint_radius_m(const ObstacleEvidence& evidence) const noexcept {
     float radius = std::max(config_.cell_size_m, evidence.radius_m);
-    radius = std::max(radius, 0.5F * std::max(evidence.size_m.x, evidence.size_m.y));
+    const auto footprint_xy_m = static_cast<float>(std::max(evidence.size_m.x, evidence.size_m.y));
+    radius = std::max(radius, 0.5F * footprint_xy_m);
     if (evidence.shape == ObstacleEvidenceShape::SurfacePatch) {
         radius = std::max(radius, 0.5F * config_.cell_size_m);
     }
