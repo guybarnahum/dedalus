@@ -231,6 +231,14 @@ dedalus_add_native_test(
     SOURCES unit/test_airsim_depth_obstacle_detector.cpp
 )
 
+
+dedalus_add_native_test(
+    NAME local_flight_map
+    LAYER unit
+    TAGS avoidance obstacle_map
+    SOURCES unit/test_local_flight_map.cpp
+)
+
 dedalus_add_native_test(
     NAME sensing_coverage
     LAYER unit

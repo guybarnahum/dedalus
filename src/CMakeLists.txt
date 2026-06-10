@@ -1,4 +1,5 @@
 add_library(dedalus_core
+    avoidance/local_flight_map.cpp
     behavior/behavior_osd.cpp
     behavior/behavior_spec.cpp
     behavior/behavior_spec_strings.cpp
