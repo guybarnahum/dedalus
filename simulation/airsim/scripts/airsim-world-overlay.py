@@ -51,12 +51,8 @@ EVIDENCE_FREE_COLOR = [0.1, 0.8, 1.0, 0.22]
 EVIDENCE_UNKNOWN_COLOR = [1.0, 0.8, 0.1, 0.32]
 EVIDENCE_THIN_RISK_COLOR = [1.0, 0.0, 1.0, 0.95]
 EVIDENCE_BLOCKING_COLOR = [1.0, 0.0, 0.0, 1.0]
-DEPTH_SURFACE_PATCH_COLOR = [1.0, 0.0, 1.0, 0.95]
-DEPTH_SURFACE_NORMAL_COLOR = [1.0, 0.55, 1.0, 0.95]
 EVIDENCE_SURFEL_MIN_M = 0.18
 EVIDENCE_SURFEL_MAX_M = 0.65
-DEPTH_SURFACE_PATCH_MIN_M = 0.9
-DEPTH_SURFACE_PATCH_MAX_M = 2.4
 
 
 class RuntimeEventStreamClient:
@@ -504,16 +500,20 @@ def obstacle_evidence_visual_class(evidence: dict[str, Any]) -> str:
 
 def obstacle_evidence_color(evidence: dict[str, Any]) -> list[float]:
     visual_class = obstacle_evidence_visual_class(evidence)
-    if visual_class == "depth_surface_patch":
-        return DEPTH_SURFACE_PATCH_COLOR
     if visual_class == "blocking_obstacle":
         return EVIDENCE_BLOCKING_COLOR
     if visual_class == "thin_structure_risk":
         return EVIDENCE_THIN_RISK_COLOR
-    if visual_class == "occupied_obstacle":
-        return EVIDENCE_OCCUPIED_COLOR
     if visual_class == "free_space":
         return EVIDENCE_FREE_COLOR
+
+    # Depth surface patches are the useful compact green/blue surfels in the live viewer.
+    # Keep that visual language; semantics are exposed through the OSD/counts.
+    if visual_class == "depth_surface_patch":
+        return EVIDENCE_OCCUPIED_COLOR
+
+    if visual_class == "occupied_obstacle":
+        return EVIDENCE_OCCUPIED_COLOR
     return EVIDENCE_UNKNOWN_COLOR
 
 
@@ -594,13 +594,6 @@ def obstacle_evidence_size_m(evidence: dict[str, Any]) -> list[float]:
             clamp(max(raw[2], 1.25), 1.25, 3.0),
         ]
 
-    if is_depth_surface_patch(evidence):
-        return [
-            clamp(raw[0], DEPTH_SURFACE_PATCH_MIN_M, DEPTH_SURFACE_PATCH_MAX_M),
-            clamp(raw[1], DEPTH_SURFACE_PATCH_MIN_M, DEPTH_SURFACE_PATCH_MAX_M),
-            clamp(raw[2], 0.08, 0.45),
-        ]
-
     max_size = max(EVIDENCE_SURFEL_MIN_M, EVIDENCE_SURFEL_MAX_M)
     return [clamp(component, EVIDENCE_SURFEL_MIN_M, max_size) for component in raw]
 
@@ -647,14 +640,7 @@ def obstacle_evidence_segments(evidence: dict[str, Any], z_lift_m: float) -> lis
     shape = str(evidence.get("shape", "voxel"))
     normal = vec3(evidence.get("surface_normal_local")) if evidence.get("has_surface_normal") else None
     if shape == "surface_patch":
-        segments = surface_patch_segments(center, size_m, normal, z_lift_m)
-        if is_depth_surface_patch(evidence) and normal is not None:
-            normal_unit = vec_normalize(normal)
-            if normal_unit is not None:
-                base = vec_lift(center, z_lift_m + 0.03)
-                tip = vec_add(base, vec_scale(normal_unit, 0.85))
-                segments.extend([airsim_vec(base), airsim_vec(tip)])
-        return segments
+        return surface_patch_segments(center, size_m, normal, z_lift_m)
     return box_wireframe_segments(center, size_m, z_lift_m)
 
 
@@ -885,8 +871,6 @@ def draw_obstacle_evidence(client: Any, snapshot: dict[str, Any] | None, args: a
                 thickness *= 1.5
             if str(evidence.get("state", "unknown")) == "thin_structure_risk":
                 thickness *= 1.35
-            if is_depth_surface_patch(evidence):
-                thickness = max(thickness * 1.8, 3.5)
             plot_line_segments(client, segments, list(color), thickness, duration, args.persistent)
 
 
