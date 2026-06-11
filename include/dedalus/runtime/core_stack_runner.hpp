@@ -6,6 +6,7 @@
 
 #include "dedalus/avoidance/local_flight_map.hpp"
 #include "dedalus/avoidance/mission_local_obstacle_map.hpp"
+#include "dedalus/avoidance/mission_obstacle_map_artifact_writer.hpp"
 #include "dedalus/avoidance/trajectory_safety_evaluator.hpp"
 
 #include "dedalus/perception/ghost_targets.hpp"
@@ -52,6 +53,7 @@ private:
     AirSimDepthObstacleDetectorConfig airsim_depth_obstacle_detector_config_;
     SensingCoverageProvider sensing_coverage_provider_;
     MissionLocalObstacleMap mission_local_obstacle_map_;
+    MissionObstacleMapArtifactWriter mission_obstacle_map_artifact_writer_;
     LocalFlightMapAccumulator local_flight_map_accumulator_;
     TrajectorySafetyEvaluator trajectory_safety_evaluator_;
     std::vector<CameraPointingState> camera_pointing_states_;

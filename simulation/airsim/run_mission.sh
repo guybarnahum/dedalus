@@ -37,6 +37,12 @@ WITH_FRAME_PRODUCER_TIMING=0
 FRAME_PRODUCER_TIMING_PATH=""
 WITH_PIPELINE_TIMING=0
 PIPELINE_TIMING_PATH=""
+OBSTACLE_MAP_ARTIFACT=1
+OBSTACLE_MAP_ARTIFACT_PATH=""
+OBSTACLE_MAP_SITE_ID="airsim_neighborhood"
+OBSTACLE_MAP_SITE_FRAME_ID="airsim_world"
+OBSTACLE_MAP_MISSION_ID="object_behavior_airsim_existing_object_circle"
+OBSTACLE_MAP_WRITE_EVERY_UPDATES="10"
 SCENE_ID="AirSimNH"
 WITH_SCENE_INVENTORY=1
 REFRESH_SCENE_INVENTORY=0
@@ -110,6 +116,15 @@ Options:
                                 Timing JSONL output path. Default: <output-dir>/profile/source_frame_bridge_<timestamp>.jsonl
   --pipeline-timing           Enable C++ pipeline timing in an effective config.
   --pipeline-timing-path PATH Timing JSONL output path. Default: <output-dir>/profile/pipeline_<timestamp>.jsonl
+  --no-obstacle-map-artifact
+                                Do not write full mission obstacle map artifact
+  --obstacle-map-artifact PATH  Full mission obstacle map artifact path. Default: <output-dir>/mission_obstacle_map_full.json
+  --obstacle-map-site-id ID      Persistent obstacle-memory site id. Default: airsim_neighborhood
+  --obstacle-map-site-frame-id ID
+                                Persistent obstacle-memory site frame id. Default: airsim_world
+  --obstacle-map-mission-id ID   Mission id recorded in obstacle map artifact
+  --obstacle-map-write-every-updates N
+                                Runtime artifact write cadence. Default: 10 updates
   --no-airsim-preflight       Skip the AirSim RPC preflight check
   --scene-id ID               Scene id for scene inventory artifact. Default: AirSimNH
   --scene-inventory PATH      Scene inventory output path. Default: ../../out/airsim_scene_inventory/<scene-id>.objects.json
@@ -320,6 +335,12 @@ while [[ $# -gt 0 ]]; do
         --frame-producer-timing-path) FRAME_PRODUCER_TIMING_PATH="$(creatable_abs_path "$2")"; WITH_FRAME_PRODUCER_TIMING=1; shift 2 ;;
         --pipeline-timing) WITH_PIPELINE_TIMING=1; shift ;;
         --pipeline-timing-path) PIPELINE_TIMING_PATH="$(creatable_abs_path "$2")"; WITH_PIPELINE_TIMING=1; shift 2 ;;
+        --no-obstacle-map-artifact) OBSTACLE_MAP_ARTIFACT=0; shift ;;
+        --obstacle-map-artifact) OBSTACLE_MAP_ARTIFACT_PATH="$(creatable_abs_path "$2")"; OBSTACLE_MAP_ARTIFACT=1; shift 2 ;;
+        --obstacle-map-site-id) OBSTACLE_MAP_SITE_ID="$2"; shift 2 ;;
+        --obstacle-map-site-frame-id) OBSTACLE_MAP_SITE_FRAME_ID="$2"; shift 2 ;;
+        --obstacle-map-mission-id) OBSTACLE_MAP_MISSION_ID="$2"; shift 2 ;;
+        --obstacle-map-write-every-updates) OBSTACLE_MAP_WRITE_EVERY_UPDATES="$2"; shift 2 ;;
         --no-airsim-preflight) AIRSIM_PREFLIGHT=0; shift ;;
         --scene-id) SCENE_ID="$2"; shift 2 ;;
         --scene-inventory) SCENE_INVENTORY_PATH="$(creatable_abs_path "$2")"; shift 2 ;;
@@ -370,6 +391,10 @@ CAMERA_DEBUG_JSON="$OUTPUT_DIR/camera_pointing_latest.json"
 OVERLAY_DEBUG_JSON="$OUTPUT_DIR/overlay_debug_latest.json"
 CAMERA_FRAMES_DIR="$OUTPUT_DIR/camera_pointing_frames"
 PROFILE_DIR="$OUTPUT_DIR/profile"
+if [[ -z "$OBSTACLE_MAP_ARTIFACT_PATH" ]]; then
+    OBSTACLE_MAP_ARTIFACT_PATH="$OUTPUT_DIR/mission_obstacle_map_full.json"
+fi
+MISSION_OBSTACLE_MAP_ARTIFACT_PATH="$OBSTACLE_MAP_ARTIFACT_PATH"
 if [[ -z "$SCENE_INVENTORY_PATH" ]]; then
     SCENE_INVENTORY_PATH="$REPO_ROOT_ABS/out/airsim_scene_inventory/${SCENE_ID}.objects.json"
 fi
@@ -397,7 +422,7 @@ if [[ "$AIRSIM_PREFLIGHT" -eq 1 ]]; then
     require_airsim_rpc
 fi
 
-mkdir -p "$OUTPUT_DIR" "$CAMERA_FRAMES_DIR" "$PROFILE_DIR"
+mkdir -p "$OUTPUT_DIR" "$CAMERA_FRAMES_DIR" "$PROFILE_DIR" "$(dirname "$MISSION_OBSTACLE_MAP_ARTIFACT_PATH")"
 
 if [[ -n "$SOURCE_FRAME_RATE_HZ" || "$WITH_FRAME_PRODUCER_TIMING" -eq 1 || "$WITH_PIPELINE_TIMING" -eq 1 ]]; then
     EFFECTIVE_CONFIG_PATH="$OUTPUT_DIR/effective_core_stack_${TIMESTAMP}.yml"
@@ -620,11 +645,23 @@ if [[ "$WITH_VALIDATION" -eq 1 ]]; then
     VALIDATION_RUN_SHELL="bash $(printf '%q' "$VALIDATION_SCRIPT") 2>&1 | tee $(printf '%q' "$VALIDATION_LOG")"
     tmux new-window -t "$SESSION_NAME" -n validation "bash -lc $(printf '%q' "$(tmux_shell_with_failure_hold "$VALIDATION_RUN_SHELL")")"
 fi
+MISSION_ENV_VARS=()
 if [[ "$WITH_SCENE_INVENTORY" -eq 1 ]]; then
-    MISSION_ENV="DEDALUS_AIRSIM_SCENE_INVENTORY=$(printf '%q' "$SCENE_INVENTORY_PATH")"
-else
-    MISSION_ENV=""
+    MISSION_ENV_VARS+=("DEDALUS_AIRSIM_SCENE_INVENTORY=$SCENE_INVENTORY_PATH")
 fi
+if [[ "$OBSTACLE_MAP_ARTIFACT" -eq 1 ]]; then
+    MISSION_ENV_VARS+=("DEDALUS_MISSION_OBSTACLE_MAP_ARTIFACT=1")
+    MISSION_ENV_VARS+=("DEDALUS_MISSION_OBSTACLE_MAP_PATH=$MISSION_OBSTACLE_MAP_ARTIFACT_PATH")
+    MISSION_ENV_VARS+=("DEDALUS_MISSION_OBSTACLE_MAP_SITE_ID=$OBSTACLE_MAP_SITE_ID")
+    MISSION_ENV_VARS+=("DEDALUS_MISSION_OBSTACLE_MAP_SITE_FRAME_ID=$OBSTACLE_MAP_SITE_FRAME_ID")
+    MISSION_ENV_VARS+=("DEDALUS_MISSION_OBSTACLE_MAP_MISSION_ID=$OBSTACLE_MAP_MISSION_ID")
+    MISSION_ENV_VARS+=("DEDALUS_MISSION_OBSTACLE_MAP_WRITE_EVERY_UPDATES=$OBSTACLE_MAP_WRITE_EVERY_UPDATES")
+fi
+MISSION_ENV=""
+for env_pair in "${MISSION_ENV_VARS[@]}"; do
+    MISSION_ENV+="$(printf '%q' "$env_pair") "
+done
+MISSION_ENV="${MISSION_ENV% }"
 MISSION_SHELL="cd $(printf '%q' "$REPO_ROOT_ABS") && ${MISSION_ENV:+$MISSION_ENV }$(quote_cmd "${MISSION_CMD[@]}") 2>&1 | tee $(printf '%q' "$MISSION_LOG")"
 tmux new-window -t "$SESSION_NAME" -n mission-loop "bash -lc $(printf '%q' "$(tmux_shell_with_failure_hold "$MISSION_SHELL")")"
 tmux select-window -t "$SESSION_NAME:mission-loop"
@@ -640,6 +677,11 @@ echo "Mission loop:"
 echo "  log:     $MISSION_LOG"
 echo "  output:  $OUTPUT_DIR"
 echo "  config:  $CONFIG_PATH"
+if [[ "$OBSTACLE_MAP_ARTIFACT" -eq 1 ]]; then
+    echo "  obstacle map artifact: $MISSION_OBSTACLE_MAP_ARTIFACT_PATH"
+else
+    echo "  obstacle map artifact: disabled"
+fi
 if [[ "$WITH_SCENE_INVENTORY" -eq 1 ]]; then
     echo "  inventory override: $SCENE_INVENTORY_PATH"
 fi

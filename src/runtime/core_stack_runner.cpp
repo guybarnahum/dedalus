@@ -15,7 +15,8 @@ CoreStackRunner::CoreStackRunner(CoreStackProviders providers, CoreStackRunnerCo
       ghost_detections_publisher_(std::move(config.ghost_detections_publisher)),
       snapshot_subscriber_handles_(std::move(config.snapshot_subscribers)),
       airsim_depth_obstacle_detector_config_(config.airsim_depth_obstacle_detector),
-      sensing_coverage_provider_(providers_.obstacle_sensing_cameras) {
+      sensing_coverage_provider_(providers_.obstacle_sensing_cameras),
+      mission_obstacle_map_artifact_writer_(MissionObstacleMapArtifactWriter::from_environment()) {
     if (!snapshot_subscriber_handles_.empty()) {
         if (!snapshot_publisher_) {
             snapshot_publisher_ = std::make_shared<WorldSnapshotPublisher>();

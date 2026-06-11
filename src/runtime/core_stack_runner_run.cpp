@@ -218,6 +218,12 @@ bool CoreStackRunner::run_once() {
     snapshot_for_annotation.mission_local_obstacle_map = mission_local_obstacle_map_snapshot;
     snapshot_for_annotation.has_mission_local_obstacle_map = true;
 
+    start = SteadyClock::now();
+    mission_obstacle_map_artifact_writer_.write_if_due(mission_local_obstacle_map_snapshot);
+    if (timing_writer_) {
+        timing_writer_->record_stage("mission_obstacle_map_artifact_writer.write_if_due", duration_us(start));
+    }
+
     if (timing_writer_) {
         timing_writer_->record_stage("mission_local_obstacle_map.update", duration_us(start));
         timing_writer_->record_stage(
