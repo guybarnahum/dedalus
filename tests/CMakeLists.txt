@@ -181,6 +181,14 @@ set_tests_properties("px4_bridge_command_sink (contracts)"
 )
 
 # Layer 2: deterministic native unit tests, usually with synthetic in-memory data.
+
+dedalus_add_native_test(
+    NAME pose_transform
+    LAYER unit
+    TAGS geometry mission_local_map
+    SOURCES unit/test_pose_transform.cpp
+)
+
 dedalus_add_native_test(
     NAME pubsub
     LAYER unit
