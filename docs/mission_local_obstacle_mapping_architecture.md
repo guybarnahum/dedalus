@@ -88,3 +88,25 @@ Downstream mapping, trajectory safety, and visualization should not depend on wh
 3. Derive the ego-local `LocalFlightMapSnapshot` by transforming/cropping the mission-local map.
 4. Keep `TrajectorySafetyEvaluator` ego-local and read-only.
 5. Add offline 3D visualization and AirSim static replay of mission-local evidence.
+
+## Persistent obstacle memory extension
+
+Mission-local mapping is the live, one-mission accumulation layer. Persistent obstacle memory is the next layer and is intentionally separate.
+
+```text
+mission-local obstacle map
+  -> mission obstacle map artifact
+  -> persistent site obstacle map
+  -> future mission preload
+```
+
+Persistent memory must record absolute time units (`unix_ns`) and primitive evidence fields so decay formulas can be changed later. Do not store only a single decayed score.
+
+Decay policy:
+
+- Calendar age alone should not erase obstacles.
+- Cells should decay strongly only when new observations contradict them or when the site has been revisited but the cell/neighborhood was not reconfirmed.
+- A site that has not been visited for a long time should retain stale obstacle memory rather than losing the entire map.
+- Compute `relative_gap_seconds = max(0, cell_age_seconds - site_staleness_seconds)` to normalize cell age against whole-site staleness.
+
+See `docs/persistent_obstacle_memory_plan.md` for the current 5H+ plan.

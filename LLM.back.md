@@ -689,3 +689,17 @@ Canonical current diagrams are in:
 ```text
 docs/runtime_dataflow.md
 ```
+
+## Persistent obstacle memory checkpoint
+
+Persistent obstacle memory plan recorded after mission-local obstacle map validation.
+
+Current rule:
+- Mission-local maps are one-flight/takeoff-relative.
+- Persistent maps are site-local and merged across missions using explicit `site_T_mission`.
+- Persistent artifacts must store `time_unit: unix_ns` and primitive evidence/timestamp/count fields.
+- Calendar time alone should not erase maps for sites that have not been revisited.
+- Use site-relative age normalization:
+  `relative_gap_seconds = max(0, cell_age_seconds - site_staleness_seconds)`.
+- Derived `freshness_score`, `active_score`, and `status` should be recomputable by tooling.
+- Next slices: 5H export mission maps, 5I merge site maps, 5J score/age maps, 5K run_mission.sh post-process, 5L diagnostics-only preload.

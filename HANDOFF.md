@@ -24,6 +24,8 @@ To generate a current handoff, read `LLM.md` and the current repo state, then fi
    - `docs/reflexive_obstacle_avoidance_architecture.md`
    - `docs/geometric_volume_detection_and_spatial_mapping_plan.md`
    - `docs/airsim_depth_obstacle_detector_validation.md`
+   - `docs/mission_local_obstacle_mapping_architecture.md`
+   - `docs/persistent_obstacle_memory_plan.md`
 9. Read `docs/selected_entity_slow_moving_animal_validation.md` and `docs/moving_target_behavior_validation_results.md` when continuing moving-target/object-conditioned behavior work.
 10. Read `LLM.back.md` only for historical context when needed; `LLM.md` is authoritative.
 11. Use architectural capability names in handoffs, docs, commands, validators, files, directories, and symbols. Do not name repo artifacts after planning labels such as `track4`, `milestone_XXX`, temporary phase names, or session-only shorthand. Prefer names that describe the stable subsystem or contract, such as `obstacle_sensing_evidence`, `world_snapshot`, `object_behavior`, `runtime_event_stream`, or `mission_artifact`.
@@ -92,6 +94,8 @@ For classless geometric occupancy / avoidance / sensing coverage / volume detect
   docs/reflexive_obstacle_avoidance_architecture.md
   docs/geometric_volume_detection_and_spatial_mapping_plan.md
   docs/airsim_depth_obstacle_detector_validation.md
+  docs/mission_local_obstacle_mapping_architecture.md
+  docs/persistent_obstacle_memory_plan.md
 
 Historical context, only if needed:
   LLM.back.md
@@ -190,3 +194,24 @@ Expected success:
 ```
 
 ---
+
+## Persistent obstacle memory handoff notes
+
+For persistent obstacle memory work, preserve this boundary:
+
+```text
+live obstacle evidence
+  -> mission-local obstacle map
+  -> mission obstacle map artifact
+  -> persistent site obstacle map
+  -> future mission preload
+```
+
+Do not implement planner/control use until export, merge, age scoring, and diagnostics-only preload are validated.
+
+Decay policy:
+- Persist absolute time as `unix_ns`.
+- Store primitive evidence fields, not only derived scores.
+- Do not erase whole-site memory just because the site has not been visited.
+- Normalize cell age against site staleness.
+- Strong decay requires contradiction or revisits without reconfirmation.

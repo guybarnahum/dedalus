@@ -22,7 +22,7 @@ Current handoff state:
 
 4.1C AirSim depth obstacle detector dataflow is live-validated: AirSim DepthPlanar now reaches FramePacket.depth_frame, CoreStackRunner, WorldSnapshot.obstacle_evidence, and the AirSim OSD as classless `airsim_depth_obstacle_detector` volumetric evidence. See docs/airsim_depth_obstacle_detector_validation.md.
 
-Active next work: expose and validate stable AirSim depth detector configuration knobs: enabled, depth_stride, max_range_m, voxel_size_m, max_evidence, and explicit disable_object_gt_fallback semantics for 4.x obstacle sensing.
+Active next work: 5H persistent obstacle memory export. Before runtime preload or avoidance use, export mission-local obstacle maps with explicit unix_ns timestamps and primitive evidence fields, then merge/score persistent site maps with site-relative aging semantics. See docs/persistent_obstacle_memory_plan.md.
 
 GitHub status checks may be absent; continue to run local build/tests after code changes.
 ```
@@ -49,7 +49,7 @@ Milestone 2.29E: mixed-mode sequence validation. Complete: static far-person app
 Milestone 2.30A: slow moving SEL animal sequence validation. Complete: ghost_far_animal_001 at 0.20 m/s validated.
 Milestone 2.30B: moving-target stress matrix. Complete: medium, side-motion, and diagonal far-animal trajectories validated.
 Milestone 4.1C.2/4.1C.3: AirSim depth-frame classless obstacle detector core, sidecar acquisition, CoreStackRunner handoff, sampling fix, and OSD visualization are live-validated.
-Active next slice: AirSim depth detector configuration knobs and explicit 4.x no-object-GT-fallback semantics.
+Active next slice: 5H persistent mission obstacle map export; 5I site-map merge; 5J derived score/age calculator; 5K run_mission.sh post-process; 5L runtime preload remains diagnostics-only until validated.
 ```
 
 ---
@@ -296,3 +296,39 @@ Sequence step observability is present in behavior_tick_sample:
   active_yaw_mode
   active_camera_pointing_mode
   sequence_step_index
+
+## Persistent obstacle memory checkpoint
+
+```text
+5A-5G mission-local obstacle mapping path:
+  AirSim DepthPlanar / future obstacle providers
+    -> ObstacleEvidence
+    -> MissionLocalObstacleMap
+    -> LocalFlightMapSnapshot ego crop
+    -> TrajectorySafetyEvaluator read-only diagnostics
+    -> WorldSnapshot mission_local_obstacle_map diagnostics
+    -> offline mission-local viewer
+```
+
+The next work is persistent obstacle memory:
+
+```text
+5H export mission_obstacle_map.json from snapshots
+5I merge mission maps into maps/<site_id>/site_obstacle_map.json
+5J compute age/freshness/active score as derived fields
+5K add run_mission.sh post-process hooks
+5L preload prior site map into mission-local accumulator as diagnostics
+5M optional streaming map deltas
+5N planner/control use only after explicit validation
+```
+
+Decay policy:
+
+- Store absolute timestamps with explicit `time_unit: unix_ns`.
+- Store raw evidence primitives: first/last seen, last confirmed occupied, last observed free, last in sensing frustum, positive/negative counts, source stats.
+- Do not blindly decay/delete obstacles because a site has not been visited.
+- Normalize cell age against whole-site staleness:
+  `relative_gap_seconds = max(0, cell_age_seconds - site_staleness_seconds)`.
+- Strong decay should come from contradiction or revisits without reconfirmation, not calendar time alone.
+- Persisted maps are site-local, not necessarily geodetic/global, until a real site anchor is available.
+```
