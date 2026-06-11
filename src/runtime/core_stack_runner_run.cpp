@@ -215,6 +215,9 @@ bool CoreStackRunner::run_once() {
         perception_output.obstacle_evidence,
         frame->timestamp,
         snapshot_for_annotation.ego.map_frame_id);
+    snapshot_for_annotation.mission_local_obstacle_map = mission_local_obstacle_map_snapshot;
+    snapshot_for_annotation.has_mission_local_obstacle_map = true;
+
     if (timing_writer_) {
         timing_writer_->record_stage("mission_local_obstacle_map.update", duration_us(start));
         timing_writer_->record_stage(

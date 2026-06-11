@@ -277,6 +277,69 @@ void write_ego_occupancy(std::ostringstream& out, const EgoOccupancyMapSnapshot&
     out << "  },\n";
 }
 
+
+void write_mission_local_obstacle_map(
+    std::ostringstream& out,
+    const MissionLocalObstacleMapSnapshot& map) {
+    constexpr std::size_t kMaxDebugCells = 128U;
+
+    out << "  \"mission_local_obstacle_map\": {\n";
+    out << "    \"map_frame_id\": \"" << escape_json(map.summary.map_frame_id.value) << "\",\n";
+    out << "    \"cell_size_m\": " << map.config.cell_size_m << ",\n";
+    out << "    \"vertical_cell_size_m\": " << map.config.vertical_cell_size_m << ",\n";
+    out << "    \"observed_cell_count\": " << map.summary.observed_cell_count << ",\n";
+    out << "    \"occupied_cell_count\": " << map.summary.occupied_cell_count << ",\n";
+    out << "    \"free_cell_count\": " << map.summary.free_cell_count << ",\n";
+    out << "    \"update_count\": " << map.summary.update_count << ",\n";
+    out << "    \"last_update_timestamp_ns\": " << map.summary.last_update_timestamp_ns << ",\n";
+
+    std::vector<const MissionLocalObstacleCell*> debug_cells;
+    debug_cells.reserve(std::min<std::size_t>(map.cells.size(), kMaxDebugCells));
+    for (const auto& cell : map.cells) {
+        if (!cell.observed) {
+            continue;
+        }
+        debug_cells.push_back(&cell);
+    }
+
+    std::sort(debug_cells.begin(), debug_cells.end(), [](const auto* a, const auto* b) {
+        if (a->occupied != b->occupied) return a->occupied > b->occupied;
+        if (a->occupied_score != b->occupied_score) return a->occupied_score > b->occupied_score;
+        return a->last_observed_timestamp_ns > b->last_observed_timestamp_ns;
+    });
+
+    if (debug_cells.size() > kMaxDebugCells) {
+        debug_cells.resize(kMaxDebugCells);
+    }
+
+    out << "    \"debug_cell_limit\": " << kMaxDebugCells << ",\n";
+    out << "    \"debug_cells\": [";
+    for (std::size_t i = 0; i < debug_cells.size(); ++i) {
+        const auto& cell = *debug_cells[i];
+        if (i != 0) out << ",";
+        out << "\n      {\n";
+        out << "        \"center_map\": "; write_vec3(out, cell.center_map); out << ",\n";
+        out << "        \"size_m\": "; write_vec3(out, cell.size_m); out << ",\n";
+        write_bool_field(out, "observed", cell.observed); out << ",\n";
+        write_bool_field(out, "occupied", cell.occupied); out << ",\n";
+        write_bool_field(out, "free", cell.free); out << ",\n";
+        out << "        \"occupied_score\": " << cell.occupied_score << ",\n";
+        out << "        \"free_score\": " << cell.free_score << ",\n";
+        out << "        \"risk_score\": " << cell.risk_score << ",\n";
+        out << "        \"confidence\": " << cell.confidence << ",\n";
+        out << "        \"first_observed_timestamp_ns\": " << cell.first_observed_timestamp_ns << ",\n";
+        out << "        \"last_observed_timestamp_ns\": " << cell.last_observed_timestamp_ns << ",\n";
+        out << "        \"min_z_m\": " << cell.min_z_m << ",\n";
+        out << "        \"max_z_m\": " << cell.max_z_m << ",\n";
+        out << "        \"last_source_kind\": \"" << to_string(cell.last_source_kind) << "\",\n";
+        out << "        \"last_source_provider\": \"" << escape_json(cell.last_source_provider) << "\"\n";
+        out << "      }";
+    }
+    if (!debug_cells.empty()) out << "\n    ";
+    out << "]\n";
+    out << "  },\n";
+}
+
 void write_local_flight_map(std::ostringstream& out, const LocalFlightMapSnapshot& map) {
     constexpr std::size_t kMaxDebugCells = 96U;
 
@@ -495,6 +558,7 @@ std::string to_json(const WorldSnapshot& snapshot) {
 
     if (snapshot.has_ego_occupancy) write_ego_occupancy(out, snapshot.ego_occupancy);
     if (snapshot.has_latest_swept_volume) write_swept_volume(out, snapshot.latest_swept_volume);
+    if (snapshot.has_mission_local_obstacle_map) write_mission_local_obstacle_map(out, snapshot.mission_local_obstacle_map);
     if (snapshot.has_local_flight_map) write_local_flight_map(out, snapshot.local_flight_map);
     if (snapshot.has_trajectory_safety) write_trajectory_safety(out, snapshot.trajectory_safety);
     write_obstacle_sensing_volumes(out, snapshot.obstacle_sensing_volumes);
