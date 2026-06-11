@@ -336,3 +336,17 @@ No command blocking or replanning should be added until explicitly requested.
 - Do not couple map persistence to flight command sinks.
 - Do not use semantic object-GT as the obstacle memory source.
 - Do not make persistence a runtime database before the post-process tools are proven.
+
+## 5H.1 validation note
+
+The runtime full mission obstacle map artifact writer now emits `mission_obstacle_map_full.json` directly from the full `MissionLocalObstacleMapSnapshot`, outside the capped per-frame `WorldSnapshot` debug cells.
+
+Validated AirSim example:
+
+```text
+export_summary.source_cells_are_debug_capped: false
+exported_cell_count: 41480
+mission_summary.observed_cell_count: 41480
+```
+
+Known follow-up: persisted cells currently retain raw `occupied_score`, normalized score, timestamps, and source, but not true per-cell observation counts. `mission_observation_count` is currently a placeholder value of 1. A later persistence refinement should add real observation counters to `MissionLocalObstacleCell`.
