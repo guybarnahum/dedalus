@@ -26,6 +26,8 @@ collapse simply because wall-clock time passed.
 from __future__ import annotations
 
 import argparse
+import bisect
+import sys
 import glob
 import json
 import math
@@ -39,6 +41,10 @@ from typing import Any
 SCHEMA = "dedalus.site_obstacle_map.v1"
 MISSION_SCHEMA = "dedalus.mission_obstacle_map.v1"
 TIME_UNIT = "unix_ns"
+
+
+def progress(message: str) -> None:
+    print(f"[merge-site-map] {message}", file=sys.stderr, flush=True)
 
 
 def unix_ns_now() -> int:
@@ -402,21 +408,19 @@ def score_site_map(site_map: dict[str, Any], now_unix_ns: int) -> None:
     def percentile(age: float) -> float:
         if not sorted_ages:
             return 0.0
-        # fraction of cells no older than this cell
-        count = 0
-        for value in sorted_ages:
-            if value <= age:
-                count += 1
-            else:
-                break
-        return count / len(sorted_ages)
+        # fraction of cells no older than this cell. Use bisect to avoid O(N^2)
+        # behavior on large site maps.
+        return bisect.bisect_right(sorted_ages, age) / len(sorted_ages)
 
     active_count = 0
     stale_count = 0
     suppressed_count = 0
     retired_count = 0
 
-    for cell in cells:
+    progress(f"scoring site map: {len(cells)} cells")
+    for index, cell in enumerate(cells, start=1):
+        if index == 1 or index % 5000 == 0 or index == len(cells):
+            progress(f"  scored {index}/{len(cells)} cells")
         if not isinstance(cell, dict):
             continue
 
@@ -511,8 +515,11 @@ def merge_mission_into_site(
     if not isinstance(mission_cells, list):
         mission_cells = []
 
+    progress(f"merging mission {mission_id}: {len(mission_cells)} cells")
     merged_count = 0
-    for mission_cell in mission_cells:
+    for index, mission_cell in enumerate(mission_cells, start=1):
+        if index == 1 or index % 5000 == 0 or index == len(mission_cells):
+            progress(f"  merged {index}/{len(mission_cells)} cells")
         if not isinstance(mission_cell, dict):
             continue
         center_mission = vec3(mission_cell.get("center_mission"))
@@ -588,6 +595,7 @@ def main() -> int:
     if not paths:
         raise SystemExit("No mission obstacle map artifacts found")
 
+    progress(f"loading {len(paths)} mission map artifact(s)")
     missions = [load_json(path) for path in paths]
     first = missions[0]
     site_id = args.site_id or str(first.get("site_id", "unknown_site"))
@@ -616,6 +624,7 @@ def main() -> int:
 
     score_site_map(site_map, now_unix_ns)
 
+    progress(f"writing {site_map_path}")
     atomic_write_json(site_map_path, site_map)
     atomic_write_json(site_map_path.with_suffix(site_map_path.suffix + ".meta.json"), build_meta(site_map))
 
