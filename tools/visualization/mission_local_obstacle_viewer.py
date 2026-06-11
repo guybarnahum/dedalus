@@ -276,7 +276,9 @@ function project(p) {{
   const c = center();
   let x = p.x - c.x;
   let y = p.y - c.y;
-  let z = p.z - c.z;
+  // Viewer convention: flip Z so positive/down snapshot values render visually down,
+  // and positive/up render visually up.
+  let z = -(p.z - c.z);
 
   const cy = Math.cos(yaw), sy = Math.sin(yaw);
   const cp = Math.cos(pitch), sp = Math.sin(pitch);
@@ -372,7 +374,6 @@ window.addEventListener("mousemove", (e) => {{
   lastY = e.clientY;
   yaw += dx * 0.006;
   pitch += dy * 0.006;
-  pitch = Math.max(-1.45, Math.min(1.45, pitch));
   draw();
 }});
 canvas.addEventListener("wheel", (e) => {{
