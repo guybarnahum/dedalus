@@ -2,17 +2,41 @@
 
 Dedalus uses a first-class test declaration attribute named `LAYER` in `tests/CMakeLists.txt`.
 
-Plain CTest runs tests in the declaration order from `tests/CMakeLists.txt`. The file is intentionally ordered by validation layer:
+The validation layers are:
 
 ```text
 contracts -> unit -> synthetic -> scenario
 ```
 
-So the normal command already executes the suite layer-by-layer:
+The default developer validation path should be fast. Use either:
+
+```bash
+./build.sh
+```
+
+or directly:
+
+```bash
+ctest --test-dir build-staging --output-on-failure -LE 'synthetic|scenario'
+```
+
+That default excludes the slower synthetic replay/artifact validators and archive-grade scenario/campaign harnesses.
+
+For a full pre-handoff / pre-merge validation run, opt in explicitly:
+
+```bash
+TEST_MODE=full ./build.sh
+```
+
+or:
 
 ```bash
 ctest --test-dir build-staging --output-on-failure
 ```
+
+---
+
+## Test Declaration
 
 Each test is declared through one of the helper functions:
 
@@ -59,15 +83,6 @@ synthetic = ...
 scenario  = ...
 ```
 
-Layer filters are precise:
-
-```bash
-ctest --test-dir build-staging --output-on-failure -L contracts
-ctest --test-dir build-staging --output-on-failure -L unit
-ctest --test-dir build-staging --output-on-failure -L synthetic
-ctest --test-dir build-staging --output-on-failure -L scenario
-```
-
 Secondary metadata such as `unit`, `synthetic`, `integration`, or `airsim` can be stored in `DEDALUS_TAGS`, but those tags are not CTest labels.
 
 ---
@@ -98,7 +113,7 @@ px4_mavlink_command_sink (contracts)
 
 ### unit
 
-Deterministic native C++ unit tests. Most use synthetic in-memory state or mocked providers.
+Deterministic native C++ unit tests. Most use in-memory state or mocked providers.
 
 ```bash
 ctest --test-dir build-staging --output-on-failure -L unit
@@ -118,7 +133,7 @@ latest_world_snapshot (unit)
 
 ### synthetic
 
-Tests that exercise synthetic or recorded data, generated mission artifacts, or CI-safe mission loops. These do not require a live AirSim/PX4 session.
+Tests that exercise synthetic or recorded data, generated mission artifacts, or CI-safe mission loops. These do not require a live AirSim/PX4 session, but they are slower than the default fast developer loop.
 
 ```bash
 ctest --test-dir build-staging --output-on-failure -L synthetic
@@ -150,7 +165,9 @@ mission_campaign_runner (scenario)
 mission_abort_scenario (scenario)
 ```
 
-### AirSim boundary metadata
+---
+
+## AirSim Boundary Metadata
 
 AirSim-facing boundary tests that remain CI-safe are currently part of the contracts layer.
 
@@ -161,8 +178,6 @@ airsim_provider_boundary (contracts)
 ```
 
 It carries `DEDALUS_TAGS=unit;airsim`, but it is not labeled `airsim` so it does not add a separate CTest label summary row.
-
-### airsim_live
 
 No normal CTest test is labeled `airsim_live` today. Real live AirSim/PX4 validation remains an explicit operator-run smoke/campaign flow outside normal CTest.
 
@@ -212,20 +227,26 @@ For fast local work:
 
 ```bash
 cmake --build build-staging -j$(nproc)
-ctest --test-dir build-staging --output-on-failure -L contracts
-ctest --test-dir build-staging --output-on-failure -L unit
+ctest --test-dir build-staging --output-on-failure -LE 'synthetic|scenario'
 ```
 
-Before handing off or committing larger behavior/runtime changes, run plain CTest. It already executes in layer order:
+or simply:
 
 ```bash
-ctest --test-dir build-staging --output-on-failure
+./build.sh
+```
+
+For a full run before handoff or larger behavior/runtime changes:
+
+```bash
+TEST_MODE=full ./build.sh
 ```
 
 For mission runtime, scenario, or artifact-validator changes:
 
 ```bash
+ctest --test-dir build-staging --output-on-failure -L synthetic
 ctest --test-dir build-staging --output-on-failure -L scenario
 ```
 
-For AirSim/PX4 live-control changes, run the full suite first and then run live smoke manually with AirSim/PX4 already running.
+For AirSim/PX4 live-control changes, run the full CTest suite first and then run live smoke manually with AirSim/PX4 already running.
