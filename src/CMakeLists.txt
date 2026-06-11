@@ -2,6 +2,7 @@ add_library(dedalus_core
     geometry/pose_transform.cpp
     avoidance/local_flight_map.cpp
     avoidance/local_flight_map_ingest.cpp
+    avoidance/local_flight_map_mission.cpp
     avoidance/trajectory_safety_evaluator.cpp
     avoidance/mission_local_obstacle_map.cpp
     behavior/behavior_osd.cpp

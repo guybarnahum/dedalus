@@ -12,6 +12,7 @@
 namespace dedalus {
 
 struct WorldSnapshot;
+struct MissionLocalObstacleMapSnapshot;
 
 struct LocalFlightMapConfig {
     float cell_size_m{0.5F};
@@ -85,6 +86,16 @@ public:
     const LocalFlightMapConfig& config() const noexcept { return config_; }
 
     LocalFlightMapSnapshot update(const WorldSnapshot& snapshot);
+
+    // Derive the current ego-local flight map from a stable mission-local map.
+    //
+    // map_T_body is the current ego pose in the mission-local map frame.
+    // This method resets the ego-local grid each tick because the local map is
+    // a crop/view of accumulated mission-local evidence, not the storage layer.
+    LocalFlightMapSnapshot update_from_mission_local_map(
+        const MissionLocalObstacleMapSnapshot& mission_map,
+        const Pose3& map_T_body,
+        TimePoint timestamp);
 
     const LocalFlightMapSnapshot& latest() const noexcept { return latest_; }
 
