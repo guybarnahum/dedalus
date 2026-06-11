@@ -234,6 +234,7 @@ def load_or_create_site_map(
         "vertical_cell_size_m": vertical_cell_size_m,
         "merge_summary": {
             "mission_merge_count": 0,
+            "merged_mission_ids": [],
             "last_merged_mission_id": "",
             "last_merged_mission_end_unix_ns": 0,
         },
@@ -414,6 +415,7 @@ def score_site_map(site_map: dict[str, Any], now_unix_ns: int) -> None:
 
     active_count = 0
     stale_count = 0
+    probationary_count = 0
     suppressed_count = 0
     retired_count = 0
 
@@ -438,6 +440,12 @@ def score_site_map(site_map: dict[str, Any], now_unix_ns: int) -> None:
         last_occupied = as_int(cell.get("last_confirmed_occupied_unix_ns"))
         free_after_occupied = last_free > last_occupied and last_free > 0
 
+        has_positive_evidence = (
+            as_int(cell.get("positive_observation_count")) > 0
+            or as_float(cell.get("max_raw_occupied_score")) > 0.0
+            or as_float(cell.get("raw_occupied_score")) > 0.0
+        )
+
         if free_after_occupied:
             active_score *= 0.25
             status = "suppressed"
@@ -448,6 +456,9 @@ def score_site_map(site_map: dict[str, Any], now_unix_ns: int) -> None:
         elif occupancy_score >= 0.55:
             status = "stale"
             stale_count += 1
+        elif has_positive_evidence:
+            status = "probationary"
+            probationary_count += 1
         else:
             status = "retired"
             retired_count += 1
@@ -469,6 +480,7 @@ def score_site_map(site_map: dict[str, Any], now_unix_ns: int) -> None:
         "cell_count": len(cells),
         "active_cell_count": active_count,
         "stale_cell_count": stale_count,
+        "probationary_cell_count": probationary_count,
         "suppressed_cell_count": suppressed_count,
         "retired_cell_count": retired_count,
     }
@@ -487,6 +499,18 @@ def merge_mission_into_site(
     site_frame_id = str(mission.get("site_frame_id", site_map.get("site_frame_id", "site_local")))
     mission_id = str(mission.get("mission_id", "unknown_mission"))
     mission_end_unix_ns = as_int(mission.get("mission_end_unix_ns"), now_unix_ns)
+
+    merge_summary = site_map.setdefault("merge_summary", {})
+    if not isinstance(merge_summary, dict):
+        merge_summary = {}
+        site_map["merge_summary"] = merge_summary
+    merged_mission_ids = merge_summary.setdefault("merged_mission_ids", [])
+    if not isinstance(merged_mission_ids, list):
+        merged_mission_ids = []
+        merge_summary["merged_mission_ids"] = merged_mission_ids
+    if mission_id in merged_mission_ids:
+        progress(f"skipping already-merged mission {mission_id}")
+        return
 
     if str(site_map.get("site_id")) != site_id:
         raise SystemExit(f"site_id mismatch: site map={site_map.get('site_id')} mission={site_id}")
@@ -552,7 +576,11 @@ def merge_mission_into_site(
         merge_summary = {}
         site_map["merge_summary"] = merge_summary
 
-    merge_summary["mission_merge_count"] = as_int(merge_summary.get("mission_merge_count")) + 1
+    merged_mission_ids = merge_summary.setdefault("merged_mission_ids", [])
+    if mission_id not in merged_mission_ids:
+        merged_mission_ids.append(mission_id)
+
+    merge_summary["mission_merge_count"] = len(merged_mission_ids)
     merge_summary["last_merged_mission_id"] = mission_id
     merge_summary["last_merged_mission_end_unix_ns"] = mission_end_unix_ns
     merge_summary["last_merged_cell_count"] = merged_count
