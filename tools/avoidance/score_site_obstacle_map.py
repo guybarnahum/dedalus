@@ -47,9 +47,20 @@ import time
 from pathlib import Path
 from typing import Any
 
+try:
+    from tqdm import tqdm
+except ImportError:  # pragma: no cover - optional developer convenience
+    tqdm = None
+
 
 SCHEMA = "dedalus.site_obstacle_map.v1"
 TIME_UNIT = "unix_ns"
+
+
+def progress_iter(iterable, *, total: int, desc: str):
+    if tqdm is None:
+        return iterable
+    return tqdm(iterable, total=total, desc=desc, unit="cell")
 
 
 def unix_ns_now() -> int:
@@ -163,7 +174,7 @@ def score_site_map(
     freshness_floor = clamp(freshness_floor, 0.0, 1.0)
 
     ages: list[float] = []
-    for cell in cells:
+    for cell in progress_iter(cells, total=len(cells), desc="collect ages"):
         if not isinstance(cell, dict):
             continue
         last_seen = as_int(cell.get("last_seen_unix_ns"))
@@ -189,7 +200,7 @@ def score_site_map(
     freshness_scores: list[float] = []
     occupancy_scores: list[float] = []
 
-    for cell in cells:
+    for cell in progress_iter(cells, total=len(cells), desc="score cells"):
         if not isinstance(cell, dict):
             continue
 
