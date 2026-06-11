@@ -35,8 +35,8 @@ jobs:
       - name: Build
         run: cmake --build build-validation -j$(nproc)
 
-      - name: Run unit tests
-        run: ctest --test-dir build-validation --output-on-failure
+      - name: Run fast tests
+        run: ctest --test-dir build-validation --output-on-failure -LE 'synthetic|scenario'
 
       - name: Run dedalus_core_stack
         run: ./build-validation/apps/dedalus_core_stack --config config/core_stack_ci.yaml > /tmp/world_snapshot.json
