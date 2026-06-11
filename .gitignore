@@ -150,6 +150,7 @@ Desktop.ini
 # -----------------------------
 modules/
 site/
+maps/
 
 # Third-party generated/source checkouts and downloaded simulator assets
 third_party/PX4-Autopilot/
