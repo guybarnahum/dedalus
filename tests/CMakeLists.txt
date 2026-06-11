@@ -248,6 +248,14 @@ dedalus_add_native_test(
     SOURCES unit/test_trajectory_safety_evaluator.cpp
 )
 
+
+dedalus_add_native_test(
+    NAME mission_local_obstacle_map
+    LAYER unit
+    TAGS avoidance mission_local_map
+    SOURCES unit/test_mission_local_obstacle_map.cpp
+)
+
 dedalus_add_native_test(
     NAME local_flight_map
     LAYER unit

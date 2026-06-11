@@ -3,6 +3,7 @@ add_library(dedalus_core
     avoidance/local_flight_map.cpp
     avoidance/local_flight_map_ingest.cpp
     avoidance/trajectory_safety_evaluator.cpp
+    avoidance/mission_local_obstacle_map.cpp
     behavior/behavior_osd.cpp
     behavior/behavior_spec.cpp
     behavior/behavior_spec_strings.cpp
