@@ -9,7 +9,6 @@
 namespace dedalus {
 namespace {
 
-constexpr double kNanosecondsPerSecond = 1'000'000'000.0;
 
 std::uint64_t timestamp_ns(const TimePoint& time) {
     return static_cast<std::uint64_t>(time.timestamp_ns);
