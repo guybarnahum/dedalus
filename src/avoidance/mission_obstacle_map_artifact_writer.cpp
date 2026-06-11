@@ -1,15 +1,15 @@
 #include "dedalus/avoidance/mission_obstacle_map_artifact_writer.hpp"
 
 #include <algorithm>
+#include <cmath>
 #include <cstdlib>
 #include <fstream>
 #include <iomanip>
-#include <limits>
 #include <sstream>
 #include <stdexcept>
 #include <string>
 #include <system_error>
-#include <vector>
+#include <utility>
 
 namespace dedalus {
 namespace {
@@ -62,6 +62,7 @@ std::uint64_t aligned_unix_ns(
     if (mission_end_timestamp == 0U) {
         return mission_end_unix_ns;
     }
+
     const auto delta = mission_end_timestamp > timestamp
         ? mission_end_timestamp - timestamp
         : 0U;
@@ -72,8 +73,7 @@ double normalized_score(const double raw_score, const double scale) {
     if (scale <= 0.0 || !std::isfinite(raw_score)) {
         return 0.0;
     }
-    const auto value = raw_score / scale;
-    return std::clamp(value, 0.0, 1.0);
+    return std::clamp(raw_score / scale, 0.0, 1.0);
 }
 
 double log_odds_from_probability(const double probability) {
@@ -85,11 +85,21 @@ std::string escape_json(const std::string& value) {
     std::ostringstream out;
     for (const auto ch : value) {
         switch (ch) {
-            case '\\': out << "\\\\"; break;
-            case '"': out << "\\\""; break;
-            case '\n': out << "\\n"; break;
-            case '\r': out << "\\r"; break;
-            case '\t': out << "\\t"; break;
+            case '\\':
+                out << "\\\\";
+                break;
+            case '"':
+                out << "\\\"";
+                break;
+            case '\n':
+                out << "\\n";
+                break;
+            case '\r':
+                out << "\\r";
+                break;
+            case '\t':
+                out << "\\t";
+                break;
             default:
                 if (static_cast<unsigned char>(ch) < 0x20U) {
                     out << "\\u" << std::hex << std::setw(4) << std::setfill('0')
@@ -114,10 +124,39 @@ std::string map_frame_value(const MapFrameId& frame_id) {
     return frame_id.value;
 }
 
+std::string source_kind_string(const OccupancySourceKind kind) {
+    if (kind == OccupancySourceKind::DepthProvider) {
+        return "depth_provider";
+    }
+    return "unknown";
+}
+
+std::string status_for(const MissionLocalObstacleCell& cell) {
+    if (cell.occupied) {
+        return "active";
+    }
+    if (cell.free) {
+        return "free";
+    }
+    if (cell.observed) {
+        return "unknown";
+    }
+    return "unobserved";
+}
+
+double score_scale_for(const MissionLocalObstacleMapSnapshot& snapshot) {
+    double scale = 1.0;
+    for (const auto& cell : snapshot.cells) {
+        scale = std::max(scale, cell.occupied_score);
+        scale = std::max(scale, cell.free_score);
+    }
+    return scale;
+}
+
 void atomic_write_text(const std::filesystem::path& path, const std::string& text) {
     std::filesystem::create_directories(path.parent_path());
-    const auto tmp = path.string() + ".tmp";
 
+    const auto tmp = path.string() + ".tmp";
     {
         std::ofstream out(tmp, std::ios::out | std::ios::trunc);
         if (!out) {
@@ -136,42 +175,6 @@ void atomic_write_text(const std::filesystem::path& path, const std::string& tex
             "failed to rename temp artifact " + tmp + " to " + path.string() +
             ": " + rename_error.message());
     }
-}
-
-double score_scale_for(const MissionLocalObstacleMapSnapshot& snapshot) {
-    double scale = 1.0;
-    for (const auto& cell : snapshot.cells) {
-        scale = std::max(scale, cell.occupied_score);
-        scale = std::max(scale, cell.free_score);
-    }
-    return scale;
-}
-
-std::string status_for(const MissionLocalObstacleCell& cell) {
-    if (cell.occupied) {
-        return "active";
-    }
-    if (cell.free) {
-        return "free";
-    }
-    if (cell.observed) {
-        return "unknown";
-    }
-    return "unobserved";
-}
-
-std::string source_kind_string(const OccupancySourceKind kind) {
-    switch (kind) {
-        case OccupancySourceKind::Unknown:
-            return "unknown";
-        case OccupancySourceKind::DepthProvider:
-            return "depth_provider";
-        case OccupancySourceKind::ObjectDetector:
-            return "object_detector";
-        case OccupancySourceKind::Synthetic:
-            return "synthetic";
-    }
-    return "unknown";
 }
 
 std::string render_artifact(
@@ -219,6 +222,7 @@ std::string render_artifact(
 
     for (std::size_t i = 0; i < snapshot.cells.size(); ++i) {
         const auto& cell = snapshot.cells[i];
+
         const auto first_seen = aligned_unix_ns(
             cell.first_observed_timestamp_ns,
             mission_end_timestamp_ns,
@@ -233,8 +237,12 @@ std::string render_artifact(
         const auto occupied_log_odds = log_odds_from_probability(normalized_occupied);
 
         out << "    {\n";
-        out << "      \"center_mission\": "; write_vec3(out, cell.center_map); out << ",\n";
-        out << "      \"size_m\": "; write_vec3(out, cell.size_m); out << ",\n";
+        out << "      \"center_mission\": ";
+        write_vec3(out, cell.center_map);
+        out << ",\n";
+        out << "      \"size_m\": ";
+        write_vec3(out, cell.size_m);
+        out << ",\n";
         out << "      \"observed\": " << (cell.observed ? "true" : "false") << ",\n";
         out << "      \"occupied\": " << (cell.occupied ? "true" : "false") << ",\n";
         out << "      \"free\": " << (cell.free ? "true" : "false") << ",\n";
@@ -306,21 +314,27 @@ std::string render_meta(
 
 }  // namespace
 
-MissionObstacleMapArtifactWriter::MissionObstacleMapArtifactWriter(MissionObstacleMapArtifactWriterConfig config)
+MissionObstacleMapArtifactWriter::MissionObstacleMapArtifactWriter(
+    MissionObstacleMapArtifactWriterConfig config)
     : config_(std::move(config)) {}
 
 MissionObstacleMapArtifactWriter MissionObstacleMapArtifactWriter::from_environment() {
     MissionObstacleMapArtifactWriterConfig config;
     config.enabled = env_enabled("DEDALUS_MISSION_OBSTACLE_MAP_ARTIFACT");
-    config.output_path = env_string("DEDALUS_MISSION_OBSTACLE_MAP_PATH", "out/mission_obstacle_map_full.json");
+    config.output_path =
+        env_string("DEDALUS_MISSION_OBSTACLE_MAP_PATH", "out/mission_obstacle_map_full.json");
     config.site_id = env_string("DEDALUS_MISSION_OBSTACLE_MAP_SITE_ID", "unknown_site");
-    config.site_frame_id = env_string("DEDALUS_MISSION_OBSTACLE_MAP_SITE_FRAME_ID", "site_local");
-    config.mission_id = env_string("DEDALUS_MISSION_OBSTACLE_MAP_MISSION_ID", "unknown_mission");
-    config.write_every_updates = env_size("DEDALUS_MISSION_OBSTACLE_MAP_WRITE_EVERY_UPDATES", 10U);
+    config.site_frame_id =
+        env_string("DEDALUS_MISSION_OBSTACLE_MAP_SITE_FRAME_ID", "site_local");
+    config.mission_id =
+        env_string("DEDALUS_MISSION_OBSTACLE_MAP_MISSION_ID", "unknown_mission");
+    config.write_every_updates =
+        env_size("DEDALUS_MISSION_OBSTACLE_MAP_WRITE_EVERY_UPDATES", 10U);
     return MissionObstacleMapArtifactWriter{std::move(config)};
 }
 
-void MissionObstacleMapArtifactWriter::write_if_due(const MissionLocalObstacleMapSnapshot& snapshot) {
+void MissionObstacleMapArtifactWriter::write_if_due(
+    const MissionLocalObstacleMapSnapshot& snapshot) {
     if (!config_.enabled || config_.output_path.empty()) {
         return;
     }
@@ -335,7 +349,9 @@ void MissionObstacleMapArtifactWriter::write_if_due(const MissionLocalObstacleMa
         return;
     }
 
-    const auto mission_end_unix_ns = snapshot.summary.last_update_timestamp_ns;
+    const auto mission_end_unix_ns =
+        static_cast<std::uint64_t>(snapshot.summary.last_update_timestamp_ns);
+
     if (!mission_start_unix_ns_.has_value()) {
         mission_start_unix_ns_ = mission_end_unix_ns;
         for (const auto& cell : snapshot.cells) {
