@@ -211,10 +211,28 @@ bool CoreStackRunner::run_once() {
     }
 
     start = SteadyClock::now();
-    snapshot_for_annotation.local_flight_map = local_flight_map_accumulator_.update(snapshot_for_annotation);
+    const auto mission_local_obstacle_map_snapshot = mission_local_obstacle_map_.update(
+        perception_output.obstacle_evidence,
+        frame->timestamp,
+        snapshot_for_annotation.ego.map_frame_id);
+    if (timing_writer_) {
+        timing_writer_->record_stage("mission_local_obstacle_map.update", duration_us(start));
+        timing_writer_->record_stage(
+            "mission_local_obstacle_map.observed_cells",
+            mission_local_obstacle_map_snapshot.summary.observed_cell_count);
+        timing_writer_->record_stage(
+            "mission_local_obstacle_map.occupied_cells",
+            mission_local_obstacle_map_snapshot.summary.occupied_cell_count);
+    }
+
+    start = SteadyClock::now();
+    snapshot_for_annotation.local_flight_map = local_flight_map_accumulator_.update_from_mission_local_map(
+        mission_local_obstacle_map_snapshot,
+        snapshot_for_annotation.ego.local_T_body,
+        frame->timestamp);
     snapshot_for_annotation.has_local_flight_map = true;
     if (timing_writer_) {
-        timing_writer_->record_stage("local_flight_map.update", duration_us(start));
+        timing_writer_->record_stage("local_flight_map.update_from_mission_local_map", duration_us(start));
     }
 
     start = SteadyClock::now();
