@@ -1,6 +1,18 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+dedalus_build_jobs() {
+  if [ -n "${JOBS:-}" ]; then
+    printf '%s\n' "$JOBS"
+  elif command -v nproc >/dev/null 2>&1; then
+    nproc
+  elif command -v sysctl >/dev/null 2>&1; then
+    sysctl -n hw.ncpu
+  else
+    printf '%s\n' 4
+  fi
+}
+
 BUILD_DIR="${BUILD_DIR:-build-staging}"
 TEST_MODE="${TEST_MODE:-fast}"
 TEST_REGEX="${TEST_REGEX:-}"
@@ -10,7 +22,7 @@ cd "$(git rev-parse --show-toplevel)"
 
 git pull --ff-only
 
-cmake --build "$BUILD_DIR" -j"$(nproc)"
+cmake --build "$BUILD_DIR" -j"$(dedalus_build_jobs)"
 
 ctest_args=(--test-dir "$BUILD_DIR" --output-on-failure)
 
