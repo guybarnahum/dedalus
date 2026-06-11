@@ -45,6 +45,21 @@ def file_mtime_unix_ns(path: Path) -> int:
     return int(path.stat().st_mtime_ns)
 
 
+def looks_like_unix_ns(timestamp_ns: int) -> bool:
+    # Anything after year 2000 in ns is absolute wall-clock time for our use.
+    # Mission-relative clocks are expected to be much smaller.
+    return timestamp_ns >= 946684800000000000
+
+
+def normalized_score(raw_score: float, score_scale: float) -> float:
+    if score_scale <= 0.0:
+        return 0.0
+    value = raw_score / score_scale
+    if not math.isfinite(value):
+        return 0.0
+    return min(1.0, max(0.0, value))
+
+
 def as_float(value: Any, default: float = 0.0) -> float:
     try:
         result = float(value)
@@ -145,8 +160,22 @@ def align_mission_ns_to_unix_ns(
     mission_end_timestamp_ns: int,
     mission_end_unix_ns: int,
 ) -> int:
-    if mission_timestamp_ns <= 0 or mission_end_timestamp_ns <= 0:
+    if mission_timestamp_ns <= 0:
         return mission_end_unix_ns
+
+    # 5F snapshots currently carry absolute unix_ns values from TimePoint.
+    # Preserve those directly instead of treating them as mission-relative.
+    if looks_like_unix_ns(mission_timestamp_ns):
+        return mission_timestamp_ns
+
+    if mission_end_timestamp_ns <= 0:
+        return mission_end_unix_ns
+
+    if looks_like_unix_ns(mission_end_timestamp_ns):
+        # Mixed case: a relative cell timestamp with an absolute mission end.
+        # Align relative value against wall-clock mission end as best effort.
+        return max(0, mission_end_unix_ns - max(0, mission_end_timestamp_ns - mission_timestamp_ns))
+
     delta = max(0, mission_end_timestamp_ns - mission_timestamp_ns)
     return max(0, mission_end_unix_ns - delta)
 
@@ -156,6 +185,7 @@ def cell_to_artifact_cell(
     *,
     mission_end_timestamp_ns: int,
     mission_end_unix_ns: int,
+    score_scale: float,
 ) -> dict[str, Any]:
     first_mission_ns = as_int(raw.get("first_observed_timestamp_ns"))
     last_mission_ns = as_int(raw.get("last_observed_timestamp_ns"))
@@ -176,13 +206,15 @@ def cell_to_artifact_cell(
     occupied_score = as_float(raw.get("occupied_score"))
     free_score = as_float(raw.get("free_score"))
     confidence = as_float(raw.get("confidence"))
+    normalized_occupied_score = normalized_score(occupied_score, score_scale)
+    normalized_free_score = normalized_score(free_score, score_scale)
 
     last_confirmed_occupied_unix_ns = last_seen_unix_ns if occupied else 0
     last_observed_free_unix_ns = last_seen_unix_ns if free else 0
 
-    # Approximate log-odds from score when possible. This is a derived field;
-    # raw score and timestamps are kept so formulas can change later.
-    clamped = min(0.999, max(0.001, occupied_score))
+    # Approximate log-odds from normalized score when possible. This is a
+    # derived field; raw score and timestamps are kept so formulas can change.
+    clamped = min(0.999, max(0.001, normalized_occupied_score))
     occupied_log_odds = math.log(clamped / (1.0 - clamped))
 
     return {
@@ -192,6 +224,9 @@ def cell_to_artifact_cell(
         "free": free,
         "occupied_score": occupied_score,
         "free_score": free_score,
+        "normalized_occupied_score": normalized_occupied_score,
+        "normalized_free_score": normalized_free_score,
+        "score_scale": score_scale,
         "risk_score": as_float(raw.get("risk_score")),
         "confidence": confidence,
         "occupied_log_odds": occupied_log_odds,
@@ -208,9 +243,9 @@ def cell_to_artifact_cell(
             "last_source_provider": str(raw.get("last_source_provider", "")),
         },
         "derived": {
-            "persistent_score": occupied_score,
+            "persistent_score": normalized_occupied_score,
             "freshness_score": 1.0,
-            "active_score": occupied_score,
+            "active_score": normalized_occupied_score,
             "status": "active" if occupied else "free" if free else "unknown",
         },
     }
@@ -239,10 +274,27 @@ def build_artifact(
     if mission_end_unix_ns is None:
         mission_end_unix_ns = file_mtime_unix_ns(snapshot_path)
     if mission_start_unix_ns is None:
-        if mission_end_timestamp_ns > 0:
+        # Prefer the earliest exported cell timestamp. If snapshots carry unix_ns,
+        # this preserves real wall-clock mission time. Fall back conservatively.
+        cell_first_seen = [
+            as_int(raw.get("first_observed_timestamp_ns"))
+            for raw in raw_cells
+            if isinstance(raw, dict) and as_int(raw.get("first_observed_timestamp_ns")) > 0
+        ]
+        unix_cell_first_seen = [t for t in cell_first_seen if looks_like_unix_ns(t)]
+        if unix_cell_first_seen:
+            mission_start_unix_ns = min(unix_cell_first_seen)
+        elif mission_end_timestamp_ns > 0 and not looks_like_unix_ns(mission_end_timestamp_ns):
             mission_start_unix_ns = max(0, mission_end_unix_ns - mission_end_timestamp_ns)
         else:
             mission_start_unix_ns = mission_end_unix_ns
+
+    raw_score_values = [
+        max(as_float(raw.get("occupied_score")), as_float(raw.get("free_score")))
+        for raw in raw_cells
+        if isinstance(raw, dict)
+    ]
+    score_scale = max([1.0] + raw_score_values)
 
     cells: list[dict[str, Any]] = []
     for raw in raw_cells:
@@ -253,6 +305,7 @@ def build_artifact(
                 raw,
                 mission_end_timestamp_ns=mission_end_timestamp_ns,
                 mission_end_unix_ns=mission_end_unix_ns,
+                score_scale=score_scale,
             )
         )
 
@@ -276,6 +329,7 @@ def build_artifact(
         "source_snapshot_mtime_unix_ns": file_mtime_unix_ns(snapshot_path),
         "cell_size_m": as_float(mission.get("cell_size_m")),
         "vertical_cell_size_m": as_float(mission.get("vertical_cell_size_m")),
+        "score_scale": score_scale,
         "mission_summary": {
             "observed_cell_count": observed_cell_count,
             "occupied_cell_count": occupied_cell_count,
@@ -315,6 +369,7 @@ def build_artifact(
         "created_at_unix_ns": artifact["created_at_unix_ns"],
         "cell_size_m": artifact["cell_size_m"],
         "vertical_cell_size_m": artifact["vertical_cell_size_m"],
+        "score_scale": artifact["score_scale"],
         "observed_cell_count": observed_cell_count,
         "occupied_cell_count": occupied_cell_count,
         "exported_cell_count": len(cells),
