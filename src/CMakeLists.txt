@@ -6,6 +6,7 @@ add_library(dedalus_core
     avoidance/trajectory_safety_evaluator.cpp
     avoidance/mission_local_obstacle_map.cpp
     avoidance/mission_obstacle_map_artifact_writer.cpp
+    avoidance/mission_obstacle_map_artifact_writer_env.cpp
     behavior/behavior_osd.cpp
     behavior/behavior_spec.cpp
     behavior/behavior_spec_strings.cpp
