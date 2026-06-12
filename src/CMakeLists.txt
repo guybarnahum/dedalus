@@ -35,6 +35,7 @@ add_library(dedalus_core
     sensors/synthetic_mission_frame_source.cpp
     sensing/sensing_coverage.cpp
     sensing/airsim_depth_obstacle_detector.cpp
+    sensing/airsim_depth_obstacle_detector_impl.cpp
     perception/ghost_targets.cpp
     perception/perception_pipeline.cpp
     runtime/camera_pointing_state_store.cpp
@@ -49,6 +50,7 @@ add_library(dedalus_core
     simulation/airsim_sidecar_parser.cpp
     simulation/bridge_transport.cpp
     simulation/ghost_scenario.cpp
+    simulation/ghost_scenario_parse.cpp
     visualization/frame_annotator.cpp
     visualization/frame_annotator_annotate.cpp
     visualization/obstacle_evidence_visualization.cpp
