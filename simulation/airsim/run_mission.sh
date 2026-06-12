@@ -433,6 +433,41 @@ fi
 
 mkdir -p "$OUTPUT_DIR" "$CAMERA_FRAMES_DIR" "$PROFILE_DIR" "$(dirname "$MISSION_OBSTACLE_MAP_ARTIFACT_PATH")" "$(dirname "$SITE_OBSTACLE_MAP_PATH")"
 
+postprocess_obstacle_map_on_success() {
+    local status="$?"
+    if [[ "$status" -ne 0 ]]; then
+        return "$status"
+    fi
+
+    if [[ "${MERGE_OBSTACLE_MAP:-0}" -ne 1 ]]; then
+        return 0
+    fi
+
+    if [[ -z "${MISSION_OBSTACLE_MAP_ARTIFACT_PATH:-}" ]]; then
+        echo "ERROR: --merge-obstacle-map requested but MISSION_OBSTACLE_MAP_ARTIFACT_PATH is empty" >&2
+        return 1
+    fi
+
+    if [[ ! -f "$MISSION_OBSTACLE_MAP_ARTIFACT_PATH" ]]; then
+        echo "ERROR: --merge-obstacle-map requested but missing artifact: $MISSION_OBSTACLE_MAP_ARTIFACT_PATH" >&2
+        return 1
+    fi
+
+    if [[ -z "${SITE_OBSTACLE_MAP_PATH:-}" ]]; then
+        echo "ERROR: --merge-obstacle-map requested but SITE_OBSTACLE_MAP_PATH is empty" >&2
+        return 1
+    fi
+
+    echo "Merging mission obstacle map into site memory..."
+    python3 "$REPO_ROOT_ABS/tools/avoidance/merge_site_obstacle_map.py" \
+        "$MISSION_OBSTACLE_MAP_ARTIFACT_PATH" \
+        --site-map "$SITE_OBSTACLE_MAP_PATH" \
+        --site-id "$OBSTACLE_MAP_SITE_ID" \
+        --site-frame-id "$OBSTACLE_MAP_SITE_FRAME_ID"
+}
+
+trap postprocess_obstacle_map_on_success EXIT
+
 if [[ -n "$SOURCE_FRAME_RATE_HZ" || "$WITH_FRAME_PRODUCER_TIMING" -eq 1 || "$WITH_PIPELINE_TIMING" -eq 1 ]]; then
     EFFECTIVE_CONFIG_PATH="$OUTPUT_DIR/effective_core_stack_${TIMESTAMP}.yml"
     python3 - "$CONFIG_PATH" "$EFFECTIVE_CONFIG_PATH" "$SOURCE_FRAME_RATE_HZ" "$WITH_FRAME_PRODUCER_TIMING" "$FRAME_PRODUCER_TIMING_PATH" "$WITH_PIPELINE_TIMING" "$PIPELINE_TIMING_PATH" <<'PY'
