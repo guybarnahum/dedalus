@@ -43,6 +43,8 @@ OBSTACLE_MAP_SITE_ID="airsim_neighborhood"
 OBSTACLE_MAP_SITE_FRAME_ID="airsim_world"
 OBSTACLE_MAP_MISSION_ID="object_behavior_airsim_existing_object_circle"
 OBSTACLE_MAP_WRITE_EVERY_UPDATES="10"
+MERGE_OBSTACLE_MAP=0
+SITE_OBSTACLE_MAP_PATH=""
 SCENE_ID="AirSimNH"
 WITH_SCENE_INVENTORY=1
 REFRESH_SCENE_INVENTORY=0
@@ -125,6 +127,8 @@ Options:
   --obstacle-map-mission-id ID   Mission id recorded in obstacle map artifact
   --obstacle-map-write-every-updates N
                                 Runtime artifact write cadence. Default: 10 updates
+  --merge-obstacle-map          Merge full mission obstacle artifact into persistent site map after mission success
+  --site-map-path PATH          Persistent site map path. Default: maps/<site-id>/site_obstacle_map.json
   --no-airsim-preflight       Skip the AirSim RPC preflight check
   --scene-id ID               Scene id for scene inventory artifact. Default: AirSimNH
   --scene-inventory PATH      Scene inventory output path. Default: ../../out/airsim_scene_inventory/<scene-id>.objects.json
@@ -341,6 +345,8 @@ while [[ $# -gt 0 ]]; do
         --obstacle-map-site-frame-id) OBSTACLE_MAP_SITE_FRAME_ID="$2"; shift 2 ;;
         --obstacle-map-mission-id) OBSTACLE_MAP_MISSION_ID="$2"; shift 2 ;;
         --obstacle-map-write-every-updates) OBSTACLE_MAP_WRITE_EVERY_UPDATES="$2"; shift 2 ;;
+        --merge-obstacle-map) MERGE_OBSTACLE_MAP=1; OBSTACLE_MAP_ARTIFACT=1; shift ;;
+        --site-map-path) SITE_OBSTACLE_MAP_PATH="$(creatable_abs_path "$2")"; shift 2 ;;
         --no-airsim-preflight) AIRSIM_PREFLIGHT=0; shift ;;
         --scene-id) SCENE_ID="$2"; shift 2 ;;
         --scene-inventory) SCENE_INVENTORY_PATH="$(creatable_abs_path "$2")"; shift 2 ;;
@@ -395,6 +401,9 @@ if [[ -z "$OBSTACLE_MAP_ARTIFACT_PATH" ]]; then
     OBSTACLE_MAP_ARTIFACT_PATH="$OUTPUT_DIR/mission_obstacle_map_full.json"
 fi
 MISSION_OBSTACLE_MAP_ARTIFACT_PATH="$OBSTACLE_MAP_ARTIFACT_PATH"
+if [[ -z "$SITE_OBSTACLE_MAP_PATH" ]]; then
+    SITE_OBSTACLE_MAP_PATH="$REPO_ROOT_ABS/maps/$OBSTACLE_MAP_SITE_ID/site_obstacle_map.json"
+fi
 if [[ -z "$SCENE_INVENTORY_PATH" ]]; then
     SCENE_INVENTORY_PATH="$REPO_ROOT_ABS/out/airsim_scene_inventory/${SCENE_ID}.objects.json"
 fi
@@ -422,7 +431,7 @@ if [[ "$AIRSIM_PREFLIGHT" -eq 1 ]]; then
     require_airsim_rpc
 fi
 
-mkdir -p "$OUTPUT_DIR" "$CAMERA_FRAMES_DIR" "$PROFILE_DIR" "$(dirname "$MISSION_OBSTACLE_MAP_ARTIFACT_PATH")"
+mkdir -p "$OUTPUT_DIR" "$CAMERA_FRAMES_DIR" "$PROFILE_DIR" "$(dirname "$MISSION_OBSTACLE_MAP_ARTIFACT_PATH")" "$(dirname "$SITE_OBSTACLE_MAP_PATH")"
 
 if [[ -n "$SOURCE_FRAME_RATE_HZ" || "$WITH_FRAME_PRODUCER_TIMING" -eq 1 || "$WITH_PIPELINE_TIMING" -eq 1 ]]; then
     EFFECTIVE_CONFIG_PATH="$OUTPUT_DIR/effective_core_stack_${TIMESTAMP}.yml"
@@ -682,6 +691,11 @@ if [[ "$OBSTACLE_MAP_ARTIFACT" -eq 1 ]]; then
 else
     echo "  obstacle map artifact: disabled"
 fi
+if [[ "$MERGE_OBSTACLE_MAP" -eq 1 ]]; then
+    echo "  site obstacle map: $SITE_OBSTACLE_MAP_PATH"
+else
+    echo "  site obstacle map: merge disabled"
+fi
 if [[ "$WITH_SCENE_INVENTORY" -eq 1 ]]; then
     echo "  inventory override: $SCENE_INVENTORY_PATH"
 fi
@@ -748,4 +762,18 @@ fi
 
 if [[ "$ATTACH" -eq 1 ]]; then
     tmux attach -t "$SESSION_NAME"
+fi
+
+
+if [[ "$MERGE_OBSTACLE_MAP" -eq 1 ]]; then
+    if [[ ! -f "$MISSION_OBSTACLE_MAP_ARTIFACT_PATH" ]]; then
+        echo "ERROR: requested --merge-obstacle-map but missing artifact: $MISSION_OBSTACLE_MAP_ARTIFACT_PATH" >&2
+        exit 1
+    fi
+    echo "Merging mission obstacle map into site memory..."
+    python3 "$REPO_ROOT_ABS/tools/avoidance/merge_site_obstacle_map.py" \
+        "$MISSION_OBSTACLE_MAP_ARTIFACT_PATH" \
+        --site-map "$SITE_OBSTACLE_MAP_PATH" \
+        --site-id "$OBSTACLE_MAP_SITE_ID" \
+        --site-frame-id "$OBSTACLE_MAP_SITE_FRAME_ID"
 fi
