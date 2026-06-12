@@ -393,6 +393,8 @@ CAMERA_LOG="$LOG_DIR_ABS/camera_pointing_${TIMESTAMP}.log"
 OVERLAY_LOG="$LOG_DIR_ABS/overlay_${TIMESTAMP}.log"
 VALIDATION_LOG="$LOG_DIR_ABS/validation_${TIMESTAMP}.log"
 VALIDATION_SCRIPT="$LOG_DIR_ABS/validation_${TIMESTAMP}.sh"
+POST_MISSION_LOG="$LOG_DIR_ABS/post_mission_${TIMESTAMP}.log"
+POST_MISSION_SCRIPT="$LOG_DIR_ABS/post_mission_${TIMESTAMP}.sh"
 CAMERA_DEBUG_JSON="$OUTPUT_DIR/camera_pointing_latest.json"
 OVERLAY_DEBUG_JSON="$OUTPUT_DIR/overlay_debug_latest.json"
 CAMERA_FRAMES_DIR="$OUTPUT_DIR/camera_pointing_frames"
@@ -432,40 +434,6 @@ if [[ "$AIRSIM_PREFLIGHT" -eq 1 ]]; then
 fi
 
 mkdir -p "$OUTPUT_DIR" "$CAMERA_FRAMES_DIR" "$PROFILE_DIR" "$(dirname "$MISSION_OBSTACLE_MAP_ARTIFACT_PATH")" "$(dirname "$SITE_OBSTACLE_MAP_PATH")"
-
-start_obstacle_map_merge_waiter() {
-    if [[ "${MERGE_OBSTACLE_MAP:-0}" -ne 1 ]]; then
-        return 0
-    fi
-
-    (
-        set +e
-        echo "Obstacle map merge waiter started: $MISSION_OBSTACLE_MAP_ARTIFACT_PATH -> $SITE_OBSTACLE_MAP_PATH"
-
-        # Wait up to 20 minutes for the runtime artifact. The mission validation
-        # timeout is usually shorter, but obstacle artifacts can be large.
-        for _ in $(seq 1 1200); do
-            if [[ -s "$MISSION_OBSTACLE_MAP_ARTIFACT_PATH" ]]; then
-                break
-            fi
-            sleep 1
-        done
-
-        if [[ ! -s "$MISSION_OBSTACLE_MAP_ARTIFACT_PATH" ]]; then
-            echo "ERROR: --merge-obstacle-map requested but artifact was not produced: $MISSION_OBSTACLE_MAP_ARTIFACT_PATH" >&2
-            exit 1
-        fi
-
-        echo "Merging mission obstacle map into site memory..."
-        python3 "$REPO_ROOT_ABS/tools/avoidance/merge_site_obstacle_map.py" \
-            "$MISSION_OBSTACLE_MAP_ARTIFACT_PATH" \
-            --site-map "$SITE_OBSTACLE_MAP_PATH" \
-            --site-id "$OBSTACLE_MAP_SITE_ID" \
-            --site-frame-id "$OBSTACLE_MAP_SITE_FRAME_ID"
-    ) > "$OUTPUT_DIR/obstacle_map_merge.log" 2>&1 &
-
-    echo "  obstacle map merge log: $OUTPUT_DIR/obstacle_map_merge.log"
-}
 
 
 if [[ -n "$SOURCE_FRAME_RATE_HZ" || "$WITH_FRAME_PRODUCER_TIMING" -eq 1 || "$WITH_PIPELINE_TIMING" -eq 1 ]]; then
@@ -668,6 +636,86 @@ EOF
 printf '%s\n' "$VALIDATION_SHELL" > "$VALIDATION_SCRIPT"
 chmod +x "$VALIDATION_SCRIPT"
 
+POST_MISSION_SHELL=$(cat <<EOF
+set -euo pipefail
+cd $(printf '%q' "$REPO_ROOT_ABS")
+
+EVENTS=$(printf '%q' "$OUTPUT_DIR/mission_events.jsonl")
+TIMEOUT=$(printf '%q' "$VALIDATION_TIMEOUT_S")
+MISSION_OBSTACLE_MAP_ARTIFACT_PATH=$(printf '%q' "$MISSION_OBSTACLE_MAP_ARTIFACT_PATH")
+SITE_OBSTACLE_MAP_PATH=$(printf '%q' "$SITE_OBSTACLE_MAP_PATH")
+OBSTACLE_MAP_SITE_ID=$(printf '%q' "$OBSTACLE_MAP_SITE_ID")
+OBSTACLE_MAP_SITE_FRAME_ID=$(printf '%q' "$OBSTACLE_MAP_SITE_FRAME_ID")
+MERGE_SITE_MAP_TOOL=$(printf '%q' "$REPO_ROOT_ABS/tools/avoidance/merge_site_obstacle_map.py")
+
+python3 - "\$EVENTS" "\$TIMEOUT" <<'PYWAIT'
+import json
+import sys
+import time
+from pathlib import Path
+
+path = Path(sys.argv[1])
+timeout_s = float(sys.argv[2])
+start = time.monotonic()
+last_count = -1
+
+print(f"post-mission: waiting for runtime_stop in {path}", flush=True)
+while True:
+    events = []
+    if path.exists():
+        for line in path.read_text(encoding="utf-8").splitlines():
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                events.append(json.loads(line))
+            except json.JSONDecodeError:
+                pass
+
+    if len(events) != last_count:
+        print(f"post-mission: events={len(events)}", flush=True)
+        last_count = len(events)
+
+    if any(isinstance(event, dict) and event.get("event") == "runtime_stop" for event in events):
+        print("post-mission: runtime_stop observed", flush=True)
+        break
+
+    if timeout_s > 0 and time.monotonic() - start >= timeout_s:
+        raise SystemExit(f"post-mission: timed out waiting for runtime_stop after {timeout_s}s")
+
+    time.sleep(2.0)
+PYWAIT
+
+echo "post-mission: requested site obstacle map merge"
+echo "post-mission: mission obstacle map artifact: \$MISSION_OBSTACLE_MAP_ARTIFACT_PATH"
+echo "post-mission: site obstacle map: \$SITE_OBSTACLE_MAP_PATH"
+
+if [[ ! -f "\$MERGE_SITE_MAP_TOOL" ]]; then
+  echo "post-mission: ERROR missing merge tool: \$MERGE_SITE_MAP_TOOL" >&2
+  exit 1
+fi
+
+if [[ ! -s "\$MISSION_OBSTACLE_MAP_ARTIFACT_PATH" ]]; then
+  echo "post-mission: mission obstacle map artifact not present; skipping merge"
+  exit 0
+fi
+
+mkdir -p "\$(dirname "\$SITE_OBSTACLE_MAP_PATH")"
+
+echo "post-mission: merging mission obstacle map into site memory"
+python3 "\$MERGE_SITE_MAP_TOOL" \
+  "\$MISSION_OBSTACLE_MAP_ARTIFACT_PATH" \
+  --site-map "\$SITE_OBSTACLE_MAP_PATH" \
+  --site-id "\$OBSTACLE_MAP_SITE_ID" \
+  --site-frame-id "\$OBSTACLE_MAP_SITE_FRAME_ID"
+
+echo "post-mission: PASS"
+EOF
+)
+
+printf '%s\n' "$POST_MISSION_SHELL" > "$POST_MISSION_SCRIPT"
+chmod +x "$POST_MISSION_SCRIPT"
+
 if [[ "$KILL_EXISTING" -eq 1 ]]; then
     tmux kill-session -t "$SESSION_NAME" 2>/dev/null || true
 elif tmux has-session -t "$SESSION_NAME" 2>/dev/null; then
@@ -688,6 +736,10 @@ fi
 if [[ "$WITH_VALIDATION" -eq 1 ]]; then
     VALIDATION_RUN_SHELL="bash $(printf '%q' "$VALIDATION_SCRIPT") 2>&1 | tee $(printf '%q' "$VALIDATION_LOG")"
     tmux new-window -t "$SESSION_NAME" -n validation "bash -lc $(printf '%q' "$(tmux_shell_with_failure_hold "$VALIDATION_RUN_SHELL")")"
+fi
+if [[ "$MERGE_OBSTACLE_MAP" -eq 1 ]]; then
+    POST_MISSION_RUN_SHELL="bash $(printf '%q' "$POST_MISSION_SCRIPT") 2>&1 | tee $(printf '%q' "$POST_MISSION_LOG")"
+    tmux new-window -t "$SESSION_NAME" -n post-mission "bash -lc $(printf '%q' "$(tmux_shell_with_failure_hold "$POST_MISSION_RUN_SHELL")")"
 fi
 MISSION_ENV_VARS=()
 if [[ "$WITH_SCENE_INVENTORY" -eq 1 ]]; then
@@ -781,6 +833,14 @@ if [[ "$WITH_VALIDATION" -eq 1 ]]; then
     echo "  min occupied cells: $VALIDATION_MIN_OCCUPIED_CELLS"
     echo ""
 fi
+if [[ "$MERGE_OBSTACLE_MAP" -eq 1 ]]; then
+    echo "Post-mission:"
+    echo "  log:        $POST_MISSION_LOG"
+    echo "  script:     $POST_MISSION_SCRIPT"
+    echo "  task:       merge obstacle map"
+    echo "  site map:   $SITE_OBSTACLE_MAP_PATH"
+    echo ""
+fi
 
 echo "Exit on mission complete: $([[ "$EXIT_ON_COMPLETE" -eq 1 ]] && echo yes || echo no)"
 echo "Useful commands:"
@@ -788,8 +848,6 @@ echo "  attach: tmux attach -t $SESSION_NAME"
 echo "  stop mission stack: tmux kill-session -t $SESSION_NAME"
 echo "  stop simulator/PX4: ./stop.sh"
 echo ""
-start_obstacle_map_merge_waiter
-
 echo "Mission command:"
 echo "  ${MISSION_ENV:+$MISSION_ENV }$(quote_cmd "${MISSION_CMD[@]}")"
 if [[ "$WITH_OVERLAY" -eq 1 ]]; then
