@@ -433,40 +433,40 @@ fi
 
 mkdir -p "$OUTPUT_DIR" "$CAMERA_FRAMES_DIR" "$PROFILE_DIR" "$(dirname "$MISSION_OBSTACLE_MAP_ARTIFACT_PATH")" "$(dirname "$SITE_OBSTACLE_MAP_PATH")"
 
-postprocess_obstacle_map_on_success() {
-    local status="$?"
-    if [[ "$status" -ne 0 ]]; then
-        return "$status"
-    fi
-
+start_obstacle_map_merge_waiter() {
     if [[ "${MERGE_OBSTACLE_MAP:-0}" -ne 1 ]]; then
         return 0
     fi
 
-    if [[ -z "${MISSION_OBSTACLE_MAP_ARTIFACT_PATH:-}" ]]; then
-        echo "ERROR: --merge-obstacle-map requested but MISSION_OBSTACLE_MAP_ARTIFACT_PATH is empty" >&2
-        return 1
-    fi
+    (
+        set +e
+        echo "Obstacle map merge waiter started: $MISSION_OBSTACLE_MAP_ARTIFACT_PATH -> $SITE_OBSTACLE_MAP_PATH"
 
-    if [[ ! -f "$MISSION_OBSTACLE_MAP_ARTIFACT_PATH" ]]; then
-        echo "ERROR: --merge-obstacle-map requested but missing artifact: $MISSION_OBSTACLE_MAP_ARTIFACT_PATH" >&2
-        return 1
-    fi
+        # Wait up to 20 minutes for the runtime artifact. The mission validation
+        # timeout is usually shorter, but obstacle artifacts can be large.
+        for _ in $(seq 1 1200); do
+            if [[ -s "$MISSION_OBSTACLE_MAP_ARTIFACT_PATH" ]]; then
+                break
+            fi
+            sleep 1
+        done
 
-    if [[ -z "${SITE_OBSTACLE_MAP_PATH:-}" ]]; then
-        echo "ERROR: --merge-obstacle-map requested but SITE_OBSTACLE_MAP_PATH is empty" >&2
-        return 1
-    fi
+        if [[ ! -s "$MISSION_OBSTACLE_MAP_ARTIFACT_PATH" ]]; then
+            echo "ERROR: --merge-obstacle-map requested but artifact was not produced: $MISSION_OBSTACLE_MAP_ARTIFACT_PATH" >&2
+            exit 1
+        fi
 
-    echo "Merging mission obstacle map into site memory..."
-    python3 "$REPO_ROOT_ABS/tools/avoidance/merge_site_obstacle_map.py" \
-        "$MISSION_OBSTACLE_MAP_ARTIFACT_PATH" \
-        --site-map "$SITE_OBSTACLE_MAP_PATH" \
-        --site-id "$OBSTACLE_MAP_SITE_ID" \
-        --site-frame-id "$OBSTACLE_MAP_SITE_FRAME_ID"
+        echo "Merging mission obstacle map into site memory..."
+        python3 "$REPO_ROOT_ABS/tools/avoidance/merge_site_obstacle_map.py" \
+            "$MISSION_OBSTACLE_MAP_ARTIFACT_PATH" \
+            --site-map "$SITE_OBSTACLE_MAP_PATH" \
+            --site-id "$OBSTACLE_MAP_SITE_ID" \
+            --site-frame-id "$OBSTACLE_MAP_SITE_FRAME_ID"
+    ) > "$OUTPUT_DIR/obstacle_map_merge.log" 2>&1 &
+
+    echo "  obstacle map merge log: $OUTPUT_DIR/obstacle_map_merge.log"
 }
 
-trap postprocess_obstacle_map_on_success EXIT
 
 if [[ -n "$SOURCE_FRAME_RATE_HZ" || "$WITH_FRAME_PRODUCER_TIMING" -eq 1 || "$WITH_PIPELINE_TIMING" -eq 1 ]]; then
     EFFECTIVE_CONFIG_PATH="$OUTPUT_DIR/effective_core_stack_${TIMESTAMP}.yml"
@@ -788,6 +788,8 @@ echo "  attach: tmux attach -t $SESSION_NAME"
 echo "  stop mission stack: tmux kill-session -t $SESSION_NAME"
 echo "  stop simulator/PX4: ./stop.sh"
 echo ""
+start_obstacle_map_merge_waiter
+
 echo "Mission command:"
 echo "  ${MISSION_ENV:+$MISSION_ENV }$(quote_cmd "${MISSION_CMD[@]}")"
 if [[ "$WITH_OVERLAY" -eq 1 ]]; then
