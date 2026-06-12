@@ -860,15 +860,5 @@ if [[ "$ATTACH" -eq 1 ]]; then
 fi
 
 
-if [[ "$MERGE_OBSTACLE_MAP" -eq 1 ]]; then
-    if [[ ! -f "$MISSION_OBSTACLE_MAP_ARTIFACT_PATH" ]]; then
-        echo "ERROR: requested --merge-obstacle-map but missing artifact: $MISSION_OBSTACLE_MAP_ARTIFACT_PATH" >&2
-        exit 1
-    fi
-    echo "Merging mission obstacle map into site memory..."
-    python3 "$REPO_ROOT_ABS/tools/avoidance/merge_site_obstacle_map.py" \
-        "$MISSION_OBSTACLE_MAP_ARTIFACT_PATH" \
-        --site-map "$SITE_OBSTACLE_MAP_PATH" \
-        --site-id "$OBSTACLE_MAP_SITE_ID" \
-        --site-frame-id "$OBSTACLE_MAP_SITE_FRAME_ID"
-fi
+
+
