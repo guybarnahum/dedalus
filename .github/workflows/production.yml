@@ -38,7 +38,7 @@ jobs:
       - name: Build
         run: cmake --build build-prod -j$(nproc)
 
-      - name: Run unit tests
+      - name: Run full CTest release gate
         run: ctest --test-dir build-prod --output-on-failure
 
       - name: Run core stack smoke validation
