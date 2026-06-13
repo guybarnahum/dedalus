@@ -839,21 +839,21 @@ esac
 
 
 write_obstacle_memory_manifest() {
-  mkdir -p "$(dirname "$OBSTACLE_MEMORY_MANIFEST_PATH")"
+  mkdir -p "\$(dirname "\$OBSTACLE_MEMORY_MANIFEST_PATH")"
 
-  python3 - "$OBSTACLE_MEMORY_MANIFEST_PATH" \
-    "$SITE_OBSTACLE_MAP_FORMAT" \
-    "$OBSTACLE_MAP_SITE_ID" \
-    "$OBSTACLE_MAP_SITE_FRAME_ID" \
-    "$OBSTACLE_MAP_MISSION_ID" \
-    "$MISSION_OBSTACLE_MAP_ARTIFACT_PATH" \
-    "$MISSION_OBSTACLE_MAP_DELTAS_PATH" \
-    "$MISSION_OBSTACLE_MAP_DELTAS_SQLITE_PATH" \
-    "$SITE_OBSTACLE_MAP_SQLITE_PATH" \
-    "$SITE_OBSTACLE_MAP_PATH" \
-    "$POST_MISSION_LOG_PATH" \
-    "$POST_MISSION_SCRIPT_PATH" \
-    "$WRITE_FULL_OBSTACLE_MAP_ARTIFACT" <<'PYMANIFEST'
+  python3 - "\$OBSTACLE_MEMORY_MANIFEST_PATH" \
+    "\$SITE_OBSTACLE_MAP_FORMAT" \
+    "\$OBSTACLE_MAP_SITE_ID" \
+    "\$OBSTACLE_MAP_SITE_FRAME_ID" \
+    "\$OBSTACLE_MAP_MISSION_ID" \
+    "\$MISSION_OBSTACLE_MAP_ARTIFACT_PATH" \
+    "\$MISSION_OBSTACLE_MAP_DELTAS_PATH" \
+    "\$MISSION_OBSTACLE_MAP_DELTAS_SQLITE_PATH" \
+    "\$SITE_OBSTACLE_MAP_SQLITE_PATH" \
+    "\$SITE_OBSTACLE_MAP_PATH" \
+    "\$POST_MISSION_LOG_PATH" \
+    "\$POST_MISSION_SCRIPT_PATH" \
+    "\$WRITE_FULL_OBSTACLE_MAP_ARTIFACT" <<'PYMANIFEST'
 import json
 import sys
 import time
@@ -920,7 +920,6 @@ Path(manifest_path).write_text(json.dumps(manifest, indent=2, sort_keys=True) + 
 print(f"post-mission: wrote obstacle memory manifest: {manifest_path}", flush=True)
 PYMANIFEST
 }
-
 
 write_obstacle_memory_manifest
 
