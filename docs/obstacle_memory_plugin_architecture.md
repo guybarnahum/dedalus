@@ -433,3 +433,24 @@ tools/avoidance/mission_obstacle_delta_sqlite.py import-jsonl \
 ```
 
 This database is not the persistent site map. It is a replay/queryable storage backend for the append-only mission delta stream. It validates the Tier-B persistence boundary before wiring delta replay directly into Tier-C site-map compaction.
+
+
+### 5O — compact delta SQLite to persistent site SQLite
+
+The Tier-B delta SQLite log can now be compacted into the Tier-C persistent site SQLite map without reading the full mission JSON artifact:
+
+```text
+tools/avoidance/merge_site_obstacle_map_from_delta_sqlite.py \
+  --delta-db out/<run>/mission_obstacle_map_deltas.sqlite \
+  --site-db maps/<site_id>/site_obstacle_map.sqlite \
+  --site-id <site_id> \
+  --site-frame-id <site_frame_id>
+```
+
+This keeps the runtime unchanged while proving the persistence path:
+
+```text
+runtime in-memory map -> compact JSONL delta stream -> delta SQLite log -> persistent site SQLite
+```
+
+The merge is idempotent at the mission-id level. If all mission IDs from the delta log are already present in the site database, a repeated merge skips without duplicating cells.
