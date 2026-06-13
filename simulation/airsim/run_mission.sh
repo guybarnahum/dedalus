@@ -43,6 +43,7 @@ WRITE_FULL_OBSTACLE_MAP_ARTIFACT="${WRITE_FULL_OBSTACLE_MAP_ARTIFACT:-0}"
 MISSION_OBSTACLE_MAP_DELTAS_PATH=""
 MISSION_OBSTACLE_MAP_DELTAS_SQLITE_PATH=""
 OBSTACLE_MEMORY_MANIFEST_PATH=""
+OBSTACLE_MEMORY_MANIFEST_WAIT_SECONDS="${DEDALUS_OBSTACLE_MEMORY_MANIFEST_WAIT_SECONDS:-0}"
 MISSION_OBSTACLE_MAP_DELTAS_WRITE_EVERY_UPDATES="${MISSION_OBSTACLE_MAP_DELTAS_WRITE_EVERY_UPDATES:-10}"
 OBSTACLE_MAP_SITE_ID="airsim_neighborhood"
 OBSTACLE_MAP_SITE_FRAME_ID="airsim_world"
@@ -425,6 +426,9 @@ fi
 if [[ -z "$OBSTACLE_MEMORY_MANIFEST_PATH" ]]; then
     OBSTACLE_MEMORY_MANIFEST_PATH="$OUTPUT_DIR/obstacle_memory_manifest.json"
 fi
+if [[ "$MERGE_OBSTACLE_MAP" -eq 1 && "$OBSTACLE_MEMORY_MANIFEST_WAIT_SECONDS" == "0" ]]; then
+    OBSTACLE_MEMORY_MANIFEST_WAIT_SECONDS=360
+fi
 MISSION_OBSTACLE_MAP_ARTIFACT_PATH="$OBSTACLE_MAP_ARTIFACT_PATH"
 case "$SITE_OBSTACLE_MAP_FORMAT" in
     json|both|sqlite-full-json)
@@ -606,6 +610,7 @@ VALIDATION_SHELL=$(cat <<EOF
 set -euo pipefail
 VALIDATE_OBSTACLE_MEMORY_MANIFEST_TOOL=$(printf '%q' "$REPO_ROOT_ABS/tools/avoidance/validate_obstacle_memory_manifest.py")
 OBSTACLE_MEMORY_MANIFEST_PATH=$(printf '%q' "$OBSTACLE_MEMORY_MANIFEST_PATH")
+OBSTACLE_MEMORY_MANIFEST_WAIT_SECONDS=$(printf '%q' "$OBSTACLE_MEMORY_MANIFEST_WAIT_SECONDS")
 OBSTACLE_MAP_SITE_ID=$(printf '%q' "$OBSTACLE_MAP_SITE_ID")
 OBSTACLE_MAP_SITE_FRAME_ID=$(printf '%q' "$OBSTACLE_MAP_SITE_FRAME_ID")
 OBSTACLE_MAP_MISSION_ID=$(printf '%q' "$OBSTACLE_MAP_MISSION_ID")
@@ -677,6 +682,16 @@ python3 tools/validation/validate-circle-trajectory.py \
   --expect-complete-reason $(printf '%q' "$VALIDATION_COMPLETE_REASON") \
   --require-terminal-settled \
   --require-lifecycle
+if [[ ! -f "\$OBSTACLE_MEMORY_MANIFEST_PATH" && "\$OBSTACLE_MEMORY_MANIFEST_WAIT_SECONDS" -gt 0 ]]; then
+  echo "validation: waiting up to \${OBSTACLE_MEMORY_MANIFEST_WAIT_SECONDS}s for obstacle memory manifest: \$OBSTACLE_MEMORY_MANIFEST_PATH"
+  for ((i = 0; i < OBSTACLE_MEMORY_MANIFEST_WAIT_SECONDS; i++)); do
+    if [[ -f "\$OBSTACLE_MEMORY_MANIFEST_PATH" ]]; then
+      break
+    fi
+    sleep 1
+  done
+fi
+
 if [[ -f "\$OBSTACLE_MEMORY_MANIFEST_PATH" ]]; then
   echo "validation: validating obstacle memory manifest: \$OBSTACLE_MEMORY_MANIFEST_PATH"
   python3 "\$VALIDATE_OBSTACLE_MEMORY_MANIFEST_TOOL" \
@@ -686,7 +701,7 @@ if [[ -f "\$OBSTACLE_MEMORY_MANIFEST_PATH" ]]; then
     --mission-id "\$OBSTACLE_MAP_MISSION_ID" \
     --site-map-format "\$SITE_OBSTACLE_MAP_FORMAT"
 else
-  echo "validation: obstacle memory manifest not present yet; skipping manifest validation"
+  echo "validation: obstacle memory manifest not present after wait; skipping manifest validation"
 fi
 
 echo "validation: PASS"
@@ -1019,6 +1034,7 @@ if [[ "$OBSTACLE_MAP_ARTIFACT" -eq 1 ]]; then
     echo "  obstacle map deltas:  $MISSION_OBSTACLE_MAP_DELTAS_PATH"
     echo "  obstacle delta sqlite: $MISSION_OBSTACLE_MAP_DELTAS_SQLITE_PATH"
     echo "  obstacle manifest: $OBSTACLE_MEMORY_MANIFEST_PATH"
+    echo "  obstacle manifest wait: ${OBSTACLE_MEMORY_MANIFEST_WAIT_SECONDS}s"
 else
     echo "  obstacle map artifact: disabled"
 fi

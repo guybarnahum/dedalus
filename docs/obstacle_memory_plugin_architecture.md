@@ -524,3 +524,20 @@ tools/avoidance/validate_obstacle_memory_manifest.py out/<run>/obstacle_memory_m
 ```
 
 The validator checks the schema, mission/site identifiers, selected site-map format, expected merge path, and artifact existence/size consistency. This reduces hard-coded artifact inference as the persistence path evolves.
+
+
+### 5T — validation can wait for the post-mission manifest
+
+When obstacle-map merging is enabled, the generated AirSim validation script waits for the post-mission manifest before validating it:
+
+```text
+out/<run>/obstacle_memory_manifest.json
+```
+
+The default wait is bounded to 360 seconds when `--merge-obstacle-map` is enabled and zero otherwise. It can be overridden with:
+
+```text
+DEDALUS_OBSTACLE_MEMORY_MANIFEST_WAIT_SECONDS=<seconds>
+```
+
+This lets `validate-mission-artifacts` validate the manifest in the same run instead of racing ahead of the post-mission merge.
