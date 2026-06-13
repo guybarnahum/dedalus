@@ -15,9 +15,8 @@ missing_fields=0
 
 mkdir -p "$(dirname "$SNAPSHOT_PATH")"
 
-if ! "${APP_PATH}" --config "${CONFIG_PATH}" > "${SNAPSHOT_PATH}"; then
-    run_status=$?
-fi
+"${APP_PATH}" --config "${CONFIG_PATH}" > "${SNAPSHOT_PATH}"
+run_status=$?
 
 if [[ -f "${SNAPSHOT_PATH}" ]]; then
     if ! python3 -m json.tool "${SNAPSHOT_PATH}" >/dev/null; then
