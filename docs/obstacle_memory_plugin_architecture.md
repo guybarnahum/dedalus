@@ -454,3 +454,16 @@ runtime in-memory map -> compact JSONL delta stream -> delta SQLite log -> persi
 ```
 
 The merge is idempotent at the mission-id level. If all mission IDs from the delta log are already present in the site database, a repeated merge skips without duplicating cells.
+
+
+### 5P — post-mission merge from delta SQLite by default
+
+The AirSim post-mission merge path now uses the compact delta stream for SQLite site memory by default:
+
+```text
+mission_obstacle_map_deltas.jsonl
+  -> mission_obstacle_map_deltas.sqlite
+  -> maps/<site_id>/site_obstacle_map.sqlite
+```
+
+The full mission JSON artifact remains available as a debug/export artifact and remains the source for `--site-map-format json`. The legacy full-JSON-to-SQLite merge path is retained under `sqlite-full-json` for comparison and debugging.

@@ -40,6 +40,7 @@ PIPELINE_TIMING_PATH=""
 OBSTACLE_MAP_ARTIFACT=1
 OBSTACLE_MAP_ARTIFACT_PATH=""
 MISSION_OBSTACLE_MAP_DELTAS_PATH=""
+MISSION_OBSTACLE_MAP_DELTAS_SQLITE_PATH=""
 MISSION_OBSTACLE_MAP_DELTAS_WRITE_EVERY_UPDATES="${MISSION_OBSTACLE_MAP_DELTAS_WRITE_EVERY_UPDATES:-10}"
 OBSTACLE_MAP_SITE_ID="airsim_neighborhood"
 OBSTACLE_MAP_SITE_FRAME_ID="airsim_world"
@@ -413,6 +414,9 @@ fi
 if [[ -z "$MISSION_OBSTACLE_MAP_DELTAS_PATH" ]]; then
     MISSION_OBSTACLE_MAP_DELTAS_PATH="$OUTPUT_DIR/mission_obstacle_map_deltas.jsonl"
 fi
+if [[ -z "$MISSION_OBSTACLE_MAP_DELTAS_SQLITE_PATH" ]]; then
+    MISSION_OBSTACLE_MAP_DELTAS_SQLITE_PATH="$OUTPUT_DIR/mission_obstacle_map_deltas.sqlite"
+fi
 MISSION_OBSTACLE_MAP_ARTIFACT_PATH="$OBSTACLE_MAP_ARTIFACT_PATH"
 if [[ -z "$SITE_OBSTACLE_MAP_PATH" ]]; then
     SITE_OBSTACLE_MAP_PATH="$REPO_ROOT_ABS/maps/$OBSTACLE_MAP_SITE_ID/site_obstacle_map.json"
@@ -667,13 +671,17 @@ cd $(printf '%q' "$REPO_ROOT_ABS")
 EVENTS=$(printf '%q' "$OUTPUT_DIR/mission_events.jsonl")
 TIMEOUT=$(printf '%q' "$VALIDATION_TIMEOUT_S")
 MISSION_OBSTACLE_MAP_ARTIFACT_PATH=$(printf '%q' "$OBSTACLE_MAP_ARTIFACT_PATH")
+MISSION_OBSTACLE_MAP_DELTAS_PATH=$(printf '%q' "$MISSION_OBSTACLE_MAP_DELTAS_PATH")
+MISSION_OBSTACLE_MAP_DELTAS_SQLITE_PATH=$(printf '%q' "$MISSION_OBSTACLE_MAP_DELTAS_SQLITE_PATH")
 SITE_OBSTACLE_MAP_PATH=$(printf '%q' "$SITE_OBSTACLE_MAP_PATH")
 SITE_OBSTACLE_MAP_SQLITE_PATH=$(printf '%q' "$SITE_OBSTACLE_MAP_SQLITE_PATH")
 SITE_OBSTACLE_MAP_FORMAT=$(printf '%q' "$SITE_OBSTACLE_MAP_FORMAT")
 OBSTACLE_MAP_SITE_ID=$(printf '%q' "$OBSTACLE_MAP_SITE_ID")
 OBSTACLE_MAP_SITE_FRAME_ID=$(printf '%q' "$OBSTACLE_MAP_SITE_FRAME_ID")
 MERGE_SITE_MAP_JSON_TOOL=$(printf '%q' "$REPO_ROOT_ABS/tools/avoidance/merge_site_obstacle_map.py")
-MERGE_SITE_MAP_SQLITE_TOOL=$(printf '%q' "$REPO_ROOT_ABS/tools/avoidance/merge_site_obstacle_map_sqlite.py")
+MERGE_SITE_MAP_SQLITE_FULL_TOOL=$(printf '%q' "$REPO_ROOT_ABS/tools/avoidance/merge_site_obstacle_map_sqlite.py")
+DELTA_SQLITE_IMPORT_TOOL=$(printf '%q' "$REPO_ROOT_ABS/tools/avoidance/mission_obstacle_delta_sqlite.py")
+MERGE_SITE_MAP_FROM_DELTA_SQLITE_TOOL=$(printf '%q' "$REPO_ROOT_ABS/tools/avoidance/merge_site_obstacle_map_from_delta_sqlite.py")
 
 python3 - "\$EVENTS" "\$TIMEOUT" <<'PYWAIT'
 import json
@@ -717,63 +725,92 @@ PYWAIT
 echo "post-mission: requested site obstacle map merge"
 echo "post-mission: format: \$SITE_OBSTACLE_MAP_FORMAT"
 echo "post-mission: mission obstacle map artifact: \$MISSION_OBSTACLE_MAP_ARTIFACT_PATH"
+echo "post-mission: mission obstacle delta jsonl: \$MISSION_OBSTACLE_MAP_DELTAS_PATH"
+echo "post-mission: mission obstacle delta sqlite: \$MISSION_OBSTACLE_MAP_DELTAS_SQLITE_PATH"
 echo "post-mission: sqlite site map: \$SITE_OBSTACLE_MAP_SQLITE_PATH"
 echo "post-mission: debug json site map: \$SITE_OBSTACLE_MAP_PATH"
 
-if [[ ! -s "\$MISSION_OBSTACLE_MAP_ARTIFACT_PATH" ]]; then
-  echo "post-mission: mission obstacle map artifact not present; skipping merge"
-  exit 0
-fi
+merge_sqlite_from_delta() {
+  if [[ ! -f "\$DELTA_SQLITE_IMPORT_TOOL" ]]; then
+    echo "post-mission: ERROR missing delta SQLite import tool: \$DELTA_SQLITE_IMPORT_TOOL" >&2
+    exit 1
+  fi
+  if [[ ! -f "\$MERGE_SITE_MAP_FROM_DELTA_SQLITE_TOOL" ]]; then
+    echo "post-mission: ERROR missing delta-to-site SQLite merge tool: \$MERGE_SITE_MAP_FROM_DELTA_SQLITE_TOOL" >&2
+    exit 1
+  fi
+  if [[ ! -s "\$MISSION_OBSTACLE_MAP_DELTAS_PATH" ]]; then
+    echo "post-mission: mission obstacle delta JSONL not present; skipping SQLite site merge"
+    return 0
+  fi
+
+  mkdir -p "\$(dirname "\$MISSION_OBSTACLE_MAP_DELTAS_SQLITE_PATH")" "\$(dirname "\$SITE_OBSTACLE_MAP_SQLITE_PATH")"
+
+  echo "post-mission: importing mission obstacle delta JSONL into delta SQLite"
+  python3 "\$DELTA_SQLITE_IMPORT_TOOL" import-jsonl \
+    "\$MISSION_OBSTACLE_MAP_DELTAS_PATH" \
+    --db "\$MISSION_OBSTACLE_MAP_DELTAS_SQLITE_PATH" \
+    --replace
+
+  echo "post-mission: merging delta SQLite into persistent site SQLite"
+  python3 "\$MERGE_SITE_MAP_FROM_DELTA_SQLITE_TOOL" \
+    --delta-db "\$MISSION_OBSTACLE_MAP_DELTAS_SQLITE_PATH" \
+    --site-db "\$SITE_OBSTACLE_MAP_SQLITE_PATH" \
+    --site-id "\$OBSTACLE_MAP_SITE_ID" \
+    --site-frame-id "\$OBSTACLE_MAP_SITE_FRAME_ID"
+}
+
+merge_json_from_full_artifact() {
+  if [[ ! -f "\$MERGE_SITE_MAP_JSON_TOOL" ]]; then
+    echo "post-mission: ERROR missing JSON merge tool: \$MERGE_SITE_MAP_JSON_TOOL" >&2
+    exit 1
+  fi
+  if [[ ! -s "\$MISSION_OBSTACLE_MAP_ARTIFACT_PATH" ]]; then
+    echo "post-mission: mission obstacle full JSON artifact not present; skipping debug JSON site merge"
+    return 0
+  fi
+
+  mkdir -p "\$(dirname "\$SITE_OBSTACLE_MAP_PATH")"
+  echo "post-mission: merging full mission obstacle map into debug JSON site memory"
+  python3 "\$MERGE_SITE_MAP_JSON_TOOL" \
+    "\$MISSION_OBSTACLE_MAP_ARTIFACT_PATH" \
+    --site-map "\$SITE_OBSTACLE_MAP_PATH" \
+    --site-id "\$OBSTACLE_MAP_SITE_ID" \
+    --site-frame-id "\$OBSTACLE_MAP_SITE_FRAME_ID"
+}
+
+merge_sqlite_from_full_artifact_legacy() {
+  if [[ ! -f "\$MERGE_SITE_MAP_SQLITE_FULL_TOOL" ]]; then
+    echo "post-mission: ERROR missing full-artifact SQLite merge tool: \$MERGE_SITE_MAP_SQLITE_FULL_TOOL" >&2
+    exit 1
+  fi
+  if [[ ! -s "\$MISSION_OBSTACLE_MAP_ARTIFACT_PATH" ]]; then
+    echo "post-mission: mission obstacle full JSON artifact not present; skipping legacy SQLite site merge"
+    return 0
+  fi
+
+  mkdir -p "\$(dirname "\$SITE_OBSTACLE_MAP_SQLITE_PATH")"
+  echo "post-mission: merging full mission obstacle map into SQLite site memory"
+  python3 "\$MERGE_SITE_MAP_SQLITE_FULL_TOOL" \
+    "\$MISSION_OBSTACLE_MAP_ARTIFACT_PATH" \
+    --db "\$SITE_OBSTACLE_MAP_SQLITE_PATH" \
+    --site-id "\$OBSTACLE_MAP_SITE_ID" \
+    --site-frame-id "\$OBSTACLE_MAP_SITE_FRAME_ID"
+}
 
 case "\$SITE_OBSTACLE_MAP_FORMAT" in
   sqlite)
-    if [[ ! -f "\$MERGE_SITE_MAP_SQLITE_TOOL" ]]; then
-      echo "post-mission: ERROR missing sqlite merge tool: \$MERGE_SITE_MAP_SQLITE_TOOL" >&2
-      exit 1
-    fi
-    mkdir -p "\$(dirname "\$SITE_OBSTACLE_MAP_SQLITE_PATH")"
-    echo "post-mission: merging mission obstacle map into SQLite site memory"
-    python3 "\$MERGE_SITE_MAP_SQLITE_TOOL" \
-      "\$MISSION_OBSTACLE_MAP_ARTIFACT_PATH" \
-      --db "\$SITE_OBSTACLE_MAP_SQLITE_PATH" \
-      --site-id "\$OBSTACLE_MAP_SITE_ID" \
-      --site-frame-id "\$OBSTACLE_MAP_SITE_FRAME_ID"
+    merge_sqlite_from_delta
     ;;
   json)
-    if [[ ! -f "\$MERGE_SITE_MAP_JSON_TOOL" ]]; then
-      echo "post-mission: ERROR missing JSON merge tool: \$MERGE_SITE_MAP_JSON_TOOL" >&2
-      exit 1
-    fi
-    mkdir -p "\$(dirname "\$SITE_OBSTACLE_MAP_PATH")"
-    echo "post-mission: merging mission obstacle map into debug JSON site memory"
-    python3 "\$MERGE_SITE_MAP_JSON_TOOL" \
-      "\$MISSION_OBSTACLE_MAP_ARTIFACT_PATH" \
-      --site-map "\$SITE_OBSTACLE_MAP_PATH" \
-      --site-id "\$OBSTACLE_MAP_SITE_ID" \
-      --site-frame-id "\$OBSTACLE_MAP_SITE_FRAME_ID"
+    merge_json_from_full_artifact
     ;;
   both)
-    if [[ ! -f "\$MERGE_SITE_MAP_SQLITE_TOOL" ]]; then
-      echo "post-mission: ERROR missing sqlite merge tool: \$MERGE_SITE_MAP_SQLITE_TOOL" >&2
-      exit 1
-    fi
-    if [[ ! -f "\$MERGE_SITE_MAP_JSON_TOOL" ]]; then
-      echo "post-mission: ERROR missing JSON merge tool: \$MERGE_SITE_MAP_JSON_TOOL" >&2
-      exit 1
-    fi
-    mkdir -p "\$(dirname "\$SITE_OBSTACLE_MAP_SQLITE_PATH")" "\$(dirname "\$SITE_OBSTACLE_MAP_PATH")"
-    echo "post-mission: merging mission obstacle map into SQLite site memory"
-    python3 "\$MERGE_SITE_MAP_SQLITE_TOOL" \
-      "\$MISSION_OBSTACLE_MAP_ARTIFACT_PATH" \
-      --db "\$SITE_OBSTACLE_MAP_SQLITE_PATH" \
-      --site-id "\$OBSTACLE_MAP_SITE_ID" \
-      --site-frame-id "\$OBSTACLE_MAP_SITE_FRAME_ID"
-    echo "post-mission: merging mission obstacle map into debug JSON site memory"
-    python3 "\$MERGE_SITE_MAP_JSON_TOOL" \
-      "\$MISSION_OBSTACLE_MAP_ARTIFACT_PATH" \
-      --site-map "\$SITE_OBSTACLE_MAP_PATH" \
-      --site-id "\$OBSTACLE_MAP_SITE_ID" \
-      --site-frame-id "\$OBSTACLE_MAP_SITE_FRAME_ID"
+    merge_sqlite_from_delta
+    merge_json_from_full_artifact
+    ;;
+  sqlite-full-json)
+    merge_sqlite_from_full_artifact_legacy
     ;;
   *)
     echo "post-mission: ERROR unsupported site map format: \$SITE_OBSTACLE_MAP_FORMAT" >&2
@@ -849,6 +886,7 @@ echo "  config:  $CONFIG_PATH"
 if [[ "$OBSTACLE_MAP_ARTIFACT" -eq 1 ]]; then
     echo "  obstacle map artifact: $MISSION_OBSTACLE_MAP_ARTIFACT_PATH"
   echo "  obstacle map deltas:  $MISSION_OBSTACLE_MAP_DELTAS_PATH"
+  echo "  obstacle delta sqlite: $MISSION_OBSTACLE_MAP_DELTAS_SQLITE_PATH"
 else
     echo "  obstacle map artifact: disabled"
 fi
