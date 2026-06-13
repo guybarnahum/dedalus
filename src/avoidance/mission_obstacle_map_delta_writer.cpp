@@ -351,22 +351,15 @@ void MissionObstacleMapDeltaWriter::append_if_due(
         std::error_code remove_error;
         std::filesystem::remove(config_.output_path, remove_error);
 
-        auto meta_path = config_.output_path;
-        meta_path += ".meta.json";
-        atomic_write_text(
-            meta_path,
-            render_meta(config_, snapshot, *mission_start_unix_ns_, mission_end_unix_ns));
         wrote_header_meta_ = true;
     }
 
-    if (!wrote_header_meta_) {
-        auto meta_path = config_.output_path;
-        meta_path += ".meta.json";
-        atomic_write_text(
-            meta_path,
-            render_meta(config_, snapshot, *mission_start_unix_ns_, mission_end_unix_ns));
-        wrote_header_meta_ = true;
-    }
+    auto meta_path = config_.output_path;
+    meta_path += ".meta.json";
+    atomic_write_text(
+        meta_path,
+        render_meta(config_, snapshot, *mission_start_unix_ns_, mission_end_unix_ns));
+    wrote_header_meta_ = true;
 
     append_text(
         config_.output_path,
