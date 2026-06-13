@@ -419,3 +419,17 @@ source_provider
 ```
 
 The stream intentionally omits debug/derived fields such as thresholded occupied/free booleans, normalized scores, log odds, risk score, repeated cell size, and placeholder observation counters. These can be recomputed during replay, scoring, or backend-specific compaction. This keeps the Tier-B stream focused on durable evidence rather than runtime visualization state.
+
+
+### 5N — SQLite mission delta log
+
+The compact mission obstacle delta JSONL stream can now be imported into a SQLite-backed Tier-B delta log:
+
+```text
+tools/avoidance/mission_obstacle_delta_sqlite.py import-jsonl \
+  out/<run>/mission_obstacle_map_deltas.jsonl \
+  --db out/<run>/mission_obstacle_map_deltas.sqlite \
+  --replace
+```
+
+This database is not the persistent site map. It is a replay/queryable storage backend for the append-only mission delta stream. It validates the Tier-B persistence boundary before wiring delta replay directly into Tier-C site-map compaction.
