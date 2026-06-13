@@ -381,3 +381,23 @@ export-json    SQLite -> debug JSON
 ```
 
 This validates the efficient/default storage direction without changing runtime behavior. Runtime integration should come later through the `PersistentObstacleStore` contract.
+
+
+### 5L.2 — direct SQLite post-mission merge
+
+The efficient post-mission merge path is `tools/avoidance/merge_site_obstacle_map_sqlite.py`.
+
+It consumes full mission debug artifacts and updates the SQLite site store directly:
+
+```text
+out/<run>/mission_obstacle_map_full.json
+  -> maps/<site_id>/site_obstacle_map.sqlite
+```
+
+This avoids writing the large debug JSON site map during normal persistence. JSON remains available through explicit export:
+
+```text
+tools/avoidance/site_obstacle_map_sqlite.py export-json
+```
+
+Runtime integration is still deferred. The tool validates the efficient default format and the storage contract before wiring SQLite into `run_mission.sh` or C++ preload paths.
