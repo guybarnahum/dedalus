@@ -41,110 +41,16 @@ jobs:
       - name: Run unit tests
         run: ctest --test-dir build-prod --output-on-failure
 
-      - name: Run dedalus_core_stack
-        run: ./build-prod/apps/dedalus_core_stack --config config/core_stack_ci.yaml > /tmp/world_snapshot_prod.json
-
-      - name: Validate JSON
-        run: python3 -m json.tool /tmp/world_snapshot_prod.json >/dev/null
-
-      - name: Check required fields
-        run: |
-          grep -q '"active_map_frame_id": "map_local_0001"' /tmp/world_snapshot_prod.json
-          grep -q '"class": "person"' /tmp/world_snapshot_prod.json
-          grep -q '"type": "car"' /tmp/world_snapshot_prod.json
-          grep -q '"map_frame_id": "map_local_0001"' /tmp/world_snapshot_prod.json
-          grep -q '"tactical_exclusion_zones"' /tmp/world_snapshot_prod.json
-          grep -q '"reason": "dynamic_observation_cone"' /tmp/world_snapshot_prod.json
-          grep -q '"uncertain_regions"' /tmp/world_snapshot_prod.json
-          grep -q '"flight_corridors"' /tmp/world_snapshot_prod.json
-          grep -q '"corridor_id": "corridor_forward_0001"' /tmp/world_snapshot_prod.json
-          grep -q '"static_structures"' /tmp/world_snapshot_prod.json
-          grep -q '"structure_id": "structure_building_0001"' /tmp/world_snapshot_prod.json
-          grep -q '"landmarks"' /tmp/world_snapshot_prod.json
-          grep -q '"landmark_id": "landmark_building_corner_0001"' /tmp/world_snapshot_prod.json
+      - name: Run core stack smoke validation
+        run: bash scripts/ci/validate-core-stack-smoke.sh
+        env:
+          BUILD_DIR: build-prod
+          SNAPSHOT_PATH: /tmp/world_snapshot_prod.json
+          SUMMARY_TITLE: Production Validation Summary — ${{ github.ref_name }}
+          BUILD_RUN_LABEL: Build & run (Release)
 
       - name: Check whitespace
         run: git diff --check
-
-      - name: Write job summary
-        if: always()
-        run: |
-          echo "## Production Validation Summary — ${{ github.ref_name }}" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "| Check | Result |" >> $GITHUB_STEP_SUMMARY
-          echo "|---|---|" >> $GITHUB_STEP_SUMMARY
-
-          if [ -f /tmp/world_snapshot_prod.json ]; then
-            echo "| Build & run (Release) | ✅ passed |" >> $GITHUB_STEP_SUMMARY
-
-            if python3 -m json.tool /tmp/world_snapshot_prod.json >/dev/null 2>&1; then
-              echo "| JSON valid | ✅ passed |" >> $GITHUB_STEP_SUMMARY
-            else
-              echo "| JSON valid | ❌ failed |" >> $GITHUB_STEP_SUMMARY
-            fi
-
-            if grep -q '"active_map_frame_id": "map_local_0001"' /tmp/world_snapshot_prod.json; then
-              echo "| active_map_frame_id | ✅ present |" >> $GITHUB_STEP_SUMMARY
-            else
-              echo "| active_map_frame_id | ❌ missing |" >> $GITHUB_STEP_SUMMARY
-            fi
-
-            if grep -q '"class": "person"' /tmp/world_snapshot_prod.json; then
-              echo "| person agent | ✅ present |" >> $GITHUB_STEP_SUMMARY
-            else
-              echo "| person agent | ❌ missing |" >> $GITHUB_STEP_SUMMARY
-            fi
-
-            if grep -q '"type": "car"' /tmp/world_snapshot_prod.json; then
-              echo "| car container | ✅ present |" >> $GITHUB_STEP_SUMMARY
-            else
-              echo "| car container | ❌ missing |" >> $GITHUB_STEP_SUMMARY
-            fi
-
-            if grep -q '"map_frame_id": "map_local_0001"' /tmp/world_snapshot_prod.json; then
-              echo "| map_frame_id in map_frames | ✅ present |" >> $GITHUB_STEP_SUMMARY
-            else
-              echo "| map_frame_id in map_frames | ❌ missing |" >> $GITHUB_STEP_SUMMARY
-            fi
-
-            if grep -q '"reason": "dynamic_observation_cone"' /tmp/world_snapshot_prod.json; then
-              echo "| tactical exclusion zone | ✅ present |" >> $GITHUB_STEP_SUMMARY
-            else
-              echo "| tactical exclusion zone | ❌ missing |" >> $GITHUB_STEP_SUMMARY
-            fi
-
-            if grep -q '"uncertain_regions"' /tmp/world_snapshot_prod.json; then
-              echo "| uncertain regions | ✅ present |" >> $GITHUB_STEP_SUMMARY
-            else
-              echo "| uncertain regions | ❌ missing |" >> $GITHUB_STEP_SUMMARY
-            fi
-
-            if grep -q '"corridor_id": "corridor_forward_0001"' /tmp/world_snapshot_prod.json; then
-              echo "| rough flight corridor | ✅ present |" >> $GITHUB_STEP_SUMMARY
-            else
-              echo "| rough flight corridor | ❌ missing |" >> $GITHUB_STEP_SUMMARY
-            fi
-
-            if grep -q '"structure_id": "structure_building_0001"' /tmp/world_snapshot_prod.json; then
-              echo "| static structure | ✅ present |" >> $GITHUB_STEP_SUMMARY
-            else
-              echo "| static structure | ❌ missing |" >> $GITHUB_STEP_SUMMARY
-            fi
-
-            if grep -q '"landmark_id": "landmark_building_corner_0001"' /tmp/world_snapshot_prod.json; then
-              echo "| landmark | ✅ present |" >> $GITHUB_STEP_SUMMARY
-            else
-              echo "| landmark | ❌ missing |" >> $GITHUB_STEP_SUMMARY
-            fi
-
-            echo "" >> $GITHUB_STEP_SUMMARY
-            echo "### WorldSnapshot output" >> $GITHUB_STEP_SUMMARY
-            echo '```json' >> $GITHUB_STEP_SUMMARY
-            cat /tmp/world_snapshot_prod.json >> $GITHUB_STEP_SUMMARY
-            echo '```' >> $GITHUB_STEP_SUMMARY
-          else
-            echo "| Build & run (Release) | ❌ failed — snapshot not produced |" >> $GITHUB_STEP_SUMMARY
-          fi
 
       - name: Upload snapshot artifact
         uses: actions/upload-artifact@v6
