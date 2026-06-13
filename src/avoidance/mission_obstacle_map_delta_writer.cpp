@@ -136,7 +136,7 @@ std::string render_meta(
     std::ostringstream out;
     out << std::setprecision(17);
     out << "{\n";
-    out << "  \"schema\": \"dedalus.mission_obstacle_map_deltas.v1.meta\",\n";
+    out << "  \"schema\": \"dedalus.mission_obstacle_map_deltas.v2.meta\",\n";
     out << "  \"time_unit\": \"unix_ns\",\n";
     out << "  \"site_id\": \"" << escape_json(config.site_id) << "\",\n";
     out << "  \"site_frame_id\": \"" << escape_json(config.site_frame_id) << "\",\n";
