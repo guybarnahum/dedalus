@@ -39,6 +39,7 @@ WITH_PIPELINE_TIMING=0
 PIPELINE_TIMING_PATH=""
 OBSTACLE_MAP_ARTIFACT=1
 OBSTACLE_MAP_ARTIFACT_PATH=""
+WRITE_FULL_OBSTACLE_MAP_ARTIFACT="${WRITE_FULL_OBSTACLE_MAP_ARTIFACT:-0}"
 MISSION_OBSTACLE_MAP_DELTAS_PATH=""
 MISSION_OBSTACLE_MAP_DELTAS_SQLITE_PATH=""
 MISSION_OBSTACLE_MAP_DELTAS_WRITE_EVERY_UPDATES="${MISSION_OBSTACLE_MAP_DELTAS_WRITE_EVERY_UPDATES:-10}"
@@ -124,8 +125,10 @@ Options:
   --pipeline-timing           Enable C++ pipeline timing in an effective config.
   --pipeline-timing-path PATH Timing JSONL output path. Default: <output-dir>/profile/pipeline_<timestamp>.jsonl
   --no-obstacle-map-artifact
-                                Do not write full mission obstacle map artifact
-  --obstacle-map-artifact PATH  Full mission obstacle map artifact path. Default: <output-dir>/mission_obstacle_map_full.json
+                                Do not write obstacle-map runtime artifacts/deltas
+  --write-full-obstacle-map-artifact
+                                Write full mission obstacle map JSON debug artifact
+  --obstacle-map-artifact PATH  Full mission obstacle map artifact path and enable it. Default: <output-dir>/mission_obstacle_map_full.json
   --obstacle-map-site-id ID      Persistent obstacle-memory site id. Default: airsim_neighborhood
   --obstacle-map-site-frame-id ID
                                 Persistent obstacle-memory site frame id. Default: airsim_world
@@ -347,7 +350,8 @@ while [[ $# -gt 0 ]]; do
         --pipeline-timing) WITH_PIPELINE_TIMING=1; shift ;;
         --pipeline-timing-path) PIPELINE_TIMING_PATH="$(creatable_abs_path "$2")"; WITH_PIPELINE_TIMING=1; shift 2 ;;
         --no-obstacle-map-artifact) OBSTACLE_MAP_ARTIFACT=0; shift ;;
-        --obstacle-map-artifact) OBSTACLE_MAP_ARTIFACT_PATH="$(creatable_abs_path "$2")"; OBSTACLE_MAP_ARTIFACT=1; shift 2 ;;
+        --write-full-obstacle-map-artifact) WRITE_FULL_OBSTACLE_MAP_ARTIFACT=1; OBSTACLE_MAP_ARTIFACT=1; shift ;;
+        --obstacle-map-artifact) OBSTACLE_MAP_ARTIFACT_PATH="$(creatable_abs_path "$2")"; WRITE_FULL_OBSTACLE_MAP_ARTIFACT=1; OBSTACLE_MAP_ARTIFACT=1; shift 2 ;;
         --obstacle-map-site-id) OBSTACLE_MAP_SITE_ID="$2"; shift 2 ;;
         --obstacle-map-site-frame-id) OBSTACLE_MAP_SITE_FRAME_ID="$2"; shift 2 ;;
         --obstacle-map-mission-id) OBSTACLE_MAP_MISSION_ID="$2"; shift 2 ;;
@@ -418,6 +422,13 @@ if [[ -z "$MISSION_OBSTACLE_MAP_DELTAS_SQLITE_PATH" ]]; then
     MISSION_OBSTACLE_MAP_DELTAS_SQLITE_PATH="$OUTPUT_DIR/mission_obstacle_map_deltas.sqlite"
 fi
 MISSION_OBSTACLE_MAP_ARTIFACT_PATH="$OBSTACLE_MAP_ARTIFACT_PATH"
+case "$SITE_OBSTACLE_MAP_FORMAT" in
+    json|both|sqlite-full-json)
+        WRITE_FULL_OBSTACLE_MAP_ARTIFACT=1
+        OBSTACLE_MAP_ARTIFACT=1
+        ;;
+esac
+
 if [[ -z "$SITE_OBSTACLE_MAP_PATH" ]]; then
     SITE_OBSTACLE_MAP_PATH="$REPO_ROOT_ABS/maps/$OBSTACLE_MAP_SITE_ID/site_obstacle_map.json"
 fi
@@ -452,9 +463,9 @@ if [[ "$AIRSIM_PREFLIGHT" -eq 1 ]]; then
 fi
 
 case "$SITE_OBSTACLE_MAP_FORMAT" in
-    sqlite|json|both) ;;
+    sqlite|json|both|sqlite-full-json) ;;
     *)
-        echo "❌ unsupported --site-map-format: $SITE_OBSTACLE_MAP_FORMAT (expected sqlite, json, or both)" >&2
+        echo "❌ unsupported --site-map-format: $SITE_OBSTACLE_MAP_FORMAT (expected sqlite, json, both, or sqlite-full-json)" >&2
         exit 1
         ;;
 esac
@@ -853,15 +864,17 @@ if [[ "$WITH_SCENE_INVENTORY" -eq 1 ]]; then
     MISSION_ENV_VARS+=("DEDALUS_AIRSIM_SCENE_INVENTORY=$SCENE_INVENTORY_PATH")
 fi
 if [[ "$OBSTACLE_MAP_ARTIFACT" -eq 1 ]]; then
-    MISSION_ENV_VARS+=("DEDALUS_MISSION_OBSTACLE_MAP_ARTIFACT=1")
     MISSION_ENV_VARS+=("DEDALUS_MISSION_OBSTACLE_MAP_DELTAS=1")
     MISSION_ENV_VARS+=("DEDALUS_MISSION_OBSTACLE_MAP_DELTAS_PATH=$MISSION_OBSTACLE_MAP_DELTAS_PATH")
     MISSION_ENV_VARS+=("DEDALUS_MISSION_OBSTACLE_MAP_DELTAS_WRITE_EVERY_UPDATES=$MISSION_OBSTACLE_MAP_DELTAS_WRITE_EVERY_UPDATES")
-    MISSION_ENV_VARS+=("DEDALUS_MISSION_OBSTACLE_MAP_PATH=$OBSTACLE_MAP_ARTIFACT_PATH")
     MISSION_ENV_VARS+=("DEDALUS_MISSION_OBSTACLE_MAP_SITE_ID=$OBSTACLE_MAP_SITE_ID")
     MISSION_ENV_VARS+=("DEDALUS_MISSION_OBSTACLE_MAP_SITE_FRAME_ID=$OBSTACLE_MAP_SITE_FRAME_ID")
     MISSION_ENV_VARS+=("DEDALUS_MISSION_OBSTACLE_MAP_MISSION_ID=$OBSTACLE_MAP_MISSION_ID")
     MISSION_ENV_VARS+=("DEDALUS_MISSION_OBSTACLE_MAP_WRITE_EVERY_UPDATES=$OBSTACLE_MAP_WRITE_EVERY_UPDATES")
+    if [[ "$WRITE_FULL_OBSTACLE_MAP_ARTIFACT" == "1" ]]; then
+        MISSION_ENV_VARS+=("DEDALUS_MISSION_OBSTACLE_MAP_ARTIFACT=1")
+        MISSION_ENV_VARS+=("DEDALUS_MISSION_OBSTACLE_MAP_PATH=$OBSTACLE_MAP_ARTIFACT_PATH")
+    fi
 fi
 MISSION_ENV=""
 for env_pair in "${MISSION_ENV_VARS[@]}"; do
@@ -884,9 +897,13 @@ echo "  log:     $MISSION_LOG"
 echo "  output:  $OUTPUT_DIR"
 echo "  config:  $CONFIG_PATH"
 if [[ "$OBSTACLE_MAP_ARTIFACT" -eq 1 ]]; then
-    echo "  obstacle map artifact: $MISSION_OBSTACLE_MAP_ARTIFACT_PATH"
-  echo "  obstacle map deltas:  $MISSION_OBSTACLE_MAP_DELTAS_PATH"
-  echo "  obstacle delta sqlite: $MISSION_OBSTACLE_MAP_DELTAS_SQLITE_PATH"
+    if [[ "$WRITE_FULL_OBSTACLE_MAP_ARTIFACT" == "1" ]]; then
+        echo "  obstacle map artifact: $MISSION_OBSTACLE_MAP_ARTIFACT_PATH"
+    else
+        echo "  obstacle map artifact: disabled (use --write-full-obstacle-map-artifact)"
+    fi
+    echo "  obstacle map deltas:  $MISSION_OBSTACLE_MAP_DELTAS_PATH"
+    echo "  obstacle delta sqlite: $MISSION_OBSTACLE_MAP_DELTAS_SQLITE_PATH"
 else
     echo "  obstacle map artifact: disabled"
 fi

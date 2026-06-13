@@ -467,3 +467,28 @@ mission_obstacle_map_deltas.jsonl
 ```
 
 The full mission JSON artifact remains available as a debug/export artifact and remains the source for `--site-map-format json`. The legacy full-JSON-to-SQLite merge path is retained under `sqlite-full-json` for comparison and debugging.
+
+
+### 5Q — full mission JSON artifact is debug-only by default
+
+The default AirSim post-mission SQLite path no longer requires the full mission obstacle JSON artifact. By default, runtime emits the compact delta stream and post-mission processing uses:
+
+```text
+mission_obstacle_map_deltas.jsonl
+  -> mission_obstacle_map_deltas.sqlite
+  -> maps/<site_id>/site_obstacle_map.sqlite
+```
+
+The large full mission JSON artifact is debug/export-only. It is enabled explicitly with:
+
+```text
+--write-full-obstacle-map-artifact
+```
+
+It is also enabled automatically for formats that require the full JSON artifact:
+
+```text
+--site-map-format json
+--site-map-format both
+--site-map-format sqlite-full-json
+```
