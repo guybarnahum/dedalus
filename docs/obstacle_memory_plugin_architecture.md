@@ -541,3 +541,17 @@ DEDALUS_OBSTACLE_MEMORY_MANIFEST_WAIT_SECONDS=<seconds>
 ```
 
 This lets `validate-mission-artifacts` validate the manifest in the same run instead of racing ahead of the post-mission merge.
+
+
+### 5U — manifest validation covers non-default site-map formats
+
+Manifest validation now has fast contract coverage for all supported site-map formats:
+
+```text
+sqlite
+json
+both
+sqlite-full-json
+```
+
+The tests synthesize manifests and artifact files, then validate that the manifest validator enforces each format's expected merge path and required artifact set. This covers the full-JSON auto-enable branches without requiring multiple long AirSim validation runs.
