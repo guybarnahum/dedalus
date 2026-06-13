@@ -364,3 +364,20 @@ Preload active/probationary cells from persistent store into mission-local/local
 ### 5O — backend alternatives
 
 Prototype LMDB or custom binary/mmap behind the same contracts.
+
+
+### 5L.1 — SQLite site store prototype
+
+The first efficient backend prototype is `tools/avoidance/site_obstacle_map_sqlite.py`.
+
+It is intentionally a tool/backend prototype and is not yet used by the flight loop. It supports:
+
+```text
+import-json    debug JSON site map -> SQLite
+score          recompute derived scores inside SQLite
+summary        inspect cell/status counts and DB size
+query-region   query indexed site/cell bounds and status
+export-json    SQLite -> debug JSON
+```
+
+This validates the efficient/default storage direction without changing runtime behavior. Runtime integration should come later through the `PersistentObstacleStore` contract.
