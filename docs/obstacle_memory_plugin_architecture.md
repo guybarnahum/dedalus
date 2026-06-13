@@ -492,3 +492,24 @@ It is also enabled automatically for formats that require the full JSON artifact
 --site-map-format both
 --site-map-format sqlite-full-json
 ```
+
+
+### 5R — post-mission obstacle memory manifest
+
+Each AirSim post-mission obstacle-memory merge now writes a lightweight manifest:
+
+```text
+out/<run>/obstacle_memory_manifest.json
+```
+
+The manifest records the mission/site identifiers, selected site-map format, merge path, whether the full mission JSON debug artifact was enabled, and the existence/size of all relevant persistence artifacts:
+
+```text
+full mission JSON
+compact delta JSONL
+delta SQLite
+site SQLite
+site JSON
+```
+
+This makes validation and debugging independent of ad hoc `ls`/`grep` commands while preserving the runtime hot path.

@@ -42,6 +42,7 @@ OBSTACLE_MAP_ARTIFACT_PATH=""
 WRITE_FULL_OBSTACLE_MAP_ARTIFACT="${WRITE_FULL_OBSTACLE_MAP_ARTIFACT:-0}"
 MISSION_OBSTACLE_MAP_DELTAS_PATH=""
 MISSION_OBSTACLE_MAP_DELTAS_SQLITE_PATH=""
+OBSTACLE_MEMORY_MANIFEST_PATH=""
 MISSION_OBSTACLE_MAP_DELTAS_WRITE_EVERY_UPDATES="${MISSION_OBSTACLE_MAP_DELTAS_WRITE_EVERY_UPDATES:-10}"
 OBSTACLE_MAP_SITE_ID="airsim_neighborhood"
 OBSTACLE_MAP_SITE_FRAME_ID="airsim_world"
@@ -421,6 +422,9 @@ fi
 if [[ -z "$MISSION_OBSTACLE_MAP_DELTAS_SQLITE_PATH" ]]; then
     MISSION_OBSTACLE_MAP_DELTAS_SQLITE_PATH="$OUTPUT_DIR/mission_obstacle_map_deltas.sqlite"
 fi
+if [[ -z "$OBSTACLE_MEMORY_MANIFEST_PATH" ]]; then
+    OBSTACLE_MEMORY_MANIFEST_PATH="$OUTPUT_DIR/obstacle_memory_manifest.json"
+fi
 MISSION_OBSTACLE_MAP_ARTIFACT_PATH="$OBSTACLE_MAP_ARTIFACT_PATH"
 case "$SITE_OBSTACLE_MAP_FORMAT" in
     json|both|sqlite-full-json)
@@ -684,9 +688,13 @@ TIMEOUT=$(printf '%q' "$VALIDATION_TIMEOUT_S")
 MISSION_OBSTACLE_MAP_ARTIFACT_PATH=$(printf '%q' "$OBSTACLE_MAP_ARTIFACT_PATH")
 MISSION_OBSTACLE_MAP_DELTAS_PATH=$(printf '%q' "$MISSION_OBSTACLE_MAP_DELTAS_PATH")
 MISSION_OBSTACLE_MAP_DELTAS_SQLITE_PATH=$(printf '%q' "$MISSION_OBSTACLE_MAP_DELTAS_SQLITE_PATH")
+OBSTACLE_MEMORY_MANIFEST_PATH=$(printf '%q' "$OBSTACLE_MEMORY_MANIFEST_PATH")
 SITE_OBSTACLE_MAP_PATH=$(printf '%q' "$SITE_OBSTACLE_MAP_PATH")
 SITE_OBSTACLE_MAP_SQLITE_PATH=$(printf '%q' "$SITE_OBSTACLE_MAP_SQLITE_PATH")
 SITE_OBSTACLE_MAP_FORMAT=$(printf '%q' "$SITE_OBSTACLE_MAP_FORMAT")
+POST_MISSION_LOG_PATH=$(printf '%q' "$POST_MISSION_LOG")
+POST_MISSION_SCRIPT_PATH=$(printf '%q' "$POST_MISSION_SCRIPT")
+WRITE_FULL_OBSTACLE_MAP_ARTIFACT=$(printf '%q' "$WRITE_FULL_OBSTACLE_MAP_ARTIFACT")
 OBSTACLE_MAP_SITE_ID=$(printf '%q' "$OBSTACLE_MAP_SITE_ID")
 OBSTACLE_MAP_SITE_FRAME_ID=$(printf '%q' "$OBSTACLE_MAP_SITE_FRAME_ID")
 MERGE_SITE_MAP_JSON_TOOL=$(printf '%q' "$REPO_ROOT_ABS/tools/avoidance/merge_site_obstacle_map.py")
@@ -829,6 +837,93 @@ case "\$SITE_OBSTACLE_MAP_FORMAT" in
     ;;
 esac
 
+
+write_obstacle_memory_manifest() {
+  mkdir -p "$(dirname "$OBSTACLE_MEMORY_MANIFEST_PATH")"
+
+  python3 - "$OBSTACLE_MEMORY_MANIFEST_PATH" \
+    "$SITE_OBSTACLE_MAP_FORMAT" \
+    "$OBSTACLE_MAP_SITE_ID" \
+    "$OBSTACLE_MAP_SITE_FRAME_ID" \
+    "$OBSTACLE_MAP_MISSION_ID" \
+    "$MISSION_OBSTACLE_MAP_ARTIFACT_PATH" \
+    "$MISSION_OBSTACLE_MAP_DELTAS_PATH" \
+    "$MISSION_OBSTACLE_MAP_DELTAS_SQLITE_PATH" \
+    "$SITE_OBSTACLE_MAP_SQLITE_PATH" \
+    "$SITE_OBSTACLE_MAP_PATH" \
+    "$POST_MISSION_LOG_PATH" \
+    "$POST_MISSION_SCRIPT_PATH" \
+    "$WRITE_FULL_OBSTACLE_MAP_ARTIFACT" <<'PYMANIFEST'
+import json
+import sys
+import time
+from pathlib import Path
+
+(
+    manifest_path,
+    site_map_format,
+    site_id,
+    site_frame_id,
+    mission_id,
+    full_json_path,
+    delta_jsonl_path,
+    delta_sqlite_path,
+    site_sqlite_path,
+    site_json_path,
+    post_mission_log_path,
+    post_mission_script_path,
+    write_full_json,
+) = sys.argv[1:14]
+
+def artifact(path, kind):
+    p = Path(path)
+    return {
+        "kind": kind,
+        "path": str(p),
+        "exists": p.exists(),
+        "size_bytes": p.stat().st_size if p.exists() else 0,
+    }
+
+merge_path = "none"
+if site_map_format == "sqlite":
+    merge_path = "delta_jsonl_to_delta_sqlite_to_site_sqlite"
+elif site_map_format == "json":
+    merge_path = "full_json_to_site_json"
+elif site_map_format == "both":
+    merge_path = "delta_jsonl_to_delta_sqlite_to_site_sqlite_and_full_json_to_site_json"
+elif site_map_format == "sqlite-full-json":
+    merge_path = "full_json_to_site_sqlite_legacy"
+
+manifest = {
+    "schema": "dedalus.obstacle_memory_manifest.v1",
+    "created_at_unix_ns": time.time_ns(),
+    "site_id": site_id,
+    "site_frame_id": site_frame_id,
+    "mission_id": mission_id,
+    "site_map_format": site_map_format,
+    "merge_path": merge_path,
+    "full_json_enabled": write_full_json == "1",
+    "artifacts": {
+        "full_mission_json": artifact(full_json_path, "debug_full_mission_obstacle_map_json"),
+        "delta_jsonl": artifact(delta_jsonl_path, "compact_mission_obstacle_delta_jsonl"),
+        "delta_sqlite": artifact(delta_sqlite_path, "mission_obstacle_delta_sqlite"),
+        "site_sqlite": artifact(site_sqlite_path, "persistent_site_obstacle_map_sqlite"),
+        "site_json": artifact(site_json_path, "debug_site_obstacle_map_json"),
+    },
+    "post_mission": {
+        "log": post_mission_log_path,
+        "script": post_mission_script_path,
+    },
+}
+
+Path(manifest_path).write_text(json.dumps(manifest, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+print(f"post-mission: wrote obstacle memory manifest: {manifest_path}", flush=True)
+PYMANIFEST
+}
+
+
+write_obstacle_memory_manifest
+
 echo "post-mission: PASS"
 EOF
 
@@ -904,6 +999,7 @@ if [[ "$OBSTACLE_MAP_ARTIFACT" -eq 1 ]]; then
     fi
     echo "  obstacle map deltas:  $MISSION_OBSTACLE_MAP_DELTAS_PATH"
     echo "  obstacle delta sqlite: $MISSION_OBSTACLE_MAP_DELTAS_SQLITE_PATH"
+    echo "  obstacle manifest: $OBSTACLE_MEMORY_MANIFEST_PATH"
 else
     echo "  obstacle map artifact: disabled"
 fi
