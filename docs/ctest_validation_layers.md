@@ -36,6 +36,20 @@ ctest --test-dir build-staging --output-on-failure
 
 ---
 
+## GitHub Workflow Policy
+
+The GitHub workflows intentionally use different CTest scopes:
+
+```text
+CI        -> fast CTest subset (-LE 'synthetic|scenario') + core-stack smoke validation
+Staging   -> fast CTest subset (-LE 'synthetic|scenario') + core-stack smoke validation
+Production -> full CTest suite + core-stack smoke validation
+```
+
+CI and staging optimize for fast feedback on every push/PR-style validation. Production remains the release gate and runs the full CTest suite, including the synthetic and scenario layers, before the same core-stack smoke validation.
+
+---
+
 ## Test Declaration
 
 Each test is declared through one of the helper functions:
