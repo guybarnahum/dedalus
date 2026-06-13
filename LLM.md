@@ -332,3 +332,64 @@ Decay policy:
 - Strong decay should come from contradiction or revisits without reconfirmation, not calendar time alone.
 - Persisted maps are site-local, not necessarily geodetic/global, until a real site anchor is available.
 ```
+
+
+## Current validated obstacle-memory pipeline — 5Q through 5U
+
+The default AirSim obstacle-memory path is now compact-delta-first and SQLite-backed.
+
+Runtime:
+- AirSim depth obstacle evidence feeds the mission-local obstacle map.
+- Runtime writes compact `mission_obstacle_map_deltas.jsonl`.
+- Full `mission_obstacle_map_full.json` is debug/export-only by default and is enabled with `--write-full-obstacle-map-artifact`.
+
+Post-mission:
+- `mission_obstacle_map_deltas.jsonl` is imported into `mission_obstacle_map_deltas.sqlite`.
+- The delta SQLite DB is compacted into `maps/<site_id>/site_obstacle_map.sqlite`.
+- `out/<run>/obstacle_memory_manifest.json` records the selected merge path, site/mission ids, artifact paths, existence, and sizes.
+
+Validation:
+- `tools/avoidance/validate_obstacle_memory_manifest.py` validates the manifest schema, ids, selected site-map format, expected merge path, and artifact existence/size consistency.
+- When `--merge-obstacle-map` is enabled, validation waits up to `OBSTACLE_MEMORY_MANIFEST_WAIT_SECONDS` seconds for the manifest.
+- Default wait is 360 seconds when merging is enabled, or can be overridden with `DEDALUS_OBSTACLE_MEMORY_MANIFEST_WAIT_SECONDS=<seconds>`.
+- Manifest validation covers `sqlite`, `json`, `both`, and `sqlite-full-json` formats through integration coverage.
+
+Validated default path:
+```text
+mission_obstacle_map_deltas.jsonl
+  -> mission_obstacle_map_deltas.sqlite
+  -> maps/<site_id>/site_obstacle_map.sqlite
+  -> out/<run>/obstacle_memory_manifest.json
+```
+
+Important commands:
+```bash
+simulation/airsim/run_mission.sh \
+  --output-dir out/<run> \
+  --merge-obstacle-map \
+  --obstacle-map-site-id <site_id> \
+  --obstacle-map-site-frame-id airsim_world \
+  --obstacle-map-mission-id <mission_id>
+```
+
+Debug full JSON:
+```bash
+simulation/airsim/run_mission.sh \
+  --output-dir out/<run> \
+  --merge-obstacle-map \
+  --write-full-obstacle-map-artifact \
+  --obstacle-map-site-id <site_id> \
+  --obstacle-map-site-frame-id airsim_world \
+  --obstacle-map-mission-id <mission_id>
+```
+
+Manifest validator:
+```bash
+python3 tools/avoidance/validate_obstacle_memory_manifest.py \
+  out/<run>/obstacle_memory_manifest.json \
+  --site-id <site_id> \
+  --site-frame-id airsim_world \
+  --mission-id <mission_id> \
+  --site-map-format sqlite
+```
+
