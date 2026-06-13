@@ -28,6 +28,7 @@ add_library(dedalus_core
     behavior/trajectory_mission_controller.cpp
     behavior/trajectory_mission_controller_tick.cpp
     behavior/velocity_trajectory.cpp
+    behavior/velocity_trajectory_parse.cpp
     sensors/ego_state_provider.cpp
     sensors/async_prefetch_frame_source.cpp
     sensors/recorded_frame_source.cpp
