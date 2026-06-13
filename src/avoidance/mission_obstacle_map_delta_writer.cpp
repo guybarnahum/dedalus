@@ -1,7 +1,5 @@
 #include "dedalus/avoidance/mission_obstacle_map_delta_writer.hpp"
 
-#include <algorithm>
-#include <cmath>
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
@@ -68,21 +66,7 @@ std::size_t env_size(const char* name, const std::size_t fallback) {
     } catch (...) {
         return fallback;
     }
-}
-
-double normalized_score(const double raw_score, const double scale) {
-    if (scale <= 0.0 || !std::isfinite(raw_score)) {
-        return 0.0;
-    }
-    return std::clamp(raw_score / scale, 0.0, 1.0);
-}
-
-double log_odds_from_probability(const double probability) {
-    const auto p = std::clamp(probability, 0.001, 0.999);
-    return std::log(p / (1.0 - p));
-}
-
-std::string escape_json(const std::string& value) {
+}std::string escape_json(const std::string& value) {
     std::ostringstream out;
     for (const auto ch : value) {
         switch (ch) {
@@ -127,16 +111,6 @@ std::string source_kind_string(const OccupancySourceKind kind) {
     }
     return "unknown";
 }
-
-double score_scale_for(const MissionLocalObstacleMapSnapshot& snapshot) {
-    double scale = 1.0;
-    for (const auto& cell : snapshot.cells) {
-        scale = std::max(scale, cell.occupied_score);
-        scale = std::max(scale, cell.free_score);
-    }
-    return scale;
-}
-
 std::uint64_t mission_start_from_snapshot(
     const MissionLocalObstacleMapSnapshot& snapshot,
     const std::uint64_t mission_end_unix_ns) {
@@ -221,7 +195,6 @@ std::string render_delta_batch(
     const auto mission_end_unix_ns =
         static_cast<std::uint64_t>(snapshot.summary.last_update_timestamp_ns);
     const auto mission_end_timestamp_ns = snapshot.summary.last_update_timestamp_ns;
-    const auto score_scale = score_scale_for(snapshot);
 
     std::vector<const MissionLocalObstacleCell*> changed_cells;
     changed_cells.reserve(snapshot.cells.size());
@@ -240,7 +213,7 @@ std::string render_delta_batch(
     std::ostringstream out;
     out << std::setprecision(17);
     out << "{";
-    out << "\"schema\":\"dedalus.mission_obstacle_map_delta_batch.v1\",";
+    out << "\"schema\":\"dedalus.mission_obstacle_map_delta_batch.v2\",";
     out << "\"time_unit\":\"unix_ns\",";
     out << "\"site_id\":\"" << escape_json(config.site_id) << "\",";
     out << "\"site_frame_id\":\"" << escape_json(config.site_frame_id) << "\",";
@@ -250,7 +223,6 @@ std::string render_delta_batch(
     out << "\"batch_unix_ns\":" << mission_end_unix_ns << ",";
     out << "\"update_count\":" << snapshot.summary.update_count << ",";
     out << "\"previous_snapshot_timestamp_ns\":" << previous_snapshot_timestamp_ns << ",";
-    out << "\"score_scale\":" << score_scale << ",";
     out << "\"changed_cell_count\":" << changed_cells.size() << ",";
     out << "\"cells\":[";
 
@@ -265,38 +237,16 @@ std::string render_delta_batch(
             mission_end_timestamp_ns,
             mission_end_unix_ns);
 
-        const auto normalized_occupied = normalized_score(cell.occupied_score, score_scale);
-        const auto normalized_free = normalized_score(cell.free_score, score_scale);
-        const auto occupied_log_odds = log_odds_from_probability(normalized_occupied);
-        const auto free_log_odds = log_odds_from_probability(normalized_free);
-
         out << "{";
         out << "\"center_mission\":";
         write_vec3(out, cell.center_map);
-        out << ",\"size_m\":";
-        write_vec3(out, cell.size_m);
-        out << ",\"observed\":" << (cell.observed ? "true" : "false");
-        out << ",\"occupied\":" << (cell.occupied ? "true" : "false");
-        out << ",\"free\":" << (cell.free ? "true" : "false");
         out << ",\"occupied_score\":" << cell.occupied_score;
         out << ",\"free_score\":" << cell.free_score;
-        out << ",\"normalized_occupied_score\":" << normalized_occupied;
-        out << ",\"normalized_free_score\":" << normalized_free;
-        out << ",\"occupied_log_odds\":" << occupied_log_odds;
-        out << ",\"free_log_odds\":" << free_log_odds;
-        out << ",\"risk_score\":" << cell.risk_score;
         out << ",\"confidence\":" << cell.confidence;
         out << ",\"first_seen_unix_ns\":" << first_seen;
         out << ",\"last_seen_unix_ns\":" << last_seen;
-        out << ",\"last_confirmed_occupied_unix_ns\":" << (cell.occupied ? last_seen : 0U);
-        out << ",\"last_observed_free_unix_ns\":" << (cell.free ? last_seen : 0U);
-        out << ",\"positive_observation_count\":" << (cell.occupied ? 1 : 0);
-        out << ",\"negative_observation_count\":" << (cell.free ? 1 : 0);
-        out << ",\"mission_observation_count\":1";
-        out << ",\"source\":{\"last_source_kind\":\""
-            << escape_json(source_kind_string(cell.last_source_kind))
-            << "\",\"last_source_provider\":\""
-            << escape_json(cell.last_source_provider) << "\"}";
+        out << ",\"source_kind\":\"" << escape_json(source_kind_string(cell.last_source_kind)) << "\"";
+        out << ",\"source_provider\":\"" << escape_json(cell.last_source_provider) << "\"";
         out << "}";
 
         if (i + 1U != changed_cells.size()) {

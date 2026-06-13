@@ -401,3 +401,21 @@ tools/avoidance/site_obstacle_map_sqlite.py export-json
 ```
 
 Runtime integration is still deferred. The tool validates the efficient default format and the storage contract before wiring SQLite into `run_mission.sh` or C++ preload paths.
+
+
+### 5M.1 — compact persistence-essential delta payload
+
+The mission obstacle delta JSONL stream now emits a compact v2 payload. Each changed cell carries only persistence-essential fields:
+
+```text
+center_mission
+occupied_score
+free_score
+confidence
+first_seen_unix_ns
+last_seen_unix_ns
+source_kind
+source_provider
+```
+
+The stream intentionally omits debug/derived fields such as thresholded occupied/free booleans, normalized scores, log odds, risk score, repeated cell size, and placeholder observation counters. These can be recomputed during replay, scoring, or backend-specific compaction. This keeps the Tier-B stream focused on durable evidence rather than runtime visualization state.
