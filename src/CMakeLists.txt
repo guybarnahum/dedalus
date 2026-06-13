@@ -47,6 +47,7 @@ add_library(dedalus_core
     runtime/pipeline_profiler.cpp
     runtime/provider_registry.cpp
     runtime/world_snapshot_stream_server.cpp
+    runtime/world_snapshot_stream_server_messages.cpp
     runtime/world_snapshot_stream_server_publish.cpp
     simulation/airsim_providers.cpp
     simulation/airsim_providers_binary_stream.cpp
