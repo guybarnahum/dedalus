@@ -441,3 +441,26 @@ No command blocking or replanning should be added until explicitly requested.
 - Do not use semantic object-GT as the obstacle memory source.
 - Do not make persistence a runtime database before the post-process tools are proven.
 - Do not expand every per-frame `snapshot_*.json` with the full obstacle map.
+
+
+## Three-tier plugin storage model
+
+Persistent obstacle memory now follows the storage/plugin architecture defined in `docs/obstacle_memory_plugin_architecture.md`.
+
+The stable model is:
+
+```text
+Tier A — hot runtime maps
+  In-memory MissionLocalObstacleMap / LocalFlightMap / future sparse grids.
+  No blocking disk I/O in the flight hot path.
+
+Tier B — mission delta stream
+  Append-only changed-cell batches from runtime to durable mission logs.
+  Backend can be JSONL, SQLite, LMDB, or binary.
+
+Tier C — persistent site memory
+  Durable, indexed, cross-mission map store.
+  Backend can be current debug JSON, SQLite, LMDB, or custom binary/mmap.
+```
+
+The rest of the runtime should depend on contracts, not file formats. JSON remains a debug/export format; efficient storage should become the default for runtime preload, scoring, and persistence.
