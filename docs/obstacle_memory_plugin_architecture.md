@@ -513,3 +513,14 @@ site JSON
 ```
 
 This makes validation and debugging independent of ad hoc `ls`/`grep` commands while preserving the runtime hot path.
+
+
+### 5S — validation reads the obstacle memory manifest
+
+The AirSim validation path now validates obstacle-memory persistence through the post-mission manifest when it is available:
+
+```text
+tools/avoidance/validate_obstacle_memory_manifest.py out/<run>/obstacle_memory_manifest.json
+```
+
+The validator checks the schema, mission/site identifiers, selected site-map format, expected merge path, and artifact existence/size consistency. This reduces hard-coded artifact inference as the persistence path evolves.

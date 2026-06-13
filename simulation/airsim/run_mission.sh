@@ -604,6 +604,13 @@ fi
 
 VALIDATION_SHELL=$(cat <<EOF
 set -euo pipefail
+VALIDATE_OBSTACLE_MEMORY_MANIFEST_TOOL=$(printf '%q' "$REPO_ROOT_ABS/tools/avoidance/validate_obstacle_memory_manifest.py")
+OBSTACLE_MEMORY_MANIFEST_PATH=$(printf '%q' "$OBSTACLE_MEMORY_MANIFEST_PATH")
+OBSTACLE_MAP_SITE_ID=$(printf '%q' "$OBSTACLE_MAP_SITE_ID")
+OBSTACLE_MAP_SITE_FRAME_ID=$(printf '%q' "$OBSTACLE_MAP_SITE_FRAME_ID")
+OBSTACLE_MAP_MISSION_ID=$(printf '%q' "$OBSTACLE_MAP_MISSION_ID")
+SITE_OBSTACLE_MAP_FORMAT=$(printf '%q' "$SITE_OBSTACLE_MAP_FORMAT")
+
 cd $(printf '%q' "$REPO_ROOT_ABS")
 EVENTS=$(printf '%q' "$OUTPUT_DIR/mission_events.jsonl")
 TIMEOUT=$(printf '%q' "$VALIDATION_TIMEOUT_S")
@@ -670,6 +677,18 @@ python3 tools/validation/validate-circle-trajectory.py \
   --expect-complete-reason $(printf '%q' "$VALIDATION_COMPLETE_REASON") \
   --require-terminal-settled \
   --require-lifecycle
+if [[ -f "$OBSTACLE_MEMORY_MANIFEST_PATH" ]]; then
+  echo "validation: validating obstacle memory manifest: $OBSTACLE_MEMORY_MANIFEST_PATH"
+  python3 "$VALIDATE_OBSTACLE_MEMORY_MANIFEST_TOOL" \
+    "$OBSTACLE_MEMORY_MANIFEST_PATH" \
+    --site-id "$OBSTACLE_MAP_SITE_ID" \
+    --site-frame-id "$OBSTACLE_MAP_SITE_FRAME_ID" \
+    --mission-id "$OBSTACLE_MAP_MISSION_ID" \
+    --site-map-format "$SITE_OBSTACLE_MAP_FORMAT"
+else
+  echo "validation: obstacle memory manifest not present yet; skipping manifest validation"
+fi
+
 echo "validation: PASS"
 EOF
 )
