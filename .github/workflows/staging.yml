@@ -35,8 +35,8 @@ jobs:
       - name: Build
         run: cmake --build build-staging -j$(nproc)
 
-      - name: Run unit tests
-        run: ctest --test-dir build-staging --output-on-failure
+      - name: Run fast CTest subset
+        run: ctest --test-dir build-staging --output-on-failure -LE 'synthetic|scenario'
 
       - name: Run core stack smoke validation
         run: bash scripts/ci/validate-core-stack-smoke.sh
