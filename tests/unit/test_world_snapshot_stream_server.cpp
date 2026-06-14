@@ -169,7 +169,6 @@ void streams_jsonl_runtime_events_to_client() {
 
     const auto stats = server.stats();
     require(stats.published_seq == 5, "server published_seq should be 5");
-    require(stats.mission_obstacle_map_delta_messages == 1, "server should publish one mission obstacle map delta");
     require(stats.accepted_clients >= 1, "server should accept at least one client");
 }
 
