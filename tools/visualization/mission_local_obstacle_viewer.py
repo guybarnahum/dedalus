@@ -252,6 +252,10 @@ for (const cell of data.cells) {
 }
 data.cells = Array.from(cellsByKey.values());
 
+const LIVE_DECAY_MS = 10000;
+const LIVE_OBSTACLE_DIM = 0.45;
+const LIVE_TRACK_DIM = 0.55;
+
 const live = {
   enabled: false,
   connected: false,
@@ -319,25 +323,113 @@ function firstNumber(obj, paths) {
   return null;
 }
 
+function pathContainsAny(path, words) {
+  const lower = path.join(".").toLowerCase();
+  return words.some((word) => lower.includes(word));
+}
+
+function recursiveVec3Search(obj, path = []) {
+  if (!obj || typeof obj !== "object") return null;
+
+  const direct = asVec3(obj);
+  if (direct) {
+    const key = path.length ? String(path[path.length - 1]).toLowerCase() : "";
+    if (
+      key.includes("position") ||
+      key.includes("pose") ||
+      key.includes("location") ||
+      pathContainsAny(path, ["local_t_body.position", "local_t_body.position", "local_t_body"])
+    ) {
+      return direct;
+    }
+  }
+
+  for (const [key, value] of Object.entries(obj)) {
+    const nextPath = path.concat([key]);
+    if (
+      !pathContainsAny(nextPath, ["ego", "vehicle", "drone", "agent", "ownship", "local_t_body", "pose", "position"]) &&
+      nextPath.length > 1
+    ) {
+      continue;
+    }
+
+    if (key.toLowerCase().includes("velocity")) {
+      continue;
+    }
+
+    const found = recursiveVec3Search(value, nextPath);
+    if (found) return found;
+  }
+
+  return null;
+}
+
+function recursiveYawSearch(obj, path = []) {
+  if (!obj || typeof obj !== "object") return null;
+
+  for (const [key, value] of Object.entries(obj)) {
+    const lower = key.toLowerCase();
+    const nextPath = path.concat([key]);
+
+    if ((lower === "yaw" || lower === "yaw_rad" || lower === "heading" || lower === "heading_rad") && Number.isFinite(Number(value))) {
+      return Number(value);
+    }
+
+    if ((lower === "z" || lower === "yaw") && pathContainsAny(path, ["rotation_rpy", "rpy", "orientation"]) && Number.isFinite(Number(value))) {
+      return Number(value);
+    }
+
+    if (
+      typeof value === "object" &&
+      (pathContainsAny(nextPath, ["ego", "vehicle", "drone", "agent", "ownship", "local_t_body", "pose", "rotation", "orientation", "yaw", "heading"]) ||
+       nextPath.length <= 1)
+    ) {
+      const found = recursiveYawSearch(value, nextPath);
+      if (found !== null) return found;
+    }
+  }
+
+  return null;
+}
+
 function snapshotEgoPosition(snapshot) {
   return firstVec3(snapshot, [
+    ["ego_state", "local_T_body", "position"],
+    ["ego_state", "pose", "position"],
+    ["ego_state", "position_local"],
+    ["ego_state", "position"],
     ["ego", "local_T_body", "position"],
     ["ego", "pose", "position"],
     ["ego", "position_local"],
     ["ego", "position"],
-    ["ego", "local_position"]
-  ]);
+    ["ego", "local_position"],
+    ["vehicle", "position"],
+    ["drone", "position"],
+    ["agent", "position"],
+    ["ownship", "position"]
+  ]) || recursiveVec3Search(snapshot);
 }
 
 function snapshotEgoYaw(snapshot) {
-  return firstNumber(snapshot, [
+  const direct = firstNumber(snapshot, [
+    ["ego_state", "local_T_body", "rotation_rpy", "z"],
+    ["ego_state", "local_T_body", "rotation_rpy", "yaw"],
+    ["ego_state", "pose", "rotation_rpy", "z"],
+    ["ego_state", "pose", "rotation_rpy", "yaw"],
+    ["ego_state", "yaw_rad"],
+    ["ego_state", "heading_rad"],
     ["ego", "local_T_body", "rotation_rpy", "z"],
     ["ego", "local_T_body", "rotation_rpy", "yaw"],
     ["ego", "pose", "rotation_rpy", "z"],
     ["ego", "pose", "rotation_rpy", "yaw"],
     ["ego", "yaw_rad"],
-    ["ego", "heading_rad"]
+    ["ego", "heading_rad"],
+    ["vehicle", "yaw_rad"],
+    ["drone", "yaw_rad"],
+    ["agent", "yaw_rad"],
+    ["ownship", "yaw_rad"]
   ]);
+  return direct === null ? recursiveYawSearch(snapshot) : direct;
 }
 
 function snapshotFirstBlocked(snapshot) {
@@ -379,7 +471,8 @@ function normalizeCell(cell) {
     last_source_provider: String(cell.last_source_provider || cell.source_provider || ""),
     last_source_kind: String(cell.last_source_kind || cell.source_kind || ""),
     first_seen_unix_ns: cell.first_seen_unix_ns || null,
-    last_seen_unix_ns: cell.last_seen_unix_ns || null
+    last_seen_unix_ns: cell.last_seen_unix_ns || null,
+    live_seen_ms: cell.live_seen_ms || null
   };
 }
 
@@ -447,6 +540,7 @@ function applyMissionObstacleMapDelta(delta, seq) {
   for (const raw of delta.cells) {
     const cell = normalizeCell(raw);
     if (!cell.center) continue;
+    cell.live_seen_ms = Date.now();
     cellsByKey.set(cellKey(cell.center), cell);
     changed += 1;
   }
@@ -465,7 +559,8 @@ function applyWorldSnapshot(snapshot, seq) {
     data.ego = ego;
     const last = data.trajectory.length ? data.trajectory[data.trajectory.length - 1] : null;
     if (!last || Math.hypot(last.x - ego.x, last.y - ego.y, last.z - ego.z) > 0.05) {
-      data.trajectory.push(ego);
+      const trackSample = {...ego, live_seen_ms: Date.now()};
+      data.trajectory.push(trackSample);
       if (data.trajectory.length > 5000) {
         data.trajectory.splice(0, data.trajectory.length - 5000);
       }
@@ -686,6 +781,90 @@ canvas.addEventListener("wheel", (e) => {{
   zoom = Math.max(0.1, Math.min(20.0, zoom));
   draw();
 }}, {{passive: false}});
+
+
+function liveDecayLevel(seenMs, dimValue) {
+  if (!seenMs) return null;
+  const ageMs = Math.max(0, Date.now() - Number(seenMs));
+  const t = Math.min(1, ageMs / LIVE_DECAY_MS);
+  return 1 - ((1 - dimValue) * t);
+}
+
+function liveRed(level, alpha = 0.88) {
+  const g = Math.round(24 * level);
+  const b = Math.round(24 * level);
+  return `rgba(255,${g},${b},${alpha})`;
+}
+
+function liveYellow(level, alpha = 0.92) {
+  const gb = Math.round(255 * level);
+  return `rgba(255,${gb},0,${alpha})`;
+}
+
+function drawLivePoint(center, color, radius) {
+  if (!center) return;
+  const p = project(center);
+  if (!p || !Number.isFinite(p.x) || !Number.isFinite(p.y)) return;
+  ctx.beginPath();
+  ctx.arc(p.x, p.y, radius, 0, Math.PI * 2);
+  ctx.fillStyle = color;
+  ctx.fill();
+}
+
+function drawLiveAgingOverlay() {
+  const now = Date.now();
+  ctx.save();
+
+  for (const cell of data.cells) {
+    const level = liveDecayLevel(cell.live_seen_ms, LIVE_OBSTACLE_DIM);
+    if (level === null) continue;
+    const radius = Math.max(2.0, 5.5 * level);
+    drawLivePoint(cell.center, liveRed(level), radius);
+  }
+
+  const liveTrack = data.trajectory.filter((point) => point && point.live_seen_ms);
+  if (liveTrack.length >= 2) {
+    for (let i = 1; i < liveTrack.length; ++i) {
+      const a = project(liveTrack[i - 1]);
+      const b = project(liveTrack[i]);
+      if (!a || !b || !Number.isFinite(a.x) || !Number.isFinite(a.y) || !Number.isFinite(b.x) || !Number.isFinite(b.y)) {
+        continue;
+      }
+
+      const level = liveDecayLevel(liveTrack[i].live_seen_ms, LIVE_TRACK_DIM) ?? LIVE_TRACK_DIM;
+      ctx.beginPath();
+      ctx.moveTo(a.x, a.y);
+      ctx.lineTo(b.x, b.y);
+      ctx.strokeStyle = liveYellow(level, 0.9);
+      ctx.lineWidth = Math.max(1.5, 4.0 * level);
+      ctx.stroke();
+    }
+  }
+
+  if (data.ego) {
+    drawLivePoint(data.ego, "rgba(255,255,64,1.0)", 6.5);
+  }
+
+  ctx.restore();
+
+  // Keep live visuals moving through the 10-second fade even when no new events arrive.
+  if (live.enabled && live.connected) {
+    requestAnimationFrame(() => {
+      const hasRecentObstacle = data.cells.some((cell) => cell.live_seen_ms && now - Number(cell.live_seen_ms) < LIVE_DECAY_MS);
+      const hasRecentTrack = data.trajectory.some((point) => point.live_seen_ms && now - Number(point.live_seen_ms) < LIVE_DECAY_MS);
+      if (hasRecentObstacle || hasRecentTrack) {
+        draw();
+      }
+    });
+  }
+}
+
+const baseDraw = draw;
+draw = function() {
+  baseDraw();
+  drawLiveAgingOverlay();
+};
+
 
 window.addEventListener("resize", resize);
 recomputeBounds();
