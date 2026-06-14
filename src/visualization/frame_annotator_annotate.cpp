@@ -3,15 +3,10 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
-#include <filesystem>
-#include <fstream>
 #include <iomanip>
 #include <sstream>
-#include <stdexcept>
 #include <string>
-#include <utility>
 
-#include "dedalus/visualization/world_overlay_sidecar.hpp"
 #include "dedalus/visualization/world_to_image_projector.hpp"
 
 namespace dedalus {
@@ -147,53 +142,6 @@ void draw_label_bar(ImageView& image, int x, int y, const std::string& text, con
         const int h = 2 + static_cast<int>(code % 6U);
         fill_rect(image, cx, safe_y + 1 + (6 - h), 2, h, fg);
     }
-}
-
-std::string frame_file_name(const std::size_t frame_index) {
-    std::ostringstream stream;
-    stream << "frame_" << std::setw(6) << std::setfill('0') << frame_index << ".ppm";
-    return stream.str();
-}
-
-void validate_rgb_image(const ImageView& image) {
-    if (image.width <= 0 || image.height <= 0 || image.channels != 3) {
-        throw std::runtime_error("PPM frame annotation sink requires non-empty RGB images");
-    }
-    const auto expected_size = static_cast<std::size_t>(image.width * image.height * image.channels);
-    if (image.bytes.size() != expected_size) {
-        throw std::runtime_error("PPM frame annotation sink image byte count does not match dimensions");
-    }
-}
-
-void write_ppm(const std::filesystem::path& path, const ImageView& image) {
-    std::ofstream output{path, std::ios::binary};
-    if (!output) {
-        throw std::runtime_error("failed to open PPM annotation output: " + path.string());
-    }
-    output << "P6\n" << image.width << ' ' << image.height << "\n255\n";
-    output.write(reinterpret_cast<const char*>(image.bytes.data()), static_cast<std::streamsize>(image.bytes.size()));
-    if (!output) {
-        throw std::runtime_error("failed to write PPM annotation output: " + path.string());
-    }
-}
-
-void append_manifest_row(
-    const std::filesystem::path& manifest_path,
-    const std::size_t frame_index,
-    const AnnotationContext& context,
-    const std::filesystem::path& frame_path,
-    const double output_fps) {
-    const bool write_header = !std::filesystem::exists(manifest_path);
-    std::ofstream manifest{manifest_path, std::ios::app};
-    if (!manifest) {
-        throw std::runtime_error("failed to open annotation manifest: " + manifest_path.string());
-    }
-    if (write_header) {
-        manifest << "frame_index,frame_id,timestamp_ns,path,output_fps\n";
-    }
-    manifest << frame_index << ',' << context.frame.frame_id.value << ','
-             << context.frame.timestamp.timestamp_ns << ',' << frame_path.string() << ','
-             << output_fps << '\n';
 }
 
 WorldToImageProjectionConfig projection_config_for(const ImageView& image) {
@@ -454,29 +402,18 @@ void draw_world_debug_shapes(ImageView& image, const WorldSnapshot& snapshot) {
 
 }  // namespace
 
-void PpmFrameAnnotationSink::annotate(const AnnotationContext& context) {
-    validate_rgb_image(context.frame.image);
-
-    std::filesystem::create_directories(output_dir_);
-    ImageView annotated = context.frame.image;
-
-    draw_world_metadata(annotated, context);
+void annotate_frame_overlays(ImageView& image, const AnnotationContext& context) {
+    draw_world_metadata(image, context);
     for (const auto& detection : context.perception.stabilized_frame.detections) {
-        draw_detection_overlay(annotated, detection);
+        draw_detection_overlay(image, detection);
     }
     for (const auto& track : context.perception.tracks) {
-        draw_track_overlay(annotated, track);
+        draw_track_overlay(image, track);
     }
-    draw_projected_agent_overlays(annotated, context.world_snapshot);
-    draw_occupancy_overlay(annotated, context.world_snapshot);
-    draw_world_debug_shapes(annotated, context.world_snapshot);
-    draw_obstacle_evidence_overlay(annotated, context.world_snapshot);
-
-    ++frame_index_;
-    const auto frame_path = std::filesystem::path{output_dir_} / frame_file_name(frame_index_);
-    write_ppm(frame_path, annotated);
-    write_world_overlay_sidecar(std::filesystem::path{output_dir_}, frame_index_, context);
-    append_manifest_row(std::filesystem::path{output_dir_} / "manifest.txt", frame_index_, context, frame_path, output_fps_);
+    draw_projected_agent_overlays(image, context.world_snapshot);
+    draw_occupancy_overlay(image, context.world_snapshot);
+    draw_world_debug_shapes(image, context.world_snapshot);
+    draw_obstacle_evidence_overlay(image, context.world_snapshot);
 }
 
 }  // namespace dedalus
