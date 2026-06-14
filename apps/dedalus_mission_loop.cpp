@@ -66,6 +66,8 @@ struct Args {
     int verbosity{0};
     std::string world_snapshot_stream_host{"127.0.0.1"};
     int world_snapshot_stream_port{0};
+    std::string runtime_event_http_host{"127.0.0.1"};
+    int runtime_event_http_port{0};
     double safe_height_override_m{-1.0};
     double behavior_min_height_override_m{-1.0};
     double behavior_duration_override_s{-1.0};
@@ -281,6 +283,19 @@ Args parse_args(int argc, char** argv) {
             if (args.world_snapshot_stream_port < 0 || args.world_snapshot_stream_port > 65535) {
                 throw std::invalid_argument("--world-snapshot-stream-port must be in [0, 65535]");
             }
+        } else if (arg == "--runtime-event-http-host") {
+            if (i + 1 >= argc) {
+                throw std::invalid_argument("--runtime-event-http-host requires a value");
+            }
+            args.runtime_event_http_host = argv[++i];
+        } else if (arg == "--runtime-event-http-port") {
+            if (i + 1 >= argc) {
+                throw std::invalid_argument("--runtime-event-http-port requires a value");
+            }
+            args.runtime_event_http_port = std::stoi(argv[++i]);
+            if (args.runtime_event_http_port < 0 || args.runtime_event_http_port > 65535) {
+                throw std::invalid_argument("--runtime-event-http-port must be in [0, 65535]");
+            }
         } else {
             const int parsed_verbosity = verbosity_from_flag(arg);
             if (parsed_verbosity >= 0) {
@@ -461,7 +476,9 @@ int main(int argc, char** argv) {
             runtime_event_stream_server = std::make_shared<dedalus::RuntimeEventStreamServer>(
                 dedalus::RuntimeEventStreamServerConfig{
                     .bind_host = args.world_snapshot_stream_host,
-                    .port = static_cast<std::uint16_t>(args.world_snapshot_stream_port)});
+                    .port = static_cast<std::uint16_t>(args.world_snapshot_stream_port),
+                    .http_bind_host = args.runtime_event_http_host,
+                    .http_port = static_cast<std::uint16_t>(args.runtime_event_http_port)});
             runtime_event_stream_server->start();
             snapshot_publisher->subscribe(runtime_event_stream_server);
             ghost_detections_publisher->subscribe(runtime_event_stream_server);
@@ -469,6 +486,10 @@ int main(int argc, char** argv) {
             mission_obstacle_map_delta_publisher->subscribe(runtime_event_stream_server);
             std::cerr << "dedalus_mission_loop: runtime event stream listening on "
                       << args.world_snapshot_stream_host << ":" << runtime_event_stream_server->port() << "\n";
+            if (runtime_event_stream_server->http_port() > 0) {
+                std::cerr << "dedalus_mission_loop: runtime event HTTP/SSE listening on "
+                          << args.runtime_event_http_host << ":" << runtime_event_stream_server->http_port() << "\n";
+            }
         }
 
         app_config.runner.timing_writer = std::move(timing_writer);

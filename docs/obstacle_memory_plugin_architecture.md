@@ -649,3 +649,23 @@ Runtime streaming now exposes mission obstacle map deltas without duplicating th
 ```
 
 This keeps the file-backed persistence stream and live runtime stream on one schema and one changed-cell policy.
+
+
+### R3B.1 — embedded browser SSE endpoint
+
+The C++ `RuntimeEventStreamServer` keeps the existing raw TCP JSONL endpoint and can also expose a browser-facing HTTP/SSE endpoint:
+
+```text
+raw TCP JSONL: tcp://127.0.0.1:47770
+browser SSE:   http://127.0.0.1:8080/events
+health:        http://127.0.0.1:8080/healthz
+```
+
+The SSE endpoint does not introduce a second event schema. It converts the same canonical runtime JSON line into an SSE message by using the runtime `type` field as the SSE event name:
+
+```text
+event: mission_obstacle_map_delta
+data: {"type":"mission_obstacle_map_delta",...}
+```
+
+This preserves R3A's single compact delta schema while making the runtime stream directly consumable by browser `EventSource`.

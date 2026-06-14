@@ -26,6 +26,26 @@ void close_fd(int fd) {
     }
 }
 
+std::uint16_t reserve_tcp_port() {
+    const int fd = ::socket(AF_INET, SOCK_STREAM, 0);
+    require(fd >= 0, "reserve_tcp_port socket failed");
+
+    sockaddr_in addr{};
+    addr.sin_family = AF_INET;
+    addr.sin_port = htons(0);
+    require(::inet_pton(AF_INET, "127.0.0.1", &addr.sin_addr) == 1, "reserve_tcp_port inet_pton failed");
+    require(::bind(fd, reinterpret_cast<sockaddr*>(&addr), sizeof(addr)) == 0, "reserve_tcp_port bind failed");
+
+    sockaddr_in bound_addr{};
+    socklen_t bound_len = sizeof(bound_addr);
+    require(::getsockname(fd, reinterpret_cast<sockaddr*>(&bound_addr), &bound_len) == 0, "reserve_tcp_port getsockname failed");
+
+    const auto port = static_cast<std::uint16_t>(ntohs(bound_addr.sin_port));
+    close_fd(fd);
+    require(port > 0, "reserve_tcp_port returned zero");
+    return port;
+}
+
 int connect_to(std::uint16_t port) {
     const int fd = ::socket(AF_INET, SOCK_STREAM, 0);
     if (fd < 0) {
@@ -53,6 +73,44 @@ int connect_to(std::uint16_t port) {
         std::this_thread::sleep_for(std::chrono::milliseconds{20});
     }
     return fd;
+}
+
+std::string read_available_for_ms(int fd, int milliseconds) {
+    std::string buffer;
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds{milliseconds};
+    while (std::chrono::steady_clock::now() < deadline) {
+        char chunk[4096];
+        const auto received = ::recv(fd, chunk, sizeof(chunk), MSG_DONTWAIT);
+        if (received > 0) {
+            buffer.append(chunk, static_cast<std::size_t>(received));
+            continue;
+        }
+        if (received == 0) {
+            break;
+        }
+        if (errno == EINTR) {
+            continue;
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds{20});
+    }
+    return buffer;
+}
+
+void write_request(int fd, const std::string& request) {
+    const char* data = request.data();
+    std::size_t remaining = request.size();
+    while (remaining > 0U) {
+        const auto sent = ::send(fd, data, remaining, 0);
+        if (sent > 0) {
+            data += sent;
+            remaining -= static_cast<std::size_t>(sent);
+            continue;
+        }
+        if (errno == EINTR) {
+            continue;
+        }
+        throw std::runtime_error("send request failed");
+    }
 }
 
 std::string read_until_lines(int fd, int line_count) {
@@ -131,11 +189,25 @@ dedalus::MissionObstacleMapDeltaFrame make_delta_frame() {
 }
 
 void streams_jsonl_runtime_events_to_client() {
+    const auto requested_http_port = reserve_tcp_port();
     dedalus::RuntimeEventStreamServer server{
-        dedalus::RuntimeEventStreamServerConfig{.bind_host = "127.0.0.1", .port = 0}};
+        dedalus::RuntimeEventStreamServerConfig{.bind_host = "127.0.0.1", .port = 0, .http_bind_host = "127.0.0.1", .http_port = requested_http_port}};
     server.start();
     const auto port = server.port();
+    const auto http_port = server.http_port();
     require(port > 0, "ephemeral port should be assigned");
+    require(http_port == requested_http_port, "HTTP port should match requested test port");
+
+    const int health_fd = connect_to(http_port);
+    write_request(health_fd, "GET /healthz HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n");
+    const auto health = read_available_for_ms(health_fd, 500);
+    close_fd(health_fd);
+    require(health.find("HTTP/1.1 200 OK") != std::string::npos, "healthz missing 200 response");
+    require(health.find("\"ok\":true") != std::string::npos, "healthz missing ok=true");
+
+    const int sse_fd = connect_to(http_port);
+    write_request(sse_fd, "GET /events HTTP/1.1\r\nHost: localhost\r\nAccept: text/event-stream\r\n\r\n");
+    std::this_thread::sleep_for(std::chrono::milliseconds{80});
 
     const int fd = connect_to(port);
     std::this_thread::sleep_for(std::chrono::milliseconds{80});
@@ -147,7 +219,9 @@ void streams_jsonl_runtime_events_to_client() {
     server.on_snapshot(make_snapshot(2000, "track_b"));
 
     const auto received = read_until_lines(fd, 5);
+    const auto sse_received = read_available_for_ms(sse_fd, 1000);
     close_fd(fd);
+    close_fd(sse_fd);
     server.stop();
 
     require(received.find("\"type\":\"ghost_detections\"") != std::string::npos, "stream missing ghost_detections type");
@@ -166,10 +240,16 @@ void streams_jsonl_runtime_events_to_client() {
     require(received.find("map_stream_test") != std::string::npos, "stream missing map frame");
     require(received.find("dedalus.mission_obstacle_map_delta_batch.v2") != std::string::npos, "stream missing delta schema");
     require(received.find("airsim_depth_obstacle_detector") != std::string::npos, "stream missing delta source provider");
+    require(sse_received.find("HTTP/1.1 200 OK") != std::string::npos, "SSE stream missing 200 response");
+    require(sse_received.find("Content-Type: text/event-stream") != std::string::npos, "SSE stream missing content type");
+    require(sse_received.find("event: mission_obstacle_map_delta") != std::string::npos, "SSE stream missing mission obstacle delta event name");
+    require(sse_received.find("data: {\"type\":\"mission_obstacle_map_delta\"") != std::string::npos, "SSE stream missing mission obstacle delta data");
+    require(sse_received.find("dedalus.mission_obstacle_map_delta_batch.v2") != std::string::npos, "SSE stream missing delta schema");
 
     const auto stats = server.stats();
     require(stats.published_seq == 5, "server published_seq should be 5");
     require(stats.accepted_clients >= 1, "server should accept at least one client");
+    require(stats.accepted_sse_clients >= 1, "server should accept at least one SSE client");
 }
 
 void bounded_queue_drops_oldest_on_overflow() {
