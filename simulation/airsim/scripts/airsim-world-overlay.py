@@ -1224,7 +1224,7 @@ def format_osd_obstacle_evidence_line(snapshot: dict[str, Any] | None) -> str | 
         if source == "-" and item.get("source_provider"):
             source = str(item.get("source_provider"))
     return (
-        f"OBS depth_surf={depth_surface} "
+        f" OBS depth_surf={depth_surface} "
         f"src={short_text(source.replace('_', '-'), 16)} "
         f"occ={counts.get('occupied', 0)} sense={in_sense} sweep={in_sweep}"
     )
