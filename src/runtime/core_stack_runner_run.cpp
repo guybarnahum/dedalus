@@ -225,9 +225,19 @@ bool CoreStackRunner::run_once() {
     }
 
     start = SteadyClock::now();
-    mission_obstacle_map_delta_writer_.append_if_due(mission_local_obstacle_map_snapshot);
+    auto mission_obstacle_map_delta_batch =
+        mission_obstacle_map_delta_writer_.append_if_due(mission_local_obstacle_map_snapshot);
+    if (mission_obstacle_map_delta_batch.has_value() && mission_obstacle_map_delta_publisher_) {
+        mission_obstacle_map_delta_publisher_->publish(
+            MissionObstacleMapDeltaFrame{
+                .timestamp_ns = mission_local_obstacle_map_snapshot.summary.last_update_timestamp_ns,
+                .json = *mission_obstacle_map_delta_batch});
+    }
     if (timing_writer_) {
         timing_writer_->record_stage("mission_obstacle_map_delta_writer.append_if_due", duration_us(start));
+        timing_writer_->record_stage(
+            "mission_obstacle_map_delta_writer.published_live_batch",
+            mission_obstacle_map_delta_batch.has_value() ? 1 : 0);
     }
 
     if (timing_writer_) {

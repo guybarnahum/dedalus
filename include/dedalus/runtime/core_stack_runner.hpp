@@ -24,6 +24,7 @@ struct CoreStackRunnerConfig {
     std::unique_ptr<PipelineProfiler> timing_writer;
     std::shared_ptr<WorldSnapshotPublisher> snapshot_publisher;
     std::shared_ptr<GhostDetectionsPublisher> ghost_detections_publisher;
+    std::shared_ptr<MissionObstacleMapDeltaPublisher> mission_obstacle_map_delta_publisher;
     // Subscribers subscribed to snapshot_publisher at construction time.
     // CoreStackRunner retains these shared_ptrs (the publisher holds weak refs).
     std::vector<std::shared_ptr<WorldSnapshotSubscriber>> snapshot_subscribers;
@@ -50,6 +51,7 @@ private:
     std::unique_ptr<PipelineProfiler> timing_writer_;
     std::shared_ptr<WorldSnapshotPublisher> snapshot_publisher_;
     std::shared_ptr<GhostDetectionsPublisher> ghost_detections_publisher_;
+    std::shared_ptr<MissionObstacleMapDeltaPublisher> mission_obstacle_map_delta_publisher_;
     std::vector<std::shared_ptr<WorldSnapshotSubscriber>> snapshot_subscriber_handles_;
     AirSimDepthObstacleDetectorConfig airsim_depth_obstacle_detector_config_;
     SensingCoverageProvider sensing_coverage_provider_;

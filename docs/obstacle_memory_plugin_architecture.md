@@ -628,3 +628,24 @@ python3 tools/avoidance/obstacle_memory_manifest_summary.py out/<run>/obstacle_m
 ```
 
 The summary reports the schema, site/mission identifiers, selected site-map format, merge path, full-JSON status, and artifact existence/size for the full JSON, delta JSONL, delta SQLite, site SQLite, and site JSON artifacts.
+
+
+### R3A — live mission obstacle delta runtime event
+
+Runtime streaming now exposes mission obstacle map deltas without duplicating the compact-delta logic. The `MissionObstacleMapDeltaWriter` remains the canonical due-check and compact v2 batch renderer. When a batch is due, it writes the JSONL persistence record and returns the same batch string to `CoreStackRunner`.
+
+`CoreStackRunner` publishes the returned batch through `MissionObstacleMapDeltaPublisher`, and `RuntimeEventStreamServer` wraps it as a typed runtime event:
+
+```json
+{
+  "type": "mission_obstacle_map_delta",
+  "seq": 123,
+  "timestamp_ns": 123456789,
+  "mission_obstacle_map_delta": {
+    "schema": "dedalus.mission_obstacle_map_delta_batch.v2",
+    "cells": []
+  }
+}
+```
+
+This keeps the file-backed persistence stream and live runtime stream on one schema and one changed-cell policy.

@@ -260,6 +260,35 @@ std::string render_delta_batch(
 
 }  // namespace
 
+void MissionObstacleMapDeltaPublisher::subscribe(
+    std::shared_ptr<MissionObstacleMapDeltaSubscriber> subscriber) {
+    if (!subscriber) {
+        return;
+    }
+    std::lock_guard<std::mutex> lock{mutex_};
+    subscribers_.push_back(std::move(subscriber));
+}
+
+void MissionObstacleMapDeltaPublisher::publish(const MissionObstacleMapDeltaFrame& frame) {
+    std::vector<std::shared_ptr<MissionObstacleMapDeltaSubscriber>> live;
+    {
+        std::lock_guard<std::mutex> lock{mutex_};
+        auto it = subscribers_.begin();
+        while (it != subscribers_.end()) {
+            if (auto subscriber = it->lock()) {
+                live.push_back(std::move(subscriber));
+                ++it;
+            } else {
+                it = subscribers_.erase(it);
+            }
+        }
+    }
+
+    for (const auto& subscriber : live) {
+        subscriber->on_mission_obstacle_map_delta(frame);
+    }
+}
+
 MissionObstacleMapDeltaWriter::MissionObstacleMapDeltaWriter(
     MissionObstacleMapDeltaWriterConfig config)
     : config_(std::move(config)) {}
@@ -276,20 +305,20 @@ MissionObstacleMapDeltaWriter MissionObstacleMapDeltaWriter::from_environment() 
     return MissionObstacleMapDeltaWriter{std::move(config)};
 }
 
-void MissionObstacleMapDeltaWriter::append_if_due(
+std::optional<std::string> MissionObstacleMapDeltaWriter::append_if_due(
     const MissionLocalObstacleMapSnapshot& snapshot) {
     if (!config_.enabled || config_.output_path.empty()) {
-        return;
+        return std::nullopt;
     }
 
     const auto update_count = snapshot.summary.update_count;
     if (update_count == 0U) {
-        return;
+        return std::nullopt;
     }
 
     if (last_written_update_count_ != 0U &&
         update_count - last_written_update_count_ < config_.write_every_updates) {
-        return;
+        return std::nullopt;
     }
 
     const auto mission_end_unix_ns =
@@ -311,16 +340,18 @@ void MissionObstacleMapDeltaWriter::append_if_due(
         render_meta(config_, snapshot, *mission_start_unix_ns_, mission_end_unix_ns));
     wrote_header_meta_ = true;
 
-    append_text(
-        config_.output_path,
-        render_delta_batch(
-            config_,
-            snapshot,
-            *mission_start_unix_ns_,
-            last_written_snapshot_timestamp_ns_));
+    auto batch = render_delta_batch(
+        config_,
+        snapshot,
+        *mission_start_unix_ns_,
+        last_written_snapshot_timestamp_ns_);
+
+    append_text(config_.output_path, batch);
 
     last_written_update_count_ = update_count;
     last_written_snapshot_timestamp_ns_ = snapshot.summary.last_update_timestamp_ns;
+
+    return batch;
 }
 
 }  // namespace dedalus

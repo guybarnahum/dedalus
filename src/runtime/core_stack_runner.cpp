@@ -13,6 +13,7 @@ CoreStackRunner::CoreStackRunner(CoreStackProviders providers, CoreStackRunnerCo
       timing_writer_(std::move(config.timing_writer)),
       snapshot_publisher_(std::move(config.snapshot_publisher)),
       ghost_detections_publisher_(std::move(config.ghost_detections_publisher)),
+      mission_obstacle_map_delta_publisher_(std::move(config.mission_obstacle_map_delta_publisher)),
       snapshot_subscriber_handles_(std::move(config.snapshot_subscribers)),
       airsim_depth_obstacle_detector_config_(config.airsim_depth_obstacle_detector),
       sensing_coverage_provider_(providers_.obstacle_sensing_cameras),
