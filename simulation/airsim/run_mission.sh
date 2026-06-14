@@ -25,6 +25,7 @@ STREAM_HOST="127.0.0.1"
 STREAM_PORT="47770"
 RUNTIME_EVENT_HTTP_HOST="127.0.0.1"
 RUNTIME_EVENT_HTTP_PORT="0"
+RUNTIME_EVENT_STATIC_ROOT=""
 MAX_FRAMES="5400"
 SHUTDOWN_MAX_FRAMES="1800"
 SAFE_HEIGHT=""
@@ -118,6 +119,8 @@ Options:
                               Runtime event HTTP/SSE bind host. Default: 127.0.0.1
   --runtime-event-http-port PORT
                               Runtime event HTTP/SSE port; 0 disables it. Default: 0
+  --runtime-event-static-root DIR
+                              Static root served by runtime HTTP. Default: output dir
   --max-frames N              mission-loop --max-frames. Default: 5400
   --shutdown-max-frames N     mission-loop --shutdown-max-frames. Default: 1800
   --safe-height M             Override takeoff/return transit height and bridge takeoff height.
@@ -303,6 +306,7 @@ apply_sim_config() {
     v=$(sim_cfg stream_port "$f");                   [[ -z "$v" ]] || STREAM_PORT="$v"
     v=$(sim_cfg runtime_event_http_host "$f");       [[ -z "$v" ]] || RUNTIME_EVENT_HTTP_HOST="$v"
     v=$(sim_cfg runtime_event_http_port "$f");       [[ -z "$v" ]] || RUNTIME_EVENT_HTTP_PORT="$v"
+    v=$(sim_cfg runtime_event_static_root "$f");     [[ -z "$v" ]] || RUNTIME_EVENT_STATIC_ROOT="$v"
     v=$(sim_cfg max_frames "$f");                    [[ -z "$v" ]] || MAX_FRAMES="$v"
     v=$(sim_cfg shutdown_max_frames "$f");           [[ -z "$v" ]] || SHUTDOWN_MAX_FRAMES="$v"
     v=$(sim_cfg behavior_duration_s "$f");           [[ -z "$v" ]] || BEHAVIOR_DURATION_S="$v"
@@ -348,6 +352,7 @@ while [[ $# -gt 0 ]]; do
         --stream-port) STREAM_PORT="$2"; shift 2 ;;
         --runtime-event-http-host) RUNTIME_EVENT_HTTP_HOST="$2"; shift 2 ;;
         --runtime-event-http-port) RUNTIME_EVENT_HTTP_PORT="$2"; shift 2 ;;
+        --runtime-event-static-root) RUNTIME_EVENT_STATIC_ROOT="$2"; shift 2 ;;
         --max-frames) MAX_FRAMES="$2"; shift 2 ;;
         --shutdown-max-frames) SHUTDOWN_MAX_FRAMES="$2"; shift 2 ;;
         --safe-height) SAFE_HEIGHT="$2"; shift 2 ;;
@@ -558,6 +563,8 @@ if [[ "$WITH_SCENE_INVENTORY" -eq 1 ]]; then
     fi
 fi
 
+RUNTIME_EVENT_STATIC_ROOT="${RUNTIME_EVENT_STATIC_ROOT:-$OUTPUT_DIR}"
+
 MISSION_CMD=(
     "$MISSION_BIN"
     --config "$CONFIG_PATH"
@@ -567,6 +574,7 @@ MISSION_CMD=(
     --world-snapshot-stream-port "$STREAM_PORT"
     --runtime-event-http-host "$RUNTIME_EVENT_HTTP_HOST"
     --runtime-event-http-port "$RUNTIME_EVENT_HTTP_PORT"
+    --runtime-event-static-root "$RUNTIME_EVENT_STATIC_ROOT"
     --behavior-duration-s "$BEHAVIOR_DURATION_S"
 )
 if [[ -n "$SAFE_HEIGHT" ]]; then MISSION_CMD+=(--safe-height "$SAFE_HEIGHT"); fi

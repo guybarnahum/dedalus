@@ -3,6 +3,9 @@
 #include <algorithm>
 #include <cerrno>
 #include <cstring>
+#include <filesystem>
+#include <fstream>
+#include <iostream>
 #include <stdexcept>
 #include <string>
 #include <utility>
@@ -110,6 +113,50 @@ std::string http_request_path(const std::string& request) {
     return request.substr(first_space + 1, second_space - first_space - 1);
 }
 
+
+std::string content_type_for_path(const std::filesystem::path& path) {
+    const auto ext = path.extension().string();
+    if (ext == ".html" || ext == ".htm") {
+        return "text/html; charset=utf-8";
+    }
+    if (ext == ".js") {
+        return "application/javascript; charset=utf-8";
+    }
+    if (ext == ".css") {
+        return "text/css; charset=utf-8";
+    }
+    if (ext == ".json") {
+        return "application/json; charset=utf-8";
+    }
+    if (ext == ".txt") {
+        return "text/plain; charset=utf-8";
+    }
+    return "application/octet-stream";
+}
+
+bool path_is_within_root(const std::filesystem::path& candidate,
+                         const std::filesystem::path& root) {
+    auto rel = std::filesystem::relative(candidate, root);
+    for (const auto& part : rel) {
+        if (part == "..") {
+            return false;
+        }
+    }
+    return !rel.empty();
+}
+
+std::string http_response(std::string status,
+                          std::string content_type,
+                          const std::string& body) {
+    return "HTTP/1.1 " + status + "\r\n"
+           "Content-Type: " + content_type + "\r\n"
+           "Cache-Control: no-cache\r\n"
+           "Access-Control-Allow-Origin: *\r\n"
+           "Content-Length: " + std::to_string(body.size()) + "\r\n"
+           "\r\n" +
+           body;
+}
+
 std::string healthz_body(std::uint16_t tcp_port, std::uint16_t http_port) {
     return std::string("{\"ok\":true,\"runtime_event_tcp_port\":") +
            std::to_string(tcp_port) +
@@ -136,20 +183,26 @@ void RuntimeEventStreamServer::start() {
         listen_fd_ =
             create_listen_socket(config_.bind_host, config_.port, config_.listen_backlog, "runtime event stream");
         config_.port = bound_port(listen_fd_, config_.port);
+    } catch (...) {
+        close_listen_socket();
+        running_ = false;
+        throw;
+    }
 
-        if (config_.http_port != 0) {
+    if (config_.http_port != 0) {
+        try {
             http_listen_fd_ = create_listen_socket(
                 config_.http_bind_host,
                 config_.http_port,
                 config_.listen_backlog,
                 "runtime event HTTP/SSE stream");
             config_.http_port = bound_port(http_listen_fd_, config_.http_port);
+        } catch (const std::exception& exc) {
+            close_http_listen_socket();
+            std::cerr << "dedalus_mission_loop: warning: runtime event HTTP/SSE disabled: "
+                      << exc.what() << "\n";
+            config_.http_port = 0;
         }
-    } catch (...) {
-        close_http_listen_socket();
-        close_listen_socket();
-        running_ = false;
-        throw;
     }
 
     accept_thread_ = std::thread([this]() { accept_loop(); });
@@ -322,6 +375,37 @@ void RuntimeEventStreamServer::http_accept_loop() {
             (void)send_blocking_best_effort(client_fd, response);
             close_fd(client_fd);
             continue;
+        }
+
+        // serve static diagnostic file from configured root, if enabled
+        if (!config_.http_static_root.empty()) {
+            std::string rel = path;
+            const auto query_pos = rel.find('?');
+            if (query_pos != std::string::npos) {
+                rel = rel.substr(0, query_pos);
+            }
+            while (!rel.empty() && rel.front() == '/') {
+                rel.erase(rel.begin());
+            }
+            if (rel.empty()) {
+                rel = config_.http_default_file;
+            }
+
+            const auto root = std::filesystem::weakly_canonical(std::filesystem::path{config_.http_static_root});
+            const auto candidate = std::filesystem::weakly_canonical(root / rel);
+
+            if (path_is_within_root(candidate, root) &&
+                std::filesystem::exists(candidate) &&
+                std::filesystem::is_regular_file(candidate)) {
+                std::ifstream input{candidate, std::ios::binary};
+                std::string body{
+                    std::istreambuf_iterator<char>{input},
+                    std::istreambuf_iterator<char>{}};
+                const auto response = http_response("200 OK", content_type_for_path(candidate), body);
+                (void)send_blocking_best_effort(client_fd, response);
+                close_fd(client_fd);
+                continue;
+            }
         }
 
         const std::string body = "not found\n";

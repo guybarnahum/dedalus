@@ -68,6 +68,7 @@ struct Args {
     int world_snapshot_stream_port{0};
     std::string runtime_event_http_host{"127.0.0.1"};
     int runtime_event_http_port{0};
+    std::string runtime_event_static_root{};
     double safe_height_override_m{-1.0};
     double behavior_min_height_override_m{-1.0};
     double behavior_duration_override_s{-1.0};
@@ -296,6 +297,11 @@ Args parse_args(int argc, char** argv) {
             if (args.runtime_event_http_port < 0 || args.runtime_event_http_port > 65535) {
                 throw std::invalid_argument("--runtime-event-http-port must be in [0, 65535]");
             }
+        } else if (arg == "--runtime-event-static-root") {
+            if (i + 1 >= argc) {
+                throw std::invalid_argument("--runtime-event-static-root requires a value");
+            }
+            args.runtime_event_static_root = argv[++i];
         } else {
             const int parsed_verbosity = verbosity_from_flag(arg);
             if (parsed_verbosity >= 0) {
@@ -478,7 +484,8 @@ int main(int argc, char** argv) {
                     .bind_host = args.world_snapshot_stream_host,
                     .port = static_cast<std::uint16_t>(args.world_snapshot_stream_port),
                     .http_bind_host = args.runtime_event_http_host,
-                    .http_port = static_cast<std::uint16_t>(args.runtime_event_http_port)});
+                    .http_port = static_cast<std::uint16_t>(args.runtime_event_http_port),
+                    .http_static_root = args.runtime_event_static_root});
             runtime_event_stream_server->start();
             snapshot_publisher->subscribe(runtime_event_stream_server);
             ghost_detections_publisher->subscribe(runtime_event_stream_server);

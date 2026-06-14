@@ -23,6 +23,9 @@ struct RuntimeEventStreamServerConfig {
     // Optional browser-facing HTTP/SSE endpoint. Disabled when http_port == 0.
     std::string http_bind_host{"127.0.0.1"};
     std::uint16_t http_port{0};
+    // Optional static-file root for browser diagnostics. Empty disables static serving.
+    std::string http_static_root{};
+    std::string http_default_file{"mission_local_obstacle_viewer.html"};
     int listen_backlog{8};
     // Shared send queue bound: oldest message is dropped when the queue is full.
     std::size_t max_send_queue_depth{256};
