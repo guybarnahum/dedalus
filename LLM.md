@@ -33,6 +33,34 @@ GitHub status checks may be absent; continue to run local build/tests after code
 
 ---
 
+## 0. Ground-Truth Patch Policy
+
+Ground-truth patch policy:
+
+```text
+Before offering code changes, inspect the current repo files that define the call path, data flow, flags, schemas, tests, and scripts being changed.
+
+Do not guess file structure, option names, parser blocks, test layout, function signatures, enum values, generated artifact paths, or runtime wiring.
+
+Do not assume a wrapper script forwards a flag just because the binary supports it. Verify the wrapper parser and pass-through path.
+
+Do not assume a test failure is stale or caused by rebuild state until checking the source assertion, target path, and build output.
+
+When enhancing runtime or data-flow code, first trace:
+  source of data
+  owning publisher / accumulator
+  serialization boundary
+  transport or artifact writer
+  consuming test / tool / viewer
+  validation command
+
+Prefer small, anchored patches against inspected code. If the local file structure differs from the expected anchor, stop and request/inspect the relevant block instead of emitting increasingly broad regex patches.
+
+Balance architectural purity, implementation efficiency, and development risk. Use C++ when the feature belongs in the runtime ownership boundary; use Python/tools only for diagnostics, offline conversion, or intentionally external workflows.
+```
+
+---
+
 ## 1. Active Milestones
 
 ```text
