@@ -58,6 +58,7 @@ add_library(dedalus_core
     simulation/ghost_scenario_parse.cpp
     visualization/frame_annotator.cpp
     visualization/frame_annotator_annotate.cpp
+    visualization/frame_annotator_ppm_sequence.cpp
     visualization/obstacle_evidence_visualization.cpp
     visualization/world_overlay_sidecar.cpp
     visualization/world_to_image_projector.cpp
