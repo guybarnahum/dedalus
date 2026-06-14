@@ -23,6 +23,8 @@ CONFIG_PATH="$REPO_ROOT_ABS/config/core_stack_object_behavior_airsim_existing_ob
 OUTPUT_DIR="$REPO_ROOT_ABS/out/object_behavior_airsim_existing_object_circle"
 STREAM_HOST="127.0.0.1"
 STREAM_PORT="47770"
+RUNTIME_EVENT_HTTP_HOST="127.0.0.1"
+RUNTIME_EVENT_HTTP_PORT="0"
 MAX_FRAMES="5400"
 SHUTDOWN_MAX_FRAMES="1800"
 SAFE_HEIGHT=""
@@ -112,6 +114,10 @@ Options:
   --output-dir PATH           output dir. Default: ../../out/object_behavior_airsim_existing_object_circle
   --stream-host HOST          runtime stream host. Default: 127.0.0.1
   --stream-port PORT          runtime stream port. Default: 47770
+  --runtime-event-http-host HOST
+                              Runtime event HTTP/SSE bind host. Default: 127.0.0.1
+  --runtime-event-http-port PORT
+                              Runtime event HTTP/SSE port; 0 disables it. Default: 0
   --max-frames N              mission-loop --max-frames. Default: 5400
   --shutdown-max-frames N     mission-loop --shutdown-max-frames. Default: 1800
   --safe-height M             Override takeoff/return transit height and bridge takeoff height.
@@ -295,6 +301,8 @@ apply_sim_config() {
     v=$(sim_cfg vehicle_name "$f");                  [[ -z "$v" ]] || VEHICLE_NAME="$v"
     v=$(sim_cfg stream_host "$f");                   [[ -z "$v" ]] || STREAM_HOST="$v"
     v=$(sim_cfg stream_port "$f");                   [[ -z "$v" ]] || STREAM_PORT="$v"
+    v=$(sim_cfg runtime_event_http_host "$f");       [[ -z "$v" ]] || RUNTIME_EVENT_HTTP_HOST="$v"
+    v=$(sim_cfg runtime_event_http_port "$f");       [[ -z "$v" ]] || RUNTIME_EVENT_HTTP_PORT="$v"
     v=$(sim_cfg max_frames "$f");                    [[ -z "$v" ]] || MAX_FRAMES="$v"
     v=$(sim_cfg shutdown_max_frames "$f");           [[ -z "$v" ]] || SHUTDOWN_MAX_FRAMES="$v"
     v=$(sim_cfg behavior_duration_s "$f");           [[ -z "$v" ]] || BEHAVIOR_DURATION_S="$v"
@@ -338,6 +346,8 @@ while [[ $# -gt 0 ]]; do
         --output-dir) OUTPUT_DIR="$(creatable_abs_path "$2")"; shift 2 ;;
         --stream-host) STREAM_HOST="$2"; shift 2 ;;
         --stream-port) STREAM_PORT="$2"; shift 2 ;;
+        --runtime-event-http-host) RUNTIME_EVENT_HTTP_HOST="$2"; shift 2 ;;
+        --runtime-event-http-port) RUNTIME_EVENT_HTTP_PORT="$2"; shift 2 ;;
         --max-frames) MAX_FRAMES="$2"; shift 2 ;;
         --shutdown-max-frames) SHUTDOWN_MAX_FRAMES="$2"; shift 2 ;;
         --safe-height) SAFE_HEIGHT="$2"; shift 2 ;;
@@ -555,6 +565,8 @@ MISSION_CMD=(
     --max-frames "$MAX_FRAMES"
     --shutdown-max-frames "$SHUTDOWN_MAX_FRAMES"
     --world-snapshot-stream-port "$STREAM_PORT"
+    --runtime-event-http-host "$RUNTIME_EVENT_HTTP_HOST"
+    --runtime-event-http-port "$RUNTIME_EVENT_HTTP_PORT"
     --behavior-duration-s "$BEHAVIOR_DURATION_S"
 )
 if [[ -n "$SAFE_HEIGHT" ]]; then MISSION_CMD+=(--safe-height "$SAFE_HEIGHT"); fi
