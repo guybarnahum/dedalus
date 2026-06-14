@@ -616,3 +616,15 @@ python3 tools/avoidance/validate_obstacle_memory_manifest.py \
   --site-map-format sqlite
 ```
 
+
+
+### 5W — manifest summary command
+
+A lightweight CLI summarizes a post-mission obstacle-memory manifest without requiring ad hoc `ls` and `jq` commands:
+
+```bash
+python3 tools/avoidance/obstacle_memory_manifest_summary.py out/<run>/obstacle_memory_manifest.json
+python3 tools/avoidance/obstacle_memory_manifest_summary.py out/<run>/obstacle_memory_manifest.json --json
+```
+
+The summary reports the schema, site/mission identifiers, selected site-map format, merge path, full-JSON status, and artifact existence/size for the full JSON, delta JSONL, delta SQLite, site SQLite, and site JSON artifacts.
