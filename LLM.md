@@ -22,7 +22,11 @@ Current handoff state:
 
 4.1C AirSim depth obstacle detector dataflow is live-validated: AirSim DepthPlanar now reaches FramePacket.depth_frame, CoreStackRunner, WorldSnapshot.obstacle_evidence, and the AirSim OSD as classless `airsim_depth_obstacle_detector` volumetric evidence. See docs/airsim_depth_obstacle_detector_validation.md.
 
-Active next work: 5H persistent obstacle memory export. Before runtime preload or avoidance use, export mission-local obstacle maps with explicit unix_ns timestamps and primitive evidence fields, then merge/score persistent site maps with site-relative aging semantics. See docs/persistent_obstacle_memory_plan.md.
+5Q-5U obstacle-memory default path is compact-delta-first and SQLite-backed. Current main is operator-validated after the refactor/CI cleanup stack: tests pass and `simulation/airsim/run_mission.sh` invocation works. DRY_RUN was not attempted and should not be assumed available.
+
+GitHub workflow policy: CI and staging run the fast CTest subset (`-LE 'synthetic|scenario'`) plus core-stack smoke validation. Production keeps full CTest as the release gate plus core-stack smoke validation. See docs/ctest_validation_layers.md.
+
+Active next work: continue mechanical cleanup/refactors only after preserving validated state. Avoid changing runtime semantics unless explicitly scoped.
 
 GitHub status checks may be absent; continue to run local build/tests after code changes.
 ```
@@ -392,4 +396,3 @@ python3 tools/avoidance/validate_obstacle_memory_manifest.py \
   --mission-id <mission_id> \
   --site-map-format sqlite
 ```
-
