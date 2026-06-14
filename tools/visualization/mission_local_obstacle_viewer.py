@@ -224,11 +224,13 @@ HTML_TEMPLATE = """<!doctype html>
     <p class="hint">Drag to rotate. Wheel to zoom. Mission cells are rendered in map/takeoff-relative coordinates.</p>
     <div class="metric"><span>Snapshot</span><code>{snapshot_path}</code></div>
     <div class="metric"><span>Map frame</span><code>{map_frame}</code></div>
-    <div class="metric"><span>Observed cells</span><b>{observed}</b></div>
-    <div class="metric"><span>Occupied cells</span><b>{occupied}</b></div>
-    <div class="metric"><span>Debug cells shown</span><b>{debug_cells}</b></div>
-    <div class="metric"><span>Trajectory points</span><b>{trajectory_points}</b></div>
-    <div class="metric"><span>Bounds</span><code>{bounds_text}</code></div>
+    <div class="metric"><span>Observed cells</span><b id="observed-count">{observed}</b></div>
+    <div class="metric"><span>Occupied cells</span><b id="occupied-count">{occupied}</b></div>
+    <div class="metric"><span>Cells shown</span><b id="cell-count">{debug_cells}</b></div>
+    <div class="metric"><span>Trajectory points</span><b id="trajectory-count">{trajectory_points}</b></div>
+    <div class="metric"><span>Bounds</span><code id="bounds-text">{bounds_text}</code></div>
+    <div class="metric"><span>Live stream</span><code id="live-status">offline</code></div>
+    <div class="metric"><span>Live delta cells</span><b id="live-delta-count">0</b></div>
     <h3>Legend</h3>
     <p class="hint">
       Red: occupied mission-local cells<br>
@@ -241,6 +243,308 @@ HTML_TEMPLATE = """<!doctype html>
 </div>
 <script>
 const data = {data_json};
+if (!Array.isArray(data.cells)) data.cells = [];
+if (!Array.isArray(data.trajectory)) data.trajectory = [];
+
+const cellsByKey = new Map();
+for (const cell of data.cells) {
+  cellsByKey.set(cellKey(cell.center), normalizeCell(cell));
+}
+data.cells = Array.from(cellsByKey.values());
+
+const live = {
+  enabled: false,
+  connected: false,
+  eventSource: null,
+  eventCount: 0,
+  deltaCellCount: 0,
+  lastSeq: null,
+  error: ""
+};
+
+function el(id) {
+  return document.getElementById(id);
+}
+
+function finiteNumber(value, fallback = 0) {
+  const n = Number(value);
+  return Number.isFinite(n) ? n : fallback;
+}
+
+function asVec3(value) {
+  if (!value || typeof value !== "object") return null;
+  if (["x", "y", "z"].every((k) => Object.prototype.hasOwnProperty.call(value, k))) {
+    return {
+      x: finiteNumber(value.x),
+      y: finiteNumber(value.y),
+      z: finiteNumber(value.z)
+    };
+  }
+  if (["north", "east", "down"].every((k) => Object.prototype.hasOwnProperty.call(value, k))) {
+    return {
+      x: finiteNumber(value.north),
+      y: finiteNumber(value.east),
+      z: -finiteNumber(value.down)
+    };
+  }
+  return null;
+}
+
+function getPath(obj, path) {
+  let cur = obj;
+  for (const key of path) {
+    if (!cur || typeof cur !== "object" || !Object.prototype.hasOwnProperty.call(cur, key)) {
+      return null;
+    }
+    cur = cur[key];
+  }
+  return cur;
+}
+
+function firstVec3(obj, paths) {
+  for (const path of paths) {
+    const v = asVec3(getPath(obj, path));
+    if (v) return v;
+  }
+  return null;
+}
+
+function firstNumber(obj, paths) {
+  for (const path of paths) {
+    const raw = getPath(obj, path);
+    if (raw === null || raw === undefined) continue;
+    const n = Number(raw);
+    if (Number.isFinite(n)) return n;
+  }
+  return null;
+}
+
+function snapshotEgoPosition(snapshot) {
+  return firstVec3(snapshot, [
+    ["ego", "local_T_body", "position"],
+    ["ego", "pose", "position"],
+    ["ego", "position_local"],
+    ["ego", "position"],
+    ["ego", "local_position"]
+  ]);
+}
+
+function snapshotEgoYaw(snapshot) {
+  return firstNumber(snapshot, [
+    ["ego", "local_T_body", "rotation_rpy", "z"],
+    ["ego", "local_T_body", "rotation_rpy", "yaw"],
+    ["ego", "pose", "rotation_rpy", "z"],
+    ["ego", "pose", "rotation_rpy", "yaw"],
+    ["ego", "yaw_rad"],
+    ["ego", "heading_rad"]
+  ]);
+}
+
+function snapshotFirstBlocked(snapshot) {
+  const safety = snapshot && snapshot.trajectory_safety;
+  if (!safety || typeof safety !== "object") return null;
+  return firstVec3(safety, [
+    ["first_blocked_position_local"],
+    ["first_blocked_position"],
+    ["first_blocked_point"]
+  ]);
+}
+
+function cellKey(center) {
+  if (!center) return "missing";
+  return [
+    finiteNumber(center.x).toFixed(3),
+    finiteNumber(center.y).toFixed(3),
+    finiteNumber(center.z).toFixed(3)
+  ].join(",");
+}
+
+function normalizeCell(cell) {
+  const center = asVec3(cell.center) || asVec3(cell.center_mission) || asVec3(cell.center_map);
+  const size = asVec3(cell.size) || asVec3(cell.size_m) || {x: 0.5, y: 0.5, z: 0.5};
+  const occupiedScore = finiteNumber(cell.occupied_score);
+  const freeScore = finiteNumber(cell.free_score);
+  const riskScore = finiteNumber(cell.risk_score);
+  const occupied = cell.occupied === true || (occupiedScore > 0 && occupiedScore >= freeScore);
+  const free = cell.free === true || (!occupied && freeScore > 0);
+  return {
+    center,
+    size,
+    occupied,
+    free,
+    occupied_score: occupiedScore,
+    free_score: freeScore,
+    risk_score: riskScore,
+    confidence: finiteNumber(cell.confidence),
+    last_source_provider: String(cell.last_source_provider || cell.source_provider || ""),
+    last_source_kind: String(cell.last_source_kind || cell.source_kind || ""),
+    first_seen_unix_ns: cell.first_seen_unix_ns || null,
+    last_seen_unix_ns: cell.last_seen_unix_ns || null
+  };
+}
+
+function recomputeBounds() {
+  const points = [];
+  for (const cell of data.cells) {
+    if (cell.center) points.push(cell.center);
+  }
+  for (const p of data.trajectory) {
+    if (p) points.push(p);
+  }
+  if (data.ego) points.push(data.ego);
+  if (data.first_blocked) points.push(data.first_blocked);
+
+  if (points.length === 0) {
+    data.bounds = {min_x: -10, max_x: 10, min_y: -10, max_y: 10, min_z: -5, max_z: 5};
+    return;
+  }
+
+  const xs = points.map((p) => p.x);
+  const ys = points.map((p) => p.y);
+  const zs = points.map((p) => p.z);
+  data.bounds = {
+    min_x: Math.min(...xs),
+    max_x: Math.max(...xs),
+    min_y: Math.min(...ys),
+    max_y: Math.max(...ys),
+    min_z: Math.min(...zs),
+    max_z: Math.max(...zs)
+  };
+}
+
+function updateMetrics() {
+  const observedCount = cellsByKey.size;
+  const occupiedCount = data.cells.filter((cell) => cell.occupied).length;
+  const b = data.bounds;
+  if (el("observed-count")) el("observed-count").textContent = String(observedCount);
+  if (el("occupied-count")) el("occupied-count").textContent = String(occupiedCount);
+  if (el("cell-count")) el("cell-count").textContent = String(data.cells.length);
+  if (el("trajectory-count")) el("trajectory-count").textContent = String(data.trajectory.length);
+  if (el("live-delta-count")) el("live-delta-count").textContent = String(live.deltaCellCount);
+  if (el("bounds-text")) {
+    el("bounds-text").textContent =
+      `x[${b.min_x.toFixed(1)},${b.max_x.toFixed(1)}] ` +
+      `y[${b.min_y.toFixed(1)},${b.max_y.toFixed(1)}] ` +
+      `z[${b.min_z.toFixed(1)},${b.max_z.toFixed(1)}]`;
+  }
+  if (el("live-status")) {
+    if (!live.enabled) {
+      el("live-status").textContent = "offline";
+    } else if (live.connected) {
+      const suffix = live.lastSeq === null ? "" : ` seq=${live.lastSeq}`;
+      el("live-status").textContent = `connected${suffix}`;
+    } else if (live.error) {
+      el("live-status").textContent = `error: ${live.error}`;
+    } else {
+      el("live-status").textContent = "connecting";
+    }
+  }
+}
+
+function applyMissionObstacleMapDelta(delta, seq) {
+  if (!delta || typeof delta !== "object" || !Array.isArray(delta.cells)) return;
+  let changed = 0;
+  for (const raw of delta.cells) {
+    const cell = normalizeCell(raw);
+    if (!cell.center) continue;
+    cellsByKey.set(cellKey(cell.center), cell);
+    changed += 1;
+  }
+  data.cells = Array.from(cellsByKey.values());
+  live.deltaCellCount += changed;
+  live.lastSeq = seq;
+  recomputeBounds();
+  updateMetrics();
+  draw();
+}
+
+function applyWorldSnapshot(snapshot, seq) {
+  if (!snapshot || typeof snapshot !== "object") return;
+  const ego = snapshotEgoPosition(snapshot);
+  if (ego) {
+    data.ego = ego;
+    const last = data.trajectory.length ? data.trajectory[data.trajectory.length - 1] : null;
+    if (!last || Math.hypot(last.x - ego.x, last.y - ego.y, last.z - ego.z) > 0.05) {
+      data.trajectory.push(ego);
+      if (data.trajectory.length > 5000) {
+        data.trajectory.splice(0, data.trajectory.length - 5000);
+      }
+    }
+  }
+  const yawValue = snapshotEgoYaw(snapshot);
+  if (typeof yawValue === "number") {
+    data.ego_yaw = yawValue;
+  }
+  const blocked = snapshotFirstBlocked(snapshot);
+  if (blocked) {
+    data.first_blocked = blocked;
+  }
+  live.lastSeq = seq;
+  recomputeBounds();
+  updateMetrics();
+  draw();
+}
+
+function eventUrlFromLocation() {
+  const params = new URLSearchParams(window.location.search);
+  if (params.get("live") === "0") return null;
+  const explicit = params.get("events");
+  if (explicit) return explicit;
+  if (window.location.protocol === "http:" || window.location.protocol === "https:") {
+    return "/events";
+  }
+  return null;
+}
+
+function startLiveStream() {
+  const url = eventUrlFromLocation();
+  if (!url || typeof EventSource === "undefined") {
+    live.enabled = false;
+    updateMetrics();
+    return;
+  }
+
+  live.enabled = true;
+  live.error = "";
+  updateMetrics();
+
+  const source = new EventSource(url);
+  live.eventSource = source;
+
+  source.onopen = () => {
+    live.connected = true;
+    live.error = "";
+    updateMetrics();
+  };
+
+  source.onerror = () => {
+    live.connected = false;
+    live.error = "disconnected";
+    updateMetrics();
+  };
+
+  source.addEventListener("mission_obstacle_map_delta", (event) => {
+    try {
+      const payload = JSON.parse(event.data);
+      applyMissionObstacleMapDelta(payload.mission_obstacle_map_delta, payload.seq ?? null);
+    } catch (err) {
+      live.error = String(err);
+      updateMetrics();
+    }
+  });
+
+  source.addEventListener("world_snapshot", (event) => {
+    try {
+      const payload = JSON.parse(event.data);
+      applyWorldSnapshot(payload.world_snapshot || payload.snapshot, payload.seq ?? null);
+    } catch (err) {
+      live.error = String(err);
+      updateMetrics();
+    }
+  });
+}
+
+
 
 const canvas = document.getElementById("canvas");
 const ctx = canvas.getContext("2d");
@@ -330,7 +634,7 @@ function draw() {{
   ctx.clearRect(0, 0, canvas.width, canvas.height);
   drawAxes();
 
-  const cells = data.cells.slice().sort((a, b) => project(a.center).depth - project(b.center).depth);
+  const cells = data.cells.filter((cell) => cell.center).slice().sort((a, b) => project(a.center).depth - project(b.center).depth);
   for (const cell of cells) {{
     const score = Math.max(cell.occupied_score || 0, cell.free_score || 0, cell.risk_score || 0);
     const r = Math.max(2, Math.min(8, 2 + score * 0.4));
@@ -384,7 +688,10 @@ canvas.addEventListener("wheel", (e) => {{
 }}, {{passive: false}});
 
 window.addEventListener("resize", resize);
+recomputeBounds();
+updateMetrics();
 resize();
+startLiveStream();
 </script>
 </body>
 </html>
@@ -464,4 +771,4 @@ def main() -> int:
 
 
 if __name__ == "__main__":
-    raise SystemExit(main())
+    main()
