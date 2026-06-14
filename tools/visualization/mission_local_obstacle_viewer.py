@@ -698,6 +698,40 @@ startLiveStream();
 """
 
 
+
+def render_html_template(template: str, **values: object) -> str:
+    """Render HTML_TEMPLATE without treating JavaScript braces as format fields.
+
+    The viewer template contains large JavaScript blocks. Python str.format()
+    interprets every single `{...}` pair as a placeholder, which breaks as soon
+    as the embedded JavaScript contains normal object/function braces. This
+    helper replaces only the explicit top-level template tokens used by
+    build_html(), while still supporting the older doubled-brace escapes already
+    present in the template.
+
+    Order matters:
+      1. Replace known `{key}` placeholders with sentinels.
+      2. Collapse existing `{{` / `}}` escapes in the template itself.
+      3. Substitute the real values, so JSON payload braces are not modified.
+    """
+
+    rendered = template
+    sentinels: dict[str, str] = {}
+
+    for index, (key, value) in enumerate(values.items()):
+        token = "{" + key + "}"
+        sentinel = f"__DEDALUS_TEMPLATE_VALUE_{index}__"
+        sentinels[sentinel] = str(value)
+        rendered = rendered.replace(token, sentinel)
+
+    rendered = rendered.replace("{{", "{").replace("}}", "}")
+
+    for sentinel, value in sentinels.items():
+        rendered = rendered.replace(sentinel, value)
+
+    return rendered
+
+
 def build_html(
     snapshot_path: Path,
     snapshot: dict[str, Any],
@@ -726,7 +760,7 @@ def build_html(
         "bounds": b,
     }
 
-    return HTML_TEMPLATE.format(
+    return render_html_template(HTML_TEMPLATE,
         snapshot_path=html.escape(str(snapshot_path)),
         map_frame=html.escape(str(mission.get("map_frame_id", ""))),
         observed=html.escape(str(mission.get("observed_cell_count", 0))),
