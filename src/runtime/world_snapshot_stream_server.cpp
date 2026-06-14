@@ -97,19 +97,6 @@ bool send_blocking_best_effort(int fd, const std::string& payload) {
     return true;
 }
 
-std::string http_header_value(const std::string& request, const std::string& prefix) {
-    const auto pos = request.find(prefix);
-    if (pos == std::string::npos) {
-        return "";
-    }
-    const auto start = pos + prefix.size();
-    const auto end = request.find('\n', start);
-    auto value = request.substr(start, end == std::string::npos ? std::string::npos : end - start);
-    while (!value.empty() && (value.back() == '\r' || value.back() == ' ' || value.back() == '\t')) {
-        value.pop_back();
-    }
-    return value;
-}
 
 std::string http_request_path(const std::string& request) {
     const auto first_space = request.find(' ');
