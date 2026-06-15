@@ -280,6 +280,15 @@ function finiteNumber(value, fallback = 0) {
 }
 
 function asVec3(value) {
+  if (Array.isArray(value)) {
+    if (value.length < 2) return null;
+    const x = finiteNumber(value[0], NaN);
+    const y = finiteNumber(value[1], NaN);
+    const z = finiteNumber(value.length >= 3 ? value[2] : 0, NaN);
+    if (![x, y, z].every(Number.isFinite)) return null;
+    return {x, y, z};
+  }
+
   if (!value || typeof value !== "object") return null;
   if (["x", "y", "z"].every((k) => Object.prototype.hasOwnProperty.call(value, k))) {
     return {
@@ -322,6 +331,16 @@ function firstNumber(obj, paths) {
     const raw = getPath(obj, path);
     if (raw === null || raw === undefined) continue;
     const n = Number(raw);
+    if (Number.isFinite(n)) return n;
+  }
+  return null;
+}
+
+function firstArrayNumber(obj, paths, index) {
+  for (const path of paths) {
+    const raw = getPath(obj, path);
+    if (!Array.isArray(raw) || raw.length <= index) continue;
+    const n = Number(raw[index]);
     if (Number.isFinite(n)) return n;
   }
   return null;
@@ -433,7 +452,23 @@ function snapshotEgoYaw(snapshot) {
     ["agent", "yaw_rad"],
     ["ownship", "yaw_rad"]
   ]);
-  return direct === null ? recursiveYawSearch(snapshot) : direct;
+  if (direct !== null) return direct;
+
+  const arrayYaw = firstArrayNumber(snapshot, [
+    ["ego_state", "local_T_body", "rotation_rpy"],
+    ["ego_state", "pose", "rotation_rpy"],
+    ["ego_state", "rotation_rpy"],
+    ["ego", "local_T_body", "rotation_rpy"],
+    ["ego", "pose", "rotation_rpy"],
+    ["ego", "rotation_rpy"],
+    ["vehicle", "rotation_rpy"],
+    ["drone", "rotation_rpy"],
+    ["agent", "rotation_rpy"],
+    ["ownship", "rotation_rpy"]
+  ], 2);
+  if (arrayYaw !== null) return arrayYaw;
+
+  return recursiveYawSearch(snapshot);
 }
 
 function snapshotFirstBlocked(snapshot) {
