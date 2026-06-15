@@ -256,6 +256,7 @@ HTML_TEMPLATE = """<!doctype html>
 const data = {data_json};
 if (!Array.isArray(data.cells)) data.cells = [];
 if (!Array.isArray(data.trajectory)) data.trajectory = [];
+if (!Array.isArray(data.liveObstacleEvents)) data.liveObstacleEvents = [];
 
 const cellsByKey = new Map();
 for (const cell of data.cells) {
@@ -596,9 +597,20 @@ function applyMissionObstacleMapDelta(delta, seq) {
     const existing = cellsByKey.get(key);
     cell.live_seen_ms = existing && existing.live_seen_ms ? existing.live_seen_ms : Date.now();
     cellsByKey.set(key, cell);
+    data.liveObstacleEvents.push({
+      center: cell.center,
+      occupied: cell.occupied,
+      free: cell.free,
+      occupied_score: cell.occupied_score,
+      free_score: cell.free_score,
+      risk_score: cell.risk_score,
+      confidence: cell.confidence,
+      live_seen_ms: Date.now()
+    });
     changed += 1;
   }
   data.cells = Array.from(cellsByKey.values());
+  pruneLiveObstacleEvents();
   live.deltaCellCount += changed;
   live.lastSeq = seq;
   recomputeBounds();
@@ -900,6 +912,20 @@ function liveYellow(level, alpha = 0.92) {
   return `rgba(255,${gb},0,${alpha})`;
 }
 
+function pruneLiveObstacleEvents() {
+  const cutoffMs = Date.now() - 60000;
+  if (!Array.isArray(data.liveObstacleEvents)) {
+    data.liveObstacleEvents = [];
+    return;
+  }
+  if (data.liveObstacleEvents.length > 12000) {
+    data.liveObstacleEvents.splice(0, data.liveObstacleEvents.length - 12000);
+  }
+  data.liveObstacleEvents = data.liveObstacleEvents.filter((event) => {
+    return event && event.center && Number(event.live_seen_ms) >= cutoffMs;
+  });
+}
+
 function drawLivePoint(center, color, radius) {
   if (!center) return;
   const p = project(center);
@@ -914,11 +940,13 @@ function drawLiveAgingOverlay() {
   const now = Date.now();
   ctx.save();
 
-  for (const cell of data.cells) {
-    const level = liveDecayLevel(cell.live_seen_ms, LIVE_OBSTACLE_DIM);
+  const liveObstacleEvents = Array.isArray(data.liveObstacleEvents) ? data.liveObstacleEvents : [];
+  for (const event of liveObstacleEvents) {
+    const level = liveDecayLevel(event.live_seen_ms, LIVE_OBSTACLE_DIM);
     if (level === null) continue;
-    const radius = Math.max(2.0, 5.5 * level);
-    drawLivePoint(cell.center, liveRed(level), radius);
+    const score = Math.max(event.occupied_score || 0, event.free_score || 0, event.risk_score || 0);
+    const radius = Math.max(2.5, Math.min(9.0, 3.0 + score * 0.6)) * Math.max(0.75, level);
+    drawLivePoint(event.center, liveRed(level), radius);
   }
 
   const liveTrack = data.trajectory.filter((point) => point && point.live_seen_ms);
@@ -949,7 +977,7 @@ function drawLiveAgingOverlay() {
   // Keep live visuals moving through the 10-second fade even when no new events arrive.
   if (live.enabled && live.connected) {
     requestAnimationFrame(() => {
-      const hasRecentObstacle = data.cells.some((cell) => cell.live_seen_ms && now - Number(cell.live_seen_ms) < LIVE_FADE_END_MS);
+      const hasRecentObstacle = data.liveObstacleEvents.some((event) => event.live_seen_ms && now - Number(event.live_seen_ms) < LIVE_FADE_END_MS);
       const hasRecentTrack = data.trajectory.some((point) => point.live_seen_ms && now - Number(point.live_seen_ms) < LIVE_FADE_END_MS);
       if (hasRecentObstacle || hasRecentTrack) {
         draw();
