@@ -231,6 +231,8 @@ HTML_TEMPLATE = """<!doctype html>
     <div class="metric"><span>Bounds</span><code id="bounds-text">{bounds_text}</code></div>
     <div class="metric"><span>Live stream</span><code id="live-status">offline</code></div>
     <div class="metric"><span>Live delta cells</span><b id="live-delta-count">0</b></div>
+    <div class="metric"><span>World snapshots</span><b id="world-snapshot-count">0</b></div>
+    <div class="metric"><span>Ego updates</span><b id="ego-update-count">0</b></div>
     <h3>Legend</h3>
     <p class="hint">
       Red: occupied mission-local cells<br>
@@ -262,6 +264,8 @@ const live = {
   eventSource: null,
   eventCount: 0,
   deltaCellCount: 0,
+  worldSnapshotCount: 0,
+  egoUpdateCount: 0,
   lastSeq: null,
   error: ""
 };
@@ -514,6 +518,8 @@ function updateMetrics() {
   if (el("cell-count")) el("cell-count").textContent = String(data.cells.length);
   if (el("trajectory-count")) el("trajectory-count").textContent = String(data.trajectory.length);
   if (el("live-delta-count")) el("live-delta-count").textContent = String(live.deltaCellCount);
+  if (el("world-snapshot-count")) el("world-snapshot-count").textContent = String(live.worldSnapshotCount);
+  if (el("ego-update-count")) el("ego-update-count").textContent = String(live.egoUpdateCount);
   if (el("bounds-text")) {
     el("bounds-text").textContent =
       `x[${b.min_x.toFixed(1)},${b.max_x.toFixed(1)}] ` +
@@ -554,8 +560,10 @@ function applyMissionObstacleMapDelta(delta, seq) {
 
 function applyWorldSnapshot(snapshot, seq) {
   if (!snapshot || typeof snapshot !== "object") return;
+  live.worldSnapshotCount += 1;
   const ego = snapshotEgoPosition(snapshot);
   if (ego) {
+    live.egoUpdateCount += 1;
     data.ego = ego;
     const last = data.trajectory.length ? data.trajectory[data.trajectory.length - 1] : null;
     if (!last || Math.hypot(last.x - ego.x, last.y - ego.y, last.z - ego.z) > 0.05) {
@@ -731,17 +739,25 @@ function draw() {{
 
   const cells = data.cells.filter((cell) => cell.center).slice().sort((a, b) => project(a.center).depth - project(b.center).depth);
   for (const cell of cells) {{
+    if (cell.live_seen_ms) {{
+      continue;
+    }}
     const score = Math.max(cell.occupied_score || 0, cell.free_score || 0, cell.risk_score || 0);
     const r = Math.max(2, Math.min(8, 2 + score * 0.4));
-    const color = cell.occupied ? "rgba(255, 83, 83, 0.78)" :
-                  cell.free ? "rgba(80, 170, 255, 0.60)" :
-                  "rgba(180, 180, 180, 0.45)";
+    const color = cell.occupied ? "rgba(130, 38, 38, 0.42)" :
+                  cell.free ? "rgba(45, 95, 145, 0.38)" :
+                  "rgba(120, 120, 120, 0.30)";
     drawPoint(cell.center, color, r);
   }}
 
   if (data.trajectory.length > 1) {{
     for (let i = 1; i < data.trajectory.length; ++i) {{
-      drawLine(data.trajectory[i - 1], data.trajectory[i], "rgba(255, 220, 90, 0.9)", 2);
+      const a = data.trajectory[i - 1];
+      const b = data.trajectory[i];
+      if ((a && a.live_seen_ms) || (b && b.live_seen_ms)) {{
+        continue;
+      }}
+      drawLine(a, b, "rgba(150, 120, 35, 0.38)", 1.5);
     }}
   }}
 
