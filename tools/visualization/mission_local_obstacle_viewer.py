@@ -271,6 +271,12 @@ const LIVE_OBSTACLE_DIM = 0.45;
 const LIVE_TRACK_DIM = 0.55;
 const LIVE_OBSTACLE_EVENT_MAX = 5000;
 const LIVE_OBSTACLE_EVENT_GRID_M = 0.35;
+const LIVE_PENDING_DELTA_CELL_MAX = 4096;
+
+const liveObstacleEventsByKey = new Map();
+for (const event of data.liveObstacleEvents) {
+  if (event && event.key) liveObstacleEventsByKey.set(event.key, event);
+}
 
 const live = {
   enabled: false,
@@ -281,7 +287,14 @@ const live = {
   worldSnapshotCount: 0,
   egoUpdateCount: 0,
   lastSeq: null,
-  error: ""
+  error: "",
+  pendingWorldSnapshot: null,
+  pendingWorldSnapshotSeq: null,
+  pendingDeltaCells: [],
+  pendingDeltaSeq: null,
+  processingScheduled: false,
+  coalescedDeltaFrames: 0,
+  droppedPendingDeltaCells: 0
 };
 
 function el(id) {
@@ -610,8 +623,8 @@ function updateMetrics() {
   }
 }
 
-function applyMissionObstacleMapDelta(delta, seq) {
-  if (!delta || typeof delta !== "object" || !Array.isArray(delta.cells)) return;
+function applyMissionObstacleMapDelta(delta, seq, options = {}) {
+  if (!delta || typeof delta !== "object" || !Array.isArray(delta.cells)) return 0;
 
   let changed = 0;
   const nowMs = Date.now();
@@ -633,10 +646,11 @@ function applyMissionObstacleMapDelta(delta, seq) {
       live_seen_ms: nowMs
     };
 
-    const existingIndex = data.liveObstacleEvents.findIndex((existing) => existing && existing.key === eventKey);
-    if (existingIndex >= 0) {
-      data.liveObstacleEvents[existingIndex] = event;
+    const existing = liveObstacleEventsByKey.get(eventKey);
+    if (existing) {
+      Object.assign(existing, event);
     } else {
+      liveObstacleEventsByKey.set(eventKey, event);
       data.liveObstacleEvents.push(event);
     }
 
@@ -644,24 +658,34 @@ function applyMissionObstacleMapDelta(delta, seq) {
   }
 
   if (data.liveObstacleEvents.length > LIVE_OBSTACLE_EVENT_MAX) {
-    data.liveObstacleEvents.splice(0, data.liveObstacleEvents.length - LIVE_OBSTACLE_EVENT_MAX);
+    const removed = data.liveObstacleEvents.splice(0, data.liveObstacleEvents.length - LIVE_OBSTACLE_EVENT_MAX);
+    for (const event of removed) {
+      if (event && event.key) liveObstacleEventsByKey.delete(event.key);
+    }
   }
 
   data.cells = Array.from(cellsByKey.values());
   live.deltaCellCount += changed;
   live.lastSeq = seq;
-  recomputeBounds();
-  updateMetrics();
-  scheduleDraw();
+
+  if (!options.deferRender) {
+    recomputeBounds();
+    updateMetrics();
+    scheduleDraw();
+  }
+
+  return changed;
 }
 
-function applyWorldSnapshot(snapshot, seq) {
-  if (!snapshot || typeof snapshot !== "object") return;
-  live.worldSnapshotCount += 1;
+function applyWorldSnapshot(snapshot, seq, options = {}) {
+  if (!snapshot || typeof snapshot !== "object") return false;
+
+  let changed = false;
   const ego = snapshotEgoPosition(snapshot);
   if (ego) {
     live.egoUpdateCount += 1;
     data.ego = ego;
+    changed = true;
     const last = data.trajectory.length ? data.trajectory[data.trajectory.length - 1] : null;
     if (!last || Math.hypot(last.x - ego.x, last.y - ego.y, last.z - ego.z) > 0.05) {
       const trackSample = {...ego, live_seen_ms: Date.now()};
@@ -674,15 +698,22 @@ function applyWorldSnapshot(snapshot, seq) {
   const yawValue = snapshotEgoYaw(snapshot);
   if (typeof yawValue === "number") {
     data.ego_yaw = yawValue;
+    changed = true;
   }
   const blocked = snapshotFirstBlocked(snapshot);
   if (blocked) {
     data.first_blocked = blocked;
+    changed = true;
   }
   live.lastSeq = seq;
-  recomputeBounds();
-  updateMetrics();
-  scheduleDraw();
+
+  if (!options.deferRender) {
+    recomputeBounds();
+    updateMetrics();
+    scheduleDraw();
+  }
+
+  return changed;
 }
 
 function eventUrlFromLocation() {
@@ -694,6 +725,80 @@ function eventUrlFromLocation() {
     return "/events";
   }
   return null;
+}
+
+function flushLiveEventRenderUpdates() {
+  recomputeBounds();
+  updateMetrics();
+  scheduleDraw();
+}
+
+function scheduleLiveEventProcessing() {
+  if (live.processingScheduled) return;
+  live.processingScheduled = true;
+  requestAnimationFrame(processPendingLiveEvents);
+}
+
+function processPendingLiveEvents() {
+  live.processingScheduled = false;
+
+  const pendingCells = live.pendingDeltaCells;
+  const pendingDeltaSeq = live.pendingDeltaSeq;
+  live.pendingDeltaCells = [];
+  live.pendingDeltaSeq = null;
+
+  const pendingSnapshot = live.pendingWorldSnapshot;
+  const pendingSnapshotSeq = live.pendingWorldSnapshotSeq;
+  live.pendingWorldSnapshot = null;
+  live.pendingWorldSnapshotSeq = null;
+
+  let changed = false;
+  if (pendingCells.length > 0) {
+    changed = applyMissionObstacleMapDelta({cells: pendingCells}, pendingDeltaSeq, {deferRender: true}) > 0 || changed;
+  }
+  if (pendingSnapshot) {
+    changed = applyWorldSnapshot(pendingSnapshot, pendingSnapshotSeq, {deferRender: true}) || changed;
+  }
+
+  if (changed) {
+    flushLiveEventRenderUpdates();
+  } else {
+    updateMetrics();
+  }
+
+  if ((live.pendingDeltaCells.length > 0 || live.pendingWorldSnapshot) && !live.processingScheduled) {
+    scheduleLiveEventProcessing();
+  }
+}
+
+function enqueueMissionObstacleMapDelta(payload) {
+  const delta = payload && payload.mission_obstacle_map_delta;
+  if (!delta || typeof delta !== "object" || !Array.isArray(delta.cells)) return;
+
+  live.coalescedDeltaFrames += 1;
+  live.pendingDeltaSeq = payload.seq ?? live.pendingDeltaSeq;
+
+  for (const raw of delta.cells) {
+    live.pendingDeltaCells.push(raw);
+  }
+
+  if (live.pendingDeltaCells.length > LIVE_PENDING_DELTA_CELL_MAX) {
+    const dropped = live.pendingDeltaCells.length - LIVE_PENDING_DELTA_CELL_MAX;
+    live.pendingDeltaCells.splice(0, dropped);
+    live.droppedPendingDeltaCells += dropped;
+  }
+
+  scheduleLiveEventProcessing();
+}
+
+function enqueueWorldSnapshot(payload) {
+  const snapshot = payload && (payload.world_snapshot || payload.snapshot);
+  if (!snapshot || typeof snapshot !== "object") return;
+
+  live.worldSnapshotCount += 1;
+  live.pendingWorldSnapshot = snapshot;
+  live.pendingWorldSnapshotSeq = payload.seq ?? null;
+  scheduleLiveEventProcessing();
 }
 
 function startLiveStream() {
@@ -725,8 +830,7 @@ function startLiveStream() {
 
   source.addEventListener("mission_obstacle_map_delta", (event) => {
     try {
-      const payload = JSON.parse(event.data);
-      applyMissionObstacleMapDelta(payload.mission_obstacle_map_delta, payload.seq ?? null);
+      enqueueMissionObstacleMapDelta(JSON.parse(event.data));
     } catch (err) {
       live.error = String(err);
       updateMetrics();
@@ -735,8 +839,7 @@ function startLiveStream() {
 
   source.addEventListener("world_snapshot", (event) => {
     try {
-      const payload = JSON.parse(event.data);
-      applyWorldSnapshot(payload.world_snapshot || payload.snapshot, payload.seq ?? null);
+      enqueueWorldSnapshot(JSON.parse(event.data));
     } catch (err) {
       live.error = String(err);
       updateMetrics();
