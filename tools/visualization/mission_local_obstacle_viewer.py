@@ -546,8 +546,10 @@ function applyMissionObstacleMapDelta(delta, seq) {
   for (const raw of delta.cells) {
     const cell = normalizeCell(raw);
     if (!cell.center) continue;
-    cell.live_seen_ms = Date.now();
-    cellsByKey.set(cellKey(cell.center), cell);
+    const key = cellKey(cell.center);
+    const existing = cellsByKey.get(key);
+    cell.live_seen_ms = existing && existing.live_seen_ms ? existing.live_seen_ms : Date.now();
+    cellsByKey.set(key, cell);
     changed += 1;
   }
   data.cells = Array.from(cellsByKey.values());
