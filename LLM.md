@@ -424,3 +424,17 @@ python3 tools/avoidance/validate_obstacle_memory_manifest.py \
   --mission-id <mission_id> \
   --site-map-format sqlite
 ```
+
+## Patch output and safety policy
+
+When providing patch snippets:
+
+- Do not append routine `grep`, `diff`, or code-section inspection commands after a patch.
+- Patch scripts may inspect files internally, but normal output must be limited to concise `OK:` / `ERROR:` status lines.
+- Do not dump code sections as validation output. It is noisy and usually does not help human review.
+- Do not call `sys.exit()`, `raise SystemExit`, shell `exit`, or otherwise intentionally terminate the user's shell/session from generated patch snippets.
+- Do not rely on `set -e` behavior for patch control flow.
+- Do not assume generated runtime directories such as `out/...`, logs, snapshots, artifacts, or validation output exist inside patch logic unless the user explicitly provided them for that patch.
+- If a guarded patch cannot find an expected anchor, print a concise `ERROR:` explaining what failed and do not write partial changes.
+- Use prose summaries plus build/test/runtime commands for validation. Keep patch output human-readable and short.
+
