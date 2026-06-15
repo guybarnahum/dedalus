@@ -215,6 +215,9 @@ HTML_TEMPLATE = """<!doctype html>
   code {{ color: #a7d4ff; word-break: break-all; }}
   .metric {{ display: grid; grid-template-columns: 1fr auto; gap: 8px; padding: 4px 0; border-bottom: 1px solid #252a36; }}
   .hint {{ color: #aab0bf; line-height: 1.4; }}
+  .view-controls {{ display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin: 12px 0 14px; }}
+  .view-controls button {{ background: #222838; color: #e8e8e8; border: 1px solid #3a4358; border-radius: 6px; padding: 6px 8px; cursor: pointer; }}
+  .view-controls button:hover {{ background: #2b3348; }}
 </style>
 </head>
 <body>
@@ -222,6 +225,12 @@ HTML_TEMPLATE = """<!doctype html>
   <aside id="side">
     <h2>Mission-local obstacle map</h2>
     <p class="hint">Drag to rotate. Wheel to zoom. Mission cells are rendered in map/takeoff-relative coordinates.</p>
+    <div class="view-controls">
+      <button id="view-center" type="button">Center</button>
+      <button id="view-45" type="button">45°</button>
+      <button id="view-side" type="button">Side</button>
+      <button id="view-top" type="button">Top</button>
+    </div>
     <div class="metric"><span>Snapshot</span><code>{snapshot_path}</code></div>
     <div class="metric"><span>Map frame</span><code>{map_frame}</code></div>
     <div class="metric"><span>Observed cells</span><b id="observed-count">{observed}</b></div>
@@ -254,7 +263,9 @@ for (const cell of data.cells) {
 }
 data.cells = Array.from(cellsByKey.values());
 
-const LIVE_DECAY_MS = 10000;
+const LIVE_BRIGHT_HOLD_MS = 2000;
+const LIVE_FADE_END_MS = 10000;
+const LIVE_DECAY_MS = LIVE_FADE_END_MS;
 const LIVE_OBSTACLE_DIM = 0.45;
 const LIVE_TRACK_DIM = 0.55;
 
@@ -719,7 +730,9 @@ function radius() {{
 function project(p) {{
   const c = center();
   let x = p.x - c.x;
-  let y = p.y - c.y;
+  // AirSim/NED-style local Y is mirrored in canvas space; flip it so orbit
+  // handedness matches the simulator view.
+  let y = -(p.y - c.y);
   // Viewer convention: flip Z so positive/down snapshot values render visually down,
   // and positive/up render visually up.
   let z = -(p.z - c.z);
@@ -816,6 +829,37 @@ function draw() {{
   }}
 }}
 
+function setViewPreset(nextYaw, nextPitch, nextZoom = null) {{
+  yaw = nextYaw;
+  pitch = nextPitch;
+  if (nextZoom !== null) zoom = nextZoom;
+  draw();
+}}
+
+function installViewControls() {{
+  const centerButton = el("view-center");
+  const angleButton = el("view-45");
+  const sideButton = el("view-side");
+  const topButton = el("view-top");
+
+  if (centerButton) centerButton.addEventListener("click", () => {{
+    zoom = 1.0;
+    draw();
+  }});
+
+  if (angleButton) angleButton.addEventListener("click", () => {{
+    setViewPreset(-Math.PI / 4, Math.PI / 4, 1.0);
+  }});
+
+  if (sideButton) sideButton.addEventListener("click", () => {{
+    setViewPreset(0, 0, 1.0);
+  }});
+
+  if (topButton) topButton.addEventListener("click", () => {{
+    setViewPreset(0, Math.PI / 2, 1.0);
+  }});
+}}
+
 canvas.addEventListener("mousedown", (e) => {{ dragging = true; lastX = e.clientX; lastY = e.clientY; }});
 window.addEventListener("mouseup", () => {{ dragging = false; }});
 window.addEventListener("mousemove", (e) => {{
@@ -839,7 +883,9 @@ canvas.addEventListener("wheel", (e) => {{
 function liveDecayLevel(seenMs, dimValue) {
   if (!seenMs) return null;
   const ageMs = Math.max(0, Date.now() - Number(seenMs));
-  const t = Math.min(1, ageMs / LIVE_DECAY_MS);
+  if (ageMs <= LIVE_BRIGHT_HOLD_MS) return 1.0;
+  if (ageMs >= LIVE_FADE_END_MS) return dimValue;
+  const t = (ageMs - LIVE_BRIGHT_HOLD_MS) / (LIVE_FADE_END_MS - LIVE_BRIGHT_HOLD_MS);
   return 1 - ((1 - dimValue) * t);
 }
 
@@ -903,8 +949,8 @@ function drawLiveAgingOverlay() {
   // Keep live visuals moving through the 10-second fade even when no new events arrive.
   if (live.enabled && live.connected) {
     requestAnimationFrame(() => {
-      const hasRecentObstacle = data.cells.some((cell) => cell.live_seen_ms && now - Number(cell.live_seen_ms) < LIVE_DECAY_MS);
-      const hasRecentTrack = data.trajectory.some((point) => point.live_seen_ms && now - Number(point.live_seen_ms) < LIVE_DECAY_MS);
+      const hasRecentObstacle = data.cells.some((cell) => cell.live_seen_ms && now - Number(cell.live_seen_ms) < LIVE_FADE_END_MS);
+      const hasRecentTrack = data.trajectory.some((point) => point.live_seen_ms && now - Number(point.live_seen_ms) < LIVE_FADE_END_MS);
       if (hasRecentObstacle || hasRecentTrack) {
         draw();
       }
@@ -920,6 +966,7 @@ draw = function() {
 
 
 window.addEventListener("resize", resize);
+installViewControls();
 recomputeBounds();
 updateMetrics();
 resize();
