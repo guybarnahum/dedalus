@@ -24,9 +24,11 @@ Current handoff state:
 
 5Q-5U obstacle-memory default path is compact-delta-first and SQLite-backed. Current main is operator-validated after the refactor/CI cleanup stack: tests pass and `simulation/airsim/run_mission.sh` invocation works. DRY_RUN was not attempted and should not be assumed available.
 
+R3 live mission-local obstacle viewer is operator-validated: Dedalus runtime serves `/healthz`, `/events`, and `mission_local_obstacle_viewer.html` from one HTTP/SSE port; browser viewer consumes live `world_snapshot` and `mission_obstacle_map_delta` events; ego pose follows `snapshot.ego.position_local`; live trajectory samples age yellow with a 0-2s bright hold and 2-10s fade; live obstacle delta samples age red through a coalesced visual event layer; AirSim orbit handedness matches the viewer; left-panel view preset buttons are available.
+
 GitHub workflow policy: CI and staging run the fast CTest subset (`-LE 'synthetic|scenario'`) plus core-stack smoke validation. Production keeps full CTest as the release gate plus core-stack smoke validation. See docs/ctest_validation_layers.md.
 
-Active next work: continue mechanical cleanup/refactors only after preserving validated state. Avoid changing runtime semantics unless explicitly scoped.
+Active next work: preserve the validated R3 live viewer and compact SQLite obstacle-memory path; next development should focus on reducing any remaining browser/event backlog with client-side event coalescing or throttling, then continue diagnostics-only persistent site-map preload/score work. Avoid changing flight/runtime semantics unless explicitly scoped.
 
 GitHub status checks may be absent; continue to run local build/tests after code changes.
 ```

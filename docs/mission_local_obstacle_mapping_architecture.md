@@ -133,3 +133,21 @@ Tier C — persistent site memory
 ```
 
 The rest of the runtime should depend on contracts, not file formats. JSON remains a debug/export format; efficient storage should become the default for runtime preload, scoring, and persistence.
+
+## R3 live mission-local obstacle viewer validation
+
+The live viewer is now validated as the diagnostic visualization layer for mission-local obstacle mapping.
+
+Validated behavior:
+- Dedalus runtime serves `/healthz`, `/events`, and `mission_local_obstacle_viewer.html` on the same HTTP/SSE/static port when launched with `--runtime-event-http-port` and `--runtime-event-static-root`.
+- The browser viewer consumes live `world_snapshot` and `mission_obstacle_map_delta` SSE events.
+- Ego pose follows `snapshot.ego.position_local`; `rotation_rpy` array yaw is accepted.
+- AirSim orbit handedness matches the viewer after the viewer-side Y handedness fix.
+- Live trajectory samples use yellow aging: 0-2 seconds bright, 2-10 seconds fading, older samples dim.
+- Live obstacle delta samples use a separate/coalesced red visual event layer: 0-2 seconds bright, 2-10 seconds fading, older samples dim.
+- Base obstacle map cells are dim so they do not mask live red aging.
+- The left panel includes Center, 45 degree, Side, and Top view controls.
+
+Current limitation / next improvement:
+- If the browser appears to lag behind AirSim by many seconds near landing or mission shutdown, treat it as viewer/event backlog rather than AirSim control latency until proven otherwise.
+- The next viewer improvement should coalesce pending SSE events client-side, processing only the latest pending world snapshot and a bounded obstacle-delta batch per animation frame.

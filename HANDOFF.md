@@ -1,324 +1,135 @@
-# Dedalus Handoff Template
+# Dedalus Current Handoff
 
-This file is a template for generating LLM handoff prompts.
-
-To generate a current handoff, read `LLM.md` and the current repo state, then fill in the template below.
-
-**Usage trigger:** `use HANDOFF.md to generate a handoff prompt from our current state`
-
----
-
-## How to Generate a Handoff
-
-1. Read `LLM.md` first. Treat it as the active operating brief.
-2. Read `docs/runtime_dataflow.md` for the current source -> publisher -> server -> subscriber -> sink architecture.
-3. Read `docs/object_conditioned_behavior_plan.md` before object-conditioned behavior work.
-4. Read `docs/airsim_existing_object_ghost_runbook.md` before AirSim existing-object validation.
-5. Read `docs/mission_scenario_runner.md` for the scenario/campaign harness workflow.
-6. Read `docs/world_model_reprojection_validation_plan.md` before reprojection, annotation, or world-model evidence work.
-7. Read `WHITEPAPER.md` when architectural rationale is needed.
-8. For classless geometric occupancy / avoidance / sensing coverage / volume detection work, read these together before coding:
-   - `docs/sensing_coverage_architecture.md`
-   - `docs/visual_obstacle_detection_transition_plan.md`
-   - `docs/classless_geometric_occupancy_and_avoidance_plan.md`
-   - `docs/reflexive_obstacle_avoidance_architecture.md`
-   - `docs/geometric_volume_detection_and_spatial_mapping_plan.md`
-   - `docs/airsim_depth_obstacle_detector_validation.md`
-   - `docs/mission_local_obstacle_mapping_architecture.md`
-   - `docs/persistent_obstacle_memory_plan.md`
-9. Read `docs/selected_entity_slow_moving_animal_validation.md` and `docs/moving_target_behavior_validation_results.md` when continuing moving-target/object-conditioned behavior work.
-10. Read `LLM.back.md` only for historical context when needed; `LLM.md` is authoritative.
-11. Use architectural capability names in handoffs, docs, commands, validators, files, directories, and symbols. Do not name repo artifacts after planning labels such as `track4`, `milestone_XXX`, temporary phase names, or session-only shorthand. Prefer names that describe the stable subsystem or contract, such as `obstacle_sensing_evidence`, `world_snapshot`, `object_behavior`, `runtime_event_stream`, or `mission_artifact`.
-12. Run `git log --oneline -1` to get the current commit SHA.
-13. Substitute all `<PLACEHOLDER>` values below with current state.
-14. Emit the filled-in prompt as plain text — no surrounding explanation.
-
----
-
-## Ground-Truth Patch Policy
-
-Ground-truth patch policy:
-
-```text
-Before offering code changes, inspect the current repo files that define the call path, data flow, flags, schemas, tests, and scripts being changed.
-
-Do not guess file structure, option names, parser blocks, test layout, function signatures, enum values, generated artifact paths, or runtime wiring.
-
-Do not assume a wrapper script forwards a flag just because the binary supports it. Verify the wrapper parser and pass-through path.
-
-Do not assume a test failure is stale or caused by rebuild state until checking the source assertion, target path, and build output.
-
-When enhancing runtime or data-flow code, first trace:
-  source of data
-  owning publisher / accumulator
-  serialization boundary
-  transport or artifact writer
-  consuming test / tool / viewer
-  validation command
-
-Prefer small, anchored patches against inspected code. If the local file structure differs from the expected anchor, stop and request/inspect the relevant block instead of emitting increasingly broad regex patches.
-
-Balance architectural purity, implementation efficiency, and development risk. Use C++ when the feature belongs in the runtime ownership boundary; use Python/tools only for diagnostics, offline conversion, or intentionally external workflows.
-```
-
----
-
-## Naming and Artifact Convention
-
-```text
-Use architectural capability names, not planning labels or arbitrary placeholders.
-
-Prefer names that encode the stable subsystem, runtime boundary, contract, scenario, or artifact role:
-  out/object_behavior_airsim_existing_object_circle
-  out/mission_loop_snapshots
-  tools/mission/validate-obstacle-sensing-evidence-snapshots.py
-  tools/mission/validate-mission-artifacts.py
-  simulation/airsim/run_mission.sh
-  obstacle_sensing_volumes
-  obstacle_evidence
-  runtime_event_stream
-  world_snapshot
-
-Avoid names based on planning labels or temporary session language:
-  track4
-  milestone_XXX
-  phase_YYY
-  latest_run
-  mission_YYYY
-  foo.json
-  temp.json
-  ad-hoc simulation/artifacts/mission_* unless that is the actual architectural path produced by the repo
-
-When referring to run artifacts, use the concrete `--output-dir` value or the named output directory printed by `dedalus_mission_loop` / `simulation/airsim/run_mission.sh`.
-```
-
----
-
-## Template
-
-```text
 You are continuing work on the Dedalus repo.
 
 Repository:
   guybarnahum/dedalus
 
 Current commit:
-  <CURRENT_COMMIT_SHA>
+  run `git log --oneline -1` and use the current local SHA.
 
 First read:
   LLM.md
 
 Then read:
   docs/runtime_dataflow.md
-  docs/object_conditioned_behavior_plan.md
-  docs/airsim_existing_object_ghost_runbook.md
-  docs/mission_scenario_runner.md
-  docs/world_model_reprojection_validation_plan.md
-
-For classless geometric occupancy / avoidance / sensing coverage / volume detection work, also read:
+  docs/mission_local_obstacle_mapping_architecture.md
+  docs/persistent_obstacle_memory_plan.md
+  docs/obstacle_memory_plugin_architecture.md
+  docs/airsim_depth_obstacle_detector_validation.md
   docs/sensing_coverage_architecture.md
   docs/visual_obstacle_detection_transition_plan.md
   docs/classless_geometric_occupancy_and_avoidance_plan.md
   docs/reflexive_obstacle_avoidance_architecture.md
   docs/geometric_volume_detection_and_spatial_mapping_plan.md
-  docs/airsim_depth_obstacle_detector_validation.md
-  docs/mission_local_obstacle_mapping_architecture.md
-  docs/persistent_obstacle_memory_plan.md
 
 Historical context, only if needed:
   LLM.back.md
 
-Active milestone:
-  <ACTIVE_MILESTONE_AND_STAGE>
+Active development state:
+  R3 live mission-local obstacle viewer is operator-validated.
+  5Q-5U obstacle-memory default path is compact-delta-first and SQLite-backed.
+  The current work is still diagnostics / visualization / persistence plumbing.
+  Do not add planner blocking, replanning, or command-sink obstacle avoidance semantics unless explicitly requested.
 
-Current architecture:
-  <DATA_FLOW_DIAGRAM — copy from LLM.md Current Runtime Architecture or update if pipeline changed>
+Current validated architecture:
+  AirSim DepthPlanar / obstacle evidence
+    -> CoreStackRunner
+    -> MissionLocalObstacleMap
+    -> mission-local obstacle map deltas
+    -> RuntimeEventStreamServer
+         -> raw TCP JSONL on --world-snapshot-stream-port
+         -> optional HTTP/SSE/static on --runtime-event-http-port
+              /healthz
+              /events
+              /mission_local_obstacle_viewer.html
+    -> browser mission-local obstacle viewer
 
-Current observed behavior:
-  <MOST_RECENT_NOTABLE_LOGS_OR_RUNTIME_OUTPUT>
+Validated R3 viewer behavior:
+  - Runtime serves /healthz, /events, and generated mission_local_obstacle_viewer.html from one HTTP/SSE/static port.
+  - Viewer receives world_snapshot events and the World snapshots counter increments.
+  - Viewer extracts ego pose from snapshot.ego.position_local arrays.
+  - Ego updates counter increments and drone marker moves live.
+  - AirSim anti-clockwise orbit renders anti-clockwise in the viewer after the viewer-side Y handedness fix.
+  - Live trajectory samples age yellow: 0-2 seconds bright, 2-10 seconds fade, older samples dim.
+  - Live obstacle delta samples age red through a separate/coalesced visual event layer: 0-2 seconds bright, 2-10 seconds fade, older samples dim.
+  - Base obstacle map cells remain dim so they do not mask live red aging.
+  - Left panel has Center, 45 degree, Side, and Top view buttons.
+  - Generated HTML must be regenerated after changes to tools/visualization/mission_local_obstacle_viewer.py.
 
-Current diagnosis:
-  <WHAT_IS_VERIFIED, WHAT_IS STILL_UNVALIDATED, AND WHAT_IS LIKELY MISSING OR BROKEN>
+Most recent operator observations:
+  - World snapshots increments: YES.
+  - Ego updates increments: YES.
+  - Drone marker moves from snapshot.ego.position_local: YES.
+  - AirSim anti-clockwise orbit renders anti-clockwise in viewer: YES.
+  - Red obstacle cell aging now works after event-layer/coalescing fix.
+  - Yellow live track aging works.
+  - View preset buttons work.
+  - Remaining concern: viewer can appear seconds behind AirSim near landing/shutdown. Treat as browser/SSE processing backlog until measured.
 
-Immediate tasks:
-  <NUMBERED_TASK_LIST — copy from LLM.md Active Next Work or update to reflect current state>
+Immediate next tasks:
+  1. Preserve current validated R3 viewer behavior.
+  2. If viewer lag remains visible, add client-side event coalescing:
+       - store latest pending world_snapshot event instead of processing every old snapshot immediately
+       - accumulate/bound pending mission_obstacle_map_delta cells
+       - process pending events once per animation frame
+       - keep counters diagnostic and honest
+  3. Add or update lightweight viewer tests if practical, especially for:
+       - array ego pose extraction
+       - 0-2s bright hold / 2-10s fade / >10s dim aging
+       - Y handedness projection
+       - view preset handlers
+       - scheduled/coalesced draw behavior
+  4. Continue persistent obstacle memory work only after preserving diagnostics:
+       - site-map scoring / age diagnostics
+       - diagnostics-only runtime preload
+       - no planner/control coupling yet
 
-Naming convention:
-  Use architectural capability names, not planning labels or arbitrary placeholders, for files, directories, artifacts, validators, commands, and symbols.
-  Do not encode planning labels such as `track4`, `milestone_XXX`, temporary phase names, or session-only shorthand into repo files or validator names.
-  Use concrete subsystem/contract/scenario names and actual `--output-dir` values printed by the repo.
-  Do not refer to non-existent generic paths such as simulation/artifacts/mission_* unless that is the actual path produced by the command being discussed.
+Runtime commands used for validated viewer workflow:
+  Generate viewer HTML:
+    FIRST_SNAPSHOT="$(find out/validate_r3b1 -maxdepth 1 -type f -name 'snapshot_*.json' | sort | head -1)"
+    python3 tools/visualization/mission_local_obstacle_viewer.py \
+      "$FIRST_SNAPSHOT" \
+      --history-glob 'out/validate_r3b1/snapshot_*.json' \
+      --max-cells 2048 \
+      --output out/validate_r3b1/mission_local_obstacle_viewer.html
+
+  Start AirSim mission with runtime HTTP/SSE/static viewer:
+    DEDALUS_AIRSIM_ENABLE_DEPTH_OBSTACLES=1 \
+    DEDALUS_AIRSIM_DEPTH_OBSTACLE_MAX_POINTS=4096 \
+    DEDALUS_AIRSIM_DEPTH_OBSTACLE_STRIDE=8 \
+    DEDALUS_AIRSIM_DEPTH_OBSTACLE_MAX_RANGE_M=30 \
+    DEDALUS_AIRSIM_DEPTH_OBSTACLE_MIN_RANGE_M=0.5 \
+    DEDALUS_AIRSIM_DEPTH_OBSTACLE_CONFIDENCE=0.8 \
+    simulation/airsim/run_mission.sh \
+      --output-dir out/validate_r3b1 \
+      --merge-obstacle-map \
+      --obstacle-map-site-id validate_r3b1 \
+      --obstacle-map-site-frame-id airsim_world \
+      --obstacle-map-mission-id validate_r3b1_mission \
+      --runtime-event-http-port 8080 \
+      --runtime-event-static-root out/validate_r3b1
+
+  Local browser through SSH port forward:
+    ssh -L 8080:127.0.0.1:8080 <ec2-host>
+    http://127.0.0.1:8080/mission_local_obstacle_viewer.html
+
+Patch output and safety policy:
+  - Before code changes, inspect current repo files that define call path, data flow, flags, schemas, tests, and scripts.
+  - Do not guess file structure, option names, parser blocks, test layout, function signatures, enum values, generated artifact paths, or runtime wiring.
+  - Patch scripts should print concise OK:/ERROR: lines only.
+  - Do not append routine grep/diff/code-section dumps after patches.
+  - Do not call sys.exit(), raise SystemExit, shell exit, or intentionally terminate the user's shell/session from generated patch snippets.
+  - Do not assume out/, generated artifacts, runtime logs, snapshots, or validation directories exist inside patch logic unless explicitly provided for that patch.
+  - If anchors do not match, print ERROR and do not write partial changes.
+  - Use prose summaries and build/test/runtime commands for validation.
 
 Do not:
-  - Do not use YOLO/DETR/classifier outputs as a prerequisite for obstacle avoidance. The obstacle avoidance path uses classless geometric/arbitrary-volume evidence.
-  - Do not derive visual obstacle coverage from vehicle yaw alone. It is camera optical coverage composed from camera config, ego pose, and current camera/gimbal pointing state.
-  - Do not judge a visual/volume detector against global AirSim GT objects outside the configured sensing volume.
-  - Do not make AirSim GT global-oracle output mean the same thing as visual detector capability; add/use GT visual-emulation clipping when comparing sources.
-  - Do not continue expanding AirSim GT visual-emulation as if it were the real detector. Visual-emulation is now a validation oracle clipped by sensing coverage.
-  - Do not implement the first real visual obstacle detector as a semantic YOLO/DETR/classifier path. The first detector should be classless geometric evidence, preferably AirSim depth-frame based for deterministic validation.
-  - Do not let a visual detector infer or fake camera coverage. It must consume `EgoSensingFrame` / current sensing coverage.
-  - Do not use AirSim object-GT as the 4.x obstacle detector. Object-GT belongs to 3.x semantic/object perception, re-ID, target behavior, and approximate object pose validation.
-  - Do not broaden 4.x obstacle detection by adding more named AirSim object classes or patterns. Use depth/ray/mesh geometry inside the sensing volume.
-  - Do not render object-GT as obstacle-detector output unless it has first been normalized through the same classless `ObstacleEvidence` geometry contract.
-  - Do not emit visual obstacle evidence when no valid sensing coverage exists for the frame/camera.
-  - Do not put obstacle avoidance, map-building policy, sensing coverage, or detector semantics inside a flight command sink.
-  - Do not silently fall back to AirSim named-object GT boxes when the classless AirSim depth detector is enabled; empty depth evidence means no observed depth evidence for that frame.
-  - Do not duplicate occupancy logic for GT and visual sources; normalize them into the same obstacle evidence / occupancy contract.
-  - Do not make `rough_flight_map_builder.cpp` a second perception pipeline; it should consume normalized reflexive occupancy / obstacle evidence.
-  - Do not use arbitrary placeholder artifact names when an architectural path or exact `--output-dir` exists.
-  - Do not name files, validators, scripts, or symbols after planning labels such as `track4`, `milestone_XXX`, temporary phase names, or session-only shorthand.
-  <OTHER_DO_NOT_LIST — copy from LLM.md Known Traps and add any session-specific traps>
-
-Patch policy:
-  Before offering code changes, inspect the current repo files that define the call path, data flow, flags, schemas, tests, and scripts being changed.
-  Do not guess file structure, option names, parser blocks, test layout, function signatures, enum values, generated artifact paths, or runtime wiring.
-  Do not assume a wrapper script forwards a flag just because the binary supports it; verify the wrapper parser and pass-through path.
-  If the local file structure differs from the expected anchor, stop and request/inspect the relevant block instead of emitting increasingly broad regex patches.
-  Balance architectural purity, implementation efficiency, and development risk.
-  Apply changes directly to main.
-  Do not create branches or PRs unless explicitly requested.
-  If GitHub connector patching fails, is ambiguous, is blocked, or would require a risky broad rewrite, stop using the connector for that code change.
-  When generating manual patches for the user, always provide one unified git diff suitable for git apply.
-  Generate an exact manual patch and ask the user to apply it locally.
-  Do not keep retrying increasingly complex connector paths after a connector failure.
-
-Validation:
-  Always give build/test commands after code patches:
-
-    cmake --build build-staging -j$(nproc)
-    ctest --test-dir build-staging --output-on-failure
-
-  For current behavior/runtime changes, also include:
-
-    python3 -m py_compile simulation/airsim/scripts/airsim-world-overlay.py
-
-    ctest --test-dir build-staging --output-on-failure -R \
-      'mission_runtime|object_behavior_mission_controller|object_behavior_mission_smoke|core_stack_config_loader|behavior_spec|target_selector|world_snapshot_stream_server|mission_artifact_validator'
-
-  For live AirSim obstacle sensing/evidence validation, prefer `simulation/airsim/run_mission.sh`:
-
-    DEDALUS_AIRSIM_GT_NEARBY_RADIUS_M=80 \
-    DEDALUS_AIRSIM_GT_MAX_OBJECTS_PER_FRAME=128 \
-    DEDALUS_AIRSIM_GT_STATIC_REFRESH_EVERY_N_FRAMES=10 \
-    ./simulation/airsim/run_mission.sh \
-      --attach \
-      --overlay-debug \
-      --source-frame-rate-hz 0 \
-      --pipeline-timing \
-      --frame-producer-timing \
-      --scene-id AirSimNH \
-      --refresh-scene-inventory \
-      --behavior-duration-s 60 \
-      --max-frames 1200 \
-      --validation-min-orbits 0.20 \
-      --validation-complete-reason duration_elapsed \
-      --validation-min-occupied-cells 48
-
-  For obstacle sensing/evidence snapshot validation, use the architectural validator and concrete output directory:
-
-    python3 tools/mission/validate-obstacle-sensing-evidence-snapshots.py <OUTPUT_DIR>
-
-  Example output directory:
-
-    out/object_behavior_airsim_existing_object_circle
-
-Expected success:
-  <SPECIFIC_LOG_STATE_OR_TEST_RESULT_THAT SIGNALS TASK COMPLETE>
-```
-
----
-
-## Persistent obstacle memory handoff notes
-
-For persistent obstacle memory work, preserve this boundary:
-
-```text
-live obstacle evidence
-  -> mission-local obstacle map
-  -> mission obstacle map artifact
-  -> persistent site obstacle map
-  -> future mission preload
-```
-
-Do not implement planner/control use until export, merge, age scoring, and diagnostics-only preload are validated.
-
-Decay policy:
-- Persist absolute time as `unix_ns`.
-- Store primitive evidence fields, not only derived scores.
-- Do not erase whole-site memory just because the site has not been visited.
-- Normalize cell age against site staleness.
-- Strong decay requires contradiction or revisits without reconfirmation.
-
-
-## Current validated obstacle-memory pipeline — 5Q through 5U
-
-The default AirSim obstacle-memory path is now compact-delta-first and SQLite-backed.
-
-Runtime:
-- AirSim depth obstacle evidence feeds the mission-local obstacle map.
-- Runtime writes compact `mission_obstacle_map_deltas.jsonl`.
-- Full `mission_obstacle_map_full.json` is debug/export-only by default and is enabled with `--write-full-obstacle-map-artifact`.
-
-Post-mission:
-- `mission_obstacle_map_deltas.jsonl` is imported into `mission_obstacle_map_deltas.sqlite`.
-- The delta SQLite DB is compacted into `maps/<site_id>/site_obstacle_map.sqlite`.
-- `out/<run>/obstacle_memory_manifest.json` records the selected merge path, site/mission ids, artifact paths, existence, and sizes.
-
-Validation:
-- `tools/avoidance/validate_obstacle_memory_manifest.py` validates the manifest schema, ids, selected site-map format, expected merge path, and artifact existence/size consistency.
-- When `--merge-obstacle-map` is enabled, validation waits up to `OBSTACLE_MEMORY_MANIFEST_WAIT_SECONDS` seconds for the manifest.
-- Default wait is 360 seconds when merging is enabled, or can be overridden with `DEDALUS_OBSTACLE_MEMORY_MANIFEST_WAIT_SECONDS=<seconds>`.
-- Manifest validation covers `sqlite`, `json`, `both`, and `sqlite-full-json` formats through integration coverage.
-
-Validated default path:
-```text
-mission_obstacle_map_deltas.jsonl
-  -> mission_obstacle_map_deltas.sqlite
-  -> maps/<site_id>/site_obstacle_map.sqlite
-  -> out/<run>/obstacle_memory_manifest.json
-```
-
-Important commands:
-```bash
-simulation/airsim/run_mission.sh \
-  --output-dir out/<run> \
-  --merge-obstacle-map \
-  --obstacle-map-site-id <site_id> \
-  --obstacle-map-site-frame-id airsim_world \
-  --obstacle-map-mission-id <mission_id>
-```
-
-Debug full JSON:
-```bash
-simulation/airsim/run_mission.sh \
-  --output-dir out/<run> \
-  --merge-obstacle-map \
-  --write-full-obstacle-map-artifact \
-  --obstacle-map-site-id <site_id> \
-  --obstacle-map-site-frame-id airsim_world \
-  --obstacle-map-mission-id <mission_id>
-```
-
-Manifest validator:
-```bash
-python3 tools/avoidance/validate_obstacle_memory_manifest.py \
-  out/<run>/obstacle_memory_manifest.json \
-  --site-id <site_id> \
-  --site-frame-id airsim_world \
-  --mission-id <mission_id> \
-  --site-map-format sqlite
-```
-
-## Patch output and safety policy
-
-When providing patch snippets:
-
-- Do not append routine `grep`, `diff`, or code-section inspection commands after a patch.
-- Patch scripts may inspect files internally, but normal output must be limited to concise `OK:` / `ERROR:` status lines.
-- Do not dump code sections as validation output. It is noisy and usually does not help human review.
-- Do not call `sys.exit()`, `raise SystemExit`, shell `exit`, or otherwise intentionally terminate the user's shell/session from generated patch snippets.
-- Do not rely on `set -e` behavior for patch control flow.
-- Do not assume generated runtime directories such as `out/...`, logs, snapshots, artifacts, or validation output exist inside patch logic unless the user explicitly provided them for that patch.
-- If a guarded patch cannot find an expected anchor, print a concise `ERROR:` explaining what failed and do not write partial changes.
-- Use prose summaries plus build/test/runtime commands for validation. Keep patch output human-readable and short.
-
+  - Do not use YOLO/DETR/classifier outputs as a prerequisite for obstacle avoidance.
+  - Do not derive visual obstacle coverage from vehicle yaw alone.
+  - Do not judge detector output against global AirSim GT objects outside configured sensing volume.
+  - Do not use AirSim object-GT as the 4.x obstacle detector.
+  - Do not add named-object class filters to obstacle detection.
+  - Do not couple obstacle persistence, map-building policy, or sensing coverage to a flight command sink.
+  - Do not add avoidance/replanning/control behavior from persistent memory until explicitly scoped and validated.
+  - Do not name files, validators, scripts, or symbols after planning labels or temporary session shorthand.

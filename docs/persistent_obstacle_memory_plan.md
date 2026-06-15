@@ -18,6 +18,7 @@ Implemented and validated:
 - `CoreStackRunner` wires depth evidence through mission-local accumulation and derives read-only local flight map / trajectory safety diagnostics.
 - `WorldSnapshot` publishes `mission_local_obstacle_map` diagnostics with capped debug cells.
 - `tools/visualization/mission_local_obstacle_viewer.py` provides offline mission-local map visualization.
+- R3 live viewer validation extends the same tool into a live HTTP/SSE diagnostic viewer: runtime serves the generated HTML from `--runtime-event-static-root`, `/events` streams `world_snapshot` and `mission_obstacle_map_delta`, ego pose and obstacle deltas render live, trajectory/obstacle aging are visually validated, and view preset controls are available.
 - `tools/avoidance/export_mission_obstacle_map.py` exports mission obstacle map artifacts from snapshot diagnostics.
 - Runtime full mission obstacle map artifact writing emits `mission_obstacle_map_full.json` directly from the full `MissionLocalObstacleMapSnapshot`.
 - `tools/avoidance/merge_site_obstacle_map.py` is the planned/active 5I post-process tool for merging mission artifacts into persistent site memory.
