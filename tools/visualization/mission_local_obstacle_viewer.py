@@ -156,6 +156,8 @@ def mission_cells(snapshot: dict[str, Any], max_cells: int) -> tuple[dict[str, A
                 "free_score": as_float(raw.get("free_score")),
                 "risk_score": as_float(raw.get("risk_score")),
                 "confidence": as_float(raw.get("confidence")),
+                "min_z_m": as_float(raw.get("min_z_m"), math.nan),
+                "max_z_m": as_float(raw.get("max_z_m"), math.nan),
                 "last_source_provider": str(raw.get("last_source_provider", "")),
                 "last_source_kind": str(raw.get("last_source_kind", "")),
             }
@@ -218,6 +220,13 @@ HTML_TEMPLATE = """<!doctype html>
   .view-controls {{ display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin: 12px 0 14px; }}
   .view-controls button {{ background: #222838; color: #e8e8e8; border: 1px solid #3a4358; border-radius: 6px; padding: 6px 8px; cursor: pointer; }}
   .view-controls button:hover {{ background: #2b3348; }}
+  .height-legend {{ margin: 10px 0 12px; }}
+  .height-ramp {{ height: 14px; border: 1px solid #3a4358; border-radius: 6px;
+    background: linear-gradient(to right, #2641a8, #00a8d8, #3fbf6a, #e5d84c, #f08c2e, #d83b7d); }}
+  .height-ticks {{ display: grid; grid-template-columns: repeat(5, 1fr); gap: 4px; color: #aab0bf; font-size: 12px; margin-top: 4px; }}
+  .height-ticks span:nth-child(1) {{ text-align: left; }}
+  .height-ticks span:nth-child(2), .height-ticks span:nth-child(3), .height-ticks span:nth-child(4) {{ text-align: center; }}
+  .height-ticks span:nth-child(5) {{ text-align: right; }}
 </style>
 </head>
 <body>
@@ -249,9 +258,16 @@ HTML_TEMPLATE = """<!doctype html>
     <div class="metric"><span>World snapshots</span><b id="world-snapshot-count">0</b></div>
     <div class="metric"><span>Ego updates</span><b id="ego-update-count">0</b></div>
     <h3>Legend</h3>
+    <div class="height-legend">
+      <div class="hint">Obstacle color: height above takeoff / local origin</div>
+      <div class="height-ramp" aria-label="Height color ramp from 0 to 40 meters"></div>
+      <div class="height-ticks">
+        <span>0m</span><span>10m</span><span>20m</span><span>30m</span><span>40m+</span>
+      </div>
+    </div>
     <p class="hint">
-      Red: occupied mission-local cells<br>
-      Blue: free cells<br>
+      Topo color: mission-cell height, using AirSim/NED-style height = -Z<br>
+      Opacity: occupied/free/unknown confidence<br>
       Yellow: ego pose / path<br>
       Magenta: first blocked trajectory point, when present
     </p>
@@ -327,6 +343,78 @@ function formatMetricMeters(value) {
   const n = Number(value);
   if (!Number.isFinite(n)) return "n/a";
   return `${n.toFixed(2)} m`;
+}
+
+const HEIGHT_COLOR_MIN_M = 0.0;
+const HEIGHT_COLOR_MAX_M = 40.0;
+const HEIGHT_COLOR_BAND_M = 2.0;
+const HEIGHT_COLOR_RAMP = [
+  {v: 0.0, rgb: [38, 65, 168]},
+  {v: 5.0, rgb: [0, 168, 216]},
+  {v: 10.0, rgb: [63, 191, 106]},
+  {v: 20.0, rgb: [229, 216, 76]},
+  {v: 30.0, rgb: [240, 140, 46]},
+  {v: 40.0, rgb: [216, 59, 125]}
+];
+
+function clampNumber(value, lo, hi) {
+  return Math.max(lo, Math.min(hi, value));
+}
+
+function lerpNumber(a, b, t) {
+  return a + ((b - a) * t);
+}
+
+function topoBandHeightM(heightM) {
+  if (!Number.isFinite(heightM)) return HEIGHT_COLOR_MIN_M;
+  return Math.round(heightM / HEIGHT_COLOR_BAND_M) * HEIGHT_COLOR_BAND_M;
+}
+
+function cellMapZ(cell) {
+  const minZ = Number(cell.min_z_m);
+  const maxZ = Number(cell.max_z_m);
+  if (Number.isFinite(minZ) && Number.isFinite(maxZ)) {
+    return 0.5 * (minZ + maxZ);
+  }
+  const center = asVec3(cell.center) || asVec3(cell.center_mission) || asVec3(cell.center_map);
+  if (center && Number.isFinite(Number(center.z))) {
+    return Number(center.z);
+  }
+  return 0.0;
+}
+
+function heightAboveTakeoffM(cell) {
+  // AirSim / NED-style mission-local Z is negative above takeoff.
+  return -cellMapZ(cell);
+}
+
+function rgbForHeight(heightM) {
+  const h = clampNumber(topoBandHeightM(heightM), HEIGHT_COLOR_MIN_M, HEIGHT_COLOR_MAX_M);
+  for (let i = 1; i < HEIGHT_COLOR_RAMP.length; ++i) {
+    const lo = HEIGHT_COLOR_RAMP[i - 1];
+    const hi = HEIGHT_COLOR_RAMP[i];
+    if (h <= hi.v) {
+      const span = Math.max(1e-6, hi.v - lo.v);
+      const t = clampNumber((h - lo.v) / span, 0.0, 1.0);
+      return [
+        Math.round(lerpNumber(lo.rgb[0], hi.rgb[0], t)),
+        Math.round(lerpNumber(lo.rgb[1], hi.rgb[1], t)),
+        Math.round(lerpNumber(lo.rgb[2], hi.rgb[2], t))
+      ];
+    }
+  }
+  return HEIGHT_COLOR_RAMP[HEIGHT_COLOR_RAMP.length - 1].rgb;
+}
+
+function rgbaForHeight(heightM, alpha) {
+  const rgb = rgbForHeight(heightM);
+  return `rgba(${rgb[0]},${rgb[1]},${rgb[2]},${alpha})`;
+}
+
+function cellDisplayAlpha(cell) {
+  if (cell.occupied) return 0.62;
+  if (cell.free) return 0.30;
+  return 0.38;
 }
 
 function asVec3(value) {
@@ -567,6 +655,8 @@ function normalizeCell(cell) {
     free_score: freeScore,
     risk_score: riskScore,
     confidence: finiteNumber(cell.confidence),
+    min_z_m: finiteNumber(cell.min_z_m, NaN),
+    max_z_m: finiteNumber(cell.max_z_m, NaN),
     last_source_provider: String(cell.last_source_provider || cell.source_provider || ""),
     last_source_kind: String(cell.last_source_kind || cell.source_kind || ""),
     first_seen_unix_ns: cell.first_seen_unix_ns || null,
@@ -1001,9 +1091,7 @@ function draw() {{
     }}
     const score = Math.max(cell.occupied_score || 0, cell.free_score || 0, cell.risk_score || 0);
     const r = Math.max(2, Math.min(8, 2 + score * 0.4));
-    const color = cell.occupied ? "rgba(130, 38, 38, 0.42)" :
-                  cell.free ? "rgba(45, 95, 145, 0.38)" :
-                  "rgba(120, 120, 120, 0.30)";
+    const color = rgbaForHeight(heightAboveTakeoffM(cell), cellDisplayAlpha(cell));
     drawPoint(cell.center, color, r);
   }}
 
