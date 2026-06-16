@@ -279,8 +279,8 @@ HTML_TEMPLATE = """<!doctype html>
       </div>
     </div>
     <p class="hint">
-      Topo color: mission-cell height, using AirSim/NED-style height = -Z<br>
-      Opacity: occupied/free/unknown confidence<br>
+      Topo color: mission-cell / live evidence height, using AirSim/NED-style height = -Z<br>
+      Opacity: confidence and live recency<br>
       Yellow: ego pose / path<br>
       Cyan: true sensing volume, when published<br>
       Dashed gray: ego-yaw sensing approximation<br>
@@ -861,6 +861,8 @@ function applyMissionObstacleMapDelta(delta, seq, options = {}) {
       free_score: cell.free_score,
       risk_score: cell.risk_score,
       confidence: cell.confidence,
+      min_z_m: cell.min_z_m,
+      max_z_m: cell.max_z_m,
       live_seen_ms: nowMs
     };
 
@@ -1422,10 +1424,9 @@ function liveDecayLevel(seenMs, dimValue) {
   return 1 - ((1 - dimValue) * t);
 }
 
-function liveRed(level, alpha = 0.88) {
-  const g = Math.round(24 * level);
-  const b = Math.round(24 * level);
-  return `rgba(255,${g},${b},${alpha})`;
+function liveHeightColor(event, level, alpha = 0.88) {
+  const displayAlpha = Math.max(0.18, Math.min(0.96, alpha * Math.max(0.35, level)));
+  return rgbaForHeight(heightAboveTakeoffM(event), displayAlpha);
 }
 
 function liveYellow(level, alpha = 0.92) {
@@ -1468,7 +1469,7 @@ function drawLiveAgingOverlay() {
 
     const score = Math.max(event.occupied_score || 0, event.free_score || 0, event.risk_score || 0);
     const radius = Math.max(2.0, Math.min(8.0, 3.0 + score * 0.5)) * Math.max(0.8, level);
-    drawLivePoint(event.center, liveRed(level), radius);
+    drawLivePoint(event.center, liveHeightColor(event, level), radius);
   }
 
   const liveTrack = data.trajectory.filter((point) => point && point.live_seen_ms);
