@@ -227,6 +227,8 @@ HTML_TEMPLATE = """<!doctype html>
   .height-ticks span:nth-child(1) {{ text-align: left; }}
   .height-ticks span:nth-child(2), .height-ticks span:nth-child(3), .height-ticks span:nth-child(4) {{ text-align: center; }}
   .height-ticks span:nth-child(5) {{ text-align: right; }}
+  .overlay-controls {{ display: grid; gap: 6px; margin: 10px 0 12px; color: #c8ccd8; }}
+  .overlay-controls label {{ display: flex; align-items: center; gap: 8px; }}
 </style>
 </head>
 <body>
@@ -239,6 +241,9 @@ HTML_TEMPLATE = """<!doctype html>
       <button id="view-45" type="button">45°</button>
       <button id="view-side" type="button">Side</button>
       <button id="view-top" type="button">Top</button>
+    </div>
+    <div class="overlay-controls">
+      <label><input id="toggle-sensing-overlay" type="checkbox" checked> Sensing direction overlay</label>
     </div>
     <div class="metric"><span>Snapshot</span><code>{snapshot_path}</code></div>
     <div class="metric"><span>Map frame</span><code>{map_frame}</code></div>
@@ -257,6 +262,7 @@ HTML_TEMPLATE = """<!doctype html>
     <div class="metric"><span>Live delta cells</span><b id="live-delta-count">0</b></div>
     <div class="metric"><span>World snapshots</span><b id="world-snapshot-count">0</b></div>
     <div class="metric"><span>Ego updates</span><b id="ego-update-count">0</b></div>
+    <div class="metric"><span>Sensing overlay</span><code id="sensing-overlay-status">{sensing_overlay_status}</code></div>
     <h3>Legend</h3>
     <div class="height-legend">
       <div class="hint">Obstacle color: height above takeoff / local origin</div>
@@ -269,6 +275,8 @@ HTML_TEMPLATE = """<!doctype html>
       Topo color: mission-cell height, using AirSim/NED-style height = -Z<br>
       Opacity: occupied/free/unknown confidence<br>
       Yellow: ego pose / path<br>
+      Cyan: true sensing volume, when published<br>
+      Dashed gray: ego-yaw sensing approximation<br>
       Magenta: first blocked trajectory point, when present
     </p>
   </aside>
@@ -279,7 +287,9 @@ const data = {data_json};
 if (!Array.isArray(data.cells)) data.cells = [];
 if (!Array.isArray(data.trajectory)) data.trajectory = [];
 if (!Array.isArray(data.liveObstacleEvents)) data.liveObstacleEvents = [];
+if (!Array.isArray(data.sensingOverlays)) data.sensingOverlays = [];
 if (!data.diagnostics || typeof data.diagnostics !== "object") data.diagnostics = {};
+data.showSensingOverlay = true;
 
 const cellsByKey = new Map();
 for (const cell of data.cells) {
@@ -484,6 +494,66 @@ function firstArrayNumber(obj, paths, index) {
   return null;
 }
 
+function normalizeVec3(v) {
+  if (!v) return null;
+  const length = Math.hypot(v.x, v.y, v.z);
+  if (!Number.isFinite(length) || length <= 1e-6) return null;
+  return {x: v.x / length, y: v.y / length, z: v.z / length};
+}
+
+function addVec3(a, b, scale = 1.0) {
+  return {x: a.x + b.x * scale, y: a.y + b.y * scale, z: a.z + b.z * scale};
+}
+
+function snapshotSensingOverlays(snapshot) {
+  if (!snapshot || typeof snapshot !== "object") return [];
+
+  const candidates = [
+    snapshot.obstacle_sensing_volumes,
+    snapshot.sensing_volumes,
+    snapshot.camera_sensing_volumes,
+    snapshot.depth_sensing_volumes,
+    snapshot.sensing_coverage && snapshot.sensing_coverage.volumes
+  ];
+
+  const overlays = [];
+  for (const candidate of candidates) {
+    if (!Array.isArray(candidate)) continue;
+    for (const raw of candidate) {
+      if (!raw || typeof raw !== "object") continue;
+      const origin =
+        asVec3(raw.origin_local) ||
+        asVec3(raw.origin) ||
+        asVec3(raw.camera_origin_local) ||
+        asVec3(raw.position_local) ||
+        asVec3(raw.position);
+      const forward =
+        normalizeVec3(asVec3(raw.forward_axis_local)) ||
+        normalizeVec3(asVec3(raw.forward)) ||
+        normalizeVec3(asVec3(raw.direction_local)) ||
+        normalizeVec3(asVec3(raw.direction));
+      if (!origin || !forward) continue;
+
+      overlays.push({
+        kind: "true_sensing_volume",
+        label: String(raw.camera_id || raw.sensor_id || raw.id || "sensing volume"),
+        origin,
+        forward,
+        range_m: Math.max(0.25, finiteNumber(raw.range_m || raw.max_range_m || raw.far_m, 8.0))
+      });
+    }
+  }
+
+  return overlays;
+}
+
+function sensingOverlayStatus() {
+  const count = Array.isArray(data.sensingOverlays) ? data.sensingOverlays.length : 0;
+  if (count > 0) return `${count} true volume${count === 1 ? "" : "s"}`;
+  if (data.ego && typeof data.ego_yaw === "number") return "ego-yaw approximation";
+  return "unavailable";
+}
+
 function pathContainsAny(path, words) {
   const lower = path.join(".").toLowerCase();
   return words.some((word) => lower.includes(word));
@@ -674,6 +744,14 @@ function recomputeBounds() {
     if (p) points.push(p);
   }
   if (data.ego) points.push(data.ego);
+  if (Array.isArray(data.sensingOverlays)) {
+    for (const overlay of data.sensingOverlays) {
+      if (overlay && overlay.origin) points.push(overlay.origin);
+      if (overlay && overlay.origin && overlay.forward) {
+        points.push(addVec3(overlay.origin, overlay.forward, finiteNumber(overlay.range_m, 8.0)));
+      }
+    }
+  }
   if (data.first_blocked) points.push(data.first_blocked);
 
   if (points.length === 0) {
@@ -725,6 +803,7 @@ function updateMetrics() {
   if (el("live-delta-count")) el("live-delta-count").textContent = String(live.deltaCellCount);
   if (el("world-snapshot-count")) el("world-snapshot-count").textContent = String(live.worldSnapshotCount);
   if (el("ego-update-count")) el("ego-update-count").textContent = String(live.egoUpdateCount);
+  if (el("sensing-overlay-status")) el("sensing-overlay-status").textContent = sensingOverlayStatus();
   if (el("bounds-text")) {
     el("bounds-text").textContent =
       `x[${b.min_x.toFixed(1)},${b.max_x.toFixed(1)}] ` +
@@ -822,6 +901,13 @@ function applyWorldSnapshot(snapshot, seq, options = {}) {
     data.ego_yaw = yawValue;
     changed = true;
   }
+
+  const sensingOverlays = snapshotSensingOverlays(snapshot);
+  if (sensingOverlays.length > 0) {
+    data.sensingOverlays = sensingOverlays;
+    changed = true;
+  }
+
   const blocked = snapshotFirstBlocked(snapshot);
   if (blocked) {
     data.first_blocked = blocked;
@@ -1064,12 +1150,52 @@ function drawLine(a, b, color, width = 1) {{
   ctx.stroke();
 }}
 
+function drawDashedLine(a, b, color, width = 1) {{
+  const pa = project(a);
+  const pb = project(b);
+  ctx.save();
+  ctx.strokeStyle = color;
+  ctx.lineWidth = width * window.devicePixelRatio;
+  ctx.setLineDash([8 * window.devicePixelRatio, 6 * window.devicePixelRatio]);
+  ctx.beginPath();
+  ctx.moveTo(pa.x, pa.y);
+  ctx.lineTo(pb.x, pb.y);
+  ctx.stroke();
+  ctx.restore();
+}}
+
 function drawAxes() {{
   const length = 0.25 * radius();
   const origin = center();
   drawLine(origin, {{x: origin.x + length, y: origin.y, z: origin.z}}, "#ff6b6b", 2);
   drawLine(origin, {{x: origin.x, y: origin.y + length, z: origin.z}}, "#7bed9f", 2);
   drawLine(origin, {{x: origin.x, y: origin.y, z: origin.z + length}}, "#70a1ff", 2);
+}}
+
+function drawSensingOverlays() {{
+  if (!data.showSensingOverlay) return;
+
+  const overlays = Array.isArray(data.sensingOverlays) ? data.sensingOverlays : [];
+  if (overlays.length > 0) {{
+    for (const overlay of overlays) {{
+      if (!overlay || !overlay.origin || !overlay.forward) continue;
+      const range = Math.max(0.25, finiteNumber(overlay.range_m, 8.0));
+      const tip = addVec3(overlay.origin, overlay.forward, range);
+      drawLine(overlay.origin, tip, "rgba(80, 220, 255, 0.92)", 2.5);
+      drawPoint(overlay.origin, "rgba(80, 220, 255, 0.95)", 4.0);
+    }}
+    return;
+  }}
+
+  if (data.ego && typeof data.ego_yaw === "number") {{
+    const range = Math.max(3.0, Math.min(12.0, 0.18 * radius()));
+    const approxTip = {{
+      x: data.ego.x + range * Math.cos(data.ego_yaw),
+      y: data.ego.y + range * Math.sin(data.ego_yaw),
+      z: data.ego.z
+    }};
+    drawDashedLine(data.ego, approxTip, "rgba(190, 195, 205, 0.78)", 2.0);
+  }}
 }}
 
 function drawPoint(p, color, r) {{
@@ -1083,6 +1209,7 @@ function drawPoint(p, color, r) {{
 function draw() {{
   ctx.clearRect(0, 0, canvas.width, canvas.height);
   drawAxes();
+  drawSensingOverlays();
 
   const cells = data.cells.filter((cell) => cell.center).slice().sort((a, b) => project(a.center).depth - project(b.center).depth);
   for (const cell of cells) {{
@@ -1152,6 +1279,12 @@ function installViewControls() {{
 
   if (topButton) topButton.addEventListener("click", () => {{
     setViewPreset(0, Math.PI / 2, 1.0);
+  }});
+
+  const sensingToggle = el("toggle-sensing-overlay");
+  if (sensingToggle) sensingToggle.addEventListener("change", () => {{
+    data.showSensingOverlay = sensingToggle.checked;
+    draw();
   }});
 }}
 
@@ -1322,6 +1455,60 @@ def render_html_template(template: str, **values: object) -> str:
     return rendered
 
 
+def sensing_overlays(snapshot: dict[str, Any]) -> list[dict[str, Any]]:
+    """Extract optional true sensing/camera volumes if future snapshots publish them.
+
+    Current snapshots at bb2d836 do not expose a first-class camera/frustum
+    payload. This intentionally accepts several likely future keys, but returns
+    an empty list unless true origin + forward-axis data exists.
+    """
+
+    candidate_arrays = [
+        snapshot.get("obstacle_sensing_volumes"),
+        snapshot.get("sensing_volumes"),
+        snapshot.get("camera_sensing_volumes"),
+        snapshot.get("depth_sensing_volumes"),
+    ]
+
+    sensing_coverage = snapshot.get("sensing_coverage")
+    if isinstance(sensing_coverage, dict):
+        candidate_arrays.append(sensing_coverage.get("volumes"))
+
+    overlays: list[dict[str, Any]] = []
+    for candidate in candidate_arrays:
+        if not isinstance(candidate, list):
+            continue
+        for raw in candidate:
+            if not isinstance(raw, dict):
+                continue
+            origin = (
+                vec3(raw.get("origin_local"))
+                or vec3(raw.get("origin"))
+                or vec3(raw.get("camera_origin_local"))
+                or vec3(raw.get("position_local"))
+                or vec3(raw.get("position"))
+            )
+            forward = (
+                vec3(raw.get("forward_axis_local"))
+                or vec3(raw.get("forward"))
+                or vec3(raw.get("direction_local"))
+                or vec3(raw.get("direction"))
+            )
+            if origin is None or forward is None:
+                continue
+            overlays.append(
+                {
+                    "kind": "true_sensing_volume",
+                    "label": str(raw.get("camera_id") or raw.get("sensor_id") or raw.get("id") or "sensing volume"),
+                    "origin": origin,
+                    "forward": forward,
+                    "range_m": as_float(raw.get("range_m") or raw.get("max_range_m") or raw.get("far_m"), 8.0),
+                }
+            )
+
+    return overlays
+
+
 def build_html(
     snapshot_path: Path,
     snapshot: dict[str, Any],
@@ -1360,6 +1547,8 @@ def build_html(
         "exclusion_inflation_radius_m": local_flight_map.get("exclusion_inflation_radius_m", None),
     }
 
+    overlays = sensing_overlays(snapshot)
+
     data = {
         "cells": cells,
         "trajectory": trajectory,
@@ -1368,6 +1557,7 @@ def build_html(
         "first_blocked": first_blocked,
         "bounds": b,
         "diagnostics": diagnostics,
+        "sensingOverlays": overlays,
     }
 
     return render_html_template(HTML_TEMPLATE,
@@ -1384,6 +1574,10 @@ def build_html(
         exclusion_radius=html.escape(
             "n/a" if diagnostics.get("exclusion_inflation_radius_m") is None
             else f"{as_float(diagnostics.get('exclusion_inflation_radius_m')):.2f} m"
+        ),
+        sensing_overlay_status=html.escape(
+            f"{len(overlays)} true volume{'s' if len(overlays) != 1 else ''}"
+            if overlays else ("ego-yaw approximation" if ego is not None and yaw is not None else "unavailable")
         ),
         trajectory_points=html.escape(str(len(trajectory))),
         bounds_text=html.escape(
