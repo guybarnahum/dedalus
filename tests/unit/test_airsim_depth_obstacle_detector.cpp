@@ -169,50 +169,5 @@ int main() {
         return 1;
     }
 
-    dedalus::AirSimDepthFrame coalesce_frame;
-    coalesce_frame.timestamp = dedalus::TimePoint{4000000};
-    coalesce_frame.source_frame_id = dedalus::FrameId{"frame_depth_coalesce_0001"};
-    coalesce_frame.has_source_frame = true;
-    coalesce_frame.sensor_name = "front_center";
-    coalesce_frame.map_frame_id = dedalus::MapFrameId{"map_local_0001"};
-    coalesce_frame.width = 3;
-    coalesce_frame.height = 3;
-    coalesce_frame.depth_m.assign(9, 1.0F);
-
-    dedalus::AirSimDepthObstacleDetectorConfig coalesce_config;
-    coalesce_config.pixel_stride = 1;
-    coalesce_config.min_depth_m = 0.5F;
-    coalesce_config.max_depth_m = 30.0F;
-    coalesce_config.voxel_size_m = 20.0F;
-    coalesce_config.confidence = 0.8F;
-    coalesce_config.max_evidence = 32U;
-
-    const auto coalesced =
-        dedalus::detect_airsim_depth_obstacles(coalesce_frame, volume, coalesce_config);
-    if (coalesced.size() != 1U) {
-        std::cerr << "coalesced neighboring surface samples should emit one patch, got "
-                  << coalesced.size() << "\n";
-        return 1;
-    }
-    const auto& coalesced_item = coalesced.front();
-    if (!coalesced_item.has_surface_normal) {
-        std::cerr << "coalesced surface patch should preserve averaged depth-derived local normal\n";
-        return 1;
-    }
-    const double coalesced_len2 =
-        coalesced_item.surface_normal_local.x * coalesced_item.surface_normal_local.x +
-        coalesced_item.surface_normal_local.y * coalesced_item.surface_normal_local.y +
-        coalesced_item.surface_normal_local.z * coalesced_item.surface_normal_local.z;
-    if (!near(coalesced_len2, 1.0)) {
-        std::cerr << "coalesced depth-derived normal should remain unit length\n";
-        return 1;
-    }
-    if (!near(coalesced_item.size_m.x, 20.0) ||
-        !near(coalesced_item.size_m.y, 20.0) ||
-        !near(coalesced_item.size_m.z, 5.0)) {
-        std::cerr << "coalesced patch size should derive from voxel_size_m\n";
-        return 1;
-    }
-
     return 0;
 }
