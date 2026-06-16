@@ -41,10 +41,6 @@ Vec3 normalize_or_zero(const Vec3& value) {
     return Vec3{value.x / length, value.y / length, value.z / length};
 }
 
-Vec3 zero_vec3() {
-    return Vec3{0.0, 0.0, 0.0};
-}
-
 bool finite_positive(float value) {
     return std::isfinite(value) && value > 0.0F;
 }

@@ -106,6 +106,39 @@ void same_update_duplicate_evidence_is_compacted_before_scoring() {
     assert(snapshot.cells.front().max_z_m >= 0.4F);
 }
 
+void dense_detector_style_evidence_is_compacted_by_mission_map() {
+    MissionLocalObstacleMapConfig config;
+    config.cell_size_m = 1.0;
+    config.vertical_cell_size_m = 1.0;
+    config.occupied_threshold = 2.0;
+    config.occupied_hit_score = 1.0;
+
+    MissionLocalObstacleMap map(config);
+
+    std::vector<ObstacleEvidence> evidence;
+    for (int y = 0; y < 3; ++y) {
+        for (int x = 0; x < 3; ++x) {
+            evidence.push_back(occupied_evidence(Vec3{
+                4.1 + (0.05 * x),
+                -2.4 + (0.05 * y),
+                0.2 + (0.01 * (x + y)),
+            }));
+        }
+    }
+
+    const auto snapshot = map.update(evidence, at_ns(1000), map_frame("mission_local"));
+
+    assert(snapshot.summary.raw_evidence_count == 9U);
+    assert(snapshot.summary.accepted_evidence_count == 9U);
+    assert(snapshot.summary.compacted_evidence_count == 1U);
+    assert(snapshot.summary.duplicate_evidence_count == 8U);
+    assert(snapshot.summary.observed_cell_count == 1U);
+    assert(snapshot.summary.occupied_cell_count == 0U);
+    assert(snapshot.cells.front().occupied_score < 2.0);
+    assert(snapshot.cells.front().positive_observation_count == 9U);
+    assert(snapshot.cells.front().same_update_duplicate_count == 8U);
+}
+
 void decay_reduces_occupied_state() {
     MissionLocalObstacleMapConfig config;
     config.cell_size_m = 1.0;
@@ -167,6 +200,7 @@ int main() {
     occupied_evidence_creates_mission_local_cell();
     repeated_evidence_accumulates_score_in_same_cell();
     same_update_duplicate_evidence_is_compacted_before_scoring();
+    dense_detector_style_evidence_is_compacted_by_mission_map();
     decay_reduces_occupied_state();
     evidence_from_other_map_frame_is_ignored();
     snapshot_cell_limit_returns_highest_priority_cells();
