@@ -292,6 +292,13 @@ void write_mission_local_obstacle_map(
     out << "    \"free_cell_count\": " << map.summary.free_cell_count << ",\n";
     out << "    \"update_count\": " << map.summary.update_count << ",\n";
     out << "    \"last_update_timestamp_ns\": " << map.summary.last_update_timestamp_ns << ",\n";
+    out << "    \"raw_evidence_count\": " << map.summary.raw_evidence_count << ",\n";
+    out << "    \"accepted_evidence_count\": " << map.summary.accepted_evidence_count << ",\n";
+    out << "    \"compacted_evidence_count\": " << map.summary.compacted_evidence_count << ",\n";
+    out << "    \"duplicate_evidence_count\": " << map.summary.duplicate_evidence_count << ",\n";
+    out << "    \"dropped_evidence_count\": " << map.summary.dropped_evidence_count << ",\n";
+    out << "    \"new_cell_count\": " << map.summary.new_cell_count << ",\n";
+    out << "    \"updated_cell_count\": " << map.summary.updated_cell_count << ",\n";
 
     std::vector<const MissionLocalObstacleCell*> debug_cells;
     debug_cells.reserve(std::min<std::size_t>(map.cells.size(), kMaxDebugCells));
@@ -331,6 +338,11 @@ void write_mission_local_obstacle_map(
         out << "        \"last_observed_timestamp_ns\": " << cell.last_observed_timestamp_ns << ",\n";
         out << "        \"min_z_m\": " << cell.min_z_m << ",\n";
         out << "        \"max_z_m\": " << cell.max_z_m << ",\n";
+        out << "        \"positive_observation_count\": " << cell.positive_observation_count << ",\n";
+        out << "        \"negative_observation_count\": " << cell.negative_observation_count << ",\n";
+        out << "        \"same_update_duplicate_count\": " << cell.same_update_duplicate_count << ",\n";
+        out << "        \"last_confirmed_occupied_timestamp_ns\": " << cell.last_confirmed_occupied_timestamp_ns << ",\n";
+        out << "        \"last_observed_free_timestamp_ns\": " << cell.last_observed_free_timestamp_ns << ",\n";
         out << "        \"last_source_kind\": \"" << to_string(cell.last_source_kind) << "\",\n";
         out << "        \"last_source_provider\": \"" << escape_json(cell.last_source_provider) << "\"\n";
         out << "      }";
@@ -359,6 +371,10 @@ void write_local_flight_map(std::ostringstream& out, const LocalFlightMapSnapsho
     out << "    \"nearest_obstacle_m\": ";
     write_float_or_null(out, map.nearest_obstacle_m);
     out << ",\n";
+    out << "    \"source_mission_cell_count\": " << map.source_mission_cell_count << ",\n";
+    out << "    \"projected_mission_cell_count\": " << map.projected_mission_cell_count << ",\n";
+    out << "    \"projected_local_cell_update_count\": " << map.projected_local_cell_update_count << ",\n";
+    out << "    \"exclusion_inflation_radius_m\": " << map.exclusion_inflation_radius_m << ",\n";
 
     std::vector<const LocalFlightMapCell*> debug_cells;
     debug_cells.reserve(std::min<std::size_t>(map.cells.size(), kMaxDebugCells));

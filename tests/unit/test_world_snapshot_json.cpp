@@ -131,6 +131,70 @@ int main() {
     map_frame.orientation_confidence = 0.5F;
     snapshot.map_frames.push_back(map_frame);
 
+    snapshot.has_mission_local_obstacle_map = true;
+    snapshot.mission_local_obstacle_map.config.cell_size_m = 0.5;
+    snapshot.mission_local_obstacle_map.config.vertical_cell_size_m = 0.5;
+    snapshot.mission_local_obstacle_map.summary.map_frame_id = snapshot.active_map_frame_id;
+    snapshot.mission_local_obstacle_map.summary.observed_cell_count = 1U;
+    snapshot.mission_local_obstacle_map.summary.occupied_cell_count = 1U;
+    snapshot.mission_local_obstacle_map.summary.free_cell_count = 0U;
+    snapshot.mission_local_obstacle_map.summary.update_count = 7U;
+    snapshot.mission_local_obstacle_map.summary.last_update_timestamp_ns = 123456789U;
+    snapshot.mission_local_obstacle_map.summary.raw_evidence_count = 9U;
+    snapshot.mission_local_obstacle_map.summary.accepted_evidence_count = 9U;
+    snapshot.mission_local_obstacle_map.summary.compacted_evidence_count = 1U;
+    snapshot.mission_local_obstacle_map.summary.duplicate_evidence_count = 8U;
+    snapshot.mission_local_obstacle_map.summary.dropped_evidence_count = 0U;
+    snapshot.mission_local_obstacle_map.summary.new_cell_count = 1U;
+    snapshot.mission_local_obstacle_map.summary.updated_cell_count = 0U;
+
+    dedalus::MissionLocalObstacleCell mission_cell;
+    mission_cell.center_map = dedalus::Vec3{6.0, 2.0, -8.0};
+    mission_cell.size_m = dedalus::Vec3{0.5, 0.5, 0.5};
+    mission_cell.observed = true;
+    mission_cell.occupied = true;
+    mission_cell.occupied_score = 1.0;
+    mission_cell.confidence = 0.8;
+    mission_cell.first_observed_timestamp_ns = 123456700U;
+    mission_cell.last_observed_timestamp_ns = 123456789U;
+    mission_cell.min_z_m = -8.25F;
+    mission_cell.max_z_m = -7.75F;
+    mission_cell.positive_observation_count = 9U;
+    mission_cell.negative_observation_count = 0U;
+    mission_cell.same_update_duplicate_count = 8U;
+    mission_cell.last_confirmed_occupied_timestamp_ns = 123456789U;
+    mission_cell.last_observed_free_timestamp_ns = 0U;
+    mission_cell.last_source_kind = dedalus::OccupancySourceKind::DepthProvider;
+    mission_cell.last_source_provider = "unit_test_depth";
+    snapshot.mission_local_obstacle_map.cells.push_back(mission_cell);
+
+    snapshot.has_local_flight_map = true;
+    snapshot.local_flight_map.timestamp = snapshot.timestamp;
+    snapshot.local_flight_map.cell_size_m = 0.5F;
+    snapshot.local_flight_map.x_cells = 10;
+    snapshot.local_flight_map.y_cells = 8;
+    snapshot.local_flight_map.forward_range_m = 8.0F;
+    snapshot.local_flight_map.rear_range_m = 2.0F;
+    snapshot.local_flight_map.lateral_range_m = 4.0F;
+    snapshot.local_flight_map.occupied_count = 1U;
+    snapshot.local_flight_map.inflated_blocked_count = 9U;
+    snapshot.local_flight_map.nearest_obstacle_m = 5.0F;
+    snapshot.local_flight_map.source_mission_cell_count = 1U;
+    snapshot.local_flight_map.projected_mission_cell_count = 1U;
+    snapshot.local_flight_map.projected_local_cell_update_count = 1U;
+    snapshot.local_flight_map.exclusion_inflation_radius_m = 1.5F;
+
+    dedalus::LocalFlightMapCell local_cell;
+    local_cell.center_local = dedalus::Vec3{5.0, 0.0, 0.0};
+    local_cell.occupied = true;
+    local_cell.inflated_blocked = true;
+    local_cell.recently_observed = true;
+    local_cell.occupied_score = 1.0F;
+    local_cell.nearest_range_m = 5.0F;
+    local_cell.min_z_m = -0.25F;
+    local_cell.max_z_m = 0.25F;
+    snapshot.local_flight_map.cells.push_back(local_cell);
+
     const std::string json = dedalus::to_json(snapshot);
 
     if (!contains(json, "\"map_frames\"")) {
@@ -262,6 +326,49 @@ int main() {
     for (const auto& token : required_obstacle_evidence_tokens) {
         if (!contains(json, token)) {
             std::cerr << "missing serialized obstacle-evidence token: " << token << "\n";
+            std::cerr << json << "\n";
+            return 1;
+        }
+    }
+
+    const std::string required_mission_local_obstacle_map_tokens[] = {
+        "\"mission_local_obstacle_map\"",
+        "\"raw_evidence_count\": 9",
+        "\"accepted_evidence_count\": 9",
+        "\"compacted_evidence_count\": 1",
+        "\"duplicate_evidence_count\": 8",
+        "\"dropped_evidence_count\": 0",
+        "\"new_cell_count\": 1",
+        "\"updated_cell_count\": 0",
+        "\"positive_observation_count\": 9",
+        "\"negative_observation_count\": 0",
+        "\"same_update_duplicate_count\": 8",
+        "\"last_confirmed_occupied_timestamp_ns\": 123456789",
+        "\"last_observed_free_timestamp_ns\": 0",
+        "\"last_source_kind\": \"depth_provider\"",
+        "\"last_source_provider\": \"unit_test_depth\""};
+
+    for (const auto& token : required_mission_local_obstacle_map_tokens) {
+        if (!contains(json, token)) {
+            std::cerr << "missing serialized mission-local obstacle-map diagnostic token: " << token << "\n";
+            std::cerr << json << "\n";
+            return 1;
+        }
+    }
+
+    const std::string required_local_flight_map_tokens[] = {
+        "\"local_flight_map\"",
+        "\"inflated_blocked_count\": 9",
+        "\"source_mission_cell_count\": 1",
+        "\"projected_mission_cell_count\": 1",
+        "\"projected_local_cell_update_count\": 1",
+        "\"exclusion_inflation_radius_m\": 1.5",
+        "\"inflated_blocked\": true",
+        "\"recently_observed\": true"};
+
+    for (const auto& token : required_local_flight_map_tokens) {
+        if (!contains(json, token)) {
+            std::cerr << "missing serialized local-flight-map diagnostic token: " << token << "\n";
             std::cerr << json << "\n";
             return 1;
         }
