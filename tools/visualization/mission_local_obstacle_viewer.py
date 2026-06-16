@@ -283,7 +283,6 @@ HTML_TEMPLATE = """<!doctype html>
       Opacity: confidence and live recency<br>
       Yellow: ego pose / path<br>
       White: true sensing volume, when published<br>
-      Dashed white: ego-yaw sensing approximation<br>
       Magenta: first blocked trajectory point, when present
     </p>
   </aside>
@@ -567,7 +566,6 @@ function snapshotSensingOverlays(snapshot) {
 function sensingOverlayStatus() {
   const count = Array.isArray(data.sensingOverlays) ? data.sensingOverlays.length : 0;
   if (count > 0) return `${count} true volume${count === 1 ? "" : "s"}`;
-  if (data.ego && typeof data.ego_yaw === "number") return "ego-yaw approximation";
   return "unavailable";
 }
 
@@ -1209,16 +1207,9 @@ function drawSensingOverlays() {{
     return;
   }}
 
-  if (data.ego && typeof data.ego_yaw === "number") {{
-    const range = Math.max(3.0, Math.min(12.0, 0.18 * radius()));
-    const approxTip = {{
-      x: data.ego.x + range * Math.cos(data.ego_yaw),
-      y: data.ego.y + range * Math.sin(data.ego_yaw),
-      z: data.ego.z
-    }};
-    drawDashedLine(data.ego, approxTip, "rgba(0, 0, 0, 0.92)", 5.0);
-    drawDashedLine(data.ego, approxTip, "rgba(255, 255, 255, 0.92)", 2.6);
-  }}
+  // Do not draw a fallback camera/sensing vector from ego yaw.
+  // Without true camera/frustum data, this duplicates the drone yaw vector and
+  // can be mistaken for the actual depth-camera direction.
 }}
 
 function drawPoint(p, color, r) {{
@@ -1336,7 +1327,6 @@ function updateHoverCard(event) {
 function draw() {{
   ctx.clearRect(0, 0, canvas.width, canvas.height);
   drawAxes();
-  drawSensingOverlays();
 
   const cells = data.cells.filter((cell) => cell.center).slice().sort((a, b) => project(a.center).depth - project(b.center).depth);
   for (const cell of cells) {{
@@ -1532,6 +1522,7 @@ const baseDraw = draw;
 draw = function() {
   baseDraw();
   drawLiveAgingOverlay();
+  drawSensingOverlays();
   drawDroneMarker();
 };
 
@@ -1704,7 +1695,7 @@ def build_html(
         ),
         sensing_overlay_status=html.escape(
             f"{len(overlays)} true volume{'s' if len(overlays) != 1 else ''}"
-            if overlays else ("ego-yaw approximation" if ego is not None and yaw is not None else "unavailable")
+            if overlays else "unavailable"
         ),
         trajectory_points=html.escape(str(len(trajectory))),
         bounds_text=html.escape(
