@@ -72,6 +72,13 @@ struct LocalFlightMapSnapshot {
     std::size_t occupied_count{0U};
     std::size_t inflated_blocked_count{0U};
     float nearest_obstacle_m{std::numeric_limits<float>::infinity()};
+
+    // Diagnostics for the mission-local -> ego-local exclusion-zone derivation.
+    // These counters are observational only; they do not imply command blocking.
+    std::size_t source_mission_cell_count{0U};
+    std::size_t projected_mission_cell_count{0U};
+    std::size_t projected_local_cell_update_count{0U};
+    float exclusion_inflation_radius_m{0.0F};
 };
 
 struct LocalFlightMapIndex {

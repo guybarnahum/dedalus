@@ -188,6 +188,50 @@ void mission_local_crop_accounts_for_ego_translation() {
     const auto& local_cell = cell_for(accumulator, Vec3{2.0, 0.0, 0.0});
     assert(local_cell.occupied);
     assert(result.occupied_count >= 1U);
+    assert(result.source_mission_cell_count == 1U);
+    assert(result.projected_mission_cell_count == 1U);
+    assert(result.projected_local_cell_update_count >= 1U);
+    assert(result.exclusion_inflation_radius_m == 0.0F);
+}
+
+void mission_local_projection_reports_exclusion_diagnostics() {
+    MissionLocalObstacleMapConfig mission_config;
+    mission_config.cell_size_m = 1.0;
+    mission_config.vertical_cell_size_m = 1.0;
+    mission_config.occupied_threshold = 0.5;
+    mission_config.occupied_hit_score = 1.0;
+
+    MissionLocalObstacleMap mission_map{mission_config};
+    mission_map.update(
+        {occupied_depth_evidence(Vec3{4.0, 0.0, 0.0}, 4.0F)},
+        at_ms(0),
+        map_frame("mission_local"));
+
+    LocalFlightMapConfig local_config;
+    local_config.cell_size_m = 1.0F;
+    local_config.forward_range_m = 8.0F;
+    local_config.rear_range_m = 2.0F;
+    local_config.lateral_range_m = 5.0F;
+    local_config.vehicle_radius_m = 0.5F;
+    local_config.safety_margin_m = 1.0F;
+
+    LocalFlightMapAccumulator accumulator{local_config};
+
+    Pose3 map_T_body;
+    map_T_body.position = Vec3{0.0, 0.0, 0.0};
+    map_T_body.rotation_rpy = Vec3{0.0, 0.0, 0.0};
+
+    const auto result = accumulator.update_from_mission_local_map(
+        mission_map.snapshot(),
+        map_T_body,
+        at_ms(100));
+
+    assert(result.source_mission_cell_count == 1U);
+    assert(result.projected_mission_cell_count == 1U);
+    assert(result.projected_local_cell_update_count >= 1U);
+    assert(result.occupied_count >= 1U);
+    assert(result.inflated_blocked_count > result.occupied_count);
+    assert(result.exclusion_inflation_radius_m == 1.5F);
 }
 
 void mission_local_crop_accounts_for_ego_yaw() {
@@ -237,6 +281,7 @@ int main() {
     inflation_marks_neighbor_cells();
     max_evidence_per_update_is_enforced();
     mission_local_crop_accounts_for_ego_translation();
+    mission_local_projection_reports_exclusion_diagnostics();
     mission_local_crop_accounts_for_ego_yaw();
 
     std::cout << "local flight map accumulator tests passed\n";

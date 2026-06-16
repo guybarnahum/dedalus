@@ -45,6 +45,13 @@ LocalFlightMapSnapshot LocalFlightMapAccumulator::update_from_mission_local_map(
     // cells from the previous ego pose; persistence belongs to the mission map.
     reset_cells();
 
+    latest_.source_mission_cell_count = mission_map.summary.observed_cell_count;
+    latest_.projected_mission_cell_count = 0U;
+    latest_.projected_local_cell_update_count = 0U;
+    latest_.exclusion_inflation_radius_m = std::max(
+        0.0F,
+        config_.vehicle_radius_m + config_.safety_margin_m);
+
     const auto now_ns = timestamp_ns(timestamp);
 
     for (const auto& mission_cell : mission_map.cells) {
@@ -76,6 +83,7 @@ LocalFlightMapSnapshot LocalFlightMapAccumulator::update_from_mission_local_map(
         const float risk_score = clamp01(mission_cell.risk_score);
         const float range_m = local_range_m(center_local);
 
+        bool projected_any_local_cell = false;
         for (int dy = -radius_cells; dy <= radius_cells; ++dy) {
             for (int dx = -radius_cells; dx <= radius_cells; ++dx) {
                 if ((dx * dx) + (dy * dy) > radius_cells * radius_cells) {
@@ -101,7 +109,13 @@ LocalFlightMapSnapshot LocalFlightMapAccumulator::update_from_mission_local_map(
                         ? mission_cell.last_observed_timestamp_ns
                         : now_ns);
                 local_cell->recently_observed = true;
+                projected_any_local_cell = true;
+                ++latest_.projected_local_cell_update_count;
             }
+        }
+
+        if (projected_any_local_cell) {
+            ++latest_.projected_mission_cell_count;
         }
     }
 

@@ -56,6 +56,12 @@ LocalFlightMapSnapshot LocalFlightMapAccumulator::update(const WorldSnapshot& sn
     latest_.timestamp = snapshot.timestamp;
     latest_.source_frame_id = FrameId{};
     latest_.has_source_frame = false;
+    latest_.source_mission_cell_count = 0U;
+    latest_.projected_mission_cell_count = 0U;
+    latest_.projected_local_cell_update_count = 0U;
+    latest_.exclusion_inflation_radius_m = std::max(
+        0.0F,
+        config_.vehicle_radius_m + config_.safety_margin_m);
     if (!snapshot.obstacle_evidence.empty() && snapshot.obstacle_evidence.front().has_source_frame) {
         latest_.source_frame_id = snapshot.obstacle_evidence.front().source_frame_id;
         latest_.has_source_frame = true;
