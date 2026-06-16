@@ -518,6 +518,29 @@ function addVec3(a, b, scale = 1.0) {
   return {x: a.x + b.x * scale, y: a.y + b.y * scale, z: a.z + b.z * scale};
 }
 
+function droneVelocityDirection() {
+  if (!data.ego || !Array.isArray(data.trajectory) || data.trajectory.length < 2) return null;
+
+  // Use the most recent path segment with non-trivial XY motion.
+  const newest = data.trajectory[data.trajectory.length - 1];
+  for (let i = data.trajectory.length - 2; i >= 0; --i) {
+    const older = data.trajectory[i];
+    if (!older || !newest) continue;
+    const dx = newest.x - older.x;
+    const dy = newest.y - older.y;
+    const dz = newest.z - older.z;
+    const xy = Math.hypot(dx, dy);
+    if (Number.isFinite(xy) && xy > 0.05) {
+      const length = Math.hypot(dx, dy, dz);
+      if (Number.isFinite(length) && length > 1e-6) {
+        return {x: dx / length, y: dy / length, z: dz / length};
+      }
+    }
+  }
+
+  return null;
+}
+
 function snapshotSensingOverlays(snapshot) {
   if (!snapshot || typeof snapshot !== "object") return [];
 
@@ -1208,14 +1231,10 @@ function drawDroneMarker() {{
   drawPoint(data.ego, "rgba(0, 0, 0, 0.92)", 10.5);
   drawPoint(data.ego, "rgba(255, 255, 255, 1.0)", 8.5);
   drawPoint(data.ego, "rgba(255, 230, 64, 1.0)", 5.8);
-
-  if (typeof data.ego_yaw === "number") {{
-    const l = 2.4;
-    const tip = {{
-      x: data.ego.x + l * Math.cos(data.ego_yaw),
-      y: data.ego.y + l * Math.sin(data.ego_yaw),
-      z: data.ego.z
-    }};
+  const velocityDirection = droneVelocityDirection();
+  if (velocityDirection) {{
+    const l = 2.8;
+    const tip = addVec3(data.ego, velocityDirection, l);
     drawLine(data.ego, tip, "rgba(0, 0, 0, 0.96)", 7.0);
     drawLine(data.ego, tip, "rgba(255, 255, 255, 1.0)", 3.8);
   }}
@@ -1553,6 +1572,7 @@ const baseDraw = draw;
 draw = function() {
   baseDraw();
   drawLiveAgingOverlay();
+  drawSensingOverlays();
   drawDroneMarker();
 };
 
