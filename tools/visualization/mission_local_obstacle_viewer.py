@@ -282,8 +282,8 @@ HTML_TEMPLATE = """<!doctype html>
       Topo color: mission-cell / live evidence height, using AirSim/NED-style height = -Z<br>
       Opacity: confidence and live recency<br>
       Yellow: ego pose / path<br>
-      Cyan: true sensing volume, when published<br>
-      Dashed gray: ego-yaw sensing approximation<br>
+      White: true sensing volume, when published<br>
+      Dashed white: ego-yaw sensing approximation<br>
       Magenta: first blocked trajectory point, when present
     </p>
   </aside>
@@ -1200,8 +1200,10 @@ function drawSensingOverlays() {{
       if (!overlay || !overlay.origin || !overlay.forward) continue;
       const range = Math.max(0.25, finiteNumber(overlay.range_m, 8.0));
       const tip = addVec3(overlay.origin, overlay.forward, range);
-      drawLine(overlay.origin, tip, "rgba(80, 220, 255, 0.92)", 2.5);
-      drawPoint(overlay.origin, "rgba(80, 220, 255, 0.95)", 4.0);
+      drawLine(overlay.origin, tip, "rgba(0, 0, 0, 0.90)", 5.0);
+      drawLine(overlay.origin, tip, "rgba(255, 255, 255, 0.96)", 2.8);
+      drawPoint(overlay.origin, "rgba(0, 0, 0, 0.90)", 6.0);
+      drawPoint(overlay.origin, "rgba(255, 255, 255, 0.96)", 3.8);
     }}
     return;
   }}
@@ -1213,7 +1215,8 @@ function drawSensingOverlays() {{
       y: data.ego.y + range * Math.sin(data.ego_yaw),
       z: data.ego.z
     }};
-    drawDashedLine(data.ego, approxTip, "rgba(190, 195, 205, 0.78)", 2.0);
+    drawDashedLine(data.ego, approxTip, "rgba(0, 0, 0, 0.92)", 5.0);
+    drawDashedLine(data.ego, approxTip, "rgba(255, 255, 255, 0.92)", 2.6);
   }}
 }}
 
@@ -1223,6 +1226,25 @@ function drawPoint(p, color, r) {{
   ctx.beginPath();
   ctx.arc(pp.x, pp.y, r * window.devicePixelRatio, 0, Math.PI * 2);
   ctx.fill();
+}}
+
+function drawDroneMarker() {{
+  if (!data.ego) return;
+
+  drawPoint(data.ego, "rgba(0, 0, 0, 0.92)", 10.5);
+  drawPoint(data.ego, "rgba(255, 255, 255, 1.0)", 8.5);
+  drawPoint(data.ego, "rgba(255, 230, 64, 1.0)", 5.8);
+
+  if (typeof data.ego_yaw === "number") {{
+    const l = 2.4;
+    const tip = {{
+      x: data.ego.x + l * Math.cos(data.ego_yaw),
+      y: data.ego.y + l * Math.sin(data.ego_yaw),
+      z: data.ego.z
+    }};
+    drawLine(data.ego, tip, "rgba(0, 0, 0, 0.90)", 6.0);
+    drawLine(data.ego, tip, "rgba(255, 255, 255, 1.0)", 3.2);
+  }}
 }}
 
 function cellStateLabel(cell) {
@@ -1337,18 +1359,7 @@ function draw() {{
     }}
   }}
 
-  if (data.ego) {{
-    drawPoint(data.ego, "rgba(255, 230, 80, 1.0)", 7);
-    if (typeof data.ego_yaw === "number") {{
-      const l = 2.0;
-      drawLine(
-        data.ego,
-        {{x: data.ego.x + l * Math.cos(data.ego_yaw), y: data.ego.y + l * Math.sin(data.ego_yaw), z: data.ego.z}},
-        "rgba(255, 230, 80, 1.0)",
-        3
-      );
-    }}
-  }}
+  drawDroneMarker();
 
   if (data.first_blocked) {{
     drawPoint(data.first_blocked, "rgba(255, 80, 255, 1.0)", 8);
@@ -1512,6 +1523,7 @@ const baseDraw = draw;
 draw = function() {
   baseDraw();
   drawLiveAgingOverlay();
+  drawDroneMarker();
 };
 
 
