@@ -236,6 +236,12 @@ HTML_TEMPLATE = """<!doctype html>
     <div class="metric"><span>Observed cells</span><b id="observed-count">{observed}</b></div>
     <div class="metric"><span>Occupied cells</span><b id="occupied-count">{occupied}</b></div>
     <div class="metric"><span>Cells shown</span><b id="cell-count">{debug_cells}</b></div>
+    <div class="metric"><span>Raw evidence</span><b id="raw-evidence-count">{raw_evidence}</b></div>
+    <div class="metric"><span>Compacted evidence</span><b id="compacted-evidence-count">{compacted_evidence}</b></div>
+    <div class="metric"><span>Duplicate evidence</span><b id="duplicate-evidence-count">{duplicate_evidence}</b></div>
+    <div class="metric"><span>Projected mission cells</span><b id="projected-mission-cell-count">{projected_mission_cells}</b></div>
+    <div class="metric"><span>Exclusion cells</span><b id="exclusion-cell-count">{exclusion_cells}</b></div>
+    <div class="metric"><span>Exclusion radius</span><b id="exclusion-radius">{exclusion_radius}</b></div>
     <div class="metric"><span>Trajectory points</span><b id="trajectory-count">{trajectory_points}</b></div>
     <div class="metric"><span>Bounds</span><code id="bounds-text">{bounds_text}</code></div>
     <div class="metric"><span>Live stream</span><code id="live-status">offline</code></div>
@@ -257,6 +263,7 @@ const data = {data_json};
 if (!Array.isArray(data.cells)) data.cells = [];
 if (!Array.isArray(data.trajectory)) data.trajectory = [];
 if (!Array.isArray(data.liveObstacleEvents)) data.liveObstacleEvents = [];
+if (!data.diagnostics || typeof data.diagnostics !== "object") data.diagnostics = {};
 
 const cellsByKey = new Map();
 for (const cell of data.cells) {
@@ -304,6 +311,22 @@ function el(id) {
 function finiteNumber(value, fallback = 0) {
   const n = Number(value);
   return Number.isFinite(n) ? n : fallback;
+}
+
+function metricNumber(value, fallback = 0) {
+  const n = Number(value);
+  return Number.isFinite(n) ? n : fallback;
+}
+
+function formatMetricNumber(value) {
+  const n = metricNumber(value, 0);
+  return Number.isInteger(n) ? String(n) : n.toFixed(2);
+}
+
+function formatMetricMeters(value) {
+  const n = Number(value);
+  if (!Number.isFinite(n)) return "n/a";
+  return `${n.toFixed(2)} m`;
 }
 
 function asVec3(value) {
@@ -600,6 +623,15 @@ function updateMetrics() {
   if (el("occupied-count")) el("occupied-count").textContent = String(occupiedCount);
   if (el("cell-count")) el("cell-count").textContent = String(data.cells.length);
   if (el("trajectory-count")) el("trajectory-count").textContent = String(data.trajectory.length);
+  const d = data.diagnostics || {};
+  if (el("raw-evidence-count")) el("raw-evidence-count").textContent = formatMetricNumber(d.raw_evidence_count);
+  if (el("compacted-evidence-count")) el("compacted-evidence-count").textContent = formatMetricNumber(d.compacted_evidence_count);
+  if (el("duplicate-evidence-count")) el("duplicate-evidence-count").textContent = formatMetricNumber(d.duplicate_evidence_count);
+  if (el("projected-mission-cell-count")) {
+    el("projected-mission-cell-count").textContent = formatMetricNumber(d.projected_mission_cell_count);
+  }
+  if (el("exclusion-cell-count")) el("exclusion-cell-count").textContent = formatMetricNumber(d.inflated_blocked_count);
+  if (el("exclusion-radius")) el("exclusion-radius").textContent = formatMetricMeters(d.exclusion_inflation_radius_m);
   if (el("live-delta-count")) el("live-delta-count").textContent = String(live.deltaCellCount);
   if (el("world-snapshot-count")) el("world-snapshot-count").textContent = String(live.worldSnapshotCount);
   if (el("ego-update-count")) el("ego-update-count").textContent = String(live.egoUpdateCount);
@@ -705,6 +737,29 @@ function applyWorldSnapshot(snapshot, seq, options = {}) {
     data.first_blocked = blocked;
     changed = true;
   }
+
+  const mission = snapshot.mission_local_obstacle_map;
+  if (mission && typeof mission === "object") {
+    data.diagnostics.raw_evidence_count = metricNumber(mission.raw_evidence_count);
+    data.diagnostics.accepted_evidence_count = metricNumber(mission.accepted_evidence_count);
+    data.diagnostics.compacted_evidence_count = metricNumber(mission.compacted_evidence_count);
+    data.diagnostics.duplicate_evidence_count = metricNumber(mission.duplicate_evidence_count);
+    data.diagnostics.dropped_evidence_count = metricNumber(mission.dropped_evidence_count);
+    data.diagnostics.new_cell_count = metricNumber(mission.new_cell_count);
+    data.diagnostics.updated_cell_count = metricNumber(mission.updated_cell_count);
+    changed = true;
+  }
+
+  const localFlight = snapshot.local_flight_map;
+  if (localFlight && typeof localFlight === "object") {
+    data.diagnostics.source_mission_cell_count = metricNumber(localFlight.source_mission_cell_count);
+    data.diagnostics.projected_mission_cell_count = metricNumber(localFlight.projected_mission_cell_count);
+    data.diagnostics.projected_local_cell_update_count = metricNumber(localFlight.projected_local_cell_update_count);
+    data.diagnostics.inflated_blocked_count = metricNumber(localFlight.inflated_blocked_count);
+    data.diagnostics.exclusion_inflation_radius_m = metricNumber(localFlight.exclusion_inflation_radius_m, NaN);
+    changed = true;
+  }
+
   live.lastSeq = seq;
 
   if (!options.deferRender) {
@@ -1198,6 +1253,25 @@ def build_html(
         all_points.append(first_blocked)
 
     b = bounds(all_points)
+    local_flight_map = snapshot.get("local_flight_map")
+    if not isinstance(local_flight_map, dict):
+        local_flight_map = {}
+
+    diagnostics = {
+        "raw_evidence_count": mission.get("raw_evidence_count", 0),
+        "accepted_evidence_count": mission.get("accepted_evidence_count", 0),
+        "compacted_evidence_count": mission.get("compacted_evidence_count", 0),
+        "duplicate_evidence_count": mission.get("duplicate_evidence_count", 0),
+        "dropped_evidence_count": mission.get("dropped_evidence_count", 0),
+        "new_cell_count": mission.get("new_cell_count", 0),
+        "updated_cell_count": mission.get("updated_cell_count", 0),
+        "source_mission_cell_count": local_flight_map.get("source_mission_cell_count", 0),
+        "projected_mission_cell_count": local_flight_map.get("projected_mission_cell_count", 0),
+        "projected_local_cell_update_count": local_flight_map.get("projected_local_cell_update_count", 0),
+        "inflated_blocked_count": local_flight_map.get("inflated_blocked_count", 0),
+        "exclusion_inflation_radius_m": local_flight_map.get("exclusion_inflation_radius_m", None),
+    }
+
     data = {
         "cells": cells,
         "trajectory": trajectory,
@@ -1205,6 +1279,7 @@ def build_html(
         "ego_yaw": yaw,
         "first_blocked": first_blocked,
         "bounds": b,
+        "diagnostics": diagnostics,
     }
 
     return render_html_template(HTML_TEMPLATE,
@@ -1213,6 +1288,15 @@ def build_html(
         observed=html.escape(str(mission.get("observed_cell_count", 0))),
         occupied=html.escape(str(mission.get("occupied_cell_count", 0))),
         debug_cells=html.escape(str(len(cells))),
+        raw_evidence=html.escape(str(diagnostics.get("raw_evidence_count", 0))),
+        compacted_evidence=html.escape(str(diagnostics.get("compacted_evidence_count", 0))),
+        duplicate_evidence=html.escape(str(diagnostics.get("duplicate_evidence_count", 0))),
+        projected_mission_cells=html.escape(str(diagnostics.get("projected_mission_cell_count", 0))),
+        exclusion_cells=html.escape(str(diagnostics.get("inflated_blocked_count", 0))),
+        exclusion_radius=html.escape(
+            "n/a" if diagnostics.get("exclusion_inflation_radius_m") is None
+            else f"{as_float(diagnostics.get('exclusion_inflation_radius_m')):.2f} m"
+        ),
         trajectory_points=html.escape(str(len(trajectory))),
         bounds_text=html.escape(
             f"x[{b['min_x']:.1f},{b['max_x']:.1f}] "
