@@ -744,16 +744,8 @@ function normalizeCell(cell) {
     confidence: finiteNumber(cell.confidence),
     min_z_m: finiteNumber(cell.min_z_m, NaN),
     max_z_m: finiteNumber(cell.max_z_m, NaN),
-    stable_color: cell.stable_color || rgbaForHeight(heightAboveTakeoffM({
-      center,
-      min_z_m: finiteNumber(cell.min_z_m, NaN),
-      max_z_m: finiteNumber(cell.max_z_m, NaN)
-    }), cellDisplayAlpha({occupied, free})),
-    live_color: cell.live_color || rgbaForHeight(heightAboveTakeoffM({
-      center,
-      min_z_m: finiteNumber(cell.min_z_m, NaN),
-      max_z_m: finiteNumber(cell.max_z_m, NaN)
-    }), 0.88),
+    stable_color: cell.stable_color || null,
+    live_color: cell.live_color || null,
     last_source_provider: String(cell.last_source_provider || cell.source_provider || ""),
     last_source_kind: String(cell.last_source_kind || cell.source_kind || ""),
     first_seen_unix_ns: cell.first_seen_unix_ns || null,
@@ -873,8 +865,8 @@ function applyMissionObstacleMapDelta(delta, seq, options = {}) {
       confidence: cell.confidence,
       min_z_m: cell.min_z_m,
       max_z_m: cell.max_z_m,
-      stable_color: cell.stable_color,
-      live_color: cell.live_color,
+      stable_color: stableCellColor(cell),
+      live_color: cell.live_color || null,
       live_seen_ms: nowMs
     };
 
@@ -1353,7 +1345,7 @@ function draw() {{
     }}
     const score = Math.max(cell.occupied_score || 0, cell.free_score || 0, cell.risk_score || 0);
     const r = Math.max(2, Math.min(8, 2 + score * 0.4));
-    drawPoint(cell.center, cell.stable_color || rgbaForHeight(heightAboveTakeoffM(cell), cellDisplayAlpha(cell)), r);
+    drawPoint(cell.center, stableCellColor(cell), r);
   }}
 
   if (data.trajectory.length > 1) {{
@@ -1443,8 +1435,18 @@ function liveDecayLevel(seenMs, dimValue) {
   return 1 - ((1 - dimValue) * t);
 }
 
+function stableCellColor(cell) {
+  if (!cell.stable_color) {
+    cell.stable_color = rgbaForHeight(heightAboveTakeoffM(cell), cellDisplayAlpha(cell));
+  }
+  return cell.stable_color;
+}
+
 function stableLiveColor(event) {
-  return event.live_color || event.stable_color || rgbaForHeight(heightAboveTakeoffM(event), 0.88);
+  if (!event.live_color) {
+    event.live_color = event.stable_color || rgbaForHeight(heightAboveTakeoffM(event), 0.88);
+  }
+  return event.live_color;
 }
 
 function liveYellow(level, alpha = 0.92) {
