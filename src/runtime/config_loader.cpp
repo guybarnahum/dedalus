@@ -268,8 +268,6 @@ bool parse_airsim_depth_obstacle_detector_key(
         detector.normal_confidence = std::stof(value);
     } else if (field == "derive_surface_normals_from_depth") {
         detector.derive_surface_normals_from_depth = parse_bool(value);
-    } else if (field == "coalesce_surface_patches") {
-        detector.coalesce_surface_patches = parse_bool(value);
     } else {
         throw std::invalid_argument("unknown AirSim depth obstacle detector field: " + key);
     }

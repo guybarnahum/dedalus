@@ -3,6 +3,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <string>
+#include <unordered_map>
 #include <vector>
 
 #include "dedalus/core/types.hpp"
@@ -53,6 +54,13 @@ struct MissionLocalObstacleCell {
     bool occupied{false};
     bool free{false};
 
+    std::uint32_t positive_observation_count{0U};
+    std::uint32_t negative_observation_count{0U};
+    std::uint32_t same_update_duplicate_count{0U};
+
+    std::uint64_t last_confirmed_occupied_timestamp_ns{0U};
+    std::uint64_t last_observed_free_timestamp_ns{0U};
+
     OccupancySourceKind last_source_kind{};
     std::string last_source_provider;
 };
@@ -66,6 +74,14 @@ struct MissionLocalObstacleMapSummary {
 
     std::uint64_t update_count{0U};
     std::uint64_t last_update_timestamp_ns{0U};
+
+    std::size_t raw_evidence_count{0U};
+    std::size_t accepted_evidence_count{0U};
+    std::size_t compacted_evidence_count{0U};
+    std::size_t duplicate_evidence_count{0U};
+    std::size_t dropped_evidence_count{0U};
+    std::size_t new_cell_count{0U};
+    std::size_t updated_cell_count{0U};
 };
 
 struct MissionLocalObstacleMapSnapshot {
@@ -118,6 +134,7 @@ private:
     };
 
     std::vector<StoredCell> cells_;
+    std::unordered_map<CellKey, std::size_t, CellKeyHash> cell_index_;
     bool has_last_update_{false};
     TimePoint last_update_{};
 };

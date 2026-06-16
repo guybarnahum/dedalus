@@ -57,7 +57,6 @@ int main() {
     config.voxel_size_m = 0.5F;
     config.confidence = 0.8F;
     config.max_evidence = 32U;
-    config.coalesce_surface_patches = false;
 
     const auto volume = front_volume();
     const auto evidence = dedalus::detect_airsim_depth_obstacles(frame, volume, config);
@@ -161,7 +160,6 @@ int main() {
     default_config.min_depth_m = 0.5F;
     default_config.max_depth_m = 30.0F;
     default_config.max_evidence = 32U;
-    default_config.coalesce_surface_patches = false;
 
     const auto sidecar_evidence =
         dedalus::detect_airsim_depth_obstacles(sidecar_frame, volume, default_config);
@@ -188,7 +186,6 @@ int main() {
     coalesce_config.voxel_size_m = 20.0F;
     coalesce_config.confidence = 0.8F;
     coalesce_config.max_evidence = 32U;
-    coalesce_config.coalesce_surface_patches = true;
 
     const auto coalesced =
         dedalus::detect_airsim_depth_obstacles(coalesce_frame, volume, coalesce_config);

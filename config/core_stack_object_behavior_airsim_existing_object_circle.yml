@@ -150,7 +150,6 @@ mission_options.flight_land_timeout_s: 90.0
 mission_options.flight_disarm_retry_interval_s: 4.0
 mission_options.flight_disarm_timeout_s: 30.0
 
-airsim_depth_obstacle_detector.coalesce_surface_patches: true
 airsim_depth_obstacle_detector.voxel_size_m: 1.5
 airsim_depth_obstacle_detector.max_evidence: 256
 airsim_depth_obstacle_detector.max_depth_m: 60.0

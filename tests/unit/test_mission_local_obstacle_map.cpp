@@ -75,6 +75,37 @@ void repeated_evidence_accumulates_score_in_same_cell() {
     assert(snapshot.cells.front().occupied_score >= 2.0);
 }
 
+void same_update_duplicate_evidence_is_compacted_before_scoring() {
+    MissionLocalObstacleMapConfig config;
+    config.cell_size_m = 1.0;
+    config.vertical_cell_size_m = 1.0;
+    config.occupied_threshold = 2.0;
+    config.occupied_hit_score = 1.0;
+
+    MissionLocalObstacleMap map(config);
+
+    const auto snapshot = map.update(
+        {
+            occupied_evidence(Vec3{1.1, 2.1, 0.2}),
+            occupied_evidence(Vec3{1.2, 2.2, 0.3}),
+            occupied_evidence(Vec3{1.3, 2.3, 0.4}),
+        },
+        at_ns(1000),
+        map_frame("mission_local"));
+
+    assert(snapshot.summary.raw_evidence_count == 3U);
+    assert(snapshot.summary.accepted_evidence_count == 3U);
+    assert(snapshot.summary.compacted_evidence_count == 1U);
+    assert(snapshot.summary.duplicate_evidence_count == 2U);
+    assert(snapshot.summary.observed_cell_count == 1U);
+    assert(snapshot.summary.occupied_cell_count == 0U);
+    assert(snapshot.cells.front().occupied_score < 2.0);
+    assert(snapshot.cells.front().positive_observation_count == 3U);
+    assert(snapshot.cells.front().same_update_duplicate_count == 2U);
+    assert(snapshot.cells.front().min_z_m <= 0.2F);
+    assert(snapshot.cells.front().max_z_m >= 0.4F);
+}
+
 void decay_reduces_occupied_state() {
     MissionLocalObstacleMapConfig config;
     config.cell_size_m = 1.0;
@@ -135,6 +166,7 @@ void snapshot_cell_limit_returns_highest_priority_cells() {
 int main() {
     occupied_evidence_creates_mission_local_cell();
     repeated_evidence_accumulates_score_in_same_cell();
+    same_update_duplicate_evidence_is_compacted_before_scoring();
     decay_reduces_occupied_state();
     evidence_from_other_map_frame_is_ignored();
     snapshot_cell_limit_returns_highest_priority_cells();

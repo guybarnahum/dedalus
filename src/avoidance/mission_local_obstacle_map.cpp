@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cmath>
 #include <limits>
+#include <unordered_map>
 
 namespace dedalus {
 namespace {
@@ -159,6 +160,28 @@ MissionLocalObstacleMapSnapshot MissionLocalObstacleMap::update(
     const auto now_ns = timestamp_ns(now);
     const auto limit = std::min(evidence.size(), config_.max_evidence_per_update);
 
+    summary_.raw_evidence_count = evidence.size();
+    summary_.accepted_evidence_count = 0U;
+    summary_.compacted_evidence_count = 0U;
+    summary_.duplicate_evidence_count = 0U;
+    summary_.dropped_evidence_count = evidence.size() > limit ? evidence.size() - limit : 0U;
+    summary_.new_cell_count = 0U;
+    summary_.updated_cell_count = 0U;
+
+    struct EvidenceCellUpdate {
+        CellKey key;
+        ObstacleEvidence representative;
+        double occupied_confidence{0.0};
+        double free_confidence{0.0};
+        std::uint32_t positive_count{0U};
+        std::uint32_t negative_count{0U};
+        float min_z_m{0.0F};
+        float max_z_m{0.0F};
+    };
+
+    std::vector<EvidenceCellUpdate> compacted_updates;
+    std::unordered_map<CellKey, std::size_t, CellKeyHash> compacted_index;
+
     for (std::size_t i = 0U; i < limit; ++i) {
         const auto& item = evidence[i];
         if (!finite_point(item.center_local)) {
@@ -175,41 +198,93 @@ MissionLocalObstacleMapSnapshot MissionLocalObstacleMap::update(
             continue;
         }
 
+        ++summary_.accepted_evidence_count;
+
         const auto key = key_for_point(item.center_local);
+        const auto confidence = confidence_or_default(item);
 
-        auto found = std::find_if(cells_.begin(), cells_.end(), [&key](const StoredCell& stored) {
-            return stored.key == key;
-        });
-
-        if (found == cells_.end()) {
-            MissionLocalObstacleCell cell;
-            cell.center_map = center_for_key(key);
-            cell.size_m = Vec3{config_.cell_size_m, config_.cell_size_m, config_.vertical_cell_size_m};
-            cell.first_observed_timestamp_ns = now_ns;
-            cell.min_z_m = static_cast<float>(item.center_local.z);
-            cell.max_z_m = static_cast<float>(item.center_local.z);
-            cells_.push_back(StoredCell{key, cell});
-            found = std::prev(cells_.end());
+        auto found_update = compacted_index.find(key);
+        if (found_update == compacted_index.end()) {
+            EvidenceCellUpdate update{
+                key,
+                item,
+                0.0,
+                0.0,
+                0U,
+                0U,
+                static_cast<float>(item.center_local.z),
+                static_cast<float>(item.center_local.z),
+            };
+            compacted_index.emplace(key, compacted_updates.size());
+            compacted_updates.push_back(update);
+            found_update = compacted_index.find(key);
         }
 
-        auto& cell = found->cell;
-        const auto confidence = confidence_or_default(item);
+        auto& update = compacted_updates[found_update->second];
+        update.representative = item;
+        update.min_z_m = std::min(update.min_z_m, static_cast<float>(item.center_local.z));
+        update.max_z_m = std::max(update.max_z_m, static_cast<float>(item.center_local.z));
+
+        if (is_occupied_evidence(item)) {
+            update.occupied_confidence = std::max(update.occupied_confidence, confidence);
+            ++update.positive_count;
+        } else {
+            update.free_confidence = std::max(update.free_confidence, confidence);
+            ++update.negative_count;
+        }
+    }
+
+    summary_.compacted_evidence_count = compacted_updates.size();
+    if (summary_.accepted_evidence_count > summary_.compacted_evidence_count) {
+        summary_.duplicate_evidence_count =
+            summary_.accepted_evidence_count - summary_.compacted_evidence_count;
+    }
+
+    for (const auto& update : compacted_updates) {
+        auto found_index = cell_index_.find(update.key);
+        if (found_index == cell_index_.end()) {
+            MissionLocalObstacleCell cell;
+            cell.center_map = center_for_key(update.key);
+            cell.size_m = Vec3{config_.cell_size_m, config_.cell_size_m, config_.vertical_cell_size_m};
+            cell.first_observed_timestamp_ns = now_ns;
+            cell.min_z_m = update.min_z_m;
+            cell.max_z_m = update.max_z_m;
+            cells_.push_back(StoredCell{update.key, cell});
+            cell_index_.emplace(update.key, cells_.size() - 1U);
+            found_index = cell_index_.find(update.key);
+            ++summary_.new_cell_count;
+        } else {
+            ++summary_.updated_cell_count;
+        }
+
+        auto& cell = cells_[found_index->second].cell;
+        const auto& item = update.representative;
+        const auto confidence = std::max(update.occupied_confidence, update.free_confidence);
+        const auto total_count = update.positive_count + update.negative_count;
 
         cell.observed = true;
         cell.last_observed_timestamp_ns = now_ns;
         cell.confidence = std::max(cell.confidence, confidence);
-        cell.min_z_m = std::min(cell.min_z_m, static_cast<float>(item.center_local.z));
-        cell.max_z_m = std::max(cell.max_z_m, static_cast<float>(item.center_local.z));
+        cell.min_z_m = std::min(cell.min_z_m, update.min_z_m);
+        cell.max_z_m = std::max(cell.max_z_m, update.max_z_m);
         cell.last_source_kind = item.source_kind;
         cell.last_source_provider = item.source_provider;
+        cell.positive_observation_count += update.positive_count;
+        cell.negative_observation_count += update.negative_count;
+        if (total_count > 1U) {
+            cell.same_update_duplicate_count += total_count - 1U;
+        }
 
-        if (is_occupied_evidence(item)) {
+        if (update.positive_count > 0U) {
+            cell.last_confirmed_occupied_timestamp_ns = now_ns;
             cell.occupied_score = clamp_score(
-                cell.occupied_score + (config_.occupied_hit_score * confidence),
+                cell.occupied_score + (config_.occupied_hit_score * update.occupied_confidence),
                 config_.max_score);
-        } else {
+        }
+        if (update.negative_count > 0U) {
+            cell.last_observed_free_timestamp_ns = now_ns;
             cell.free_score = clamp_score(
-                cell.free_score + (config_.free_hit_score * confidence),
+                cell.free_score + (config_.free_hit_score * update.free_confidence),
                 config_.max_score);
         }
 
@@ -228,6 +303,7 @@ MissionLocalObstacleMapSnapshot MissionLocalObstacleMap::update(
 
 void MissionLocalObstacleMap::reset() {
     cells_.clear();
+    cell_index_.clear();
     summary_ = MissionLocalObstacleMapSummary{};
     has_last_update_ = false;
     last_update_ = TimePoint{};

@@ -39,14 +39,6 @@ struct AirSimDepthObstacleDetectorConfig {
     // sign, or coordinate-frame conventions.
     bool derive_surface_normals_from_depth{true};
 
-    // Display/planning-facing evidence coalescing.
-    //
-    // The AirSim bridge samples camera depth/normals on an image grid. Without
-    // coalescing, large continuous surfaces such as ground during landing emit
-    // one SurfacePatch per sampled pixel. When enabled, the detector aggregates
-    // neighboring samples into local-space buckets of voxel_size_m and emits one
-    // averaged SurfacePatch per bucket without changing the upstream sidecar.
-    bool coalesce_surface_patches{false};
 };
 
 class AirSimDepthObstacleDetector {
