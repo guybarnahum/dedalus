@@ -744,6 +744,16 @@ function normalizeCell(cell) {
     confidence: finiteNumber(cell.confidence),
     min_z_m: finiteNumber(cell.min_z_m, NaN),
     max_z_m: finiteNumber(cell.max_z_m, NaN),
+    stable_color: cell.stable_color || rgbaForHeight(heightAboveTakeoffM({
+      center,
+      min_z_m: finiteNumber(cell.min_z_m, NaN),
+      max_z_m: finiteNumber(cell.max_z_m, NaN)
+    }), cellDisplayAlpha({occupied, free})),
+    live_color: cell.live_color || rgbaForHeight(heightAboveTakeoffM({
+      center,
+      min_z_m: finiteNumber(cell.min_z_m, NaN),
+      max_z_m: finiteNumber(cell.max_z_m, NaN)
+    }), 0.88),
     last_source_provider: String(cell.last_source_provider || cell.source_provider || ""),
     last_source_kind: String(cell.last_source_kind || cell.source_kind || ""),
     first_seen_unix_ns: cell.first_seen_unix_ns || null,
@@ -863,6 +873,8 @@ function applyMissionObstacleMapDelta(delta, seq, options = {}) {
       confidence: cell.confidence,
       min_z_m: cell.min_z_m,
       max_z_m: cell.max_z_m,
+      stable_color: cell.stable_color,
+      live_color: cell.live_color,
       live_seen_ms: nowMs
     };
 
@@ -889,7 +901,6 @@ function applyMissionObstacleMapDelta(delta, seq, options = {}) {
   live.lastSeq = seq;
 
   if (!options.deferRender) {
-    recomputeBounds();
     updateMetrics();
     scheduleDraw();
   }
@@ -958,7 +969,6 @@ function applyWorldSnapshot(snapshot, seq, options = {}) {
   live.lastSeq = seq;
 
   if (!options.deferRender) {
-    recomputeBounds();
     updateMetrics();
     scheduleDraw();
   }
@@ -978,7 +988,6 @@ function eventUrlFromLocation() {
 }
 
 function flushLiveEventRenderUpdates() {
-  recomputeBounds();
   updateMetrics();
   scheduleDraw();
 }
@@ -1344,8 +1353,7 @@ function draw() {{
     }}
     const score = Math.max(cell.occupied_score || 0, cell.free_score || 0, cell.risk_score || 0);
     const r = Math.max(2, Math.min(8, 2 + score * 0.4));
-    const color = rgbaForHeight(heightAboveTakeoffM(cell), cellDisplayAlpha(cell));
-    drawPoint(cell.center, color, r);
+    drawPoint(cell.center, cell.stable_color || rgbaForHeight(heightAboveTakeoffM(cell), cellDisplayAlpha(cell)), r);
   }}
 
   if (data.trajectory.length > 1) {{
@@ -1435,9 +1443,8 @@ function liveDecayLevel(seenMs, dimValue) {
   return 1 - ((1 - dimValue) * t);
 }
 
-function liveHeightColor(event, level, alpha = 0.88) {
-  const displayAlpha = Math.max(0.18, Math.min(0.96, alpha * Math.max(0.35, level)));
-  return rgbaForHeight(heightAboveTakeoffM(event), displayAlpha);
+function stableLiveColor(event) {
+  return event.live_color || event.stable_color || rgbaForHeight(heightAboveTakeoffM(event), 0.88);
 }
 
 function liveYellow(level, alpha = 0.92) {
@@ -1480,7 +1487,7 @@ function drawLiveAgingOverlay() {
 
     const score = Math.max(event.occupied_score || 0, event.free_score || 0, event.risk_score || 0);
     const radius = Math.max(2.0, Math.min(8.0, 3.0 + score * 0.5)) * Math.max(0.8, level);
-    drawLivePoint(event.center, liveHeightColor(event, level), radius);
+    drawLivePoint(event.center, stableLiveColor(event), radius);
   }
 
   const liveTrack = data.trajectory.filter((point) => point && point.live_seen_ms);
