@@ -834,7 +834,7 @@ function updateMetrics() {
       const suffix = live.lastSeq === null ? "" : ` seq=${live.lastSeq}`;
       el("live-status").textContent = `connected${suffix}`;
     } else if (live.error) {
-      el("live-status").textContent = `error: ${live.error}`;
+      el("live-status").textContent = live.error;
     } else {
       el("live-status").textContent = "connecting";
     }
@@ -1081,7 +1081,7 @@ function startLiveStream() {
     try {
       enqueueMissionObstacleMapDelta(JSON.parse(event.data));
     } catch (err) {
-      live.error = String(err);
+      live.error = `error: ${String(err)}`;
       updateMetrics();
     }
   });
@@ -1090,7 +1090,7 @@ function startLiveStream() {
     try {
       enqueueWorldSnapshot(JSON.parse(event.data));
     } catch (err) {
-      live.error = String(err);
+      live.error = `error: ${String(err)}`;
       updateMetrics();
     }
   });
