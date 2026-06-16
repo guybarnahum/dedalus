@@ -1123,6 +1123,76 @@ const ctx = canvas.getContext("2d");
 let yaw = -0.75;
 let pitch = 0.75;
 let zoom = 1.0;
+
+// Global view preset animation API. Keep this on window so button handlers
+// can always find it regardless of template/function insertion scope.
+window.viewAnimationHandle = null;
+
+window.shortestAngleDelta = function(from, to) {{
+  let delta = to - from;
+  while (delta > Math.PI) delta -= 2 * Math.PI;
+  while (delta < -Math.PI) delta += 2 * Math.PI;
+  return delta;
+}};
+
+window.easeInOutCubic = function(t) {{
+  return t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2;
+}};
+
+window.animateViewPreset = function(targetYaw, targetPitch, targetZoom, label = "view") {{
+  console.debug("[viewer] animateViewPreset", {{
+    label,
+    from: {{yaw, pitch, zoom}},
+    to: {{yaw: targetYaw, pitch: targetPitch, zoom: targetZoom}},
+    hasDraw: typeof draw
+  }});
+
+  if (window.viewAnimationHandle !== null) {{
+    cancelAnimationFrame(window.viewAnimationHandle);
+    window.viewAnimationHandle = null;
+  }}
+
+  const startYaw = yaw;
+  const startPitch = pitch;
+  const startZoom = zoom;
+  const deltaYaw = window.shortestAngleDelta(startYaw, targetYaw);
+  const durationMs = 420.0;
+  const startMs = performance.now();
+
+  function step(nowMs) {{
+    const rawT = Math.min(1.0, Math.max(0.0, (nowMs - startMs) / durationMs));
+    const t = window.easeInOutCubic(rawT);
+
+    yaw = startYaw + deltaYaw * t;
+    pitch = startPitch + (targetPitch - startPitch) * t;
+    zoom = startZoom + (targetZoom - startZoom) * t;
+    draw();
+
+    if (rawT < 1.0) {{
+      window.viewAnimationHandle = requestAnimationFrame(step);
+    }} else {{
+      yaw = targetYaw;
+      pitch = targetPitch;
+      zoom = targetZoom;
+      window.viewAnimationHandle = null;
+      draw();
+      console.debug("[viewer] animateViewPreset complete", {{
+        label,
+        yaw,
+        pitch,
+        zoom
+      }});
+    }}
+  }}
+
+  window.viewAnimationHandle = requestAnimationFrame(step);
+}};
+
+console.debug("[viewer] global view animation API installed", {{
+  animateViewPreset: typeof window.animateViewPreset,
+  viewAnimationHandle: window.viewAnimationHandle
+}});
+
 let dragging = false;
 let lastX = 0;
 let lastY = 0;
@@ -1393,60 +1463,11 @@ function installViewControls() {{
   }});
 
   if (sideButton) sideButton.addEventListener("click", () => {{
-function shortestAngleDelta(from, to) {{
-  let delta = to - from;
-  while (delta > Math.PI) delta -= 2 * Math.PI;
-  while (delta < -Math.PI) delta += 2 * Math.PI;
-  return delta;
-}}
-
-function easeInOutCubic(t) {{
-  return t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2;
-}}
-
-let viewAnimationHandle = null;
-
-function animateViewPreset(targetYaw, targetPitch, targetZoom) {{
-  if (viewAnimationHandle !== null) {{
-    cancelAnimationFrame(viewAnimationHandle);
-    viewAnimationHandle = null;
-  }}
-
-  const startYaw = yaw;
-  const startPitch = pitch;
-  const startZoom = zoom;
-  const deltaYaw = shortestAngleDelta(startYaw, targetYaw);
-  const durationMs = 360.0;
-  const startMs = performance.now();
-
-  function step(nowMs) {{
-    const rawT = Math.min(1.0, Math.max(0.0, (nowMs - startMs) / durationMs));
-    const t = easeInOutCubic(rawT);
-
-    yaw = startYaw + deltaYaw * t;
-    pitch = startPitch + (targetPitch - startPitch) * t;
-    zoom = startZoom + (targetZoom - startZoom) * t;
-    draw();
-
-    if (rawT < 1.0) {{
-      viewAnimationHandle = requestAnimationFrame(step);
-    }} else {{
-      yaw = targetYaw;
-      pitch = targetPitch;
-      zoom = targetZoom;
-      viewAnimationHandle = null;
-      draw();
-    }}
-  }}
-
-  viewAnimationHandle = requestAnimationFrame(step);
-}}
-
-    animateViewPreset(0, 0, 1.0);
+    window.animateViewPreset(0, 0, 1.0, "center");
   }});
 
   if (topButton) topButton.addEventListener("click", () => {{
-    animateViewPreset(0, Math.PI / 2, 1.0);
+    window.animateViewPreset(0, Math.PI / 2, 1.0, "top");
   }});
 
   const sensingToggle = el("toggle-sensing-overlay");
@@ -1456,7 +1477,7 @@ function animateViewPreset(targetYaw, targetPitch, targetZoom) {{
   }});
 }}
 
-canvas.addEventListener("mousedown", (e) => {{ if (typeof viewAnimationHandle !== "undefined" && viewAnimationHandle !== null) {{ cancelAnimationFrame(viewAnimationHandle); viewAnimationHandle = null; }} dragging = true; lastX = e.clientX; lastY = e.clientY; hideHoverCard(); }});
+canvas.addEventListener("mousedown", (e) => {{ if (typeof window.viewAnimationHandle !== "undefined" && window.viewAnimationHandle !== null) {{ cancelAnimationFrame(window.viewAnimationHandle); window.viewAnimationHandle = null; }} dragging = true; lastX = e.clientX; lastY = e.clientY; hideHoverCard(); }});
 window.addEventListener("mouseup", () => {{ dragging = false; }});
 window.addEventListener("mousemove", (e) => {{
   if (!dragging) return;
