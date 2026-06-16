@@ -1211,11 +1211,24 @@ function drawAxes() {{
 }}
 
 function drawSensingOverlays() {{
-  // Disabled until runtime publishes a confirmed true camera/frustum contract.
-  // The previous overlay could render fixed/default sensing vectors that looked
-  // like camera direction but were not validated camera pose.
-  return;
+  if (!data.showSensingOverlay) return;
+
+  const overlays = Array.isArray(data.sensingOverlays) ? data.sensingOverlays : [];
+  for (const overlay of overlays) {{
+    if (!overlay || !overlay.origin || !overlay.forward) continue;
+
+    // Camera/sensing direction. This is the published sensing-volume direction,
+    // not ego yaw and not velocity. Keep it longer than the velocity vector.
+    const range = Math.max(1.0, finiteNumber(overlay.range_m, 10.0));
+    const tip = addVec3(overlay.origin, overlay.forward, range);
+
+    drawLine(overlay.origin, tip, "rgba(0, 0, 0, 0.94)", 7.5);
+    drawLine(overlay.origin, tip, "rgba(255, 255, 255, 1.0)", 4.2);
+    drawPoint(overlay.origin, "rgba(0, 0, 0, 0.94)", 7.0);
+    drawPoint(overlay.origin, "rgba(255, 255, 255, 1.0)", 4.3);
+  }}
 }}
+
 
 function drawPoint(p, color, r) {{
   const pp = project(p);
@@ -1233,7 +1246,7 @@ function drawDroneMarker() {{
   drawPoint(data.ego, "rgba(255, 230, 64, 1.0)", 5.8);
   const velocityDirection = droneVelocityDirection();
   if (velocityDirection) {{
-    const l = 2.8;
+    const l = 2.2;
     const tip = addVec3(data.ego, velocityDirection, l);
     drawLine(data.ego, tip, "rgba(0, 0, 0, 0.96)", 7.0);
     drawLine(data.ego, tip, "rgba(255, 255, 255, 1.0)", 3.8);
@@ -1443,7 +1456,7 @@ function animateViewPreset(targetYaw, targetPitch, targetZoom) {{
   }});
 }}
 
-canvas.addEventListener("mousedown", (e) => {{ if (viewAnimationHandle !== null) {{ cancelAnimationFrame(viewAnimationHandle); viewAnimationHandle = null; }} dragging = true; lastX = e.clientX; lastY = e.clientY; hideHoverCard(); }});
+canvas.addEventListener("mousedown", (e) => {{ if (typeof viewAnimationHandle !== "undefined" && viewAnimationHandle !== null) {{ cancelAnimationFrame(viewAnimationHandle); viewAnimationHandle = null; }} dragging = true; lastX = e.clientX; lastY = e.clientY; hideHoverCard(); }});
 window.addEventListener("mouseup", () => {{ dragging = false; }});
 window.addEventListener("mousemove", (e) => {{
   if (!dragging) return;
