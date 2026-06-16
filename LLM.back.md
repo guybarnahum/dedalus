@@ -703,3 +703,35 @@ Current rule:
   `relative_gap_seconds = max(0, cell_age_seconds - site_staleness_seconds)`.
 - Derived `freshness_score`, `active_score`, and `status` should be recomputable by tooling.
 - Next slices: 5H export mission maps, 5I merge site maps, 5J score/age maps, 5K run_mission.sh post-process, 5L diagnostics-only preload.
+
+---
+
+## H9. Track 4.3 obstacle diagnostics consolidation
+
+Track 4.3 established the canonical diagnostics-only classless obstacle stack:
+
+```text
+ObstacleEvidence
+  -> MissionLocalObstacleMap
+       provider-neutral same-update compaction / fusion
+       per-cell positive/negative/duplicate counters
+       no AirSim detector-side coalescing policy
+  -> LocalFlightMapAccumulator::update_from_mission_local_map(...)
+       ego-local crop
+       inflated exclusion diagnostics
+  -> WorldSnapshot JSON
+       mission-local and local-flight diagnostic counters
+  -> mission_local_obstacle_viewer
+       existing viewer, extended metrics only
+```
+
+Important correction:
+
+```text
+AirSim depth should emit raw provider-neutral ObstacleEvidence.
+Detector-side coalescing flags or detector-local map policy should not be reintroduced.
+Compaction/fusion belongs in MissionLocalObstacleMap.
+```
+
+4.3A-D were diagnostics/observability slices only. They did not add planner blocking, replanning, command gating, or command-sink coupling. Future avoidance/control work should start as a separately scoped 6.x effort.
+

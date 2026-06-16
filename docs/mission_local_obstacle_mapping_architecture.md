@@ -81,6 +81,32 @@ Downstream mapping, trajectory safety, and visualization should not depend on wh
 - No detector-specific map logic.
 - No duplicate pose or obstacle-evidence contracts.
 
+## 4.3 diagnostics hardening status
+
+4.3A-D tightened the diagnostics path without changing the runtime control boundary.
+
+Completed:
+
+1. `MissionLocalObstacleMap` is the canonical same-update compaction/fusion layer for classless `ObstacleEvidence`.
+2. AirSim depth detector-side coalescing logic and flags are removed. AirSim depth should emit provider-neutral raw evidence; detector-specific map policy should not return.
+3. `MissionLocalObstacleCell` records primitive observation counters and timestamps:
+   - `positive_observation_count`
+   - `negative_observation_count`
+   - `same_update_duplicate_count`
+   - `last_confirmed_occupied_timestamp_ns`
+   - `last_observed_free_timestamp_ns`
+4. `LocalFlightMapAccumulator::update_from_mission_local_map(...)` reports mission-local projection and inflated exclusion diagnostics.
+5. `WorldSnapshot` serializes the mission-local and local-flight diagnostics.
+6. The existing mission-local obstacle viewer displays raw/compacted/duplicate evidence and projected/exclusion metrics.
+
+Still out of scope:
+
+- command gating
+- replanning
+- command-sink coupling
+- persistent-memory-driven avoidance
+- detector-specific obstacle-map branches
+
 ## First implementation path
 
 1. Add pose transform helpers over existing `Pose3`.

@@ -29,6 +29,12 @@ Historical context, only if needed:
 Active development state:
   R3 live mission-local obstacle viewer is operator-validated.
   5Q-5U obstacle-memory default path is compact-delta-first and SQLite-backed.
+  4.3A-D obstacle diagnostics hardening is complete:
+    - MissionLocalObstacleMap owns provider-neutral same-update compaction/fusion.
+    - AirSim detector-side coalescing logic/flags are removed and should not be reintroduced.
+    - LocalFlightMap exposes mission-local projection and inflated exclusion diagnostics.
+    - WorldSnapshot serializes those counters.
+    - The existing mission-local obstacle viewer displays those diagnostics.
   The current work is still diagnostics / visualization / persistence plumbing.
   Do not add planner blocking, replanning, or command-sink obstacle avoidance semantics unless explicitly requested.
 
@@ -68,22 +74,16 @@ Most recent operator observations:
   - Remaining concern: viewer can appear seconds behind AirSim near landing/shutdown. Treat as browser/SSE processing backlog until measured.
 
 Immediate next tasks:
-  1. Preserve current validated R3 viewer behavior.
-  2. If viewer lag remains visible, add client-side event coalescing:
-       - store latest pending world_snapshot event instead of processing every old snapshot immediately
-       - accumulate/bound pending mission_obstacle_map_delta cells
-       - process pending events once per animation frame
-       - keep counters diagnostic and honest
-  3. Add or update lightweight viewer tests if practical, especially for:
-       - array ego pose extraction
-       - 0-2s bright hold / 2-10s fade / >10s dim aging
-       - Y handedness projection
-       - view preset handlers
-       - scheduled/coalesced draw behavior
-  4. Continue persistent obstacle memory work only after preserving diagnostics:
-       - site-map scoring / age diagnostics
-       - diagnostics-only runtime preload
-       - no planner/control coupling yet
+  1. Complete 4.3E documentation / handoff consolidation.
+  2. Resume persistent obstacle-memory schema/artifact alignment using canonical mission-local counters:
+       - positive_observation_count
+       - negative_observation_count
+       - same_update_duplicate_count
+       - last_confirmed_occupied_timestamp_ns
+       - last_observed_free_timestamp_ns
+  3. Update mission artifact / site merge logic so persistent primitive counts are derived from MissionLocalObstacleCell counters, not placeholder per-cell constants.
+  4. Keep runtime preload diagnostics-only until separately validated.
+  5. Do not add planner/control coupling yet.
 
 Runtime commands used for validated viewer workflow:
   Generate viewer HTML:

@@ -21,6 +21,7 @@ Implemented and validated:
 - R3 live viewer validation extends the same tool into a live HTTP/SSE diagnostic viewer: runtime serves the generated HTML from `--runtime-event-static-root`, `/events` streams `world_snapshot` and `mission_obstacle_map_delta`, ego pose and obstacle deltas render live, trajectory/obstacle aging are visually validated, and view preset controls are available.
 - `tools/avoidance/export_mission_obstacle_map.py` exports mission obstacle map artifacts from snapshot diagnostics.
 - Runtime full mission obstacle map artifact writing emits `mission_obstacle_map_full.json` directly from the full `MissionLocalObstacleMapSnapshot`.
+- 4.3A-D added canonical mission-local primitive counters and exposed them through WorldSnapshot/viewer diagnostics.
 - `tools/avoidance/merge_site_obstacle_map.py` is the planned/active 5I post-process tool for merging mission artifacts into persistent site memory.
 
 Validated AirSim examples:
@@ -116,7 +117,7 @@ source_stats
 source_missions
 ```
 
-Known current limitation: `mission_observation_count` is currently written as `1` per cell in the full runtime artifact, even when the accumulated cell score implies repeated hits. This is acceptable for the first site-map merge because raw scores and timestamps are preserved, but a later refinement should add true per-cell observation counters to `MissionLocalObstacleCell`.
+4.3A added true runtime per-cell primitive counters to `MissionLocalObstacleCell`. Remaining artifact/schema alignment work should update full mission artifacts and site-map merge logic to derive `mission_observation_count` and persistent primitive counts from those counters instead of placeholder per-cell constants.
 
 ## Decay philosophy
 

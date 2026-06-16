@@ -26,9 +26,11 @@ Current handoff state:
 
 R3 live mission-local obstacle viewer is operator-validated: Dedalus runtime serves `/healthz`, `/events`, and `mission_local_obstacle_viewer.html` from one HTTP/SSE port; browser viewer consumes live `world_snapshot` and `mission_obstacle_map_delta` events; ego pose follows `snapshot.ego.position_local`; live trajectory samples age yellow with a 0-2s bright hold and 2-10s fade; live obstacle delta samples age red through a coalesced visual event layer; AirSim orbit handedness matches the viewer; left-panel view preset buttons are available.
 
+4.3A-D are complete as diagnostics/observability slices: obstacle evidence compaction/fusion is centralized in `MissionLocalObstacleMap`; AirSim detector-side coalescing/flags are removed; `LocalFlightMapAccumulator::update_from_mission_local_map(...)` reports mission-cell projection / inflated exclusion diagnostics; `WorldSnapshot` serializes the new counters; the existing mission-local obstacle viewer displays raw/compacted/duplicate evidence plus projected/exclusion metrics.
+
 GitHub workflow policy: CI and staging run the fast CTest subset (`-LE 'synthetic|scenario'`) plus core-stack smoke validation. Production keeps full CTest as the release gate plus core-stack smoke validation. See docs/ctest_validation_layers.md.
 
-Active next work: preserve the validated R3 live viewer and compact SQLite obstacle-memory path; next development should focus on reducing any remaining browser/event backlog with client-side event coalescing or throttling, then continue diagnostics-only persistent site-map preload/score work. Avoid changing flight/runtime semantics unless explicitly scoped.
+Active next work: 4.3E documentation / handoff consolidation, then continue persistent obstacle-memory schema/artifact alignment using the canonical mission-local counters. Avoid changing flight/runtime semantics unless explicitly scoped.
 
 GitHub status checks may be absent; continue to run local build/tests after code changes.
 ```
@@ -83,7 +85,8 @@ Milestone 2.29E: mixed-mode sequence validation. Complete: static far-person app
 Milestone 2.30A: slow moving SEL animal sequence validation. Complete: ghost_far_animal_001 at 0.20 m/s validated.
 Milestone 2.30B: moving-target stress matrix. Complete: medium, side-motion, and diagonal far-animal trajectories validated.
 Milestone 4.1C.2/4.1C.3: AirSim depth-frame classless obstacle detector core, sidecar acquisition, CoreStackRunner handoff, sampling fix, and OSD visualization are live-validated.
-Active next slice: 5H persistent mission obstacle map export; 5I site-map merge; 5J derived score/age calculator; 5K run_mission.sh post-process; 5L runtime preload remains diagnostics-only until validated.
+Milestone 4.3A-D: classless obstacle-map diagnostics hardening is complete: provider-neutral map-level compaction, no AirSim detector-side coalescing, local-flight exclusion diagnostics, WorldSnapshot serialization, and viewer observability.
+Active next slice: 4.3E documentation / handoff consolidation; after that, resume persistent obstacle-memory schema/artifact alignment using canonical `MissionLocalObstacleCell` counters. Runtime preload remains diagnostics-only until validated.
 ```
 
 ---
