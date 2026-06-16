@@ -249,9 +249,6 @@ HTML_TEMPLATE = """<!doctype html>
       <button id="view-side" type="button">Side</button>
       <button id="view-top" type="button">Top</button>
     </div>
-    <div class="overlay-controls">
-      <label><input id="toggle-sensing-overlay" type="checkbox" checked> Sensing direction overlay</label>
-    </div>
     <div class="metric"><span>Snapshot</span><code>{snapshot_path}</code></div>
     <div class="metric"><span>Map frame</span><code>{map_frame}</code></div>
     <div class="metric"><span>Observed cells</span><b id="observed-count">{observed}</b></div>
@@ -1191,25 +1188,10 @@ function drawAxes() {{
 }}
 
 function drawSensingOverlays() {{
-  if (!data.showSensingOverlay) return;
-
-  const overlays = Array.isArray(data.sensingOverlays) ? data.sensingOverlays : [];
-  if (overlays.length > 0) {{
-    for (const overlay of overlays) {{
-      if (!overlay || !overlay.origin || !overlay.forward) continue;
-      const range = Math.max(0.25, finiteNumber(overlay.range_m, 8.0));
-      const tip = addVec3(overlay.origin, overlay.forward, range);
-      drawLine(overlay.origin, tip, "rgba(0, 0, 0, 0.90)", 5.0);
-      drawLine(overlay.origin, tip, "rgba(255, 255, 255, 0.96)", 2.8);
-      drawPoint(overlay.origin, "rgba(0, 0, 0, 0.90)", 6.0);
-      drawPoint(overlay.origin, "rgba(255, 255, 255, 0.96)", 3.8);
-    }}
-    return;
-  }}
-
-  // Do not draw a fallback camera/sensing vector from ego yaw.
-  // Without true camera/frustum data, this duplicates the drone yaw vector and
-  // can be mistaken for the actual depth-camera direction.
+  // Disabled until runtime publishes a confirmed true camera/frustum contract.
+  // The previous overlay could render fixed/default sensing vectors that looked
+  // like camera direction but were not validated camera pose.
+  return;
 }}
 
 function drawPoint(p, color, r) {{
@@ -1234,8 +1216,8 @@ function drawDroneMarker() {{
       y: data.ego.y + l * Math.sin(data.ego_yaw),
       z: data.ego.z
     }};
-    drawLine(data.ego, tip, "rgba(0, 0, 0, 0.90)", 6.0);
-    drawLine(data.ego, tip, "rgba(255, 255, 255, 1.0)", 3.2);
+    drawLine(data.ego, tip, "rgba(0, 0, 0, 0.96)", 7.0);
+    drawLine(data.ego, tip, "rgba(255, 255, 255, 1.0)", 3.8);
   }}
 }}
 
@@ -1379,11 +1361,60 @@ function installViewControls() {{
   }});
 
   if (sideButton) sideButton.addEventListener("click", () => {{
-    setViewPreset(0, 0, 1.0);
+function shortestAngleDelta(from, to) {{
+  let delta = to - from;
+  while (delta > Math.PI) delta -= 2 * Math.PI;
+  while (delta < -Math.PI) delta += 2 * Math.PI;
+  return delta;
+}}
+
+function easeInOutCubic(t) {{
+  return t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2;
+}}
+
+let viewAnimationHandle = null;
+
+function animateViewPreset(targetYaw, targetPitch, targetZoom) {{
+  if (viewAnimationHandle !== null) {{
+    cancelAnimationFrame(viewAnimationHandle);
+    viewAnimationHandle = null;
+  }}
+
+  const startYaw = yaw;
+  const startPitch = pitch;
+  const startZoom = zoom;
+  const deltaYaw = shortestAngleDelta(startYaw, targetYaw);
+  const durationMs = 360.0;
+  const startMs = performance.now();
+
+  function step(nowMs) {{
+    const rawT = Math.min(1.0, Math.max(0.0, (nowMs - startMs) / durationMs));
+    const t = easeInOutCubic(rawT);
+
+    yaw = startYaw + deltaYaw * t;
+    pitch = startPitch + (targetPitch - startPitch) * t;
+    zoom = startZoom + (targetZoom - startZoom) * t;
+    draw();
+
+    if (rawT < 1.0) {{
+      viewAnimationHandle = requestAnimationFrame(step);
+    }} else {{
+      yaw = targetYaw;
+      pitch = targetPitch;
+      zoom = targetZoom;
+      viewAnimationHandle = null;
+      draw();
+    }}
+  }}
+
+  viewAnimationHandle = requestAnimationFrame(step);
+}}
+
+    animateViewPreset(0, 0, 1.0);
   }});
 
   if (topButton) topButton.addEventListener("click", () => {{
-    setViewPreset(0, Math.PI / 2, 1.0);
+    animateViewPreset(0, Math.PI / 2, 1.0);
   }});
 
   const sensingToggle = el("toggle-sensing-overlay");
@@ -1393,7 +1424,7 @@ function installViewControls() {{
   }});
 }}
 
-canvas.addEventListener("mousedown", (e) => {{ dragging = true; lastX = e.clientX; lastY = e.clientY; hideHoverCard(); }});
+canvas.addEventListener("mousedown", (e) => {{ if (viewAnimationHandle !== null) {{ cancelAnimationFrame(viewAnimationHandle); viewAnimationHandle = null; }} dragging = true; lastX = e.clientX; lastY = e.clientY; hideHoverCard(); }});
 window.addEventListener("mouseup", () => {{ dragging = false; }});
 window.addEventListener("mousemove", (e) => {{
   if (!dragging) return;
@@ -1522,7 +1553,6 @@ const baseDraw = draw;
 draw = function() {
   baseDraw();
   drawLiveAgingOverlay();
-  drawSensingOverlays();
   drawDroneMarker();
 };
 
