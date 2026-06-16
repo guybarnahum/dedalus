@@ -229,6 +229,13 @@ HTML_TEMPLATE = """<!doctype html>
   .height-ticks span:nth-child(5) {{ text-align: right; }}
   .overlay-controls {{ display: grid; gap: 6px; margin: 10px 0 12px; color: #c8ccd8; }}
   .overlay-controls label {{ display: flex; align-items: center; gap: 8px; }}
+  #hover-card {{ position: fixed; display: none; pointer-events: none; z-index: 10;
+    max-width: 310px; padding: 9px 10px; border: 1px solid #3a4358; border-radius: 8px;
+    background: rgba(15, 18, 27, 0.94); box-shadow: 0 6px 20px rgba(0,0,0,0.35);
+    color: #e8e8e8; font-size: 12px; line-height: 1.35; }}
+  #hover-card b {{ color: #ffffff; }}
+  #hover-card code {{ color: #a7d4ff; word-break: break-word; }}
+  #hover-card .muted {{ color: #aab0bf; }}
 </style>
 </head>
 <body>
@@ -281,6 +288,7 @@ HTML_TEMPLATE = """<!doctype html>
     </p>
   </aside>
   <canvas id="canvas"></canvas>
+  <div id="hover-card"></div>
 </div>
 <script>
 const data = {data_json};
@@ -332,6 +340,15 @@ const live = {
 
 function el(id) {
   return document.getElementById(id);
+}
+
+function escapeHtml(value) {
+  return String(value)
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&#39;");
 }
 
 function finiteNumber(value, fallback = 0) {
@@ -1206,6 +1223,91 @@ function drawPoint(p, color, r) {{
   ctx.fill();
 }}
 
+function cellStateLabel(cell) {
+  if (cell.occupied) return "occupied";
+  if (cell.free) return "free";
+  return "unknown";
+}
+
+function scoreText(value) {
+  const n = Number(value);
+  if (!Number.isFinite(n)) return "n/a";
+  return n.toFixed(2);
+}
+
+function hoverCellHtml(cell) {
+  const heightM = heightAboveTakeoffM(cell);
+  const zM = cellMapZ(cell);
+  const provider = cell.last_source_provider || "n/a";
+  const kind = cell.last_source_kind || "n/a";
+  const source = `${kind}${provider === "n/a" ? "" : " / " + provider}`;
+
+  return [
+    `<b>Mission-local obstacle cell</b>`,
+    `<div>state: <code>${escapeHtml(cellStateLabel(cell))}</code></div>`,
+    `<div>height above takeoff: <code>${scoreText(heightM)} m</code></div>`,
+    `<div>map Z: <code>${scoreText(zM)} m</code> <span class="muted">(AirSim/NED height = -Z)</span></div>`,
+    `<div>occupied score: <code>${scoreText(cell.occupied_score)}</code></div>`,
+    `<div>free score: <code>${scoreText(cell.free_score)}</code></div>`,
+    `<div>risk score: <code>${scoreText(cell.risk_score)}</code></div>`,
+    `<div>confidence: <code>${scoreText(cell.confidence)}</code></div>`,
+    `<div>source: <code>${escapeHtml(source)}</code></div>`,
+    `<div class="muted">x=${scoreText(cell.center.x)}, y=${scoreText(cell.center.y)}, z=${scoreText(cell.center.z)}</div>`
+  ].join("");
+}
+
+function canvasMousePoint(event) {
+  const rect = canvas.getBoundingClientRect();
+  return {
+    x: (event.clientX - rect.left) * window.devicePixelRatio,
+    y: (event.clientY - rect.top) * window.devicePixelRatio
+  };
+}
+
+function nearestCellToCanvasPoint(point) {
+  let best = null;
+  let bestDistance = Infinity;
+  const threshold = 14.0 * window.devicePixelRatio;
+
+  for (const cell of data.cells) {
+    if (!cell || !cell.center || cell.live_seen_ms) continue;
+    const projected = project(cell.center);
+    if (!projected || !Number.isFinite(projected.x) || !Number.isFinite(projected.y)) continue;
+    const distance = Math.hypot(projected.x - point.x, projected.y - point.y);
+    if (distance < bestDistance) {
+      bestDistance = distance;
+      best = cell;
+    }
+  }
+
+  return bestDistance <= threshold ? best : null;
+}
+
+function hideHoverCard() {
+  const card = el("hover-card");
+  if (!card) return;
+  card.style.display = "none";
+}
+
+function updateHoverCard(event) {
+  const card = el("hover-card");
+  if (!card || dragging) {
+    hideHoverCard();
+    return;
+  }
+
+  const cell = nearestCellToCanvasPoint(canvasMousePoint(event));
+  if (!cell) {
+    hideHoverCard();
+    return;
+  }
+
+  card.innerHTML = hoverCellHtml(cell);
+  card.style.left = `${event.clientX + 14}px`;
+  card.style.top = `${event.clientY + 14}px`;
+  card.style.display = "block";
+}
+
 function draw() {{
   ctx.clearRect(0, 0, canvas.width, canvas.height);
   drawAxes();
@@ -1288,7 +1390,7 @@ function installViewControls() {{
   }});
 }}
 
-canvas.addEventListener("mousedown", (e) => {{ dragging = true; lastX = e.clientX; lastY = e.clientY; }});
+canvas.addEventListener("mousedown", (e) => {{ dragging = true; lastX = e.clientX; lastY = e.clientY; hideHoverCard(); }});
 window.addEventListener("mouseup", () => {{ dragging = false; }});
 window.addEventListener("mousemove", (e) => {{
   if (!dragging) return;
@@ -1300,8 +1402,11 @@ window.addEventListener("mousemove", (e) => {{
   pitch += dy * 0.006;
   draw();
 }});
+canvas.addEventListener("mousemove", updateHoverCard);
+canvas.addEventListener("mouseleave", hideHoverCard);
 canvas.addEventListener("wheel", (e) => {{
   e.preventDefault();
+  hideHoverCard();
   zoom *= Math.exp(-e.deltaY * 0.001);
   zoom = Math.max(0.1, Math.min(20.0, zoom));
   draw();
