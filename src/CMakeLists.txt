@@ -9,6 +9,8 @@ add_library(dedalus_core
     avoidance/mission_map_assimilator.cpp
     avoidance/mission_obstacle_map_artifact_writer.cpp
     avoidance/mission_obstacle_map_artifact_writer_env.cpp
+    avoidance/mission_traversability_map_artifact_writer.cpp
+    avoidance/mission_traversability_map_artifact_writer_env.cpp
     avoidance/mission_obstacle_map_delta_writer.cpp
     behavior/behavior_osd.cpp
     behavior/behavior_spec.cpp
@@ -37,7 +39,6 @@ add_library(dedalus_core
     sensors/recorded_frame_source.cpp
     sensors/replay_frame_source.cpp
     sensors/synthetic_frame_source.cpp
-    sensors/synthetic_mission_frame_source.cpp
     sensing/sensing_coverage.cpp
     sensing/airsim_depth_obstacle_detector.cpp
     sensing/airsim_depth_obstacle_detector_impl.cpp
