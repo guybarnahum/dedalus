@@ -264,6 +264,13 @@ dedalus_add_native_test(
 )
 
 dedalus_add_native_test(
+    NAME mission_traversability_map_artifact_writer
+    LAYER unit
+    TAGS avoidance mission_local_map traversability artifacts
+    SOURCES unit/test_mission_traversability_map_artifact_writer.cpp
+)
+
+dedalus_add_native_test(
     NAME local_flight_map
     LAYER unit
     TAGS avoidance obstacle_map
