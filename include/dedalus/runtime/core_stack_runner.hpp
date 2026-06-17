@@ -6,6 +6,8 @@
 
 #include "dedalus/avoidance/local_flight_map.hpp"
 #include "dedalus/avoidance/mission_local_obstacle_map.hpp"
+#include "dedalus/avoidance/mission_local_traversability_map.hpp"
+#include "dedalus/avoidance/mission_map_assimilator.hpp"
 #include "dedalus/avoidance/mission_obstacle_map_artifact_writer.hpp"
 #include "dedalus/avoidance/mission_obstacle_map_delta_writer.hpp"
 #include "dedalus/avoidance/trajectory_safety_evaluator.hpp"
@@ -29,6 +31,7 @@ struct CoreStackRunnerConfig {
     // CoreStackRunner retains these shared_ptrs (the publisher holds weak refs).
     std::vector<std::shared_ptr<WorldSnapshotSubscriber>> snapshot_subscribers;
     AirSimDepthObstacleDetectorConfig airsim_depth_obstacle_detector;
+    MissionMapAssimilatorConfig mission_map_assimilator;
 };
 
 class CoreStackRunner {
@@ -46,6 +49,11 @@ public:
     [[nodiscard]] bool run_once();
     [[nodiscard]] WorldSnapshot snapshot() const;
 
+    [[nodiscard]] MissionMapFlushResult finalize_mission_map_after_landing(TimePoint now);
+    [[nodiscard]] MissionMapAssimilationStatus mission_map_assimilation_status() const;
+    [[nodiscard]] MissionLocalTraversabilityMapSnapshot mission_local_traversability_map_snapshot(
+        std::size_t max_cells = 0U) const;
+
 private:
     CoreStackProviders providers_;
     std::unique_ptr<PipelineProfiler> timing_writer_;
@@ -56,6 +64,7 @@ private:
     AirSimDepthObstacleDetectorConfig airsim_depth_obstacle_detector_config_;
     SensingCoverageProvider sensing_coverage_provider_;
     MissionLocalObstacleMap mission_local_obstacle_map_;
+    MissionMapAssimilator mission_map_assimilator_;
     MissionObstacleMapArtifactWriter mission_obstacle_map_artifact_writer_;
     MissionObstacleMapDeltaWriter mission_obstacle_map_delta_writer_;
     LocalFlightMapAccumulator local_flight_map_accumulator_;
