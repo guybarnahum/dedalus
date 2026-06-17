@@ -19,7 +19,9 @@ CoreStackRunner::CoreStackRunner(CoreStackProviders providers, CoreStackRunnerCo
       sensing_coverage_provider_(providers_.obstacle_sensing_cameras),
       mission_map_assimilator_(config.mission_map_assimilator),
       mission_obstacle_map_artifact_writer_(MissionObstacleMapArtifactWriter::from_environment()),
-      mission_obstacle_map_delta_writer_(MissionObstacleMapDeltaWriter::from_environment()) {
+      mission_obstacle_map_delta_writer_(MissionObstacleMapDeltaWriter::from_environment()),
+      mission_traversability_map_artifact_writer_(
+          MissionTraversabilityMapArtifactWriter::from_environment()) {
     if (!snapshot_subscriber_handles_.empty()) {
         if (!snapshot_publisher_) {
             snapshot_publisher_ = std::make_shared<WorldSnapshotPublisher>();
@@ -54,7 +56,10 @@ MissionMapFlushResult CoreStackRunner::finalize_mission_map_after_landing(const 
     if (obstacle_snapshot.summary.update_count > 0U || !obstacle_snapshot.cells.empty()) {
         mission_map_assimilator_.enqueue_mission_obstacle_map(obstacle_snapshot);
     }
-    return mission_map_assimilator_.flush_after_landing(now);
+    auto result = mission_map_assimilator_.flush_after_landing(now);
+    mission_traversability_map_artifact_writer_.write_final(
+        mission_map_assimilator_.traversability_map().snapshot());
+    return result;
 }
 
 MissionMapAssimilationStatus CoreStackRunner::mission_map_assimilation_status() const {
