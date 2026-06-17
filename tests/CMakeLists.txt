@@ -257,6 +257,13 @@ dedalus_add_native_test(
 )
 
 dedalus_add_native_test(
+    NAME mission_local_traversability_map
+    LAYER unit
+    TAGS avoidance mission_local_map traversability
+    SOURCES unit/test_mission_local_traversability_map.cpp
+)
+
+dedalus_add_native_test(
     NAME local_flight_map
     LAYER unit
     TAGS avoidance obstacle_map

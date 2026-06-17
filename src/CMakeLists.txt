@@ -5,6 +5,8 @@ add_library(dedalus_core
     avoidance/local_flight_map_mission.cpp
     avoidance/trajectory_safety_evaluator.cpp
     avoidance/mission_local_obstacle_map.cpp
+    avoidance/mission_local_traversability_map.cpp
+    avoidance/mission_map_assimilator.cpp
     avoidance/mission_obstacle_map_artifact_writer.cpp
     avoidance/mission_obstacle_map_artifact_writer_env.cpp
     avoidance/mission_obstacle_map_delta_writer.cpp
