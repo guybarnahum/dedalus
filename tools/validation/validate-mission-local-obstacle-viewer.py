@@ -52,15 +52,24 @@ def validate_html(path: Path) -> list[str]:
             failures.append(f"forbidden {label}: {snippet}")
 
     # Ensure the final wrapper order remains evidence/live first, then vectors.
-    base = html.find("baseDraw();")
-    live = html.find("drawLiveAgingOverlay();")
-    sensing = html.find("drawSensingOverlays();")
-    marker = html.find("drawDroneMarker();")
-    if not (0 <= base < live < sensing < marker):
-        failures.append(
-            "final draw order is not baseDraw -> drawLiveAgingOverlay -> "
-            "drawSensingOverlays -> drawDroneMarker"
-        )
+    wrapper_start = html.find("draw = function()")
+    if wrapper_start < 0:
+        failures.append("missing final draw wrapper: draw = function()")
+    else:
+        wrapper_end = html.find("};", wrapper_start)
+        if wrapper_end < 0:
+            failures.append("unterminated final draw wrapper")
+        else:
+            wrapper = html[wrapper_start:wrapper_end]
+            base = wrapper.find("baseDraw();")
+            live = wrapper.find("drawLiveAgingOverlay();")
+            sensing = wrapper.find("drawSensingOverlays();")
+            marker = wrapper.find("drawDroneMarker();")
+            if not (0 <= base < live < sensing < marker):
+                failures.append(
+                    "final draw order is not baseDraw -> drawLiveAgingOverlay -> "
+                    "drawSensingOverlays -> drawDroneMarker"
+                )
 
     return failures
 
