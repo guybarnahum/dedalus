@@ -11,6 +11,7 @@
 #include "dedalus/avoidance/mission_map_assimilator.hpp"
 #include "dedalus/avoidance/mission_obstacle_map_artifact_writer.hpp"
 #include "dedalus/avoidance/mission_obstacle_map_delta_writer.hpp"
+#include "dedalus/avoidance/mission_traversability_map_artifact_writer.hpp"
 #include "dedalus/avoidance/trajectory_safety_evaluator.hpp"
 
 #include "dedalus/perception/ghost_targets.hpp"
@@ -68,6 +69,7 @@ private:
     MissionMapAssimilator mission_map_assimilator_;
     MissionObstacleMapArtifactWriter mission_obstacle_map_artifact_writer_;
     MissionObstacleMapDeltaWriter mission_obstacle_map_delta_writer_;
+    MissionTraversabilityMapArtifactWriter mission_traversability_map_artifact_writer_;
     LocalFlightMapAccumulator local_flight_map_accumulator_;
     TrajectorySafetyEvaluator trajectory_safety_evaluator_;
     std::vector<CameraPointingState> camera_pointing_states_;
