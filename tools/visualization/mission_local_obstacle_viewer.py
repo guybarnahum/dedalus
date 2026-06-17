@@ -1454,20 +1454,20 @@ function installViewControls() {{
   const topButton = el("view-top");
 
   if (centerButton) centerButton.addEventListener("click", () => {{
-    zoom = 1.0;
-    draw();
-  }});
-
-  if (angleButton) angleButton.addEventListener("click", () => {{
-    setViewPreset(-Math.PI / 4, Math.PI / 4, 1.0);
-  }});
-
-  if (sideButton) sideButton.addEventListener("click", () => {{
     window.animateViewPreset(0, 0, 1.0, "center");
   }});
 
+  if (angleButton) angleButton.addEventListener("click", () => {{
+    window.animateViewPreset(-Math.PI / 4, Math.PI / 4, 1.0, "45");
+  }});
+
+  if (sideButton) sideButton.addEventListener("click", () => {{
+    window.animateViewPreset(Math.PI / 2, 0, 1.0, "side");
+  }});
+
   if (topButton) topButton.addEventListener("click", () => {{
-    window.animateViewPreset(0, Math.PI / 2, 1.0, "top");
+    // Avoid exact vertical singularity while remaining visually top-down.
+    window.animateViewPreset(0, Math.PI / 2 - 0.01, 1.0, "top");
   }});
 
   const sensingToggle = el("toggle-sensing-overlay");
@@ -1476,6 +1476,7 @@ function installViewControls() {{
     draw();
   }});
 }}
+
 
 canvas.addEventListener("mousedown", (e) => {{ if (typeof window.viewAnimationHandle !== "undefined" && window.viewAnimationHandle !== null) {{ cancelAnimationFrame(window.viewAnimationHandle); window.viewAnimationHandle = null; }} dragging = true; lastX = e.clientX; lastY = e.clientY; hideHoverCard(); }});
 window.addEventListener("mouseup", () => {{ dragging = false; }});
@@ -1603,85 +1604,7 @@ function drawLiveAgingOverlay() {
 }
 
 const baseDraw = draw;
-let viewPresetButtonsBound = false;
-
-function installViewPresetButtonOverrides() {{
-  if (viewPresetButtonsBound) return;
-  viewPresetButtonsBound = true;
-
-  const presets = [
-    {{
-      label: "center",
-      match: /\b(center|reset)\b/i,
-      yaw: 0,
-      pitch: 0,
-      zoom: 1.0
-    }},
-    {{
-      label: "45",
-      match: /(^|\b)(45|iso|isometric)(\b|$)/i,
-      yaw: Math.PI / 4,
-      pitch: Math.PI / 5,
-      zoom: 1.0
-    }},
-    {{
-      label: "side",
-      match: /\b(side)\b/i,
-      yaw: Math.PI / 2,
-      pitch: 0,
-      zoom: 1.0
-    }},
-    {{
-      label: "top",
-      match: /\b(top)\b/i,
-      yaw: 0,
-      pitch: Math.PI / 2 - 0.01,
-      zoom: 1.0
-    }}
-  ];
-
-  const buttons = Array.from(document.querySelectorAll("button"));
-  const bound = [];
-
-  for (const button of buttons) {{
-    const key = [
-      button.id || "",
-      button.name || "",
-      button.title || "",
-      button.getAttribute("aria-label") || "",
-      button.textContent || ""
-    ].join(" ").trim();
-
-    for (const preset of presets) {{
-      if (!preset.match.test(key)) continue;
-
-      button.addEventListener("click", (event) => {{
-        event.preventDefault();
-        event.stopImmediatePropagation();
-        console.debug("[viewer] view preset override click", {{
-          label: preset.label,
-          key,
-          buttonText: button.textContent,
-          buttonId: button.id
-        }});
-        window.animateViewPreset(preset.yaw, preset.pitch, preset.zoom, preset.label);
-      }}, true);
-
-      bound.push({{
-        label: preset.label,
-        key,
-        text: button.textContent,
-        id: button.id
-      }});
-      break;
-    }}
-  }}
-
-  console.debug("[viewer] view preset override bindings", bound);
-}}
-
 draw = function() {
-  installViewPresetButtonOverrides();
   baseDraw();
   drawLiveAgingOverlay();
   drawSensingOverlays();
