@@ -1603,7 +1603,85 @@ function drawLiveAgingOverlay() {
 }
 
 const baseDraw = draw;
+let viewPresetButtonsBound = false;
+
+function installViewPresetButtonOverrides() {{
+  if (viewPresetButtonsBound) return;
+  viewPresetButtonsBound = true;
+
+  const presets = [
+    {{
+      label: "center",
+      match: /\b(center|reset)\b/i,
+      yaw: 0,
+      pitch: 0,
+      zoom: 1.0
+    }},
+    {{
+      label: "45",
+      match: /(^|\b)(45|iso|isometric)(\b|$)/i,
+      yaw: Math.PI / 4,
+      pitch: Math.PI / 5,
+      zoom: 1.0
+    }},
+    {{
+      label: "side",
+      match: /\b(side)\b/i,
+      yaw: Math.PI / 2,
+      pitch: 0,
+      zoom: 1.0
+    }},
+    {{
+      label: "top",
+      match: /\b(top)\b/i,
+      yaw: 0,
+      pitch: Math.PI / 2 - 0.01,
+      zoom: 1.0
+    }}
+  ];
+
+  const buttons = Array.from(document.querySelectorAll("button"));
+  const bound = [];
+
+  for (const button of buttons) {{
+    const key = [
+      button.id || "",
+      button.name || "",
+      button.title || "",
+      button.getAttribute("aria-label") || "",
+      button.textContent || ""
+    ].join(" ").trim();
+
+    for (const preset of presets) {{
+      if (!preset.match.test(key)) continue;
+
+      button.addEventListener("click", (event) => {{
+        event.preventDefault();
+        event.stopImmediatePropagation();
+        console.debug("[viewer] view preset override click", {{
+          label: preset.label,
+          key,
+          buttonText: button.textContent,
+          buttonId: button.id
+        }});
+        window.animateViewPreset(preset.yaw, preset.pitch, preset.zoom, preset.label);
+      }}, true);
+
+      bound.push({{
+        label: preset.label,
+        key,
+        text: button.textContent,
+        id: button.id
+      }});
+      break;
+    }}
+  }}
+
+  console.debug("[viewer] view preset override bindings", bound);
+}}
+
 draw = function() {
+  installViewPresetButtonOverrides();
   baseDraw();
   drawLiveAgingOverlay();
   drawSensingOverlays();
