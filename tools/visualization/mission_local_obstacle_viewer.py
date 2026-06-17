@@ -1123,6 +1123,7 @@ const ctx = canvas.getContext("2d");
 let yaw = -0.75;
 let pitch = 0.75;
 let zoom = 1.0;
+let viewCenter = null;
 
 // Global view preset animation API. Keep this on window so button handlers
 // can always find it regardless of template/function insertion scope.
@@ -1139,11 +1140,11 @@ window.easeInOutCubic = function(t) {{
   return t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2;
 }};
 
-window.animateViewPreset = function(targetYaw, targetPitch, targetZoom, label = "view") {{
+window.animateViewPreset = function(targetYaw, targetPitch, targetZoom, label = "view", targetCenter = null) {{
   console.debug("[viewer] animateViewPreset", {{
     label,
-    from: {{yaw, pitch, zoom}},
-    to: {{yaw: targetYaw, pitch: targetPitch, zoom: targetZoom}},
+    from: {yaw, pitch, zoom, center: currentViewCenter()},
+    to: {yaw: targetYaw, pitch: targetPitch, zoom: targetZoom, center: targetCenter},
     hasDraw: typeof draw
   }});
 
@@ -1155,6 +1156,8 @@ window.animateViewPreset = function(targetYaw, targetPitch, targetZoom, label = 
   const startYaw = yaw;
   const startPitch = pitch;
   const startZoom = zoom;
+  const startCenter = clonePoint(currentViewCenter());
+  const finalCenter = clonePoint(targetCenter || currentViewCenter());
   const deltaYaw = window.shortestAngleDelta(startYaw, targetYaw);
   const durationMs = 420.0;
   const startMs = performance.now();
@@ -1166,6 +1169,7 @@ window.animateViewPreset = function(targetYaw, targetPitch, targetZoom, label = 
     yaw = startYaw + deltaYaw * t;
     pitch = startPitch + (targetPitch - startPitch) * t;
     zoom = startZoom + (targetZoom - startZoom) * t;
+    viewCenter = interpolatePoint(startCenter, finalCenter, t);
     draw();
 
     if (rawT < 1.0) {{
@@ -1174,14 +1178,16 @@ window.animateViewPreset = function(targetYaw, targetPitch, targetZoom, label = 
       yaw = targetYaw;
       pitch = targetPitch;
       zoom = targetZoom;
+      viewCenter = clonePoint(finalCenter);
       window.viewAnimationHandle = null;
       draw();
       console.debug("[viewer] animateViewPreset complete", {{
         label,
         yaw,
         pitch,
-        zoom
-      }});
+        zoom,
+        center: viewCenter
+      });
     }}
   }}
 
@@ -1213,13 +1219,35 @@ function center() {{
   }};
 }}
 
+function clonePoint(p) {{
+  return p ? {x: p.x, y: p.y, z: p.z} : null;
+}}
+
+function currentViewCenter() {{
+  return viewCenter || center();
+}}
+
+function interpolatePoint(a, b, t) {{
+  if (!a || !b) return clonePoint(b || a);
+  return {{
+    x: a.x + (b.x - a.x) * t,
+    y: a.y + (b.y - a.y) * t,
+    z: a.z + (b.z - a.z) * t
+  }};
+}}
+
+function recenterViewTarget() {{
+  recomputeBounds();
+  return clonePoint(center());
+}}
+
 function radius() {{
   const b = data.bounds;
   return Math.max(1.0, b.max_x - b.min_x, b.max_y - b.min_y, b.max_z - b.min_z);
 }}
 
 function project(p) {{
-  const c = center();
+  const c = currentViewCenter();
   let x = p.x - c.x;
   // AirSim/NED-style local Y is mirrored in canvas space; flip it so orbit
   // handedness matches the simulator view.
@@ -1454,7 +1482,7 @@ function installViewControls() {{
   const topButton = el("view-top");
 
   if (centerButton) centerButton.addEventListener("click", () => {{
-    window.animateViewPreset(0, 0, 1.0, "center");
+    window.animateViewPreset(0, 0, 1.0, "center", recenterViewTarget());
   }});
 
   if (angleButton) angleButton.addEventListener("click", () => {{
