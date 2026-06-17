@@ -1141,13 +1141,6 @@ window.easeInOutCubic = function(t) {{
 }};
 
 window.animateViewPreset = function(targetYaw, targetPitch, targetZoom, label = "view", targetCenter = null) {{
-  console.debug("[viewer] animateViewPreset", {{
-    label,
-    from: {yaw, pitch, zoom, center: currentViewCenter()},
-    to: {yaw: targetYaw, pitch: targetPitch, zoom: targetZoom, center: targetCenter},
-    hasDraw: typeof draw
-  }});
-
   if (window.viewAnimationHandle !== null) {{
     cancelAnimationFrame(window.viewAnimationHandle);
     window.viewAnimationHandle = null;
@@ -1194,10 +1187,6 @@ window.animateViewPreset = function(targetYaw, targetPitch, targetZoom, label = 
   window.viewAnimationHandle = requestAnimationFrame(step);
 }};
 
-console.debug("[viewer] global view animation API installed", {{
-  animateViewPreset: typeof window.animateViewPreset,
-  viewAnimationHandle: window.viewAnimationHandle
-}});
 
 let dragging = false;
 let lastX = 0;
