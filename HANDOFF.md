@@ -35,6 +35,14 @@ Active development state:
     - LocalFlightMap exposes mission-local projection and inflated exclusion diagnostics.
     - WorldSnapshot serializes those counters.
     - The existing mission-local obstacle viewer displays those diagnostics.
+  4.3F viewer polish is operator-validated:
+    - mission/live obstacle evidence uses stable height/topo coloring,
+    - evidence draws below operator vectors,
+    - short white vector is drone velocity from recent ego trajectory,
+    - long white vector is published sensing/camera origin + forward direction,
+    - Center / 45 / Side / Top view buttons are statically wired to animated presets,
+    - Center also animates translation back to the recomputed scene center.
+  4.3G adds a generated-viewer HTML validator.
   The current work is still diagnostics / visualization / persistence plumbing.
   Do not add planner blocking, replanning, or command-sink obstacle avoidance semantics unless explicitly requested.
 
@@ -51,17 +59,22 @@ Current validated architecture:
               /mission_local_obstacle_viewer.html
     -> browser mission-local obstacle viewer
 
-Validated R3 viewer behavior:
+Validated R3 / 4.3F viewer behavior:
   - Runtime serves /healthz, /events, and generated mission_local_obstacle_viewer.html from one HTTP/SSE/static port.
   - Viewer receives world_snapshot events and the World snapshots counter increments.
   - Viewer extracts ego pose from snapshot.ego.position_local arrays.
   - Ego updates counter increments and drone marker moves live.
   - AirSim anti-clockwise orbit renders anti-clockwise in the viewer after the viewer-side Y handedness fix.
   - Live trajectory samples age yellow: 0-2 seconds bright, 2-10 seconds fade, older samples dim.
-  - Live obstacle delta samples age red through a separate/coalesced visual event layer: 0-2 seconds bright, 2-10 seconds fade, older samples dim.
-  - Base obstacle map cells remain dim so they do not mask live red aging.
+  - Live obstacle delta samples render with the same stable height/topo color semantics as mission cells.
+  - Mission/live obstacle evidence draws below operator vectors.
+  - Short white vector is drone velocity from recent ego trajectory.
+  - Long white vector is published sensing/camera origin + forward direction.
   - Left panel has Center, 45 degree, Side, and Top view buttons.
+  - View buttons are statically wired to animated presets.
+  - Center also translates back to the recomputed scene center.
   - Generated HTML must be regenerated after changes to tools/visualization/mission_local_obstacle_viewer.py.
+  - Validate generated HTML with tools/validation/validate-mission-local-obstacle-viewer.py.
 
 Most recent operator observations:
   - World snapshots increments: YES.
@@ -74,7 +87,8 @@ Most recent operator observations:
   - Remaining concern: viewer can appear seconds behind AirSim near landing/shutdown. Treat as browser/SSE processing backlog until measured.
 
 Immediate next tasks:
-  1. Complete 4.3E documentation / handoff consolidation.
+  1. Run the 4.3G viewer validator after regenerating mission_local_obstacle_viewer.html:
+       tools/validation/validate-mission-local-obstacle-viewer.py <generated-html>
   2. Resume persistent obstacle-memory schema/artifact alignment using canonical mission-local counters:
        - positive_observation_count
        - negative_observation_count
@@ -82,8 +96,9 @@ Immediate next tasks:
        - last_confirmed_occupied_timestamp_ns
        - last_observed_free_timestamp_ns
   3. Update mission artifact / site merge logic so persistent primitive counts are derived from MissionLocalObstacleCell counters, not placeholder per-cell constants.
-  4. Keep runtime preload diagnostics-only until separately validated.
-  5. Do not add planner/control coupling yet.
+  4. Use the separate dynamic mission flight-path map handoff prompt for the next architecture/design session.
+  5. Keep runtime preload diagnostics-only until separately validated.
+  6. Do not add planner/control coupling yet.
 
 Runtime commands used for validated viewer workflow:
   Generate viewer HTML:
