@@ -279,6 +279,8 @@ HTML_TEMPLATE = """<!doctype html>
       Topo color: mission-cell / live evidence height, using AirSim/NED-style height = -Z<br>
       Opacity: confidence and live recency<br>
       Yellow: ego pose / path<br>
+      Short white vector: drone velocity direction<br>
+      Long white vector: sensing/camera direction<br>
       White: true sensing volume, when published<br>
       Magenta: first blocked trajectory point, when present
     </p>
@@ -1174,13 +1176,6 @@ window.animateViewPreset = function(targetYaw, targetPitch, targetZoom, label = 
       viewCenter = clonePoint(finalCenter);
       window.viewAnimationHandle = null;
       draw();
-      console.debug("[viewer] animateViewPreset complete", {{
-        label,
-        yaw,
-        pitch,
-        zoom,
-        center: viewCenter
-      });
     }}
   }}
 
