@@ -39,6 +39,7 @@ add_library(dedalus_core
     sensors/recorded_frame_source.cpp
     sensors/replay_frame_source.cpp
     sensors/synthetic_frame_source.cpp
+    sensors/synthetic_mission_frame_source.cpp
     sensing/sensing_coverage.cpp
     sensing/airsim_depth_obstacle_detector.cpp
     sensing/airsim_depth_obstacle_detector_impl.cpp
