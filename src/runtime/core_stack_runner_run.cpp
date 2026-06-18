@@ -184,9 +184,9 @@ bool CoreStackRunner::run_once() {
 
     if (!current_sensing_volumes.empty()) {
         start = SteadyClock::now();
-        providers_.world_model->update_obstacle_sensing_volumes(current_sensing_volumes);
+        providers_.world_model->update_obstacle_sensing_volumes(std::move(current_sensing_volumes));
         if (timing_writer_) {
-            timing_writer_->record_stage("world_model.update_obstacle_sensing_volumes.pre_ingest", duration_us(start));
+            timing_writer_->record_stage("world_model.update_obstacle_sensing_volumes", duration_us(start));
         }
     }
 
@@ -194,14 +194,6 @@ bool CoreStackRunner::run_once() {
     providers_.world_model->ingest(perception_output);
     if (timing_writer_) {
         timing_writer_->record_stage("world_model.ingest", duration_us(start));
-    }
-
-    if (!current_sensing_volumes.empty()) {
-        start = SteadyClock::now();
-        providers_.world_model->update_obstacle_sensing_volumes(std::move(current_sensing_volumes));
-        if (timing_writer_) {
-            timing_writer_->record_stage("world_model.update_obstacle_sensing_volumes", duration_us(start));
-        }
     }
 
     start = SteadyClock::now();
