@@ -14,6 +14,8 @@ First read:
 Then read:
   docs/runtime_dataflow.md
   docs/mission_local_obstacle_mapping_architecture.md
+  docs/dynamic_mission_flight_path_map_architecture.md
+  docs/mission_map_data_representations_and_retention.md
   docs/persistent_obstacle_memory_plan.md
   docs/obstacle_memory_plugin_architecture.md
   docs/airsim_depth_obstacle_detector_validation.md
@@ -28,6 +30,11 @@ Historical context, only if needed:
 
 Active development state:
   R3 live mission-local obstacle viewer is operator-validated.
+  S4A/S4B mission-derived foundational traversability artifact and viewer are operator-validated.
+  Normal AirSim `run_mission.sh --merge-obstacle-map` now emits:
+    - out/<mission>/mission_traversability_map_full.json
+    - out/<mission>/mission_traversability_map_full.json.meta.json
+    by deriving traversability artifact defaults from the existing obstacle-map env path.
   5Q-5U obstacle-memory default path is compact-delta-first and SQLite-backed.
   4.3A-D obstacle diagnostics hardening is complete:
     - MissionLocalObstacleMap owns provider-neutral same-update compaction/fusion.
@@ -46,6 +53,21 @@ Active development state:
   The current work is still diagnostics / visualization / persistence plumbing.
   Do not add planner blocking, replanning, or command-sink obstacle avoidance semantics unless explicitly requested.
 
+Representation boundary to preserve:
+  Read docs/mission_map_data_representations_and_retention.md before changing retention, map storage, or viewer/data plumbing.
+  Keep these four representations distinct:
+    1. detector raw evidence (`ObstacleEvidence`) — temporary live input for emergency/reflexive avoidance and map update,
+    2. ego-relative reflexive avoidance map (`LocalFlightMapSnapshot`) — bounded current-hazard working set,
+    3. mission/site foundational planning map — mission-derived traversability update now, future persistent site-frame planning memory,
+    4. visualization/debug/replay representation — streamable/exportable/operator-facing, not the runtime/control storage format.
+  Raw evidence can be forgotten only after:
+    - active flight/emergency window is clear,
+    - mission-local evidence has been compacted,
+    - mission-derived traversability output has been persisted,
+    - either replayable mission deltas are retained or persistent site-map merge has succeeded idempotently,
+    - and a retention manifest records the decision.
+  Do not implement deletion first; start with a dry-run retention manifest.
+
 Current validated architecture:
   AirSim DepthPlanar / obstacle evidence
     -> CoreStackRunner
@@ -56,11 +78,14 @@ Current validated architecture:
          -> optional HTTP/SSE/static on --runtime-event-http-port
               /healthz
               /events
-              /mission_local_obstacle_viewer.html
+              /mission_local_obstacle_viewer.html, if generated into static root
     -> browser mission-local obstacle viewer
+    -> MissionMapAssimilator / MissionLocalTraversabilityMap at finalization
+    -> mission_traversability_map_full.json
+    -> mission_traversability_map_viewer.html, if generated into static root
 
 Validated R3 / 4.3F viewer behavior:
-  - Runtime serves /healthz, /events, and generated mission_local_obstacle_viewer.html from one HTTP/SSE/static port.
+  - Runtime serves /healthz, /events, and generated mission_local_obstacle_viewer.html from one HTTP/SSE/static port when the generated HTML exists in --runtime-event-static-root.
   - Viewer receives world_snapshot events and the World snapshots counter increments.
   - Viewer extracts ego pose from snapshot.ego.position_local arrays.
   - Ego updates counter increments and drone marker moves live.
@@ -76,38 +101,56 @@ Validated R3 / 4.3F viewer behavior:
   - Generated HTML must be regenerated after changes to tools/visualization/mission_local_obstacle_viewer.py.
   - Validate generated HTML with tools/validation/validate-mission-local-obstacle-viewer.py.
 
+Validated S4 foundational traversability behavior:
+  - Normal AirSim mission command with --merge-obstacle-map emits mission_traversability_map_full.json and .meta.json.
+  - Example validated artifact:
+      schema: dedalus.mission_local_traversability_map.v1
+      site_id: validate_r3b1
+      site_frame_id: airsim_world
+      mission_id: validate_r3b1_mission
+      cell_count: 40402
+      occupied_cell_count: 16881
+      low_clearance_cell_count: 35166
+      overhead_risk_cell_count: 23287
+  - tools/visualization/mission_traversability_map_viewer.py generates mission_traversability_map_viewer.html.
+  - tools/validation/validate-mission-traversability-map-viewer.py validates the generated HTML.
+  - Viewer display may cap cells (for example 4096) even when the artifact contains more cells; that is display decimation, not data loss.
+  - `mission_traversability_map_viewer.html` can poll a large artifact with --artifact-url; for offline/final viewing, consider generating without polling.
+
 Most recent operator observations:
-  - World snapshots increments: YES.
-  - Ego updates increments: YES.
-  - Drone marker moves from snapshot.ego.position_local: YES.
-  - AirSim anti-clockwise orbit renders anti-clockwise in viewer: YES.
-  - Red obstacle cell aging now works after event-layer/coalescing fix.
-  - Yellow live track aging works.
-  - View preset buttons work.
-  - Remaining concern: viewer can appear seconds behind AirSim near landing/shutdown. Treat as browser/SSE processing backlog until measured.
+  - S4 artifact exists and validated from normal wrapper path.
+  - mission_traversability_map_viewer.html works in browser from static root.
+  - mission_local_obstacle_viewer.html is not auto-generated by run_mission.sh; static server returns not found unless it has been generated into the output/static root.
+  - /healthz may feel slow if a browser tab is polling the 41MB traversability JSON artifact.
 
 Immediate next tasks:
-  1. Run the 4.3G viewer validator after regenerating mission_local_obstacle_viewer.html:
-       tools/validation/validate-mission-local-obstacle-viewer.py <generated-html>
-  2. Resume persistent obstacle-memory schema/artifact alignment using canonical mission-local counters:
-       - positive_observation_count
-       - negative_observation_count
-       - same_update_duplicate_count
-       - last_confirmed_occupied_timestamp_ns
-       - last_observed_free_timestamp_ns
-  3. Update mission artifact / site merge logic so persistent primitive counts are derived from MissionLocalObstacleCell counters, not placeholder per-cell constants.
-  4. Use the separate dynamic mission flight-path map handoff prompt for the next architecture/design session.
-  5. Keep runtime preload diagnostics-only until separately validated.
-  6. Do not add planner/control coupling yet.
+  1. Use docs/mission_map_data_representations_and_retention.md as the source of truth for the new representation-boundary/retention plan.
+  2. Do not jump straight to deleting snapshots/raw evidence. First add a dry-run mission evidence retention manifest.
+  3. The dry-run manifest should report raw snapshots, mission deltas, traversability artifact, site-map merge status, forgettable state, retained files, and would-delete files.
+  4. Preserve the safety boundary: no raw/debug evidence deletion during active flight or while an emergency/reflexive safety window may still be relevant.
+  5. Later, add optional pruning behind explicit flags only after manifest validation.
+  6. Later, clarify the durable planner-facing site map: the current MissionLocalTraversabilityMap is a mission-derived foundational artifact, not yet the complete cross-mission site planning map.
+  7. Later, add a sidecar/offline unified map viewer/server. Do not make mission loop the long-term source of all debug/map serving.
+  8. Keep runtime preload diagnostics-only until separately validated.
+  9. Do not add planner/control coupling yet.
 
 Runtime commands used for validated viewer workflow:
-  Generate viewer HTML:
+  Generate mission-local obstacle viewer HTML:
     FIRST_SNAPSHOT="$(find out/validate_r3b1 -maxdepth 1 -type f -name 'snapshot_*.json' | sort | head -1)"
     python3 tools/visualization/mission_local_obstacle_viewer.py \
       "$FIRST_SNAPSHOT" \
       --history-glob 'out/validate_r3b1/snapshot_*.json' \
       --max-cells 2048 \
       --output out/validate_r3b1/mission_local_obstacle_viewer.html
+
+  Generate traversability viewer HTML:
+    python3 tools/visualization/mission_traversability_map_viewer.py \
+      out/validate_r3b1/mission_traversability_map_full.json \
+      --artifact-url mission_traversability_map_full.json \
+      --output out/validate_r3b1/mission_traversability_map_viewer.html
+
+    python3 tools/validation/validate-mission-traversability-map-viewer.py \
+      out/validate_r3b1/mission_traversability_map_viewer.html
 
   Start AirSim mission with runtime HTTP/SSE/static viewer:
     DEDALUS_AIRSIM_ENABLE_DEPTH_OBSTACLES=1 \
@@ -128,6 +171,7 @@ Runtime commands used for validated viewer workflow:
   Local browser through SSH port forward:
     ssh -L 8080:127.0.0.1:8080 <ec2-host>
     http://127.0.0.1:8080/mission_local_obstacle_viewer.html
+    http://127.0.0.1:8080/mission_traversability_map_viewer.html
 
 Patch output and safety policy:
   - Before code changes, inspect current repo files that define call path, data flow, flags, schemas, tests, and scripts.
