@@ -267,7 +267,7 @@ bool CoreStackRunner::run_once() {
 
     if (snapshot_publisher_) {
         start = SteadyClock::now();
-        snapshot_publisher_->publish(snapshot_for_annotation);
+        snapshot_publisher_->publish(std::make_shared<WorldSnapshot>(snapshot_for_annotation));
         if (timing_writer_) {
             timing_writer_->record_stage("snapshot_publisher.publish", duration_us(start));
         }

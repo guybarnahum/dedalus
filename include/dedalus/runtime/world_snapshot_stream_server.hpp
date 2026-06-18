@@ -63,7 +63,7 @@ public:
 
     void start();
     void stop();
-    void on_snapshot(const WorldSnapshot& snapshot) override;
+    void on_snapshot(const std::shared_ptr<const WorldSnapshot>& snapshot) override;
     void on_ghost_detections(const GhostDetectionsFrame& frame) override;
     void on_mission_event(const MissionEvent& event) override;
     void on_mission_obstacle_map_delta(const MissionObstacleMapDeltaFrame& frame) override;

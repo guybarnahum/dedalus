@@ -12,9 +12,9 @@ namespace {
 
 class RecordingSubscriber final : public dedalus::WorldSnapshotSubscriber {
 public:
-    void on_snapshot(const dedalus::WorldSnapshot& snapshot) override {
-        timestamps.push_back(snapshot.timestamp.timestamp_ns);
-        agent_counts.push_back(snapshot.agents.size());
+    void on_snapshot(const std::shared_ptr<const dedalus::WorldSnapshot>& snapshot) override {
+        timestamps.push_back(snapshot->timestamp.timestamp_ns);
+        agent_counts.push_back(snapshot->agents.size());
     }
 
     std::vector<std::int64_t> timestamps;
@@ -82,8 +82,8 @@ void publisher_delivers_to_multiple_subscribers() {
     publisher->subscribe(first);
     publisher->subscribe(second);
 
-    publisher->publish(make_snapshot(100, "track_0001"));
-    publisher->publish(make_snapshot(200, "track_0002"));
+    publisher->publish(std::make_shared<dedalus::WorldSnapshot>(make_snapshot(100, "track_0001")));
+    publisher->publish(std::make_shared<dedalus::WorldSnapshot>(make_snapshot(200, "track_0002")));
 
     require(first->timestamps == std::vector<std::int64_t>{100, 200}, "first subscriber missed snapshots");
     require(second->timestamps == std::vector<std::int64_t>{100, 200}, "second subscriber missed snapshots");
@@ -99,7 +99,7 @@ void synchronous_publishers_do_not_drop_burst_frames() {
     publisher->subscribe(second);
 
     for (int index = 1; index <= kSnapshotCount; ++index) {
-        publisher->publish(make_snapshot(index * 1000, "track_" + std::to_string(index)));
+        publisher->publish(std::make_shared<dedalus::WorldSnapshot>(make_snapshot(index * 1000, "track_" + std::to_string(index))));
     }
 
     require(static_cast<int>(first->timestamps.size()) == kSnapshotCount, "first subscriber missed burst snapshots");
@@ -117,8 +117,8 @@ void artifact_writer_writes_snapshots_and_manifest() {
 
     {
         dedalus::ArtifactSnapshotWriter writer{dedalus::ArtifactSnapshotWriterConfig{.output_dir = output_dir}};
-        writer.on_snapshot(make_snapshot(123, "track_alpha"));
-        writer.on_snapshot(make_snapshot(456, "track_beta"));
+        writer.on_snapshot(std::make_shared<dedalus::WorldSnapshot>(make_snapshot(123, "track_alpha")));
+        writer.on_snapshot(std::make_shared<dedalus::WorldSnapshot>(make_snapshot(456, "track_beta")));
         require(writer.frame_count() == 2, "artifact writer frame count should advance");
     }
 
@@ -148,7 +148,7 @@ void artifact_writer_does_not_skip_burst_frames() {
     {
         dedalus::ArtifactSnapshotWriter writer{dedalus::ArtifactSnapshotWriterConfig{.output_dir = output_dir}};
         for (int index = 1; index <= kSnapshotCount; ++index) {
-            writer.on_snapshot(make_snapshot(index * 1000, "track_burst_" + std::to_string(index)));
+            writer.on_snapshot(std::make_shared<dedalus::WorldSnapshot>(make_snapshot(index * 1000, "track_burst_" + std::to_string(index))));
         }
         require(writer.frame_count() == kSnapshotCount, "artifact writer missed burst frame count");
     }
@@ -175,7 +175,7 @@ void artifact_writer_dropped_frames_counter() {
         // and cannot drain frames faster than they are enqueued, so the bounded queue will
         // overflow and dropped_frames must become positive.
         for (int i = 1; i <= 500; ++i) {
-            writer.on_snapshot(make_snapshot(i * 1000, "track_drop_" + std::to_string(i)));
+            writer.on_snapshot(std::make_shared<dedalus::WorldSnapshot>(make_snapshot(i * 1000, "track_drop_" + std::to_string(i))));
         }
         require(writer.dropped_frames() >= 1, "dropped_frames should be positive after queue overflow");
         require(writer.frame_count() == 500, "frame_count increments regardless of drops");

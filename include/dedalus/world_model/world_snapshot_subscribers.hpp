@@ -21,7 +21,7 @@ class LatestWorldSnapshotSubscriber final : public WorldSnapshotSubscriber {
 public:
     explicit LatestWorldSnapshotSubscriber(std::shared_ptr<LatestWorldSnapshot> latest_snapshot);
 
-    void on_snapshot(const WorldSnapshot& snapshot) override;
+    void on_snapshot(const std::shared_ptr<const WorldSnapshot>& snapshot) override;
 
 private:
     std::shared_ptr<LatestWorldSnapshot> latest_snapshot_;
@@ -52,7 +52,7 @@ public:
     ArtifactSnapshotWriter(ArtifactSnapshotWriter&&) = delete;
     ArtifactSnapshotWriter& operator=(ArtifactSnapshotWriter&&) = delete;
 
-    void on_snapshot(const WorldSnapshot& snapshot) override;
+    void on_snapshot(const std::shared_ptr<const WorldSnapshot>& snapshot) override;
 
     [[nodiscard]] int frame_count() const;
     [[nodiscard]] int dropped_frames() const;

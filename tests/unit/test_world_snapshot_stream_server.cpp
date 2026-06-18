@@ -215,8 +215,8 @@ void streams_jsonl_runtime_events_to_client() {
     server.on_ghost_detections(make_ghost_frame());
     server.on_mission_event(make_target_selected_event());
     server.on_mission_obstacle_map_delta(make_delta_frame());
-    server.on_snapshot(make_snapshot(1000, "track_a"));
-    server.on_snapshot(make_snapshot(2000, "track_b"));
+    server.on_snapshot(std::make_shared<dedalus::WorldSnapshot>(make_snapshot(1000, "track_a")));
+    server.on_snapshot(std::make_shared<dedalus::WorldSnapshot>(make_snapshot(2000, "track_b")));
 
     const auto received = read_until_lines(fd, 5);
     const auto sse_received = read_available_for_ms(sse_fd, 1000);
@@ -263,9 +263,9 @@ void bounded_queue_drops_oldest_on_overflow() {
     dedalus::RuntimeEventStreamServer server{cfg};
 
     // Three pushes: the third overflows the queue, dropping the oldest.
-    server.on_snapshot(make_snapshot(1000, "track_a"));
-    server.on_snapshot(make_snapshot(2000, "track_b"));
-    server.on_snapshot(make_snapshot(3000, "track_c"));
+    server.on_snapshot(std::make_shared<dedalus::WorldSnapshot>(make_snapshot(1000, "track_a")));
+    server.on_snapshot(std::make_shared<dedalus::WorldSnapshot>(make_snapshot(2000, "track_b")));
+    server.on_snapshot(std::make_shared<dedalus::WorldSnapshot>(make_snapshot(3000, "track_c")));
 
     const auto s = server.stats();
     require(s.dropped_messages == 1, "one message should be dropped when shared queue overflows");

@@ -81,14 +81,14 @@ std::string stream_line_for(std::uint64_t seq, const MissionObstacleMapDeltaFram
 
 }  // namespace
 
-void RuntimeEventStreamServer::on_snapshot(const WorldSnapshot& snapshot) {
+void RuntimeEventStreamServer::on_snapshot(const std::shared_ptr<const WorldSnapshot>& snapshot) {
     const auto start = SteadyClock::now();
     const std::uint64_t seq = [this] {
         std::lock_guard<std::mutex> lock{mutex_};
         ++snapshot_messages_;
         return ++published_seq_;
     }();
-    auto line = stream_line_for(seq, snapshot);
+    auto line = stream_line_for(seq, *snapshot);
     const auto serialize_duration_us = elapsed_us(start);
     enqueue_line(std::move(line));
     std::lock_guard<std::mutex> lock{mutex_};

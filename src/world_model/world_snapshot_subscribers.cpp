@@ -26,8 +26,8 @@ LatestWorldSnapshotSubscriber::LatestWorldSnapshotSubscriber(std::shared_ptr<Lat
     }
 }
 
-void LatestWorldSnapshotSubscriber::on_snapshot(const WorldSnapshot& snapshot) {
-    latest_snapshot_->publish(snapshot);
+void LatestWorldSnapshotSubscriber::on_snapshot(const std::shared_ptr<const WorldSnapshot>& snapshot) {
+    latest_snapshot_->set(snapshot);
 }
 
 ArtifactSnapshotWriter::ArtifactSnapshotWriter(ArtifactSnapshotWriterConfig config)
@@ -55,10 +55,9 @@ ArtifactSnapshotWriter::~ArtifactSnapshotWriter() {
     }
 }
 
-void ArtifactSnapshotWriter::on_snapshot(const WorldSnapshot& snapshot) {
+void ArtifactSnapshotWriter::on_snapshot(const std::shared_ptr<const WorldSnapshot>& snapshot) {
     const auto start = SteadyClock::now();
     const int frame_number = ++frame_count_;
-    auto item = std::make_shared<const WorldSnapshot>(snapshot);
     {
         std::lock_guard<std::mutex> lock{mutex_};
         if (static_cast<int>(write_queue_.size()) >= config_.max_queue_depth) {
@@ -67,7 +66,7 @@ void ArtifactSnapshotWriter::on_snapshot(const WorldSnapshot& snapshot) {
             write_queue_.pop_front();
             ++dropped_frames_;
         }
-        write_queue_.emplace_back(frame_number, std::move(item));
+        write_queue_.emplace_back(frame_number, snapshot);
     }
     enqueue_count_.fetch_add(1U);
     enqueue_total_us_.fetch_add(elapsed_us(start));
