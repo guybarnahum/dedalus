@@ -1,0 +1,765 @@
+// dedalus_viewer — standalone live/replay viewer for dedalus mission streams.
+//
+// Connects to a dedalus RuntimeEventStreamServer TCP JSONL port and relays the
+// event stream to browser clients via HTTP/SSE.  Auto-switches between live and
+// replay sources: when the live connection is lost the viewer falls back to
+// replaying snapshots from an artifact directory; it reconnects to live as soon
+// as the runtime is reachable again.
+//
+// Usage:
+//   dedalus_viewer [options]
+//
+// Options:
+//   --host HOST         Runtime TCP host       (default: 127.0.0.1)
+//   --port PORT         Runtime TCP port       (default: 7788)
+//   --http-port PORT    Viewer HTTP/SSE port   (default: 8090)
+//   --replay-dir DIR    Snapshot artifact dir  (default: disabled)
+//   --reconnect-s N     Live reconnect interval in seconds (default: 3)
+//   --replay-speed F    Replay speed multiplier (default: 1.0)
+//   -h / --help
+//
+// Browser endpoints:
+//   GET /events          — SSE stream of all mission events
+//   GET /viewer_status   — JSON source status (live/replay/disconnected)
+//   GET /healthz         — JSON health check
+
+#include <algorithm>
+#include <atomic>
+#include <chrono>
+#include <cmath>
+#include <condition_variable>
+#include <cstring>
+#include <deque>
+#include <filesystem>
+#include <fstream>
+#include <iostream>
+#include <mutex>
+#include <optional>
+#include <sstream>
+#include <stdexcept>
+#include <string>
+#include <thread>
+#include <vector>
+
+#include <arpa/inet.h>
+#include <fcntl.h>
+#include <netinet/in.h>
+#include <signal.h>
+#include <sys/select.h>
+#include <sys/socket.h>
+#include <unistd.h>
+
+// MSG_NOSIGNAL / MSG_DONTWAIT are Linux extensions; define as 0 on platforms
+// that don't have them (SIGPIPE is ignored at startup anyway).
+#ifndef MSG_NOSIGNAL
+#define MSG_NOSIGNAL 0
+#endif
+#ifndef MSG_DONTWAIT
+#define MSG_DONTWAIT 0
+#endif
+
+namespace {
+
+// ── shared queue ─────────────────────────────────────────────────────────────
+//
+// One producer (SourceMonitor) writes JSONL lines; one consumer (SseRelay
+// writer thread) reads them.  Oldest entries are dropped on overflow.
+
+class SharedQueue {
+public:
+    explicit SharedQueue(std::size_t max_depth = 512) : max_depth_(max_depth) {}
+
+    void push(std::string line) {
+        std::lock_guard<std::mutex> lock{mutex_};
+        if (queue_.size() >= max_depth_) {
+            queue_.pop_front();
+            ++dropped_;
+        }
+        queue_.push_back(std::move(line));
+        cv_.notify_one();
+    }
+
+    // Blocks up to 100 ms waiting for a line; returns nullopt when nothing
+    // arrives within the window or when running becomes false.
+    std::optional<std::string> pop(const std::atomic<bool>& running) {
+        std::unique_lock<std::mutex> lock{mutex_};
+        cv_.wait_for(lock, std::chrono::milliseconds{100},
+            [this, &running] { return !queue_.empty() || !running.load(); });
+        if (queue_.empty()) return std::nullopt;
+        auto line = std::move(queue_.front());
+        queue_.pop_front();
+        return line;
+    }
+
+    std::uint64_t dropped() const {
+        std::lock_guard<std::mutex> lock{mutex_};
+        return dropped_;
+    }
+
+private:
+    mutable std::mutex mutex_;
+    std::condition_variable cv_;
+    std::deque<std::string> queue_;
+    std::size_t max_depth_;
+    std::uint64_t dropped_{0};
+};
+
+// ── source status ─────────────────────────────────────────────────────────────
+
+enum class SourceStatus : int { Disconnected = 0, Live = 1, Replay = 2 };
+
+const char* source_status_cstr(SourceStatus s) {
+    switch (s) {
+        case SourceStatus::Live:   return "live";
+        case SourceStatus::Replay: return "replay";
+        default:                   return "disconnected";
+    }
+}
+
+// ── replay reader helpers ─────────────────────────────────────────────────────
+
+struct ReplayFrame {
+    int index{0};
+    std::string path;
+    std::int64_t timestamp_ns{0};
+    std::string map_frame_id;
+};
+
+// Parses snapshot_manifest.txt from an artifact directory.
+// Lines: "# comment" or "<index> <path> <timestamp_ns> <map_frame_id>"
+std::vector<ReplayFrame> load_manifest(const std::string& dir) {
+    std::vector<ReplayFrame> frames;
+    std::ifstream f{dir + "/snapshot_manifest.txt"};
+    if (!f) return frames;
+    std::string line;
+    while (std::getline(f, line)) {
+        if (line.empty() || line[0] == '#') continue;
+        std::istringstream ss{line};
+        ReplayFrame rf;
+        std::string rel_path;
+        if (ss >> rf.index >> rel_path >> rf.timestamp_ns >> rf.map_frame_id) {
+            rf.path = dir + "/" + rel_path;
+            frames.push_back(std::move(rf));
+        }
+    }
+    return frames;
+}
+
+std::string read_file_contents(const std::string& path) {
+    std::ifstream f{path};
+    if (!f) return "";
+    std::ostringstream buf;
+    buf << f.rdbuf();
+    return buf.str();
+}
+
+// Minimal JSON string escaping (only characters that appear in field values).
+std::string json_escape(const std::string& s) {
+    std::string out;
+    out.reserve(s.size());
+    for (const char c : s) {
+        switch (c) {
+            case '"':  out += "\\\""; break;
+            case '\\': out += "\\\\"; break;
+            case '\n': out += "\\n";  break;
+            case '\r': out += "\\r";  break;
+            case '\t': out += "\\t";  break;
+            default:   out += c;
+        }
+    }
+    return out;
+}
+
+// Wraps a raw snapshot JSON blob in the same JSONL envelope that
+// RuntimeEventStreamServer emits for world_snapshot messages.
+std::string make_replay_line(std::uint64_t seq, const ReplayFrame& frame,
+                             const std::string& snapshot_json) {
+    std::string body = snapshot_json;
+    // Strip trailing whitespace so the envelope terminates cleanly.
+    while (!body.empty() && (body.back() == '\n' || body.back() == '\r' ||
+                              body.back() == ' ')) {
+        body.pop_back();
+    }
+    std::string line;
+    line.reserve(body.size() + 128U);
+    line += "{\"type\":\"world_snapshot\",\"seq\":";
+    line += std::to_string(seq);
+    line += ",\"timestamp_ns\":";
+    line += std::to_string(frame.timestamp_ns);
+    line += ",\"active_map_frame_id\":\"";
+    line += json_escape(frame.map_frame_id);
+    line += "\",\"snapshot\":";
+    line += body;
+    line += "}\n";
+    return line;
+}
+
+// ── TCP line client ───────────────────────────────────────────────────────────
+//
+// Manages a single blocking TCP connection.  connect_now() does a
+// non-blocking connect with a 2-second timeout, then switches the socket back
+// to blocking mode for reads.  read_line() returns the next \n-terminated line
+// or nullopt on EOF/error.
+
+class TcpLineClient {
+public:
+    TcpLineClient(std::string host, std::uint16_t port)
+        : host_(std::move(host)), port_(port) {}
+
+    ~TcpLineClient() { close_fd(); }
+
+    bool connect_now() {
+        close_fd();
+        fd_ = ::socket(AF_INET, SOCK_STREAM, 0);
+        if (fd_ < 0) return false;
+
+        sockaddr_in addr{};
+        addr.sin_family = AF_INET;
+        addr.sin_port = htons(port_);
+        if (::inet_pton(AF_INET, host_.c_str(), &addr.sin_addr) != 1) {
+            close_fd();
+            return false;
+        }
+
+        // Non-blocking connect so we can apply a short timeout.
+        const int orig_flags = ::fcntl(fd_, F_GETFL, 0);
+        ::fcntl(fd_, F_SETFL, orig_flags | O_NONBLOCK);
+
+        const int rc = ::connect(fd_, reinterpret_cast<sockaddr*>(&addr), sizeof(addr));
+        if (rc < 0 && errno != EINPROGRESS) {
+            close_fd();
+            return false;
+        }
+
+        fd_set wfds;
+        FD_ZERO(&wfds);
+        FD_SET(fd_, &wfds);
+        timeval tv{2, 0};  // 2-second connect timeout
+        if (::select(fd_ + 1, nullptr, &wfds, nullptr, &tv) != 1) {
+            close_fd();
+            return false;
+        }
+        int err = 0;
+        socklen_t len = sizeof(err);
+        ::getsockopt(fd_, SOL_SOCKET, SO_ERROR, &err, &len);
+        if (err != 0) {
+            close_fd();
+            return false;
+        }
+
+        // Restore blocking mode for reads.
+        ::fcntl(fd_, F_SETFL, orig_flags & ~O_NONBLOCK);
+        buf_.clear();
+        return true;
+    }
+
+    // Blocks until a complete \n-terminated line is available.
+    // Returns nullopt on EOF or socket error.
+    std::optional<std::string> read_line() {
+        while (true) {
+            const auto nl = buf_.find('\n');
+            if (nl != std::string::npos) {
+                auto line = buf_.substr(0, nl + 1);
+                buf_.erase(0, nl + 1);
+                return line;
+            }
+            char chunk[8192];
+            const auto n = ::recv(fd_, chunk, sizeof(chunk), 0);
+            if (n <= 0) return std::nullopt;
+            buf_.append(chunk, static_cast<std::size_t>(n));
+        }
+    }
+
+    void disconnect() { close_fd(); }
+
+private:
+    void close_fd() {
+        if (fd_ >= 0) { ::close(fd_); fd_ = -1; }
+        buf_.clear();
+    }
+
+    std::string host_;
+    std::uint16_t port_;
+    int fd_{-1};
+    std::string buf_;
+};
+
+// ── source monitor ────────────────────────────────────────────────────────────
+//
+// Runs a dedicated thread that drives the shared queue with JSONL lines.
+// Priority order:
+//   1. Live — TCP connected to the runtime stream server.
+//   2. Replay — reads artifact snapshots when live is unavailable.
+//   3. Disconnected — sleeps reconnect_s seconds, then retries live.
+//
+// After replay completes the monitor retries the live connection immediately.
+
+class SourceMonitor {
+public:
+    SourceMonitor(std::string live_host, std::uint16_t live_port,
+                  std::string replay_dir, double replay_speed,
+                  int reconnect_s, SharedQueue& queue)
+        : live_host_(std::move(live_host)),
+          live_port_(live_port),
+          replay_dir_(std::move(replay_dir)),
+          replay_speed_(replay_speed > 0.0 ? replay_speed : 1.0),
+          reconnect_s_(reconnect_s),
+          queue_(queue) {}
+
+    void start() {
+        running_ = true;
+        thread_ = std::thread([this] { run(); });
+    }
+
+    void stop() {
+        running_ = false;
+        if (thread_.joinable()) thread_.join();
+    }
+
+    SourceStatus status() const {
+        return static_cast<SourceStatus>(status_.load());
+    }
+    std::uint64_t seq()       const { return seq_.load(); }
+    int replay_frame()        const { return replay_frame_.load(); }
+    int replay_total()        const { return replay_total_.load(); }
+
+private:
+    void run() {
+        TcpLineClient tcp{live_host_, live_port_};
+
+        while (running_) {
+            // ── live ──────────────────────────────────────────────────────
+            if (tcp.connect_now()) {
+                status_ = static_cast<int>(SourceStatus::Live);
+                while (running_) {
+                    auto line = tcp.read_line();
+                    if (!line) break;
+                    ++seq_;
+                    queue_.push(std::move(*line));
+                }
+                tcp.disconnect();
+            }
+            if (!running_) break;
+            status_ = static_cast<int>(SourceStatus::Disconnected);
+
+            // ── replay (if configured) ────────────────────────────────────
+            if (!replay_dir_.empty()) {
+                do_replay();
+            } else {
+                sleep_chunked(std::chrono::seconds{reconnect_s_});
+            }
+            // Loop back and try live again.
+        }
+    }
+
+    void do_replay() {
+        const auto frames = load_manifest(replay_dir_);
+        if (frames.empty()) {
+            sleep_chunked(std::chrono::seconds{reconnect_s_});
+            return;
+        }
+
+        status_ = static_cast<int>(SourceStatus::Replay);
+        replay_total_ = static_cast<int>(frames.size());
+
+        for (std::size_t i = 0; i < frames.size() && running_; ++i) {
+            replay_frame_ = static_cast<int>(i + 1);
+
+            const auto& frame = frames[i];
+            const auto json = read_file_contents(frame.path);
+            if (json.empty()) continue;
+
+            queue_.push(make_replay_line(++seq_, frame, json));
+
+            // Wait the inter-frame interval scaled by replay speed.
+            if (i + 1 < frames.size()) {
+                const double raw_delta_ns = static_cast<double>(
+                    frames[i + 1].timestamp_ns - frames[i].timestamp_ns);
+                const auto wait_ns = static_cast<long long>(
+                    std::max(0.0, raw_delta_ns / replay_speed_));
+                // Cap individual waits at 5 s so the monitor stays responsive.
+                const auto wait_ms = std::min(wait_ns / 1'000'000LL, 5'000LL);
+                sleep_chunked(std::chrono::milliseconds{wait_ms});
+            }
+        }
+
+        // Brief pause before the outer loop retries the live connection.
+        sleep_chunked(std::chrono::milliseconds{500});
+    }
+
+    // Sleeps for the given duration in 50 ms chunks so we remain responsive
+    // to shutdown requests.
+    template <typename Duration>
+    void sleep_chunked(Duration total) {
+        const auto deadline = std::chrono::steady_clock::now() + total;
+        while (running_ && std::chrono::steady_clock::now() < deadline) {
+            std::this_thread::sleep_for(std::chrono::milliseconds{50});
+        }
+    }
+
+    std::string live_host_;
+    std::uint16_t live_port_;
+    std::string replay_dir_;
+    double replay_speed_;
+    int reconnect_s_;
+    SharedQueue& queue_;
+
+    std::atomic<bool> running_{false};
+    std::atomic<int> status_{static_cast<int>(SourceStatus::Disconnected)};
+    std::atomic<std::uint64_t> seq_{0};
+    std::atomic<int> replay_frame_{0};
+    std::atomic<int> replay_total_{0};
+    std::thread thread_;
+};
+
+// ── SSE relay ─────────────────────────────────────────────────────────────────
+//
+// Minimal HTTP server that:
+//   GET /events        — upgrades to an SSE connection and streams events
+//   GET /viewer_status — returns JSON describing the current source
+//   GET /healthz       — returns {"ok":true}
+//   (all other paths)  — 404
+//
+// SSE client sockets are set to non-blocking; slow clients that can't keep up
+// are dropped rather than stalling the writer thread.
+
+// Extracts the "type" field value from a JSONL line produced by the runtime
+// stream server, used as the SSE event name.
+std::string extract_event_type(const std::string& line) {
+    const auto pos = line.find("\"type\":\"");
+    if (pos == std::string::npos) return "event";
+    const auto start = pos + 8U;
+    const auto end   = line.find('"', start);
+    if (end == std::string::npos) return "event";
+    return line.substr(start, end - start);
+}
+
+// Converts a JSONL line to an SSE frame.
+std::string make_sse_frame(const std::string& jsonl_line) {
+    std::string data = jsonl_line;
+    while (!data.empty() && (data.back() == '\n' || data.back() == '\r')) {
+        data.pop_back();
+    }
+    std::string frame;
+    frame.reserve(data.size() + 64U);
+    frame += "event: ";
+    frame += extract_event_type(data);
+    frame += "\r\ndata: ";
+    frame += data;
+    frame += "\r\n\r\n";
+    return frame;
+}
+
+// Best-effort blocking send.  Returns false if the connection appears broken.
+bool send_all(int fd, const char* data, std::size_t size) {
+    while (size > 0) {
+        const auto n = ::send(fd, data, size, MSG_NOSIGNAL);
+        if (n <= 0) {
+            if (errno == EINTR) continue;
+            return false;
+        }
+        data += n;
+        size -= static_cast<std::size_t>(n);
+    }
+    return true;
+}
+
+bool send_all(int fd, const std::string& s) {
+    return send_all(fd, s.data(), s.size());
+}
+
+class SseRelay {
+public:
+    SseRelay(std::string bind_host, std::uint16_t http_port,
+             SharedQueue& queue, const SourceMonitor& monitor)
+        : bind_host_(std::move(bind_host)),
+          http_port_(http_port),
+          queue_(queue),
+          monitor_(monitor) {}
+
+    void start() {
+        setup_listen_socket();
+        running_ = true;
+        accept_thread_ = std::thread([this] { accept_loop(); });
+        writer_thread_ = std::thread([this] { writer_loop(); });
+    }
+
+    void stop() {
+        running_ = false;
+        close_listen_socket();
+        if (accept_thread_.joinable()) accept_thread_.join();
+        {
+            std::lock_guard<std::mutex> lock{clients_mutex_};
+            for (const int fd : sse_clients_) ::close(fd);
+            sse_clients_.clear();
+        }
+        if (writer_thread_.joinable()) writer_thread_.join();
+    }
+
+    std::uint16_t bound_port() const { return bound_port_; }
+
+private:
+    void setup_listen_socket() {
+        listen_fd_ = ::socket(AF_INET, SOCK_STREAM, 0);
+        if (listen_fd_ < 0) throw std::runtime_error("socket() failed");
+
+        const int opt = 1;
+        ::setsockopt(listen_fd_, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt));
+
+        sockaddr_in addr{};
+        addr.sin_family = AF_INET;
+        addr.sin_port   = htons(http_port_);
+        if (::inet_pton(AF_INET, bind_host_.c_str(), &addr.sin_addr) != 1) {
+            throw std::runtime_error("inet_pton failed for " + bind_host_);
+        }
+        if (::bind(listen_fd_, reinterpret_cast<sockaddr*>(&addr), sizeof(addr)) < 0) {
+            throw std::runtime_error("bind() failed on port " + std::to_string(http_port_));
+        }
+        if (::listen(listen_fd_, 8) < 0) {
+            throw std::runtime_error("listen() failed");
+        }
+
+        sockaddr_in bound{};
+        socklen_t   len = sizeof(bound);
+        ::getsockname(listen_fd_, reinterpret_cast<sockaddr*>(&bound), &len);
+        bound_port_ = ntohs(bound.sin_port);
+    }
+
+    void accept_loop() {
+        while (running_) {
+            fd_set rfds;
+            FD_ZERO(&rfds);
+            FD_SET(listen_fd_, &rfds);
+            timeval tv{0, 200'000};  // 200 ms poll interval
+            if (::select(listen_fd_ + 1, &rfds, nullptr, nullptr, &tv) <= 0) continue;
+
+            const int client = ::accept(listen_fd_, nullptr, nullptr);
+            if (client < 0) continue;
+
+            // Read just enough of the HTTP request to route it.
+            char req_buf[2048];
+            const auto n = ::recv(client, req_buf, sizeof(req_buf) - 1, 0);
+            if (n <= 0) { ::close(client); continue; }
+            req_buf[n] = '\0';
+            const std::string req{req_buf};
+
+            if (req.find("GET /events") != std::string::npos) {
+                handle_sse_upgrade(client);
+            } else if (req.find("GET /viewer_status") != std::string::npos) {
+                respond_json(client, viewer_status_json());
+            } else if (req.find("GET /healthz") != std::string::npos) {
+                respond_json(client, "{\"ok\":true}\n");
+            } else {
+                respond_not_found(client);
+            }
+        }
+    }
+
+    void handle_sse_upgrade(int client) {
+        const std::string headers =
+            "HTTP/1.1 200 OK\r\n"
+            "Content-Type: text/event-stream\r\n"
+            "Cache-Control: no-cache\r\n"
+            "Access-Control-Allow-Origin: *\r\n"
+            "Connection: keep-alive\r\n\r\n";
+        if (!send_all(client, headers)) {
+            ::close(client);
+            return;
+        }
+        // Switch to non-blocking so slow clients don't stall the writer.
+        const int flags = ::fcntl(client, F_GETFL, 0);
+        ::fcntl(client, F_SETFL, flags | O_NONBLOCK);
+
+        std::lock_guard<std::mutex> lock{clients_mutex_};
+        sse_clients_.push_back(client);
+    }
+
+    void writer_loop() {
+        while (running_) {
+            auto line = queue_.pop(running_);
+            if (!line) continue;
+
+            const auto frame = make_sse_frame(*line);
+            std::lock_guard<std::mutex> lock{clients_mutex_};
+            std::vector<int> dead;
+            for (const int fd : sse_clients_) {
+                // Non-blocking send: skip (not drop) if the client is temporarily busy.
+                // Drop the client on a hard error (connection closed / broken pipe).
+                const auto sent = ::send(fd, frame.data(), frame.size(),
+                                         MSG_NOSIGNAL | MSG_DONTWAIT);
+                if (sent < 0 && errno != EAGAIN && errno != EWOULDBLOCK) {
+                    dead.push_back(fd);
+                }
+            }
+            for (const int fd : dead) {
+                ::close(fd);
+                sse_clients_.erase(
+                    std::remove(sse_clients_.begin(), sse_clients_.end(), fd),
+                    sse_clients_.end());
+            }
+        }
+    }
+
+    void respond_json(int fd, const std::string& body) {
+        std::string resp =
+            "HTTP/1.1 200 OK\r\n"
+            "Content-Type: application/json\r\n"
+            "Content-Length: " + std::to_string(body.size()) + "\r\n"
+            "Connection: close\r\n\r\n" + body;
+        send_all(fd, resp);
+        ::close(fd);
+    }
+
+    void respond_not_found(int fd) {
+        const std::string resp =
+            "HTTP/1.1 404 Not Found\r\n"
+            "Content-Length: 9\r\n"
+            "Connection: close\r\n\r\nnot found";
+        send_all(fd, resp);
+        ::close(fd);
+    }
+
+    std::string viewer_status_json() const {
+        const auto st  = monitor_.status();
+        const auto seq = monitor_.seq();
+        std::string j;
+        j += "{\"source\":\"";
+        j += source_status_cstr(st);
+        j += "\",\"seq\":";
+        j += std::to_string(seq);
+        if (st == SourceStatus::Replay) {
+            j += ",\"replay_frame\":";
+            j += std::to_string(monitor_.replay_frame());
+            j += ",\"replay_total\":";
+            j += std::to_string(monitor_.replay_total());
+        }
+        j += "}\n";
+        return j;
+    }
+
+    void close_listen_socket() {
+        if (listen_fd_ >= 0) { ::close(listen_fd_); listen_fd_ = -1; }
+    }
+
+    std::string bind_host_;
+    std::uint16_t http_port_{0};
+    std::uint16_t bound_port_{0};
+    SharedQueue&        queue_;
+    const SourceMonitor& monitor_;
+
+    int listen_fd_{-1};
+    std::atomic<bool> running_{false};
+    std::thread accept_thread_;
+    std::thread writer_thread_;
+
+    mutable std::mutex clients_mutex_;
+    std::vector<int> sse_clients_;
+};
+
+// ── CLI ───────────────────────────────────────────────────────────────────────
+
+struct CliOptions {
+    std::string live_host{"127.0.0.1"};
+    std::uint16_t live_port{7788};
+    std::uint16_t http_port{8090};
+    std::string replay_dir;
+    int reconnect_s{3};
+    double replay_speed{1.0};
+};
+
+CliOptions parse_args(int argc, char** argv) {
+    CliOptions opts;
+    for (int i = 1; i < argc; ++i) {
+        const std::string arg{argv[i]};
+        auto next_arg = [&](const char* flag) -> std::string {
+            if (i + 1 >= argc) throw std::invalid_argument(
+                std::string{flag} + " requires a value");
+            return argv[++i];
+        };
+        if      (arg == "--host")          { opts.live_host    = next_arg("--host"); }
+        else if (arg == "--port")          { opts.live_port    = static_cast<std::uint16_t>(std::stoi(next_arg("--port"))); }
+        else if (arg == "--http-port")     { opts.http_port    = static_cast<std::uint16_t>(std::stoi(next_arg("--http-port"))); }
+        else if (arg == "--replay-dir")    { opts.replay_dir   = next_arg("--replay-dir"); }
+        else if (arg == "--reconnect-s")   { opts.reconnect_s  = std::stoi(next_arg("--reconnect-s")); }
+        else if (arg == "--replay-speed")  { opts.replay_speed = std::stod(next_arg("--replay-speed")); }
+        else if (arg == "-h" || arg == "--help") {
+            std::cout <<
+                "usage: dedalus_viewer [options]\n"
+                "\n"
+                "  --host HOST         Runtime TCP host       (default: 127.0.0.1)\n"
+                "  --port PORT         Runtime TCP port       (default: 7788)\n"
+                "  --http-port PORT    Viewer HTTP/SSE port   (default: 8090)\n"
+                "  --replay-dir DIR    Snapshot artifact dir  (default: disabled)\n"
+                "  --reconnect-s N     Live reconnect interval in seconds (default: 3)\n"
+                "  --replay-speed F    Replay speed multiplier (default: 1.0)\n"
+                "  -h / --help         Show this help\n"
+                "\n"
+                "Browser endpoints:\n"
+                "  GET /events         — SSE stream of all mission events\n"
+                "  GET /viewer_status  — JSON source status\n"
+                "  GET /healthz        — JSON health check\n";
+            std::exit(0);
+        } else {
+            throw std::invalid_argument("unknown argument: " + arg);
+        }
+    }
+    return opts;
+}
+
+// ── signal handling ───────────────────────────────────────────────────────────
+
+std::atomic<bool> g_shutdown{false};
+
+void on_signal(int) { g_shutdown = true; }
+
+}  // namespace
+
+// ── main ──────────────────────────────────────────────────────────────────────
+
+int main(int argc, char** argv) {
+    try {
+        const auto opts = parse_args(argc, argv);
+
+        ::signal(SIGINT,  on_signal);
+        ::signal(SIGTERM, on_signal);
+        ::signal(SIGPIPE, SIG_IGN);  // handle broken SSE clients gracefully
+
+        SharedQueue queue{512};
+
+        SourceMonitor monitor{
+            opts.live_host, opts.live_port,
+            opts.replay_dir, opts.replay_speed,
+            opts.reconnect_s, queue};
+
+        // Bind to all interfaces so browsers on other machines can connect.
+        SseRelay relay{"0.0.0.0", opts.http_port, queue, monitor};
+
+        relay.start();
+        monitor.start();
+
+        const auto http_port = relay.bound_port();
+        std::cout
+            << "dedalus_viewer started\n"
+            << "  live source :  " << opts.live_host << ":" << opts.live_port << "\n"
+            << "  browser SSE :  http://0.0.0.0:" << http_port << "/events\n"
+            << "  viewer status: http://0.0.0.0:" << http_port << "/viewer_status\n"
+            << "  health check:  http://0.0.0.0:" << http_port << "/healthz\n";
+        if (!opts.replay_dir.empty()) {
+            std::cout << "  replay dir  :  " << opts.replay_dir << "\n";
+        }
+        std::cout << std::flush;
+
+        while (!g_shutdown) {
+            std::this_thread::sleep_for(std::chrono::milliseconds{100});
+        }
+
+        std::cout << "\ndedalus_viewer: shutting down\n" << std::flush;
+        monitor.stop();
+        relay.stop();
+        return 0;
+
+    } catch (const std::exception& ex) {
+        std::cerr << "dedalus_viewer: " << ex.what() << "\n";
+        return 1;
+    }
+}

@@ -52,3 +52,15 @@ target_link_libraries(dedalus_ghost_scenario_eval
 )
 
 target_compile_features(dedalus_ghost_scenario_eval PRIVATE cxx_std_20)
+
+# Standalone live/replay viewer — connects to the runtime TCP event stream and
+# relays to browser clients via HTTP/SSE.  Intentionally has no dedalus_core
+# dependency: it is a pure POSIX string relay and must remain deployable on any
+# host without the full drone stack.
+add_executable(dedalus_viewer
+    dedalus_viewer.cpp
+)
+
+target_compile_features(dedalus_viewer PRIVATE cxx_std_20)
+
+target_compile_options(dedalus_viewer PRIVATE -Wall -Wextra -Wpedantic)
