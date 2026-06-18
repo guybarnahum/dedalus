@@ -24,6 +24,48 @@
    - Produce a clearance-aware nominal trajectory candidate and deviation/clearance metrics.
    - Keep this read-only/diagnostics-first until planner integration is explicitly scoped.
 
+## Representation boundary
+
+The dynamic mission map work must keep four data representations distinct. The
+full representation and raw-evidence retention policy is maintained in:
+
+```text
+docs/mission_map_data_representations_and_retention.md
+```
+
+Summary:
+
+```text
+Detector raw evidence
+  -> normalized source-attributed `ObstacleEvidence`
+  -> temporary live input for emergency/reflexive avoidance and map update
+
+Ego-relative reflexive avoidance map
+  -> bounded `LocalFlightMapSnapshot` working set around the drone
+  -> current hazard / emergency diagnostics and future reflexive control path
+  -> not a persistent site map
+
+Mission/site foundational planning map
+  -> mission-derived traversability update
+  -> future persistent site-frame planning memory
+  -> queryable by planner/directive-specific cost functions
+
+Visualization/debug/replay representation
+  -> streamable/exportable view of evidence, trajectory, local map, and site map
+  -> should not dictate runtime/control storage formats
+  -> should eventually be served by sidecar/offline tooling, not only mission loop
+```
+
+Raw detector evidence is temporary. It can be forgotten only after it has served
+both purposes:
+
+1. emergency/reflexive avoidance during the active flight window,
+2. mission/site map update for future planning.
+
+Forgetting must be controlled by an explicit retention gate. Do not prune raw or
+debug evidence merely because a queue is empty; require a successful compaction
+or replayable output and a retention manifest.
+
 ## Runtime ownership
 
 ```text
@@ -35,27 +77,40 @@ MissionLocalObstacleMap
   -> provider-neutral same-update compaction and primitive counters
 
 MissionMapAssimilator
-  -> background bounded compaction into persistent/planning-friendly form
+  -> bounded compaction into mission-derived traversability form
 
 MissionLocalTraversabilityMap
-  -> trajectory-independent foundational map
+  -> trajectory-independent mission-derived foundational map
       occupied/free/unknown/stale belief
       clearance and vertical-clearance fields
       age/confidence/cost hints
 
+Persistent site traversability map, future/planned
+  -> stable site-frame, cross-mission planning memory
+      receives mission-derived traversability/obstacle updates
+      supports planner directive-specific cost functions
+
 TrajectoryCorridorEvaluator, future only
-  -> samples foundational map after target trajectory is known
+  -> samples foundational/site map after target trajectory is known
 ```
 
-The foundational map is not a command sink and does not replace reflexive avoidance. It is a long-lived planning/debug memory that ages gracefully, caps evidence, and avoids storing raw depth detections forever.
+The foundational map is not a command sink and does not replace reflexive
+avoidance. It is a long-lived planning/debug memory that ages gracefully, caps
+evidence, and avoids storing raw depth detections forever. The current
+`MissionLocalTraversabilityMap` is a mission-derived artifact; it is not yet the
+complete cross-mission persistent site planning map.
 
-## First implementation boundary
+## Current implementation boundary
 
-The first implementation keeps runtime/control coupling out of scope. It adds only:
+The current implementation keeps runtime/control coupling out of scope. It adds:
 
 - in-memory data structures,
 - bounded assimilation semantics,
 - post-landing flush status semantics,
+- final traversability artifact writing,
+- foundational-map HTML viewer and validator,
 - unit tests.
 
-Persistence writers, live viewer deltas, runtime shutdown barriers, and trajectory evaluation are intentionally later slices.
+Live viewer deltas for traversability, raw-evidence retention/pruning, offline
+map serving, persistent site-map planner queries, and trajectory evaluation are
+later slices unless explicitly scoped.
