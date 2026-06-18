@@ -184,9 +184,13 @@ bool CoreStackRunner::run_once() {
 
     if (!current_sensing_volumes.empty()) {
         start = SteadyClock::now();
-        providers_.world_model->update_obstacle_sensing_volumes(std::move(current_sensing_volumes));
+        // copy: ingest reads configured_obstacle_sensing_volumes_ and calls
+        // refresh_ground_truth_obstacle_products which replaces
+        // snapshot_.obstacle_sensing_volumes with emulation volumes.
+        // The original vector is preserved here so it can be restored below.
+        providers_.world_model->update_obstacle_sensing_volumes(current_sensing_volumes);
         if (timing_writer_) {
-            timing_writer_->record_stage("world_model.update_obstacle_sensing_volumes", duration_us(start));
+            timing_writer_->record_stage("world_model.update_obstacle_sensing_volumes.pre_ingest", duration_us(start));
         }
     }
 
@@ -194,6 +198,16 @@ bool CoreStackRunner::run_once() {
     providers_.world_model->ingest(perception_output);
     if (timing_writer_) {
         timing_writer_->record_stage("world_model.ingest", duration_us(start));
+    }
+
+    if (!current_sensing_volumes.empty()) {
+        start = SteadyClock::now();
+        // move: restore snapshot_.obstacle_sensing_volumes to the raw camera
+        // sensing volumes that ingest overwrote with emulation volumes.
+        providers_.world_model->update_obstacle_sensing_volumes(std::move(current_sensing_volumes));
+        if (timing_writer_) {
+            timing_writer_->record_stage("world_model.update_obstacle_sensing_volumes.post_ingest", duration_us(start));
+        }
     }
 
     start = SteadyClock::now();
