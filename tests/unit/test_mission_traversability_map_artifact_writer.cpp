@@ -3,6 +3,7 @@
 
 #include <cassert>
 #include <chrono>
+#include <cstdlib>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
@@ -34,6 +35,24 @@ std::filesystem::path unique_temp_dir() {
     path /= "dedalus_traversability_writer_" + std::to_string(stamp);
     std::filesystem::create_directories(path);
     return path;
+}
+
+void unset_traversability_and_obstacle_env() {
+    unsetenv("DEDALUS_MISSION_TRAVERSABILITY_MAP_ARTIFACT");
+    unsetenv("DEDALUS_MISSION_TRAVERSABILITY_MAP_PATH");
+    unsetenv("DEDALUS_MISSION_TRAVERSABILITY_MAP_SITE_ID");
+    unsetenv("DEDALUS_MISSION_TRAVERSABILITY_MAP_SITE_FRAME_ID");
+    unsetenv("DEDALUS_MISSION_TRAVERSABILITY_MAP_MISSION_ID");
+    unsetenv("DEDALUS_MISSION_TRAVERSABILITY_MAP_WRITE_EVERY_UPDATES");
+    unsetenv("DEDALUS_MISSION_TRAVERSABILITY_MAP_MAX_CELLS");
+    unsetenv("DEDALUS_MISSION_OBSTACLE_MAP_DELTAS");
+    unsetenv("DEDALUS_MISSION_OBSTACLE_MAP_DELTAS_PATH");
+    unsetenv("DEDALUS_MISSION_OBSTACLE_MAP_ARTIFACT");
+    unsetenv("DEDALUS_MISSION_OBSTACLE_MAP_PATH");
+    unsetenv("DEDALUS_MISSION_OBSTACLE_MAP_SITE_ID");
+    unsetenv("DEDALUS_MISSION_OBSTACLE_MAP_SITE_FRAME_ID");
+    unsetenv("DEDALUS_MISSION_OBSTACLE_MAP_MISSION_ID");
+    unsetenv("DEDALUS_MISSION_OBSTACLE_MAP_WRITE_EVERY_UPDATES");
 }
 
 MissionLocalTraversabilityCell occupied_cell(const Vec3& center) {
@@ -160,12 +179,40 @@ void disabled_writer_does_not_create_files() {
     std::filesystem::remove_all(dir);
 }
 
+void obstacle_map_env_enables_default_foundational_artifact() {
+    unset_traversability_and_obstacle_env();
+
+    const auto dir = unique_temp_dir();
+    const auto delta_path = dir / "mission_obstacle_map_deltas.jsonl";
+    const auto artifact = dir / "mission_traversability_map_full.json";
+
+    setenv("DEDALUS_MISSION_OBSTACLE_MAP_DELTAS", "1", 1);
+    setenv("DEDALUS_MISSION_OBSTACLE_MAP_DELTAS_PATH", delta_path.string().c_str(), 1);
+    setenv("DEDALUS_MISSION_OBSTACLE_MAP_SITE_ID", "validate_r3b1", 1);
+    setenv("DEDALUS_MISSION_OBSTACLE_MAP_SITE_FRAME_ID", "airsim_world", 1);
+    setenv("DEDALUS_MISSION_OBSTACLE_MAP_MISSION_ID", "validate_r3b1_mission", 1);
+
+    auto writer = MissionTraversabilityMapArtifactWriter::from_environment();
+    assert(writer.enabled());
+    writer.write_final(sample_snapshot());
+
+    assert(std::filesystem::exists(artifact));
+    const auto text = read_text(artifact);
+    assert(text.find("\"site_id\": \"validate_r3b1\"") != std::string::npos);
+    assert(text.find("\"site_frame_id\": \"airsim_world\"") != std::string::npos);
+    assert(text.find("\"mission_id\": \"validate_r3b1_mission\"") != std::string::npos);
+
+    unset_traversability_and_obstacle_env();
+    std::filesystem::remove_all(dir);
+}
+
 }  // namespace
 
 int main() {
     writes_full_artifact_and_meta();
     capped_export_preserves_full_summary();
     disabled_writer_does_not_create_files();
+    obstacle_map_env_enables_default_foundational_artifact();
 
     std::cout << "mission traversability map artifact writer tests passed\n";
     return 0;
