@@ -82,17 +82,19 @@ std::string stream_line_for(std::uint64_t seq, const MissionObstacleMapDeltaFram
 }  // namespace
 
 void RuntimeEventStreamServer::on_snapshot(const std::shared_ptr<const WorldSnapshot>& snapshot) {
-    const auto start = SteadyClock::now();
+    // Assign a sequence number on the perception thread (preserves ordering),
+    // but defer the expensive to_json() / to_compact_json() to the writer thread.
     const std::uint64_t seq = [this] {
         std::lock_guard<std::mutex> lock{mutex_};
         ++snapshot_messages_;
         return ++published_seq_;
     }();
-    auto line = stream_line_for(seq, *snapshot);
-    const auto serialize_duration_us = elapsed_us(start);
-    enqueue_line(std::move(line));
-    std::lock_guard<std::mutex> lock{mutex_};
-    serialize_total_us_ += serialize_duration_us;
+    enqueue_snapshot(seq, snapshot);
+}
+
+std::string RuntimeEventStreamServer::serialize_snapshot(
+    std::uint64_t seq, const WorldSnapshot& snapshot) const {
+    return stream_line_for(seq, snapshot);
 }
 
 void RuntimeEventStreamServer::on_ghost_detections(const GhostDetectionsFrame& frame) {

@@ -4,10 +4,12 @@
 #include <condition_variable>
 #include <cstdint>
 #include <deque>
+#include <memory>
 #include <mutex>
 #include <string>
 #include <thread>
 #include <unordered_map>
+#include <variant>
 #include <vector>
 
 #include "dedalus/avoidance/mission_obstacle_map_delta_writer.hpp"
@@ -73,7 +75,19 @@ public:
     [[nodiscard]] RuntimeEventStreamServerStats stats() const;
 
 private:
+    // A snapshot that has not yet been serialized.  The writer thread picks it
+    // up from the queue and calls serialize_snapshot() before publishing.
+    struct PendingSnapshot {
+        std::uint64_t seq{0};
+        std::shared_ptr<const WorldSnapshot> snapshot;
+    };
+    // Queue items are either pre-serialized strings (all non-snapshot message
+    // types) or PendingSnapshots (serialized lazily on the writer thread).
+    using QueueItem = std::variant<std::string, PendingSnapshot>;
+
     void enqueue_line(std::string line);
+    void enqueue_snapshot(std::uint64_t seq, std::shared_ptr<const WorldSnapshot> snapshot);
+    [[nodiscard]] std::string serialize_snapshot(std::uint64_t seq, const WorldSnapshot& snapshot) const;
     void publish_json_line(const std::string& line);
     void accept_loop();
     void http_accept_loop();
@@ -92,7 +106,7 @@ private:
 
     mutable std::mutex mutex_;
     std::condition_variable queue_cv_;
-    std::deque<std::string> send_queue_;
+    std::deque<QueueItem> send_queue_;
     std::vector<int> client_fds_;
     std::vector<int> sse_client_fds_;
     // Per-client back-buffer: holds lines that could not be sent due to EAGAIN.
