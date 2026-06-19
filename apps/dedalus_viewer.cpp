@@ -17,7 +17,7 @@
 //   --reconnect-s N          Live reconnect interval in seconds (default: 3)
 //   --replay-speed F         Replay speed multiplier (default: 1.0)
 //   --static-root DIR        Directory to serve static files from (default: disabled)
-//   --static-default-file F  Default file for GET / (default: mission_unified_viewer.html)
+//   --static-default-file F  Default file for GET / (default: viewer.html)
 //   -h / --help
 //
 // Browser endpoints:
@@ -508,7 +508,7 @@ public:
     SseRelay(std::string bind_host, std::uint16_t http_port,
              SharedQueue& queue, const SourceMonitor& monitor,
              std::string static_root = {},
-             std::string static_default_file = "mission_unified_viewer.html")
+             std::string static_default_file = "viewer.html")
         : bind_host_(std::move(bind_host)),
           http_port_(http_port),
           queue_(queue),
@@ -759,7 +759,7 @@ struct CliOptions {
     int reconnect_s{3};
     double replay_speed{1.0};
     std::string static_root;
-    std::string static_default_file{"mission_unified_viewer.html"};
+    std::string static_default_file{"viewer.html"};
 };
 
 CliOptions parse_args(int argc, char** argv) {
@@ -790,7 +790,7 @@ CliOptions parse_args(int argc, char** argv) {
                 "  --reconnect-s N          Live reconnect interval in seconds (default: 3)\n"
                 "  --replay-speed F         Replay speed multiplier (default: 1.0)\n"
                 "  --static-root DIR        Serve static files from DIR (default: disabled)\n"
-                "  --static-default-file F  Default file for GET / (default: mission_unified_viewer.html)\n"
+                "  --static-default-file F  Default file for GET / (default: viewer.html)\n"
                 "  -h / --help              Show this help\n"
                 "\n"
                 "Browser endpoints:\n"

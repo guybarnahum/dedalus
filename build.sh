@@ -24,6 +24,12 @@ git pull --ff-only
 
 cmake --build "$BUILD_DIR" -j"$(dedalus_build_jobs)"
 
+# Generate the viewer SPA into the build directory so it is always in sync
+# with the dedalus_viewer binary.  Serve with:
+#   ./build/apps/dedalus_viewer --static-root "$BUILD_DIR" --replay-dir <out-dir>
+python3 tools/visualization/mission_unified_viewer.py --output "$BUILD_DIR/viewer.html"
+python3 tools/validation/validate-mission-unified-viewer.py "$BUILD_DIR/viewer.html"
+
 ctest_args=(--test-dir "$BUILD_DIR" --output-on-failure)
 
 if [[ -n "$TEST_REGEX" ]]; then

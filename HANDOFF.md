@@ -53,7 +53,7 @@ Active development state:
   Mission evidence retention gate + dry-run manifest is complete and validated (14-test suite).
   Unified viewer sidecar is complete and validated:
     - apps/dedalus_viewer.cpp: TCP→SSE relay with --static-root / --static-default-file static file serving.
-    - tools/visualization/mission_unified_viewer.py: pure SSE-driven SPA (no embedded data).
+    - tools/visualization/mission_unified_viewer.py: pure SSE-driven SPA → build/viewer.html (no embedded data).
       Renders all 5 event types: world_snapshot, mission_obstacle_map_delta,
       traversability_map_snapshot (exterior voxel face rendering — boundary of union surface),
       ghost_detections (labeled spheres + velocity arrows), mission_event (scrolling log panel).
@@ -177,26 +177,22 @@ Runtime commands used for validated viewer workflow:
     python3 tools/validation/validate-mission-traversability-map-viewer.py \
       out/validate_r3b1/mission_traversability_map_viewer.html
 
-  Generate and validate unified viewer HTML:
-    python3 tools/visualization/mission_unified_viewer.py \
-      --output out/validate_r3b1/mission_unified_viewer.html
+  Generate and validate viewer HTML (done automatically by build.sh):
+    python3 tools/visualization/mission_unified_viewer.py --output build/viewer.html
+    python3 tools/validation/validate-mission-unified-viewer.py build/viewer.html
 
-    python3 tools/validation/validate-mission-unified-viewer.py \
-      out/validate_r3b1/mission_unified_viewer.html
-
-  Start dedalus_viewer sidecar (replay mode, serves unified viewer):
+  Start dedalus_viewer sidecar (replay mode):
     ./build/apps/dedalus_viewer \
       --replay-dir out/validate_r3b1 \
       --http-port 8090 \
-      --static-root out/validate_r3b1 \
-      --static-default-file mission_unified_viewer.html
+      --static-root build
 
   Start dedalus_viewer sidecar (live mode, alongside running mission):
     ./build/apps/dedalus_viewer \
       --host 127.0.0.1 \
       --port 7788 \
       --http-port 8090 \
-      --static-root out/validate_r3b1
+      --static-root build
 
   Start AirSim mission with runtime HTTP/SSE/static viewer:
     DEDALUS_AIRSIM_ENABLE_DEPTH_OBSTACLES=1 \
@@ -220,7 +216,7 @@ Runtime commands used for validated viewer workflow:
     http://127.0.0.1:8080/mission_traversability_map_viewer.html
 
     ssh -L 8090:127.0.0.1:8090 <ec2-host>   # unified sidecar viewer
-    http://127.0.0.1:8090/                   # mission_unified_viewer.html (default)
+    http://127.0.0.1:8090/                   # viewer.html (default)
 
   Run evidence retention dry-run:
     python3 tools/mission/mission-evidence-retention.py \

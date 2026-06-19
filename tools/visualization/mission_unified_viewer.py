@@ -1263,8 +1263,8 @@ def main() -> int:
                                      formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument(
         "--output",
-        default="out/mission_unified_viewer.html",
-        help="Output HTML path (default: out/mission_unified_viewer.html)",
+        default="build/viewer.html",
+        help="Output HTML path (default: build/viewer.html)",
     )
     args = parser.parse_args()
 
