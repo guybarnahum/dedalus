@@ -1,5 +1,6 @@
 #include "dedalus/runtime/core_stack_runner.hpp"
 
+#include "dedalus/avoidance/mission_local_traversability_map_publisher.hpp"
 #include "dedalus/sensing/airsim_depth_obstacle_detector.hpp"
 
 #include <algorithm>
@@ -265,7 +266,10 @@ bool CoreStackRunner::run_once() {
     if (!mission_local_obstacle_map_snapshot.cells.empty()) {
         mission_map_assimilator_.enqueue_mission_obstacle_map(mission_local_obstacle_map_snapshot);
     }
+    const auto drained_before = mission_map_assimilator_.status().drained_snapshot_count;
     mission_map_assimilator_.tick(frame->timestamp);
+    const bool trav_map_updated =
+        mission_map_assimilator_.status().drained_snapshot_count > drained_before;
     if (timing_writer_) {
         timing_writer_->record_stage("mission_map_assimilator.tick", duration_us(start));
         timing_writer_->record_stage(
@@ -274,6 +278,25 @@ bool CoreStackRunner::run_once() {
         timing_writer_->record_stage(
             "mission_map_assimilator.drained_snapshots",
             mission_map_assimilator_.status().drained_snapshot_count);
+    }
+
+    // Publish the updated traversability map snapshot to any live subscribers
+    // (e.g. RuntimeEventStreamServer) when the assimilator drained at least one
+    // obstacle-map snapshot this tick.  Cells are capped at 4096 for streaming.
+    if (trav_map_updated && traversability_map_publisher_) {
+        start = SteadyClock::now();
+        const auto trav_snapshot =
+            mission_map_assimilator_.traversability_map().snapshot(4096U);
+        MissionLocalTraversabilityMapFrame trav_frame;
+        trav_frame.timestamp_ns =
+            trav_snapshot.summary.last_update_timestamp_ns != 0U
+                ? trav_snapshot.summary.last_update_timestamp_ns
+                : mission_local_obstacle_map_snapshot.summary.last_update_timestamp_ns;
+        trav_frame.json = to_compact_stream_json(trav_snapshot, 4096U);
+        traversability_map_publisher_->publish(trav_frame);
+        if (timing_writer_) {
+            timing_writer_->record_stage("traversability_map_publisher.publish", duration_us(start));
+        }
     }
 
     start = SteadyClock::now();

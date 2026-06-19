@@ -12,6 +12,7 @@
 #include <variant>
 #include <vector>
 
+#include "dedalus/avoidance/mission_local_traversability_map_publisher.hpp"
 #include "dedalus/avoidance/mission_obstacle_map_delta_writer.hpp"
 #include "dedalus/behavior/mission_runtime.hpp"
 #include "dedalus/perception/ghost_targets.hpp"
@@ -48,12 +49,13 @@ struct RuntimeEventStreamServerStats {
     std::uint64_t ghost_detection_messages{0};
     std::uint64_t mission_event_messages{0};
     std::uint64_t mission_obstacle_map_delta_messages{0};
+    std::uint64_t traversability_map_snapshot_messages{0};
     std::uint64_t serialize_total_us{0};
     std::uint64_t enqueue_total_us{0};
     std::uint64_t publish_total_us{0};
 };
 
-class RuntimeEventStreamServer final : public WorldSnapshotSubscriber, public GhostDetectionsSubscriber, public MissionEventSubscriber, public MissionObstacleMapDeltaSubscriber {
+class RuntimeEventStreamServer final : public WorldSnapshotSubscriber, public GhostDetectionsSubscriber, public MissionEventSubscriber, public MissionObstacleMapDeltaSubscriber, public MissionLocalTraversabilityMapSubscriber {
 public:
     explicit RuntimeEventStreamServer(RuntimeEventStreamServerConfig config);
     ~RuntimeEventStreamServer() override;
@@ -69,6 +71,7 @@ public:
     void on_ghost_detections(const GhostDetectionsFrame& frame) override;
     void on_mission_event(const MissionEvent& event) override;
     void on_mission_obstacle_map_delta(const MissionObstacleMapDeltaFrame& frame) override;
+    void on_traversability_map_snapshot(const MissionLocalTraversabilityMapFrame& frame) override;
 
     [[nodiscard]] std::uint16_t port() const;
     [[nodiscard]] std::uint16_t http_port() const;
@@ -123,6 +126,7 @@ private:
     std::uint64_t ghost_detection_messages_{0};
     std::uint64_t mission_event_messages_{0};
     std::uint64_t mission_obstacle_map_delta_messages_{0};
+    std::uint64_t traversability_map_snapshot_messages_{0};
     std::uint64_t serialize_total_us_{0};
     std::uint64_t enqueue_total_us_{0};
     std::uint64_t publish_total_us_{0};

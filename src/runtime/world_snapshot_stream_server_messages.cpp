@@ -1,5 +1,6 @@
 #include "dedalus/runtime/world_snapshot_stream_server.hpp"
 
+#include "dedalus/avoidance/mission_local_traversability_map_publisher.hpp"
 #include "dedalus/core/json_utils.hpp"
 #include "dedalus/world_model/world_snapshot.hpp"
 
@@ -78,6 +79,24 @@ std::string stream_line_for(std::uint64_t seq, const MissionObstacleMapDeltaFram
     return line;
 }
 
+std::string stream_line_for(std::uint64_t seq, const MissionLocalTraversabilityMapFrame& frame) {
+    std::string payload = frame.json;
+    while (!payload.empty() && (payload.back() == '\n' || payload.back() == '\r')) {
+        payload.pop_back();
+    }
+
+    std::string line;
+    line.reserve(payload.size() + 128U);
+    line += "{\"type\":\"traversability_map_snapshot\",\"seq\":";
+    line += std::to_string(seq);
+    line += ",\"timestamp_ns\":";
+    line += std::to_string(frame.timestamp_ns);
+    line += ",\"traversability_map_snapshot\":";
+    line += payload;
+    line += "}\n";
+    return line;
+}
+
 
 }  // namespace
 
@@ -131,6 +150,21 @@ void RuntimeEventStreamServer::on_mission_obstacle_map_delta(
     const std::uint64_t seq = [this] {
         std::lock_guard<std::mutex> lock{mutex_};
         ++mission_obstacle_map_delta_messages_;
+        return ++published_seq_;
+    }();
+    auto line = stream_line_for(seq, frame);
+    const auto serialize_duration_us = elapsed_us(start);
+    enqueue_line(std::move(line));
+    std::lock_guard<std::mutex> lock{mutex_};
+    serialize_total_us_ += serialize_duration_us;
+}
+
+void RuntimeEventStreamServer::on_traversability_map_snapshot(
+    const MissionLocalTraversabilityMapFrame& frame) {
+    const auto start = SteadyClock::now();
+    const std::uint64_t seq = [this] {
+        std::lock_guard<std::mutex> lock{mutex_};
+        ++traversability_map_snapshot_messages_;
         return ++published_seq_;
     }();
     auto line = stream_line_for(seq, frame);
