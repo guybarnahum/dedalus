@@ -256,6 +256,26 @@ bool CoreStackRunner::run_once() {
             mission_local_obstacle_map_snapshot.summary.occupied_cell_count);
     }
 
+    // Background-assimilate the current cumulative obstacle map into the
+    // traversability map so it builds in-flight, not only at landing.
+    // Enqueue only when the map has cells; tick() unconditionally (empty
+    // queue is a cheap no-op).  finalize_mission_map_after_landing() handles
+    // the final enqueue + high-priority flush at shutdown.
+    start = SteadyClock::now();
+    if (!mission_local_obstacle_map_snapshot.cells.empty()) {
+        mission_map_assimilator_.enqueue_mission_obstacle_map(mission_local_obstacle_map_snapshot);
+    }
+    mission_map_assimilator_.tick(frame->timestamp);
+    if (timing_writer_) {
+        timing_writer_->record_stage("mission_map_assimilator.tick", duration_us(start));
+        timing_writer_->record_stage(
+            "mission_map_assimilator.pending_snapshots",
+            mission_map_assimilator_.status().pending_snapshot_count);
+        timing_writer_->record_stage(
+            "mission_map_assimilator.drained_snapshots",
+            mission_map_assimilator_.status().drained_snapshot_count);
+    }
+
     start = SteadyClock::now();
     snapshot_for_annotation.local_flight_map = local_flight_map_accumulator_.update_from_mission_local_map(
         mission_local_obstacle_map_snapshot,
