@@ -47,12 +47,23 @@ h3 { font-size: 12px; margin: 10px 0 6px; color: #c0c4d0; text-transform: upperc
 .metric span { color: #9099b0; }
 .metric b { color: #e8e8e8; text-align: right; }
 .hint { color: #7a8099; font-size: 11px; line-height: 1.45; margin-bottom: 8px; }
-.view-controls { display: grid; grid-template-columns: 1fr 1fr; gap: 5px; margin-bottom: 10px; }
+.view-controls { display: grid; grid-template-columns: 1fr 1fr; gap: 5px; margin-bottom: 6px; }
 .view-controls button { background: #1e2535; color: #d8dce8; border: 1px solid #333d54; border-radius: 5px; padding: 5px 6px; cursor: pointer; font-size: 12px; }
 .view-controls button:hover { background: #28304a; }
+.zoom-control { display: flex; align-items: center; gap: 4px; margin-bottom: 10px; }
+.zoom-control button { background: #1e2535; color: #d8dce8; border: 1px solid #333d54; border-radius: 5px; padding: 4px 12px; cursor: pointer; font-size: 15px; font-weight: bold; line-height: 1; }
+.zoom-control button:hover { background: #28304a; }
+.zoom-control span { flex: 1; text-align: center; font-size: 12px; color: #c0c4d0; font-variant-numeric: tabular-nums; }
 .layer-controls { display: flex; flex-direction: column; gap: 5px; margin-bottom: 8px; }
 .layer-controls label { display: flex; align-items: center; gap: 7px; font-size: 12px; color: #c0c4d0; cursor: pointer; }
 .layer-controls input[type=checkbox] { accent-color: #5080e8; }
+.lod-control { margin-bottom: 8px; }
+.lod-row { display: flex; align-items: center; gap: 5px; margin-bottom: 2px; }
+.lod-row input[type=range] { flex: 1; accent-color: #5080e8; cursor: pointer; }
+.lod-end { font-size: 10px; color: #7a8099; white-space: nowrap; }
+.trav-legend { display: flex; gap: 8px; align-items: center; margin: 4px 0 8px; flex-wrap: wrap; }
+.trav-swatch { display: inline-block; width: 12px; height: 12px; border-radius: 2px; vertical-align: middle; margin-right: 3px; }
+.trav-legend span { font-size: 11px; color: #9099b0; }
 #status-bar { padding: 8px 14px; border-bottom: 1px solid #2b2f3a; display: flex; align-items: center; gap: 8px; font-size: 12px; }
 #status-dot { width: 8px; height: 8px; border-radius: 50%; background: #555; flex-shrink: 0; }
 #status-dot.live    { background: #30d060; box-shadow: 0 0 5px #30d060; }
@@ -96,8 +107,11 @@ h3 { font-size: 12px; margin: 10px 0 6px; color: #c0c4d0; text-transform: upperc
         <button id="view-45">45°</button>
         <button id="view-side">Side</button>
         <button id="view-top">Top</button>
-        <button id="view-zoom-in">＋ Zoom</button>
-        <button id="view-zoom-out">－ Zoom</button>
+      </div>
+      <div class="zoom-control">
+        <button id="view-zoom-out">−</button>
+        <span id="zoom-val">100%</span>
+        <button id="view-zoom-in">+</button>
       </div>
 
       <h3>Layers</h3>
@@ -107,6 +121,21 @@ h3 { font-size: 12px; margin: 10px 0 6px; color: #c0c4d0; text-transform: upperc
         <label><input type="checkbox" id="toggle-ghosts"> Ghost detections</label>
         <label><input type="checkbox" id="toggle-sensing" checked> Sensing volumes</label>
         <label><input type="checkbox" id="toggle-trajectory" checked> Trajectory</label>
+      </div>
+
+      <h3>Traversability LOD</h3>
+      <div class="lod-control">
+        <div class="lod-row">
+          <span class="lod-end">32m</span>
+          <input type="range" id="trav-lod" min="0" max="6" step="1" value="2">
+          <span class="lod-end">0.5m</span>
+        </div>
+        <div style="text-align:center;font-size:11px;color:#9099b0">cell size: <b id="trav-lod-val" style="color:#c0c4d0">8m</b></div>
+      </div>
+      <div class="trav-legend">
+        <span><span class="trav-swatch" style="background:rgba(190,55,45,0.85)"></span>Occupied</span>
+        <span><span class="trav-swatch" style="background:rgba(200,150,30,0.6)"></span>Partial</span>
+        <span><span class="trav-swatch" style="background:transparent;border:1px solid #3a4358"></span>Free</span>
       </div>
 
       <h3>Metrics</h3>
@@ -122,15 +151,15 @@ h3 { font-size: 12px; margin: 10px 0 6px; color: #c0c4d0; text-transform: upperc
       <div class="metric"><span>Bounds</span><code id="m-bounds">—</code></div>
 
       <h3>Legend</h3>
-      <div class="hint">Height above takeoff (obstacle + traversability colors)</div>
+      <div class="hint">Height above takeoff (obstacle colors)</div>
       <div class="height-ramp"></div>
       <div style="display:grid;grid-template-columns:repeat(5,1fr);font-size:10px;color:#6a7090;margin-bottom:6px">
         <span>0m</span><span style="text-align:center">10m</span><span style="text-align:center">20m</span><span style="text-align:center">30m</span><span style="text-align:right">40m+</span>
       </div>
       <div class="hint" style="margin-bottom:2px">
         Yellow = ego/path · White = sensing direction · Magenta = first blocked ·
-        Orange/teal fill = traversability surface (exterior faces only) ·
-        Cyan dot = ghost detection · Arrow = velocity
+        Trav: red=occupied, amber=partial, shading=depth ·
+        Cyan dot = ghost · Arrow = velocity
       </div>
 
       <div id="event-log-section">
@@ -156,7 +185,8 @@ const LIVE_TRACK_DIM         = 0.55;
 const LIVE_OBS_EVENT_MAX     = 6000;
 const LIVE_OBS_GRID_M        = 0.35;
 const PENDING_DELTA_CELL_MAX = 4096;
-const MAX_TRAV_DISPLAY       = 8000;   // cap before face build to keep GPU happy
+const MAX_TRAV_DISPLAY       = 8000;   // cap on aggregated occupied voxels before face build
+const TRAV_LOD_LEVELS        = [32, 16, 8, 4, 2, 1, 0.5]; // metres, index 2 = default 8m
 const MAX_GHOST_AGE_S        = 15;
 const MAX_TRAJ_POINTS        = 6000;
 const MAX_MISSION_LOG        = 200;
@@ -196,11 +226,12 @@ const liveObsEventsByKey = new Map();
 let   liveObsEvents = [];              // for age-decay rendering
 
 // Traversability
-const travCellsByKey = new Map();      // cellKey → trav cell
-let   travOccupiedQKeys = new Set();   // quantized key → present (for neighbor lookup)
-let   travFacesGeom = [];              // pre-built exterior face geometry
+const travCellsByKey = new Map();      // cellKey → trav cell (0.5 m raw cells from server)
+let   travOccupiedQKeys = new Set();   // raw quantized key → present (used by delta merge)
+let   travFacesGeom = [];              // pre-built exterior face geometry (at current LOD)
 let   travCellSizeM = 0.5;
 let   travVCellSizeM = 0.5;
+let   travDisplayLevelM = 8;           // current LOD cell size for rendering (metres)
 
 // Ghost detections
 let ghostDetections = [];              // {id, cls, pos, vel, size_m, seen_ms}
@@ -392,6 +423,28 @@ window.animateViewPreset = function(tYaw, tPitch, tZoom, _label="view", tCenter=
   window.viewAnimationHandle=requestAnimationFrame(step);
 };
 
+function updateZoomDisplay() {
+  el("zoom-val").textContent = Math.round(zoom * 100) + "%";
+}
+
+window.animateZoom = function(targetZoom) {
+  if (window.viewAnimationHandle !== null) {
+    cancelAnimationFrame(window.viewAnimationHandle);
+    window.viewAnimationHandle = null;
+  }
+  const startZoom = zoom;
+  const dur = 300, t0 = performance.now();
+  function step(now) {
+    const rawT = clamp((now - t0) / dur, 0, 1), t = window.easeInOutCubic(rawT);
+    zoom = startZoom + (targetZoom - startZoom) * t;
+    updateZoomDisplay();
+    draw();
+    if (rawT < 1) { window.viewAnimationHandle = requestAnimationFrame(step); }
+    else { zoom = targetZoom; updateZoomDisplay(); window.viewAnimationHandle = null; draw(); }
+  }
+  window.viewAnimationHandle = requestAnimationFrame(step);
+};
+
 // ── draw helpers ───────────────────────────────────────────────────────────────
 
 function drawLine(a, b, color, width=1) {
@@ -415,9 +468,11 @@ function drawOrientationGizmo() {
   const len  = 45 * dpr;
 
   // Project a direction vector using current yaw/pitch (no translation, no zoom).
-  // Mirrors the project() coordinate transform: NED Y-flip, Z-flip, then yaw+pitch.
+  // Mirrors the project() coordinate transform for X and Y (NED Y-flip), but
+  // intentionally flips Z so the gizmo shows Z pointing UP — a conventional
+  // orientation indicator regardless of the NED world frame.
   function gProj(vx, vy, vz) {
-    const x = vx, y = -vy, z = -vz;          // NED handedness flip
+    const x = vx, y = -vy, z = vz;           // NED Y-flip; Z flipped to show Z-up in gizmo
     const cosy = Math.cos(yaw),  siny = Math.sin(yaw);
     const cosp = Math.cos(pitch), sinp = Math.sin(pitch);
     const x1 = cosy*x - siny*y;
@@ -572,69 +627,101 @@ function buildTravFaces() {
   travFacesGeom = [];
   if (travCellsByKey.size === 0) return;
 
-  // Collect occupied cells (with optional decimation for large maps)
-  let occupiedCells = [...travCellsByKey.values()].filter(c => c.state === "occupied");
-  if (occupiedCells.length > MAX_TRAV_DISPLAY) {
-    // Prefer cells closest to ego for decimation
-    if (state.ego) {
-      const ego=state.ego;
-      occupiedCells.sort((a,b)=>{
-        const da=Math.hypot(a.center.x-ego.x, a.center.y-ego.y, a.center.z-ego.z);
-        const db=Math.hypot(b.center.x-ego.x, b.center.y-ego.y, b.center.z-ego.z);
-        return da-db;
-      });
-    }
-    occupiedCells = occupiedCells.slice(0, MAX_TRAV_DISPLAY);
+  const levelM = travDisplayLevelM;
+  const halfL  = levelM * 0.5;
+
+  // ── Step 1: aggregate raw 0.5 m cells into coarse LOD voxels ─────────────────
+  // Each coarse voxel key = snapped centre at levelM resolution.
+  // State mapping per coarse voxel:
+  //   occ > 0 && free > 0  → "partial"  (amber)
+  //   occ > 0 && free == 0 → "occupied" (red)
+  //   occ == 0             → "free"     (transparent, skip)
+
+  const coarseGrid = new Map(); // coarseKey → {cx,cy,cz, occ, free, conf}
+
+  for (const cell of travCellsByKey.values()) {
+    if (!cell.center) continue;
+    const s = cell.state;
+    const isOcc  = s === "occupied";
+    const isFree = s === "free" || s === "mixed";
+    if (!isOcc && !isFree) continue; // unknown / stale → ignore for LOD
+
+    const cx = Math.round(cell.center.x / levelM) * levelM;
+    const cy = Math.round(cell.center.y / levelM) * levelM;
+    const cz = Math.round(cell.center.z / levelM) * levelM;
+    const k  = `${cx},${cy},${cz}`;
+    let e = coarseGrid.get(k);
+    if (!e) { e = {cx, cy, cz, occ:0, free:0, conf:0}; coarseGrid.set(k, e); }
+    if (isOcc)  { e.occ++;  e.conf += cell.confidence; }
+    if (isFree) { e.free++; }
   }
 
+  // ── Step 2: build neighbour-lookup set (any voxel with obstacles) ─────────────
+  const coarseOccKeys = new Set();
+  for (const [k, e] of coarseGrid) {
+    if (e.occ > 0) coarseOccKeys.add(k);
+  }
+
+  // Decimate if too many occupied voxels (prefer closest to ego)
+  let occEntries = [...coarseGrid.entries()].filter(([,e]) => e.occ > 0);
+  if (occEntries.length > MAX_TRAV_DISPLAY) {
+    if (state.ego) {
+      const {x:ex, y:ey, z:ez} = state.ego;
+      occEntries.sort(([,[a]], [,[b]]) =>
+        Math.hypot(a.cx-ex, a.cy-ey, a.cz-ez) - Math.hypot(b.cx-ex, b.cy-ey, b.cz-ez));
+    }
+    occEntries = occEntries.slice(0, MAX_TRAV_DISPLAY);
+  }
+
+  // ── Step 3: exterior-face extraction with per-face shading ───────────────────
+  // Face shading: visually top face (-Z in NED = higher altitude) is brightest.
+  //   dz == -1 → top face (upward-facing in scene)  → shading 1.00
+  //   dx or dy  → side faces                         → shading 0.75 / 0.60
+  //   dz == +1  → bottom face                        → shading 0.38
   const DIRS = [
-    [1,0,0], [-1,0,0],
-    [0,1,0], [0,-1,0],
-    [0,0,1], [0,0,-1],
+    [1,0,0, 0.75], [-1,0,0, 0.70],
+    [0,1,0, 0.62], [0,-1,0, 0.58],
+    [0,0,1, 0.38], [0,0,-1, 1.00],
   ];
 
-  for (const cell of occupiedCells) {
-    const {center, hx, hy, hz} = cell;
-    const {x:cx, y:cy, z:cz} = center;
-    const [qx, qy, qz] = travQuantKey(cx, cy, cz).split(",").map(Number);
+  for (const [, e] of occEntries) {
+    const {cx, cy, cz, occ, free, conf} = e;
+    const isPartial = free > 0;
+    const avgConf   = occ > 0 ? clamp(conf / occ, 0, 1) : 0.5;
 
-    for (const [dx, dy, dz] of DIRS) {
-      const nKey = `${qx+dx},${qy+dy},${qz+dz}`;
-      if (travOccupiedQKeys.has(nKey)) continue; // interior face — skip
+    for (const [dx, dy, dz, shading] of DIRS) {
+      const nk = `${cx+dx*levelM},${cy+dy*levelM},${cz+dz*levelM}`;
+      if (coarseOccKeys.has(nk)) continue; // interior face — skip
 
-      // Build 4 corners of the exterior face
       let corners;
       if (dx !== 0) {
-        const fx = cx + dx * hx;
+        const fx = cx + dx * halfL;
         corners = [
-          {x:fx, y:cy-hy, z:cz-hz}, {x:fx, y:cy+hy, z:cz-hz},
-          {x:fx, y:cy+hy, z:cz+hz}, {x:fx, y:cy-hy, z:cz+hz},
+          {x:fx,y:cy-halfL,z:cz-halfL},{x:fx,y:cy+halfL,z:cz-halfL},
+          {x:fx,y:cy+halfL,z:cz+halfL},{x:fx,y:cy-halfL,z:cz+halfL},
         ];
       } else if (dy !== 0) {
-        const fy = cy + dy * hy;
+        const fy = cy + dy * halfL;
         corners = [
-          {x:cx-hx, y:fy, z:cz-hz}, {x:cx+hx, y:fy, z:cz-hz},
-          {x:cx+hx, y:fy, z:cz+hz}, {x:cx-hx, y:fy, z:cz+hz},
+          {x:cx-halfL,y:fy,z:cz-halfL},{x:cx+halfL,y:fy,z:cz-halfL},
+          {x:cx+halfL,y:fy,z:cz+halfL},{x:cx-halfL,y:fy,z:cz+halfL},
         ];
       } else {
-        const fz = cz + dz * hz;
+        const fz = cz + dz * halfL;
         corners = [
-          {x:cx-hx, y:cy-hy, z:fz}, {x:cx+hx, y:cy-hy, z:fz},
-          {x:cx+hx, y:cy+hy, z:fz}, {x:cx-hx, y:cy+hy, z:fz},
+          {x:cx-halfL,y:cy-halfL,z:fz},{x:cx+halfL,y:cy-halfL,z:fz},
+          {x:cx+halfL,y:cy+halfL,z:fz},{x:cx-halfL,y:cy+halfL,z:fz},
         ];
       }
 
-      // Face centroid for depth sorting
-      const fcx=(corners[0].x+corners[2].x)*0.5;
-      const fcy=(corners[0].y+corners[2].y)*0.5;
-      const fcz=(corners[0].z+corners[2].z)*0.5;
-
       travFacesGeom.push({
         corners,
-        centroid: {x:fcx, y:fcy, z:fcz},
-        heightM: -cz,
-        confidence: cell.confidence,
-        stale: cell.stale,
+        centroid: {x:(corners[0].x+corners[2].x)*0.5,
+                   y:(corners[0].y+corners[2].y)*0.5,
+                   z:(corners[0].z+corners[2].z)*0.5},
+        isPartial,
+        confidence: avgConf,
+        shading,
       });
     }
   }
@@ -651,29 +738,29 @@ function drawTravFaces() {
   ctx.save();
   ctx.lineWidth = 0.5 * devicePixelRatio;
 
-  // Batch by fill color: group all faces sharing the same rgba key into one
-  // Path2D → 2 canvas calls per unique color instead of 2 per face.
-  // Color is height-banded (topoBandH), so same-height faces cluster naturally.
-  // Approximation: strict depth order is maintained per color group; cross-group
-  // ordering may differ slightly from per-face painter's, but is visually fine.
+  // Batch by shaded color key: one fill + one stroke per unique (type, shading) tuple.
+  // Occupied base: [190, 55, 45]; Partial base: [200, 150, 30].
+  // Per-face shading multiplies the base RGB to create directional lighting.
   const groups = new Map(); // colorKey → { fillStyle, strokeStyle, path }
 
   for (const face of sorted) {
     const ps = face.corners.map(c => project(c));
     if (ps.some(p => !Number.isFinite(p.x) || !Number.isFinite(p.y))) continue;
 
-    const rgb = rgbForH(Math.max(0, face.heightM));
-    const a   = face.stale ? 0.10 : clamp(0.28 + face.confidence*0.32, 0.18, 0.65);
-    // Use a quantized alpha key (2 decimal places) to avoid float noise splitting groups
-    const aStr  = a.toFixed(2);
-    const asStr = Math.min(1, a+0.18).toFixed(2);
-    const key   = `${rgb[0]},${rgb[1]},${rgb[2]},${aStr}`;
+    const base = face.isPartial ? [200, 150, 30] : [190, 55, 45];
+    const s    = face.shading;
+    const fr   = Math.round(base[0] * s);
+    const fg   = Math.round(base[1] * s);
+    const fb   = Math.round(base[2] * s);
+    const fa   = face.isPartial ? 0.60 : 0.82;
+    const sa   = Math.min(1, fa + 0.12);
+    const key  = `${fr},${fg},${fb},${face.isPartial?1:0}`;
 
     let g = groups.get(key);
     if (!g) {
       g = {
-        fillStyle:   `rgba(${rgb[0]},${rgb[1]},${rgb[2]},${aStr})`,
-        strokeStyle: `rgba(${rgb[0]},${rgb[1]},${rgb[2]},${asStr})`,
+        fillStyle:   `rgba(${fr},${fg},${fb},${fa})`,
+        strokeStyle: `rgba(${fr},${fg},${fb},${sa})`,
         path: new Path2D(),
       };
       groups.set(key, g);
@@ -1302,11 +1389,23 @@ function installViewControls() {
   el("view-side")?.addEventListener("click", ()=>window.animateViewPreset(Math.PI/2, 0, 1.0, "side"));
   el("view-top")?.addEventListener("click", ()=>window.animateViewPreset(0, Math.PI/2-0.01, 1.0, "top"));
   el("view-zoom-in")?.addEventListener("click", ()=>{
-    zoom=clamp(zoom*1.25, 0.08, 25); scheduleDraw();
+    window.animateZoom(clamp(zoom * 1.25, 0.08, 25));
   });
   el("view-zoom-out")?.addEventListener("click", ()=>{
-    zoom=clamp(zoom/1.25, 0.08, 25); scheduleDraw();
+    window.animateZoom(clamp(zoom / 1.25, 0.08, 25));
   });
+
+  const lodSlider = el("trav-lod");
+  if (lodSlider) {
+    lodSlider.addEventListener("input", ()=>{
+      travDisplayLevelM = TRAV_LOD_LEVELS[Number(lodSlider.value)];
+      el("trav-lod-val").textContent = travDisplayLevelM + "m";
+      buildTravFaces();
+      scheduleDraw();
+    });
+  }
+
+  updateZoomDisplay();
 
   const toggles=[
     ["toggle-obstacles",  v=>{ state.showObstacles  =v; scheduleDraw(); }],
@@ -1342,6 +1441,7 @@ canvas.addEventListener("wheel", e=>{
   if (hoverCard) hoverCard.style.display="none";
   zoom *= Math.exp(-e.deltaY*0.001);
   zoom=clamp(zoom, 0.08, 25);
+  updateZoomDisplay();
   draw();
 }, {passive:false});
 
