@@ -10,18 +10,22 @@
 //   dedalus_viewer [options]
 //
 // Options:
-//   --host HOST         Runtime TCP host       (default: 127.0.0.1)
-//   --port PORT         Runtime TCP port       (default: 7788)
-//   --http-port PORT    Viewer HTTP/SSE port   (default: 8090)
-//   --replay-dir DIR    Snapshot artifact dir  (default: disabled)
-//   --reconnect-s N     Live reconnect interval in seconds (default: 3)
-//   --replay-speed F    Replay speed multiplier (default: 1.0)
+//   --host HOST              Runtime TCP host       (default: 127.0.0.1)
+//   --port PORT              Runtime TCP port       (default: 7788)
+//   --http-port PORT         Viewer HTTP/SSE port   (default: 8090)
+//   --replay-dir DIR         Snapshot artifact dir  (default: disabled)
+//   --reconnect-s N          Live reconnect interval in seconds (default: 3)
+//   --replay-speed F         Replay speed multiplier (default: 1.0)
+//   --static-root DIR        Directory to serve static files from (default: disabled)
+//   --static-default-file F  Default file for GET / (default: mission_unified_viewer.html)
 //   -h / --help
 //
 // Browser endpoints:
 //   GET /events          — SSE stream of all mission events
 //   GET /viewer_status   — JSON source status (live/replay/disconnected)
 //   GET /healthz         — JSON health check
+//   GET /               — Serves --static-default-file (when --static-root is set)
+//   GET /<path>          — Serves static file relative to --static-root
 
 #include <algorithm>
 #include <atomic>
@@ -412,6 +416,37 @@ private:
     std::thread thread_;
 };
 
+// ── static file helpers ───────────────────────────────────────────────────────
+
+// Returns a MIME content-type string for a file extension, defaulting to
+// application/octet-stream for unknown types.
+std::string content_type_for_path(const std::string& path) {
+    const auto dot = path.rfind('.');
+    if (dot == std::string::npos) return "application/octet-stream";
+    const auto ext = path.substr(dot);
+    if (ext == ".html" || ext == ".htm") return "text/html; charset=utf-8";
+    if (ext == ".js")                    return "application/javascript; charset=utf-8";
+    if (ext == ".css")                   return "text/css; charset=utf-8";
+    if (ext == ".json")                  return "application/json; charset=utf-8";
+    if (ext == ".svg")                   return "image/svg+xml";
+    if (ext == ".png")                   return "image/png";
+    if (ext == ".ico")                   return "image/x-icon";
+    if (ext == ".txt")                   return "text/plain; charset=utf-8";
+    return "application/octet-stream";
+}
+
+// Returns true iff `canonical` is under `root` (both must be canonical paths).
+// Prevents path-traversal attacks (e.g. GET /../secret).
+bool path_is_within_root(const std::filesystem::path& root,
+                          const std::filesystem::path& canonical) {
+    const auto root_str      = root.string();
+    const auto canonical_str = canonical.string();
+    return canonical_str.size() >= root_str.size() &&
+           canonical_str.substr(0, root_str.size()) == root_str &&
+           (canonical_str.size() == root_str.size() ||
+            canonical_str[root_str.size()] == '/');
+}
+
 // ── SSE relay ─────────────────────────────────────────────────────────────────
 //
 // Minimal HTTP server that:
@@ -471,11 +506,15 @@ bool send_all(int fd, const std::string& s) {
 class SseRelay {
 public:
     SseRelay(std::string bind_host, std::uint16_t http_port,
-             SharedQueue& queue, const SourceMonitor& monitor)
+             SharedQueue& queue, const SourceMonitor& monitor,
+             std::string static_root = {},
+             std::string static_default_file = "mission_unified_viewer.html")
         : bind_host_(std::move(bind_host)),
           http_port_(http_port),
           queue_(queue),
-          monitor_(monitor) {}
+          monitor_(monitor),
+          static_root_(std::move(static_root)),
+          static_default_file_(std::move(static_default_file)) {}
 
     void start() {
         setup_listen_socket();
@@ -549,6 +588,24 @@ private:
                 respond_json(client, viewer_status_json());
             } else if (req.find("GET /healthz") != std::string::npos) {
                 respond_json(client, "{\"ok\":true}\n");
+            } else if (!static_root_.empty()) {
+                // Extract the request path from the first line (GET <path> HTTP/1.1).
+                std::string req_path;
+                const auto sp1 = req.find(' ');
+                if (sp1 != std::string::npos) {
+                    const auto sp2 = req.find(' ', sp1 + 1);
+                    req_path = req.substr(sp1 + 1,
+                                          sp2 == std::string::npos ? std::string::npos
+                                                                    : sp2 - sp1 - 1);
+                }
+                // Strip query string.
+                const auto qm = req_path.find('?');
+                if (qm != std::string::npos) req_path = req_path.substr(0, qm);
+                // Map / to the default file.
+                if (req_path.empty() || req_path == "/") {
+                    req_path = "/" + static_default_file_;
+                }
+                respond_static_file(client, req_path);
             } else {
                 respond_not_found(client);
             }
@@ -610,6 +667,40 @@ private:
         ::close(fd);
     }
 
+    void respond_static_file(int fd, const std::string& url_path) {
+        namespace fs = std::filesystem;
+        // Resolve the requested path inside static_root_, rejecting traversal.
+        try {
+            const fs::path root_canon = fs::canonical(static_root_);
+            // Strip leading '/' and join.
+            const std::string rel = url_path.front() == '/'
+                                        ? url_path.substr(1) : url_path;
+            const fs::path candidate = root_canon / rel;
+            // canonical() throws if the file doesn't exist — treat as 404.
+            const fs::path file_canon = fs::canonical(candidate);
+            if (!path_is_within_root(root_canon, file_canon)) {
+                respond_not_found(fd);
+                return;
+            }
+            const auto body = read_file_contents(file_canon.string());
+            if (body.empty() && !fs::is_regular_file(file_canon)) {
+                respond_not_found(fd);
+                return;
+            }
+            const auto ct = content_type_for_path(file_canon.string());
+            std::string resp =
+                "HTTP/1.1 200 OK\r\n"
+                "Content-Type: " + ct + "\r\n"
+                "Content-Length: " + std::to_string(body.size()) + "\r\n"
+                "Cache-Control: no-cache\r\n"
+                "Connection: close\r\n\r\n" + body;
+            send_all(fd, resp);
+            ::close(fd);
+        } catch (const std::filesystem::filesystem_error&) {
+            respond_not_found(fd);
+        }
+    }
+
     void respond_not_found(int fd) {
         const std::string resp =
             "HTTP/1.1 404 Not Found\r\n"
@@ -646,6 +737,8 @@ private:
     std::uint16_t bound_port_{0};
     SharedQueue&        queue_;
     const SourceMonitor& monitor_;
+    std::string static_root_;
+    std::string static_default_file_;
 
     int listen_fd_{-1};
     std::atomic<bool> running_{false};
@@ -665,6 +758,8 @@ struct CliOptions {
     std::string replay_dir;
     int reconnect_s{3};
     double replay_speed{1.0};
+    std::string static_root;
+    std::string static_default_file{"mission_unified_viewer.html"};
 };
 
 CliOptions parse_args(int argc, char** argv) {
@@ -676,28 +771,34 @@ CliOptions parse_args(int argc, char** argv) {
                 std::string{flag} + " requires a value");
             return argv[++i];
         };
-        if      (arg == "--host")          { opts.live_host    = next_arg("--host"); }
-        else if (arg == "--port")          { opts.live_port    = static_cast<std::uint16_t>(std::stoi(next_arg("--port"))); }
-        else if (arg == "--http-port")     { opts.http_port    = static_cast<std::uint16_t>(std::stoi(next_arg("--http-port"))); }
-        else if (arg == "--replay-dir")    { opts.replay_dir   = next_arg("--replay-dir"); }
-        else if (arg == "--reconnect-s")   { opts.reconnect_s  = std::stoi(next_arg("--reconnect-s")); }
-        else if (arg == "--replay-speed")  { opts.replay_speed = std::stod(next_arg("--replay-speed")); }
+        if      (arg == "--host")                { opts.live_host           = next_arg("--host"); }
+        else if (arg == "--port")                { opts.live_port           = static_cast<std::uint16_t>(std::stoi(next_arg("--port"))); }
+        else if (arg == "--http-port")           { opts.http_port           = static_cast<std::uint16_t>(std::stoi(next_arg("--http-port"))); }
+        else if (arg == "--replay-dir")          { opts.replay_dir          = next_arg("--replay-dir"); }
+        else if (arg == "--reconnect-s")         { opts.reconnect_s         = std::stoi(next_arg("--reconnect-s")); }
+        else if (arg == "--replay-speed")        { opts.replay_speed        = std::stod(next_arg("--replay-speed")); }
+        else if (arg == "--static-root")         { opts.static_root         = next_arg("--static-root"); }
+        else if (arg == "--static-default-file") { opts.static_default_file = next_arg("--static-default-file"); }
         else if (arg == "-h" || arg == "--help") {
             std::cout <<
                 "usage: dedalus_viewer [options]\n"
                 "\n"
-                "  --host HOST         Runtime TCP host       (default: 127.0.0.1)\n"
-                "  --port PORT         Runtime TCP port       (default: 7788)\n"
-                "  --http-port PORT    Viewer HTTP/SSE port   (default: 8090)\n"
-                "  --replay-dir DIR    Snapshot artifact dir  (default: disabled)\n"
-                "  --reconnect-s N     Live reconnect interval in seconds (default: 3)\n"
-                "  --replay-speed F    Replay speed multiplier (default: 1.0)\n"
-                "  -h / --help         Show this help\n"
+                "  --host HOST              Runtime TCP host       (default: 127.0.0.1)\n"
+                "  --port PORT              Runtime TCP port       (default: 7788)\n"
+                "  --http-port PORT         Viewer HTTP/SSE port   (default: 8090)\n"
+                "  --replay-dir DIR         Snapshot artifact dir  (default: disabled)\n"
+                "  --reconnect-s N          Live reconnect interval in seconds (default: 3)\n"
+                "  --replay-speed F         Replay speed multiplier (default: 1.0)\n"
+                "  --static-root DIR        Serve static files from DIR (default: disabled)\n"
+                "  --static-default-file F  Default file for GET / (default: mission_unified_viewer.html)\n"
+                "  -h / --help              Show this help\n"
                 "\n"
                 "Browser endpoints:\n"
                 "  GET /events         — SSE stream of all mission events\n"
                 "  GET /viewer_status  — JSON source status\n"
-                "  GET /healthz        — JSON health check\n";
+                "  GET /healthz        — JSON health check\n"
+                "  GET /               — Serves --static-default-file (when --static-root is set)\n"
+                "  GET /<path>         — Serves static file from --static-root (when set)\n";
             std::exit(0);
         } else {
             throw std::invalid_argument("unknown argument: " + arg);
@@ -732,7 +833,8 @@ int main(int argc, char** argv) {
             opts.reconnect_s, queue};
 
         // Bind to all interfaces so browsers on other machines can connect.
-        SseRelay relay{"0.0.0.0", opts.http_port, queue, monitor};
+        SseRelay relay{"0.0.0.0", opts.http_port, queue, monitor,
+                       opts.static_root, opts.static_default_file};
 
         relay.start();
         monitor.start();
@@ -746,6 +848,10 @@ int main(int argc, char** argv) {
             << "  health check:  http://0.0.0.0:" << http_port << "/healthz\n";
         if (!opts.replay_dir.empty()) {
             std::cout << "  replay dir  :  " << opts.replay_dir << "\n";
+        }
+        if (!opts.static_root.empty()) {
+            std::cout << "  static root :  " << opts.static_root << "\n"
+                      << "  viewer URL  :  http://0.0.0.0:" << http_port << "/\n";
         }
         std::cout << std::flush;
 
