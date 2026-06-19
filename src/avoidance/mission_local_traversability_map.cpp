@@ -161,7 +161,8 @@ void MissionLocalTraversabilityMap::apply_aging(const TimePoint now) {
 
 MissionLocalTraversabilityMapSnapshot MissionLocalTraversabilityMap::update_from_mission_obstacle_map(
     const MissionLocalObstacleMapSnapshot& obstacle_map,
-    const TimePoint now) {
+    const TimePoint now,
+    const bool include_clearance) {
     apply_aging(now);
 
     if (frame_empty(summary_.map_frame_id) && !frame_empty(obstacle_map.summary.map_frame_id)) {
@@ -231,7 +232,7 @@ MissionLocalTraversabilityMapSnapshot MissionLocalTraversabilityMap::update_from
         }
     }
 
-    recompute_derived_fields(now);
+    recompute_derived_fields(now, include_clearance);
 
     summary_.update_count += 1U;
     summary_.last_update_timestamp_ns = now_ns;
@@ -242,13 +243,17 @@ MissionLocalTraversabilityMapSnapshot MissionLocalTraversabilityMap::update_from
     return snapshot();
 }
 
-void MissionLocalTraversabilityMap::recompute_derived_fields(const TimePoint now) {
+void MissionLocalTraversabilityMap::recompute_derived_fields(const TimePoint now, const bool include_clearance) {
+    // Build the occupied-cell list only when clearance is requested (O(N) scan).
+    // Skipping it avoids the O(N²) inner loop during in-flight ticks.
     std::vector<const StoredCell*> occupied_cells;
-    occupied_cells.reserve(cells_.size());
-    for (const auto& stored : cells_) {
-        const auto& cell = stored.cell;
-        if (cell.occupied_score >= config_.occupied_threshold) {
-            occupied_cells.push_back(&stored);
+    if (include_clearance) {
+        occupied_cells.reserve(cells_.size());
+        for (const auto& stored : cells_) {
+            const auto& cell = stored.cell;
+            if (cell.occupied_score >= config_.occupied_threshold) {
+                occupied_cells.push_back(&stored);
+            }
         }
     }
 
@@ -284,63 +289,62 @@ void MissionLocalTraversabilityMap::recompute_derived_fields(const TimePoint now
         cell.volatility_score = clamp01(std::min(occupied_strength, free_strength) + (0.25 * cell.unknown_score));
         cell.stability_score = clamp01(std::max(occupied_strength, free_strength) - cell.volatility_score);
 
-        cell.nearest_obstacle_distance_m = std::numeric_limits<double>::infinity();
-        cell.vertical_clearance_up_m = std::numeric_limits<double>::infinity();
-        cell.vertical_clearance_down_m = std::numeric_limits<double>::infinity();
+        if (include_clearance) {
+            cell.nearest_obstacle_distance_m = std::numeric_limits<double>::infinity();
+            cell.vertical_clearance_up_m = std::numeric_limits<double>::infinity();
+            cell.vertical_clearance_down_m = std::numeric_limits<double>::infinity();
 
-        for (const auto* occupied_cell : occupied_cells) {
-            const auto d = distance(cell.center_map, occupied_cell->cell.center_map);
-            if (d <= config_.clearance_search_radius_m) {
-                cell.nearest_obstacle_distance_m = std::min(cell.nearest_obstacle_distance_m, d);
-            }
-            if (occupied_cell->key.x == stored.key.x && occupied_cell->key.y == stored.key.y) {
-                const auto dz = occupied_cell->cell.center_map.z - cell.center_map.z;
-                if (dz > 0.0) {
-                    cell.vertical_clearance_up_m = std::min(cell.vertical_clearance_up_m, dz);
-                } else if (dz < 0.0) {
-                    cell.vertical_clearance_down_m = std::min(cell.vertical_clearance_down_m, -dz);
-                } else if (occupied) {
-                    cell.vertical_clearance_up_m = 0.0;
-                    cell.vertical_clearance_down_m = 0.0;
+            for (const auto* occupied_cell : occupied_cells) {
+                const auto d = distance(cell.center_map, occupied_cell->cell.center_map);
+                if (d <= config_.clearance_search_radius_m) {
+                    cell.nearest_obstacle_distance_m = std::min(cell.nearest_obstacle_distance_m, d);
+                }
+                if (occupied_cell->key.x == stored.key.x && occupied_cell->key.y == stored.key.y) {
+                    const auto dz = occupied_cell->cell.center_map.z - cell.center_map.z;
+                    if (dz > 0.0) {
+                        cell.vertical_clearance_up_m = std::min(cell.vertical_clearance_up_m, dz);
+                    } else if (dz < 0.0) {
+                        cell.vertical_clearance_down_m = std::min(cell.vertical_clearance_down_m, -dz);
+                    } else if (occupied) {
+                        cell.vertical_clearance_up_m = 0.0;
+                        cell.vertical_clearance_down_m = 0.0;
+                    }
                 }
             }
-        }
 
-        if (occupied) {
-            cell.nearest_obstacle_distance_m = 0.0;
-            cell.clearance_margin_m = -config_.required_clearance_m;
-        } else if (std::isfinite(cell.nearest_obstacle_distance_m)) {
-            cell.clearance_margin_m =
-                cell.nearest_obstacle_distance_m - config_.required_clearance_m;
-        } else {
-            cell.clearance_margin_m = std::numeric_limits<double>::infinity();
+            if (occupied) {
+                cell.nearest_obstacle_distance_m = 0.0;
+                cell.clearance_margin_m = -config_.required_clearance_m;
+            } else if (std::isfinite(cell.nearest_obstacle_distance_m)) {
+                cell.clearance_margin_m =
+                    cell.nearest_obstacle_distance_m - config_.required_clearance_m;
+            } else {
+                cell.clearance_margin_m = std::numeric_limits<double>::infinity();
+            }
+
+            cell.proximity_cost = 0.0;
+            if (occupied) {
+                cell.proximity_cost = 1.0;
+            } else if (std::isfinite(cell.nearest_obstacle_distance_m) &&
+                       cell.nearest_obstacle_distance_m < config_.soft_clearance_m) {
+                cell.proximity_cost = clamp01(
+                    (config_.soft_clearance_m - cell.nearest_obstacle_distance_m) /
+                    config_.soft_clearance_m);
+            }
+
+            if (std::isfinite(cell.vertical_clearance_up_m) &&
+                cell.vertical_clearance_up_m < (2.0 * config_.required_clearance_m)) {
+                cell.overhead_cost = clamp01(
+                    ((2.0 * config_.required_clearance_m) - cell.vertical_clearance_up_m) /
+                    (2.0 * config_.required_clearance_m));
+            } else {
+                cell.overhead_cost = 0.0;
+            }
         }
 
         cell.occupied_cost = occupied ? 1.0 : 0.0;
-
-        if (occupied) {
-            cell.proximity_cost = 1.0;
-        } else if (std::isfinite(cell.nearest_obstacle_distance_m) &&
-                   cell.nearest_obstacle_distance_m < config_.soft_clearance_m) {
-            cell.proximity_cost = clamp01(
-                (config_.soft_clearance_m - cell.nearest_obstacle_distance_m) /
-                config_.soft_clearance_m);
-        } else {
-            cell.proximity_cost = 0.0;
-        }
-
         cell.unknown_cost = cell.unknown_score;
         cell.stale_cost = cell.stale ? cell.age_score : 0.0;
-
-        if (std::isfinite(cell.vertical_clearance_up_m) &&
-            cell.vertical_clearance_up_m < (2.0 * config_.required_clearance_m)) {
-            cell.overhead_cost = clamp01(
-                ((2.0 * config_.required_clearance_m) - cell.vertical_clearance_up_m) /
-                (2.0 * config_.required_clearance_m));
-        } else {
-            cell.overhead_cost = 0.0;
-        }
-
         cell.thin_structure_cost = cell.volatility_score;
 
         const auto weighted =

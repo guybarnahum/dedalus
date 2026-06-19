@@ -139,7 +139,8 @@ public:
 
     MissionLocalTraversabilityMapSnapshot update_from_mission_obstacle_map(
         const MissionLocalObstacleMapSnapshot& obstacle_map,
-        TimePoint now);
+        TimePoint now,
+        bool include_clearance = true);
 
     MissionLocalTraversabilityMapSnapshot snapshot(std::size_t max_cells = 0U) const;
 
@@ -174,7 +175,7 @@ private:
     const MissionLocalTraversabilityCell* cell_at_key(const CellKey& key) const;
 
     void apply_aging(TimePoint now);
-    void recompute_derived_fields(TimePoint now);
+    void recompute_derived_fields(TimePoint now, bool include_clearance = true);
     void refresh_summary();
 
     MissionLocalTraversabilityMapConfig config_;

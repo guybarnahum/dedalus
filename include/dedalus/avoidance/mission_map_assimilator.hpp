@@ -73,7 +73,8 @@ private:
     MissionMapAssimilationStatus drain_snapshots(
         TimePoint now,
         std::size_t max_snapshots,
-        MissionMapAssimilationState active_state);
+        MissionMapAssimilationState active_state,
+        bool include_clearance = true);
 
     MissionMapAssimilatorConfig config_;
     MissionLocalTraversabilityMap traversability_map_;

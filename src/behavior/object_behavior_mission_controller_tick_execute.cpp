@@ -222,6 +222,20 @@ void ObjectBehaviorMissionController::tick_go_home(
     }
 
     Vec3 raw_velocity = go_home_velocity(ego);
+
+    // Emit per-tick convergence sample: visible in event stream for diagnosing circling.
+    {
+        const auto dx = home_initialized_ ? home_pose_.position.x - ego.local_T_body.position.x : 0.0;
+        const auto dy = home_initialized_ ? home_pose_.position.y - ego.local_T_body.position.y : 0.0;
+        const auto dist_xy_m = std::sqrt(dx * dx + dy * dy);
+        output.events.push_back(ControllerEvent{
+            ControllerEventKind::BehaviorTickSample,
+            ",\"dist_to_home_xy_m\":" + std::to_string(dist_xy_m) +
+            ",\"height_m\":" + std::to_string(height_m) +
+            ",\"home_initialized\":" + (home_initialized_ ? "true" : "false")
+        });
+    }
+
     Vec3 velocity = enforce_takeoff_height_floor(
         raw_velocity,
         height_m,

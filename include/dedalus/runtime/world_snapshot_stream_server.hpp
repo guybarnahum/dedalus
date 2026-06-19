@@ -84,13 +84,23 @@ private:
         std::uint64_t seq{0};
         std::shared_ptr<const WorldSnapshot> snapshot;
     };
+    // A traversability snapshot that has not yet been serialized.
+    // The writer thread picks it up and calls serialize_traversability_snapshot().
+    struct PendingTravSnapshot {
+        std::uint64_t seq{0};
+        std::uint64_t timestamp_ns{0};
+        MissionLocalTraversabilityMapSnapshot snapshot;
+    };
     // Queue items are either pre-serialized strings (all non-snapshot message
-    // types) or PendingSnapshots (serialized lazily on the writer thread).
-    using QueueItem = std::variant<std::string, PendingSnapshot>;
+    // types), PendingSnapshots, or PendingTravSnapshots (serialized lazily on
+    // the writer thread).
+    using QueueItem = std::variant<std::string, PendingSnapshot, PendingTravSnapshot>;
 
     void enqueue_line(std::string line);
     void enqueue_snapshot(std::uint64_t seq, std::shared_ptr<const WorldSnapshot> snapshot);
     [[nodiscard]] std::string serialize_snapshot(std::uint64_t seq, const WorldSnapshot& snapshot) const;
+    void enqueue_traversability_snapshot(std::uint64_t seq, std::uint64_t timestamp_ns, MissionLocalTraversabilityMapSnapshot snapshot);
+    [[nodiscard]] std::string serialize_traversability_snapshot(std::uint64_t seq, std::uint64_t timestamp_ns, const MissionLocalTraversabilityMapSnapshot& snapshot) const;
     void publish_json_line(const std::string& line);
     void accept_loop();
     void http_accept_loop();

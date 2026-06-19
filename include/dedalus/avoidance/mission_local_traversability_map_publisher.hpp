@@ -11,12 +11,12 @@
 
 namespace dedalus {
 
-// Pre-serialized compact inner JSON payload for one traversability map snapshot.
-// The outer stream-line wrapper (type, seq, timestamp_ns) is added by the
-// stream server's on_traversability_map_snapshot() handler.
+// Raw traversability map snapshot carried to the stream server.
+// The writer thread serializes it to JSON via serialize_traversability_snapshot(),
+// keeping the expensive to_compact_stream_json() off the hot path.
 struct MissionLocalTraversabilityMapFrame {
     std::uint64_t timestamp_ns{0U};
-    std::string json;  // compact inner JSON: summary + cells (may be cell-capped)
+    MissionLocalTraversabilityMapSnapshot snapshot;
 };
 
 class MissionLocalTraversabilityMapSubscriber {
@@ -37,8 +37,8 @@ private:
 };
 
 // Serialize a traversability map snapshot to compact inner JSON suitable for
-// embedding in a MissionLocalTraversabilityMapFrame.  max_cells == 0 means no
-// cap.  The format is compatible with the mission_traversability_map_viewer.
+// embedding in a stream line.  max_cells == 0 means no cap.
+// The format is compatible with the mission_traversability_map_viewer.
 std::string to_compact_stream_json(
     const MissionLocalTraversabilityMapSnapshot& snapshot,
     std::size_t max_cells = 4096U);

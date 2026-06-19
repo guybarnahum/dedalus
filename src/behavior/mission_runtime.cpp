@@ -170,6 +170,9 @@ MissionRuntimeStats MissionRuntime::stats() const {
 void MissionRuntime::loop() {
     const auto period = std::chrono::duration_cast<std::chrono::steady_clock::duration>(
         std::chrono::duration<double>(1.0 / config_.tick_hz));
+    const auto budget_us = static_cast<std::int64_t>(1'000'000.0 / config_.tick_hz);
+    const auto warn_us = budget_us * 8 / 10;  // warn at 80% of budget
+
     // Track a fixed deadline that advances by exactly one period per tick.
     // Using sleep_until instead of sleep_for(period - elapsed) prevents
     // accumulated drift: any OS wakeup overrun from the previous sleep is
@@ -177,6 +180,7 @@ void MissionRuntime::loop() {
     auto deadline = std::chrono::steady_clock::now();
     while (running_.load()) {
         deadline += period;
+        const auto tick_start = std::chrono::steady_clock::now();
         try {
             (void)tick_once();
         } catch (const std::exception& exc) {
@@ -191,6 +195,21 @@ void MissionRuntime::loop() {
                         ",\"error\":\"unknown exception\"");
             running_.store(false);
             break;
+        }
+        const auto tick_us = std::chrono::duration_cast<std::chrono::microseconds>(
+            std::chrono::steady_clock::now() - tick_start).count();
+        if (tick_us >= budget_us) {
+            write_event("\"event\":\"tick_overrun\""
+                        ",\"tick\":" + std::to_string(tick_count_) +
+                        ",\"tick_us\":" + std::to_string(tick_us) +
+                        ",\"budget_us\":" + std::to_string(budget_us));
+            std::cerr << "dedalus_mission: tick_overrun tick=" << tick_count_
+                      << " tick_us=" << tick_us
+                      << " budget_us=" << budget_us << "\n";
+        } else if (tick_us >= warn_us && config_.verbosity >= 2) {
+            std::cerr << "dedalus_mission: tick_slow tick=" << tick_count_
+                      << " tick_us=" << tick_us
+                      << " budget_us=" << budget_us << "\n";
         }
         std::this_thread::sleep_until(deadline);
     }

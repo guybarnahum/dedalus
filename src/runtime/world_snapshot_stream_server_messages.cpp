@@ -79,25 +79,6 @@ std::string stream_line_for(std::uint64_t seq, const MissionObstacleMapDeltaFram
     return line;
 }
 
-std::string stream_line_for(std::uint64_t seq, const MissionLocalTraversabilityMapFrame& frame) {
-    std::string payload = frame.json;
-    while (!payload.empty() && (payload.back() == '\n' || payload.back() == '\r')) {
-        payload.pop_back();
-    }
-
-    std::string line;
-    line.reserve(payload.size() + 128U);
-    line += "{\"type\":\"traversability_map_snapshot\",\"seq\":";
-    line += std::to_string(seq);
-    line += ",\"timestamp_ns\":";
-    line += std::to_string(frame.timestamp_ns);
-    line += ",\"traversability_map_snapshot\":";
-    line += payload;
-    line += "}\n";
-    return line;
-}
-
-
 }  // namespace
 
 void RuntimeEventStreamServer::on_snapshot(const std::shared_ptr<const WorldSnapshot>& snapshot) {
@@ -161,17 +142,31 @@ void RuntimeEventStreamServer::on_mission_obstacle_map_delta(
 
 void RuntimeEventStreamServer::on_traversability_map_snapshot(
     const MissionLocalTraversabilityMapFrame& frame) {
-    const auto start = SteadyClock::now();
+    // Assign a sequence number on the caller thread (preserves ordering),
+    // but defer the expensive to_compact_stream_json() to the writer thread.
     const std::uint64_t seq = [this] {
         std::lock_guard<std::mutex> lock{mutex_};
         ++traversability_map_snapshot_messages_;
         return ++published_seq_;
     }();
-    auto line = stream_line_for(seq, frame);
-    const auto serialize_duration_us = elapsed_us(start);
-    enqueue_line(std::move(line));
-    std::lock_guard<std::mutex> lock{mutex_};
-    serialize_total_us_ += serialize_duration_us;
+    enqueue_traversability_snapshot(seq, frame.timestamp_ns, frame.snapshot);
+}
+
+std::string RuntimeEventStreamServer::serialize_traversability_snapshot(
+    std::uint64_t seq,
+    std::uint64_t timestamp_ns,
+    const MissionLocalTraversabilityMapSnapshot& snapshot) const {
+    const auto payload = to_compact_stream_json(snapshot, 4096U);
+    std::string line;
+    line.reserve(payload.size() + 128U);
+    line += "{\"type\":\"traversability_map_snapshot\",\"seq\":";
+    line += std::to_string(seq);
+    line += ",\"timestamp_ns\":";
+    line += std::to_string(timestamp_ns);
+    line += ",\"traversability_map_snapshot\":";
+    line += payload;
+    line += "}\n";
+    return line;
 }
 
 

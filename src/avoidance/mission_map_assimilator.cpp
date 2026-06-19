@@ -46,27 +46,30 @@ MissionMapAssimilationStatus MissionMapAssimilator::tick(const TimePoint now) {
     return drain_snapshots(
         now,
         config_.max_snapshots_per_background_tick,
-        MissionMapAssimilationState::BackgroundAssimilating);
+        MissionMapAssimilationState::BackgroundAssimilating,
+        /*include_clearance=*/false);
 }
 
 MissionMapAssimilationStatus MissionMapAssimilator::tick_high_priority(const TimePoint now) {
     return drain_snapshots(
         now,
         config_.max_snapshots_per_high_priority_tick,
-        MissionMapAssimilationState::PostLandingFinalizing);
+        MissionMapAssimilationState::PostLandingFinalizing,
+        /*include_clearance=*/true);
 }
 
 MissionMapAssimilationStatus MissionMapAssimilator::drain_snapshots(
     const TimePoint now,
     const std::size_t max_snapshots,
-    const MissionMapAssimilationState active_state) {
+    const MissionMapAssimilationState active_state,
+    const bool include_clearance) {
     status_.state = pending_snapshots_.empty() ? MissionMapAssimilationState::Idle : active_state;
 
     const auto limit = std::min(max_snapshots, pending_snapshots_.size());
     for (std::size_t i = 0U; i < limit; ++i) {
         const auto snapshot = pending_snapshots_.front();
         pending_snapshots_.pop_front();
-        traversability_map_.update_from_mission_obstacle_map(snapshot, now);
+        traversability_map_.update_from_mission_obstacle_map(snapshot, now, include_clearance);
         ++status_.drained_snapshot_count;
         ++status_.compacted_generation;
     }
