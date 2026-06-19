@@ -358,9 +358,15 @@ void RuntimeEventStreamServer::http_accept_loop() {
                 continue;
             }
             set_nonblocking(client_fd);
-            std::lock_guard<std::mutex> lock{mutex_};
-            sse_client_fds_.push_back(client_fd);
-            ++accepted_sse_clients_;
+            {
+                std::lock_guard<std::mutex> lock{mutex_};
+                sse_client_fds_.push_back(client_fd);
+                ++accepted_sse_clients_;
+                // Reset trav watermark so the next throttled publish is a full
+                // traversability_map_snapshot.  The new client has no prior state
+                // and needs the complete map before incremental deltas make sense.
+                trav_watermark_ns_ = 0U;
+            }
             continue;
         }
 

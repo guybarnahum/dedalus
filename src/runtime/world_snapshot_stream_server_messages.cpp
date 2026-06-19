@@ -173,11 +173,17 @@ void RuntimeEventStreamServer::on_traversability_map_snapshot(
         return;
     }
 
+    // Defensive: if every cell had timestamp 0 (shouldn't happen in practice since
+    // update_from_mission_obstacle_map always stamps cells), advance watermark to at
+    // least 1 so the next call is treated as a delta rather than a second full sync.
+    const std::uint64_t effective_watermark =
+        (new_watermark == 0U) ? std::uint64_t{1U} : new_watermark;
+
     // Assign seq, update watermark, enqueue — all under one lock to preserve ordering.
-    const std::uint64_t seq = [this, new_watermark] {
+    const std::uint64_t seq = [this, effective_watermark] {
         std::lock_guard<std::mutex> lock{mutex_};
         ++traversability_map_snapshot_messages_;
-        trav_watermark_ns_ = new_watermark;
+        trav_watermark_ns_ = effective_watermark;
         return ++published_seq_;
     }();
     enqueue_traversability_snapshot(seq, frame.timestamp_ns, std::move(filtered), is_delta);
@@ -188,9 +194,11 @@ std::string RuntimeEventStreamServer::serialize_traversability_snapshot(
     std::uint64_t timestamp_ns,
     const MissionLocalTraversabilityMapSnapshot& snapshot,
     bool is_delta) const {
-    // Delta: no cell cap (already filtered to changed cells only).
-    // Full snapshot: cap at 4096 for SSE bandwidth.
-    const auto payload = to_compact_stream_json(snapshot, is_delta ? 0U : 4096U);
+    // No cap in either case:
+    //   Delta   — already filtered to changed cells only; count is inherently small.
+    //   Snapshot — must include all cells so the watermark covers the full map.
+    //              Sending the full map once is acceptable given the 2 s throttle.
+    const auto payload = to_compact_stream_json(snapshot, 0U);
     const char* const type = is_delta ? "traversability_map_delta" : "traversability_map_snapshot";
     std::string line;
     line.reserve(payload.size() + 160U);

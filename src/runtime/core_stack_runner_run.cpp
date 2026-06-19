@@ -294,8 +294,11 @@ bool CoreStackRunner::run_once() {
             (now_ns - last_trav_publish_ns_) < kTravPublishMinIntervalNs;
         if (!throttled) {
             start = SteadyClock::now();
+            // No cell cap: on_traversability_map_snapshot() filters to changed cells
+            // (delta) so the initial full snapshot must include every cell; subsequent
+            // publishes are cheap because only the changed subset is serialized.
             auto trav_snapshot =
-                mission_map_assimilator_.traversability_map().snapshot(4096U);
+                mission_map_assimilator_.traversability_map().snapshot();
             MissionLocalTraversabilityMapFrame trav_frame;
             trav_frame.timestamp_ns =
                 trav_snapshot.summary.last_update_timestamp_ns != 0U
