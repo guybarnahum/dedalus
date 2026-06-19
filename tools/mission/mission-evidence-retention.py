@@ -88,6 +88,44 @@ def artifact_entry(path: Path) -> dict[str, Any]:
     }
 
 
+def compute_reason(compaction_complete: bool, trav_written: bool) -> str:
+    if compaction_complete and trav_written:
+        return "foundational_map_finalized"
+    missing = []
+    if not compaction_complete:
+        missing.append("compaction_incomplete")
+    if not trav_written:
+        missing.append("traversability_artifact_missing")
+    return missing[0] if len(missing) == 1 else "gate_blocked_multiple"
+
+
+def update_snapshot_manifest_after_pruning(output_dir: Path, removed_names: set[str]) -> None:
+    """Remove pruned snapshot names from snapshot_manifest.txt if it exists."""
+    manifest_txt = output_dir / "snapshot_manifest.txt"
+    if not manifest_txt.exists():
+        return
+    try:
+        lines = manifest_txt.read_text(encoding="utf-8").splitlines(keepends=True)
+    except Exception as exc:
+        print(f"WARN: could not read snapshot_manifest.txt for update: {exc}")
+        return
+    kept: list[str] = []
+    for line in lines:
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#"):
+            kept.append(line)
+            continue
+        parts = stripped.split()
+        filename = Path(parts[1] if len(parts) >= 2 and parts[0].isdigit() else parts[0]).name
+        if filename in removed_names:
+            continue
+        kept.append(line)
+    try:
+        manifest_txt.write_text("".join(kept), encoding="utf-8")
+    except Exception as exc:
+        print(f"WARN: could not update snapshot_manifest.txt: {exc}")
+
+
 def find_snapshots(output_dir: Path) -> list[Path]:
     """Return snapshot_*.json files sorted by name."""
     snaps = sorted(output_dir.glob("snapshot_*.json"))
@@ -208,7 +246,7 @@ def build_manifest(
         if p.exists():
             retained_outputs.append(name)
 
-    reason = "foundational_map_finalized" if traversability_artifact_written else "traversability_artifact_missing"
+    reason = compute_reason(mission_local_compaction_complete, traversability_artifact_written)
 
     manifest: dict[str, Any] = {
         "schema": SCHEMA,
@@ -344,8 +382,15 @@ def main() -> int:
         print(f"OK: deleted {deleted} snapshot(s)")
         for err in errors:
             print(f"ERROR: delete failed: {err}")
-        manifest["raw_evidence_forget_state"] = "pruned"
+        manifest["raw_evidence_forget_state"] = "partial_prune" if errors else "pruned"
         manifest["raw_snapshots_deleted"] = deleted
+        # Remove pruned entries from snapshot_manifest.txt so downstream tools
+        # (validate-mission-artifacts.py, replay scripts) don't reference missing files.
+        if deleted > 0:
+            successfully_removed = set(manifest["would_remove_snapshot_names"]) - {
+                err.split(":")[0] for err in errors
+            }
+            update_snapshot_manifest_after_pruning(output_dir, successfully_removed)
         # Rewrite manifest with updated state.
         try:
             manifest_path.write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")

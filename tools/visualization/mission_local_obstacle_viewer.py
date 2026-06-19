@@ -266,7 +266,12 @@ HTML_TEMPLATE = """<!doctype html>
     <div class="metric"><span>Live delta cells</span><b id="live-delta-count">0</b></div>
     <div class="metric"><span>World snapshots</span><b id="world-snapshot-count">0</b></div>
     <div class="metric"><span>Ego updates</span><b id="ego-update-count">0</b></div>
+    <div class="metric"><span>Trav snapshots</span><b id="trav-snapshot-count">0</b></div>
+    <div class="metric"><span>Trav cells</span><b id="trav-cell-count">0</b></div>
     <div class="metric"><span>Sensing overlay</span><code id="sensing-overlay-status">{sensing_overlay_status}</code></div>
+    <div class="overlay-controls">
+      <label><input type="checkbox" id="toggle-trav-overlay" checked> Traversability overlay</label>
+    </div>
     <h3>Legend</h3>
     <div class="height-legend">
       <div class="hint">Obstacle color: height above takeoff / local origin</div>
@@ -282,7 +287,8 @@ HTML_TEMPLATE = """<!doctype html>
       Short white vector: drone velocity direction<br>
       Long white vector: sensing/camera direction<br>
       White: true sensing volume, when published<br>
-      Magenta: first blocked trajectory point, when present
+      Magenta: first blocked trajectory point, when present<br>
+      Traversability overlay (live): orange=occupied, teal=free, grey=unknown
     </p>
   </aside>
   <canvas id="canvas"></canvas>
@@ -296,6 +302,8 @@ if (!Array.isArray(data.liveObstacleEvents)) data.liveObstacleEvents = [];
 if (!Array.isArray(data.sensingOverlays)) data.sensingOverlays = [];
 if (!data.diagnostics || typeof data.diagnostics !== "object") data.diagnostics = {};
 data.showSensingOverlay = true;
+data.showTravOverlay = true;
+const travCellsByKey = new Map();  // key → trav cell object, replaced on each snapshot
 
 const cellsByKey = new Map();
 for (const cell of data.cells) {
@@ -325,12 +333,15 @@ const live = {
   deltaCellCount: 0,
   worldSnapshotCount: 0,
   egoUpdateCount: 0,
+  travSnapshotCount: 0,
+  travCellCount: 0,
   lastSeq: null,
   error: "",
   pendingWorldSnapshot: null,
   pendingWorldSnapshotSeq: null,
   pendingDeltaCells: [],
   pendingDeltaSeq: null,
+  pendingTravSnapshot: null,
   processingScheduled: false,
   coalescedDeltaFrames: 0,
   droppedPendingDeltaCells: 0
@@ -842,6 +853,8 @@ function updateMetrics() {
   if (el("live-delta-count")) el("live-delta-count").textContent = String(live.deltaCellCount);
   if (el("world-snapshot-count")) el("world-snapshot-count").textContent = String(live.worldSnapshotCount);
   if (el("ego-update-count")) el("ego-update-count").textContent = String(live.egoUpdateCount);
+  if (el("trav-snapshot-count")) el("trav-snapshot-count").textContent = String(live.travSnapshotCount);
+  if (el("trav-cell-count")) el("trav-cell-count").textContent = String(live.travCellCount);
   if (el("sensing-overlay-status")) el("sensing-overlay-status").textContent = sensingOverlayStatus();
   if (el("bounds-text")) {
     el("bounds-text").textContent =
@@ -1023,12 +1036,18 @@ function processPendingLiveEvents() {
   live.pendingWorldSnapshot = null;
   live.pendingWorldSnapshotSeq = null;
 
+  const pendingTrav = live.pendingTravSnapshot;
+  live.pendingTravSnapshot = null;
+
   let changed = false;
   if (pendingCells.length > 0) {
     changed = applyMissionObstacleMapDelta({cells: pendingCells}, pendingDeltaSeq, {deferRender: true}) > 0 || changed;
   }
   if (pendingSnapshot) {
     changed = applyWorldSnapshot(pendingSnapshot, pendingSnapshotSeq, {deferRender: true}) || changed;
+  }
+  if (pendingTrav) {
+    changed = applyTraversabilityMapSnapshot(pendingTrav, {deferRender: true}) || changed;
   }
 
   if (changed) {
@@ -1037,7 +1056,7 @@ function processPendingLiveEvents() {
     updateMetrics();
   }
 
-  if ((live.pendingDeltaCells.length > 0 || live.pendingWorldSnapshot) && !live.processingScheduled) {
+  if ((live.pendingDeltaCells.length > 0 || live.pendingWorldSnapshot || live.pendingTravSnapshot) && !live.processingScheduled) {
     scheduleLiveEventProcessing();
   }
 }
@@ -1070,6 +1089,44 @@ function enqueueWorldSnapshot(payload) {
   live.pendingWorldSnapshot = snapshot;
   live.pendingWorldSnapshotSeq = payload.seq ?? null;
   scheduleLiveEventProcessing();
+}
+
+function enqueueTraversabilityMapSnapshot(payload) {
+  const trav = payload && payload.traversability_map_snapshot;
+  if (!trav || typeof trav !== "object" || !Array.isArray(trav.cells)) return;
+
+  live.travSnapshotCount += 1;
+  // Latest snapshot wins; coalesce if a prior one is pending.
+  live.pendingTravSnapshot = trav;
+  scheduleLiveEventProcessing();
+}
+
+function applyTraversabilityMapSnapshot(trav, options = {}) {
+  if (!trav || !Array.isArray(trav.cells)) return false;
+
+  travCellsByKey.clear();
+  for (const raw of trav.cells) {
+    // center_map is [x, y, z] in map frame (NED-style)
+    const center = asVec3(raw.center_map);
+    if (!center) continue;
+    const key = `${center.x.toFixed(2)},${center.y.toFixed(2)},${center.z.toFixed(2)}`;
+    travCellsByKey.set(key, {
+      center,
+      occupied_score: finiteNumber(raw.occupied_score, 0),
+      free_score: finiteNumber(raw.free_score, 0),
+      confidence: finiteNumber(raw.confidence, 0),
+      state: typeof raw.state === "string" ? raw.state : "unknown",
+      stale: raw.stale === true,
+    });
+  }
+
+  live.travCellCount = travCellsByKey.size;
+
+  if (!options.deferRender) {
+    updateMetrics();
+    scheduleDraw();
+  }
+  return true;
 }
 
 function startLiveStream() {
@@ -1111,6 +1168,15 @@ function startLiveStream() {
   source.addEventListener("world_snapshot", (event) => {
     try {
       enqueueWorldSnapshot(JSON.parse(event.data));
+    } catch (err) {
+      live.error = `error: ${String(err)}`;
+      updateMetrics();
+    }
+  });
+
+  source.addEventListener("traversability_map_snapshot", (event) => {
+    try {
+      enqueueTraversabilityMapSnapshot(JSON.parse(event.data));
     } catch (err) {
       live.error = `error: ${String(err)}`;
       updateMetrics();
@@ -1450,6 +1516,37 @@ function draw() {{
   if (data.first_blocked) {{
     drawPoint(data.first_blocked, "rgba(255, 80, 255, 1.0)", 8);
   }}
+
+  // Traversability overlay — rendered on top of obstacle cells as wireframe squares.
+  if (data.showTravOverlay && travCellsByKey.size > 0) {{
+    const travCells = Array.from(travCellsByKey.values())
+      .filter((c) => c.center)
+      .sort((a, b) => project(a.center).depth - project(b.center).depth);
+    for (const tc of travCells) {{
+      const alpha = tc.stale ? 0.25 : (0.35 + tc.confidence * 0.35);
+      let color;
+      if (tc.state === "occupied") {{
+        color = `rgba(255, 140, 30, ${alpha})`;
+      }} else if (tc.state === "free") {{
+        color = `rgba(30, 200, 160, ${alpha * 0.7})`;
+      }} else {{
+        color = `rgba(160, 160, 160, ${alpha * 0.5})`;
+      }}
+      // Draw a small cross/diamond to distinguish from solid obstacle dots.
+      const p = project(tc.center);
+      const r = Math.max(3, Math.min(6, 3 + tc.occupied_score * 2));
+      ctx.save();
+      ctx.strokeStyle = color;
+      ctx.lineWidth = 1.5;
+      ctx.beginPath();
+      ctx.moveTo(p.x - r, p.y);
+      ctx.lineTo(p.x + r, p.y);
+      ctx.moveTo(p.x, p.y - r);
+      ctx.lineTo(p.x, p.y + r);
+      ctx.stroke();
+      ctx.restore();
+    }}
+  }}
 }}
 
 function setViewPreset(nextYaw, nextPitch, nextZoom = null) {{
@@ -1485,6 +1582,12 @@ function installViewControls() {{
   const sensingToggle = el("toggle-sensing-overlay");
   if (sensingToggle) sensingToggle.addEventListener("change", () => {{
     data.showSensingOverlay = sensingToggle.checked;
+    draw();
+  }});
+
+  const travToggle = el("toggle-trav-overlay");
+  if (travToggle) travToggle.addEventListener("change", () => {{
+    data.showTravOverlay = travToggle.checked;
     draw();
   }});
 }}
