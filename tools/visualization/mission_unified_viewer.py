@@ -1429,10 +1429,15 @@ function installViewControls() {
     recomputeBounds();
     window.animateViewPreset(yaw, pitch, zoom, "center", cloneP(sceneCenter()));
   });
-  // 45°: NE isometric — yaw 45° + pitch 45° so XY plane is both tilted and rotated.
-  el("view-45")?.addEventListener("click", ()=>window.animateViewPreset(Math.PI/4, Math.PI/4, 1.0, "45"));
-  el("view-side")?.addEventListener("click", ()=>window.animateViewPreset(Math.PI/2, 0, 1.0, "side"));
-  el("view-top")?.addEventListener("click", ()=>window.animateViewPreset(0, Math.PI/2-0.01, 1.0, "top"));
+  // 45°: snap pitch to 45°, advance yaw +45° from current each press.
+  el("view-45")?.addEventListener("click", ()=>
+    window.animateViewPreset(yaw + Math.PI/4, Math.PI/4, 1.0, "45"));
+  // Side: snap pitch to 0 (horizontal), advance yaw +90° each press → cycles N/E/S/W.
+  el("view-side")?.addEventListener("click", ()=>
+    window.animateViewPreset(yaw + Math.PI/2, 0, 1.0, "side"));
+  // Top: snap pitch to near-vertical, advance yaw +90° each press.
+  el("view-top")?.addEventListener("click", ()=>
+    window.animateViewPreset(yaw + Math.PI/2, Math.PI/2-0.01, 1.0, "top"));
   el("view-zoom-in")?.addEventListener("click", ()=>{
     window.animateZoom(clamp(zoom * 1.25, 0.08, 25));
   });

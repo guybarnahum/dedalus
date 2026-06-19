@@ -96,9 +96,9 @@ REQUIRED_SNIPPETS: dict[str, str] = {
 
     # ── view presets ────────────────────────────────────────────────────────
     'view center preset': 'animateViewPreset(yaw, pitch, zoom, "center"',
-    'view 45 preset':     'animateViewPreset(Math.PI/4, Math.PI/4, 1.0, "45")',
-    'view side preset':   'animateViewPreset(Math.PI/2, 0',
-    'view top preset':    'animateViewPreset(0, Math.PI/2-0.01',
+    'view 45 preset':     'animateViewPreset(yaw + Math.PI/4, Math.PI/4',
+    'view side preset':   'animateViewPreset(yaw + Math.PI/2, 0',
+    'view top preset':    'animateViewPreset(yaw + Math.PI/2, Math.PI/2-0.01',
 
     # ── connection + status ─────────────────────────────────────────────────
     'EventSource connection':     'new EventSource(',
