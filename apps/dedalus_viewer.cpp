@@ -11,7 +11,7 @@
 //
 // Options:
 //   --host HOST              Runtime TCP host       (default: 127.0.0.1)
-//   --port PORT              Runtime TCP port       (default: 7788)
+//   --port PORT              Runtime TCP port       (default: 47770)
 //   --http-port PORT         Viewer HTTP/SSE port   (default: 8090)
 //   --replay-dir DIR         Snapshot artifact dir  (default: disabled)
 //   --reconnect-s N          Live reconnect interval in seconds (default: 3)
@@ -753,7 +753,7 @@ private:
 
 struct CliOptions {
     std::string live_host{"127.0.0.1"};
-    std::uint16_t live_port{7788};
+    std::uint16_t live_port{47770};
     std::uint16_t http_port{8090};
     std::string replay_dir;
     int reconnect_s{3};
@@ -784,7 +784,7 @@ CliOptions parse_args(int argc, char** argv) {
                 "usage: dedalus_viewer [options]\n"
                 "\n"
                 "  --host HOST              Runtime TCP host       (default: 127.0.0.1)\n"
-                "  --port PORT              Runtime TCP port       (default: 7788)\n"
+                "  --port PORT              Runtime TCP port       (default: 47770)\n"
                 "  --http-port PORT         Viewer HTTP/SSE port   (default: 8090)\n"
                 "  --replay-dir DIR         Snapshot artifact dir  (default: disabled)\n"
                 "  --reconnect-s N          Live reconnect interval in seconds (default: 3)\n"

@@ -182,17 +182,17 @@ Runtime commands used for validated viewer workflow:
     python3 tools/validation/validate-mission-unified-viewer.py build/viewer.html
 
   Start dedalus_viewer sidecar (replay mode):
-    ./build/apps/dedalus_viewer \
+    ./build-staging/apps/dedalus_viewer \
       --replay-dir out/validate_r3b1 \
       --http-port 8090 \
-      --static-root build
+      --static-root build-staging
 
   Start dedalus_viewer sidecar (live mode, alongside running mission):
-    ./build/apps/dedalus_viewer \
+    ./build-staging/apps/dedalus_viewer \
       --host 127.0.0.1 \
-      --port 7788 \
+      --port 47770 \
       --http-port 8090 \
-      --static-root build
+      --static-root build-staging
 
   Start AirSim mission with runtime HTTP/SSE/static viewer:
     DEDALUS_AIRSIM_ENABLE_DEPTH_OBSTACLES=1 \
