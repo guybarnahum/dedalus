@@ -83,7 +83,7 @@ REQUIRED_SNIPPETS: dict[str, str] = {
     'easeInOutCubic helper':      'window.easeInOutCubic',
 
     # ── draw pipeline ───────────────────────────────────────────────────────
-    'drawAxes called in draw':          'drawAxes()',
+    'drawOrientationGizmo called in draw': 'drawOrientationGizmo()',
     'drawObstacleCells called in draw': 'drawObstacleCells()',
     'drawDroneMarker called in draw':   'drawDroneMarker()',
     'drawSensingOverlays called in draw': 'drawSensingOverlays()',

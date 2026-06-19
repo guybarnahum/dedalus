@@ -77,6 +77,10 @@ private:
     TrajectorySafetyEvaluator trajectory_safety_evaluator_;
     std::vector<CameraPointingState> camera_pointing_states_;
     std::optional<TimePoint> ghost_scenario_start_;
+    // Throttle: timestamp (ns) of the last traversability snapshot published to
+    // traversability_map_publisher_.  Publish at most once every
+    // kTravPublishMinIntervalNs to avoid drowning the SSE stream.
+    std::uint64_t last_trav_publish_ns_{0U};
 };
 
 }  // namespace dedalus

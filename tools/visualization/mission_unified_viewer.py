@@ -96,13 +96,15 @@ h3 { font-size: 12px; margin: 10px 0 6px; color: #c0c4d0; text-transform: upperc
         <button id="view-45">45°</button>
         <button id="view-side">Side</button>
         <button id="view-top">Top</button>
+        <button id="view-zoom-in">＋ Zoom</button>
+        <button id="view-zoom-out">－ Zoom</button>
       </div>
 
       <h3>Layers</h3>
       <div class="layer-controls">
         <label><input type="checkbox" id="toggle-obstacles" checked> Obstacle map</label>
         <label><input type="checkbox" id="toggle-trav" checked> Traversability surface</label>
-        <label><input type="checkbox" id="toggle-ghosts" checked> Ghost detections</label>
+        <label><input type="checkbox" id="toggle-ghosts"> Ghost detections</label>
         <label><input type="checkbox" id="toggle-sensing" checked> Sensing volumes</label>
         <label><input type="checkbox" id="toggle-trajectory" checked> Trajectory</label>
       </div>
@@ -183,7 +185,7 @@ const state = {
   diagnostics: {},
   showObstacles:   true,
   showTrav:        true,
-  showGhosts:      true,
+  showGhosts:      false,
   showSensing:     true,
   showTrajectory:  true,
 };
@@ -403,11 +405,70 @@ function drawPoint(p, color, r) {
   ctx.beginPath(); ctx.arc(pp.x, pp.y, r*devicePixelRatio, 0, Math.PI*2); ctx.fill();
 }
 
-function drawAxes() {
-  const l=0.25*sceneRadius(), o=sceneCenter();
-  drawLine(o, {x:o.x+l,y:o.y,  z:o.z  }, "#ff6b6b", 2);
-  drawLine(o, {x:o.x,  y:o.y+l,z:o.z  }, "#7bed9f", 2);
-  drawLine(o, {x:o.x,  y:o.y,  z:o.z+l}, "#70a1ff", 2);
+function drawOrientationGizmo() {
+  // Fixed bottom-right gizmo: always 70px from corner, 45px arm length.
+  // Reflects yaw/pitch rotation only — does not move with pan or zoom.
+  const dpr  = devicePixelRatio;
+  const cx   = canvas.width  - 70 * dpr;
+  const cy   = canvas.height - 70 * dpr;
+  const len  = 45 * dpr;
+
+  // Project a direction vector using current yaw/pitch (no translation, no zoom).
+  // Mirrors the project() coordinate transform: NED Y-flip, Z-flip, then yaw+pitch.
+  function gProj(vx, vy, vz) {
+    const x = vx, y = -vy, z = -vz;          // NED handedness flip
+    const cosy = Math.cos(yaw),  siny = Math.sin(yaw);
+    const cosp = Math.cos(pitch), sinp = Math.sin(pitch);
+    const x1 = cosy*x - siny*y;
+    const y1 = siny*x + cosy*y;
+    const z2 = sinp*y1 + cosp*z;
+    return { sx: cx + x1*len, sy: cy - z2*len };
+  }
+
+  const axes = [
+    { v:[1,0,0], label:"X", color:"#ff6b6b" },
+    { v:[0,1,0], label:"Y", color:"#7bed9f" },
+    { v:[0,0,1], label:"Z", color:"#70a1ff" },
+  ];
+
+  ctx.save();
+  ctx.lineWidth = 2 * dpr;
+  ctx.font = `bold ${10*dpr}px system-ui, sans-serif`;
+  ctx.textAlign = "center";
+  ctx.textBaseline = "middle";
+
+  // Draw in depth order (back-to-front) so front axes are not obscured
+  const projected = axes.map(a => ({ ...a, tip: gProj(...a.v) }));
+  // depth: a dot gizmo's depth direction (positive = into screen = further back)
+  // y2 from gProj equivalent: sinp*y1 where y1 = siny*vx + cosy*(-vy)
+  function gDepth(vx, vy) {
+    const y1 = Math.sin(yaw)*vx + Math.cos(yaw)*(-vy);
+    return Math.sin(pitch)*y1;
+  }
+  projected.sort((a,b) => gDepth(a.v[0],a.v[1]) - gDepth(b.v[0],b.v[1]));
+
+  // Background disc
+  ctx.beginPath();
+  ctx.arc(cx, cy, 55*dpr, 0, Math.PI*2);
+  ctx.fillStyle = "rgba(15,17,23,0.55)";
+  ctx.fill();
+
+  for (const {v, label, color, tip} of projected) {
+    ctx.strokeStyle = color;
+    ctx.beginPath(); ctx.moveTo(cx, cy); ctx.lineTo(tip.sx, tip.sy); ctx.stroke();
+    ctx.fillStyle = color;
+    const lx = cx + (tip.sx-cx)*1.22;
+    const ly = cy + (tip.sy-cy)*1.22;
+    ctx.fillText(label, lx, ly);
+  }
+
+  // Center dot
+  ctx.fillStyle = "rgba(255,255,255,0.7)";
+  ctx.beginPath();
+  ctx.arc(cx, cy, 3*dpr, 0, Math.PI*2);
+  ctx.fill();
+
+  ctx.restore();
 }
 
 // ── obstacle cell rendering ────────────────────────────────────────────────────
@@ -581,29 +642,55 @@ function buildTravFaces() {
 function drawTravFaces() {
   if (!state.showTrav || travFacesGeom.length === 0) return;
 
-  // Sort back-to-front for painter's algorithm
+  // Sort back-to-front for painter's algorithm.
   const sorted = travFacesGeom.slice().sort(
     (a,b) => project(a.centroid).depth - project(b.centroid).depth
   );
 
   ctx.save();
+  ctx.lineWidth = 0.5 * devicePixelRatio;
+
+  // Batch by fill color: group all faces sharing the same rgba key into one
+  // Path2D → 2 canvas calls per unique color instead of 2 per face.
+  // Color is height-banded (topoBandH), so same-height faces cluster naturally.
+  // Approximation: strict depth order is maintained per color group; cross-group
+  // ordering may differ slightly from per-face painter's, but is visually fine.
+  const groups = new Map(); // colorKey → { fillStyle, strokeStyle, path }
+
   for (const face of sorted) {
     const ps = face.corners.map(c => project(c));
     if (ps.some(p => !Number.isFinite(p.x) || !Number.isFinite(p.y))) continue;
 
-    ctx.beginPath();
-    ctx.moveTo(ps[0].x, ps[0].y);
-    for (let i=1; i<ps.length; i++) ctx.lineTo(ps[i].x, ps[i].y);
-    ctx.closePath();
-
     const rgb = rgbForH(Math.max(0, face.heightM));
-    const a = face.stale ? 0.10 : clamp(0.28 + face.confidence*0.32, 0.18, 0.65);
-    ctx.fillStyle   = `rgba(${rgb[0]},${rgb[1]},${rgb[2]},${a})`;
-    ctx.strokeStyle = `rgba(${rgb[0]},${rgb[1]},${rgb[2]},${Math.min(1, a+0.18)})`;
-    ctx.lineWidth   = 0.5 * devicePixelRatio;
-    ctx.fill();
-    ctx.stroke();
+    const a   = face.stale ? 0.10 : clamp(0.28 + face.confidence*0.32, 0.18, 0.65);
+    // Use a quantized alpha key (2 decimal places) to avoid float noise splitting groups
+    const aStr  = a.toFixed(2);
+    const asStr = Math.min(1, a+0.18).toFixed(2);
+    const key   = `${rgb[0]},${rgb[1]},${rgb[2]},${aStr}`;
+
+    let g = groups.get(key);
+    if (!g) {
+      g = {
+        fillStyle:   `rgba(${rgb[0]},${rgb[1]},${rgb[2]},${aStr})`,
+        strokeStyle: `rgba(${rgb[0]},${rgb[1]},${rgb[2]},${asStr})`,
+        path: new Path2D(),
+      };
+      groups.set(key, g);
+    }
+
+    g.path.moveTo(ps[0].x, ps[0].y);
+    for (let i=1; i<ps.length; i++) g.path.lineTo(ps[i].x, ps[i].y);
+    g.path.closePath();
   }
+
+  // Flush: one fill + one stroke per color group
+  for (const {fillStyle, strokeStyle, path} of groups.values()) {
+    ctx.fillStyle   = fillStyle;
+    ctx.strokeStyle = strokeStyle;
+    ctx.fill(path);
+    ctx.stroke(path);
+  }
+
   ctx.restore();
 
   el("m-trav-faces").textContent = String(travFacesGeom.length);
@@ -761,7 +848,6 @@ function scheduleDraw() {
 
 function draw() {
   ctx.clearRect(0, 0, canvas.width, canvas.height);
-  drawAxes();
   drawTravFaces();       // traversability exterior surface (back, painted first)
   drawObstacleCells();   // mission obstacle map cells
   drawLiveAgingOverlay(); // live delta events with age decay
@@ -770,6 +856,7 @@ function draw() {
   drawSensingOverlays();
   drawDroneMarker();
   if (state.firstBlocked) drawPoint(state.firstBlocked, "rgba(255,80,255,1.0)", 8);
+  drawOrientationGizmo(); // fixed bottom-right — drawn last so it is always on top
 
   // Schedule next frame if live aging is active
   if (live.connected) {
@@ -1158,6 +1245,12 @@ function installViewControls() {
   el("view-45")?.addEventListener("click", ()=>window.animateViewPreset(-Math.PI/4, Math.PI/4, 1.0, "45"));
   el("view-side")?.addEventListener("click", ()=>window.animateViewPreset(Math.PI/2, 0, 1.0, "side"));
   el("view-top")?.addEventListener("click", ()=>window.animateViewPreset(0, Math.PI/2-0.01, 1.0, "top"));
+  el("view-zoom-in")?.addEventListener("click", ()=>{
+    zoom=clamp(zoom*1.25, 0.08, 25); scheduleDraw();
+  });
+  el("view-zoom-out")?.addEventListener("click", ()=>{
+    zoom=clamp(zoom/1.25, 0.08, 25); scheduleDraw();
+  });
 
   const toggles=[
     ["toggle-obstacles",  v=>{ state.showObstacles  =v; scheduleDraw(); }],

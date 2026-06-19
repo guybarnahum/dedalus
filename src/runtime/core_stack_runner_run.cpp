@@ -283,19 +283,32 @@ bool CoreStackRunner::run_once() {
     // Publish the updated traversability map snapshot to any live subscribers
     // (e.g. RuntimeEventStreamServer) when the assimilator drained at least one
     // obstacle-map snapshot this tick.  Cells are capped at 4096 for streaming.
+    // Throttled to at most once every 2 seconds to avoid flooding the SSE stream.
+    static constexpr std::uint64_t kTravPublishMinIntervalNs = 2'000'000'000ULL;
     if (trav_map_updated && traversability_map_publisher_) {
-        start = SteadyClock::now();
-        auto trav_snapshot =
-            mission_map_assimilator_.traversability_map().snapshot(4096U);
-        MissionLocalTraversabilityMapFrame trav_frame;
-        trav_frame.timestamp_ns =
-            trav_snapshot.summary.last_update_timestamp_ns != 0U
-                ? trav_snapshot.summary.last_update_timestamp_ns
-                : mission_local_obstacle_map_snapshot.summary.last_update_timestamp_ns;
-        trav_frame.snapshot = std::move(trav_snapshot);
-        traversability_map_publisher_->publish(trav_frame);
-        if (timing_writer_) {
-            timing_writer_->record_stage("traversability_map_publisher.publish", duration_us(start));
+        const std::uint64_t now_ns =
+            mission_map_assimilator_.status().last_update_timestamp_ns;
+        const bool throttled =
+            last_trav_publish_ns_ != 0U &&
+            now_ns != 0U &&
+            (now_ns - last_trav_publish_ns_) < kTravPublishMinIntervalNs;
+        if (!throttled) {
+            start = SteadyClock::now();
+            auto trav_snapshot =
+                mission_map_assimilator_.traversability_map().snapshot(4096U);
+            MissionLocalTraversabilityMapFrame trav_frame;
+            trav_frame.timestamp_ns =
+                trav_snapshot.summary.last_update_timestamp_ns != 0U
+                    ? trav_snapshot.summary.last_update_timestamp_ns
+                    : mission_local_obstacle_map_snapshot.summary.last_update_timestamp_ns;
+            last_trav_publish_ns_ = trav_frame.timestamp_ns != 0U
+                ? trav_frame.timestamp_ns
+                : now_ns;
+            trav_frame.snapshot = std::move(trav_snapshot);
+            traversability_map_publisher_->publish(trav_frame);
+            if (timing_writer_) {
+                timing_writer_->record_stage("traversability_map_publisher.publish", duration_us(start));
+            }
         }
     }
 
