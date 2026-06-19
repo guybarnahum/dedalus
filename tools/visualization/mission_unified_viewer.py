@@ -756,6 +756,9 @@ function buildTravFaces() {
         isPartial,
         confidence: avgConf,
         shading,
+        // Voxel identity — used by hover card.
+        vx: cx, vy: cy, vz: cz,
+        occ, edge, levelM,
       });
     }
   }
@@ -1488,6 +1491,7 @@ const hoverCard=el("hover-card");
 canvas.addEventListener("mousedown", e=>{
   if (window.viewAnimationHandle!==null) { cancelAnimationFrame(window.viewAnimationHandle); window.viewAnimationHandle=null; }
   dragging=true; lastX=e.clientX; lastY=e.clientY;
+  _mouseDownX=e.clientX; _mouseDownY=e.clientY;
   if (hoverCard) hoverCard.style.display="none";
 });
 window.addEventListener("mouseup", ()=>{ dragging=false; });
@@ -1507,7 +1511,8 @@ canvas.addEventListener("wheel", e=>{
   draw();
 }, {passive:false});
 
-// Hover card — nearest obstacle cell
+// ── hover card — obstacle cells + trav voxels ─────────────────────────────────
+
 function nearestObsCellToCanvas(px, py) {
   let best=null, bestD=Infinity;
   const thresh=14*devicePixelRatio;
@@ -1518,14 +1523,27 @@ function nearestObsCellToCanvas(px, py) {
     const d=Math.hypot(p.x-px, p.y-py);
     if (d<bestD) { bestD=d; best=cell; }
   }
-  return bestD<=thresh?best:null;
+  return {item: bestD<=thresh?best:null, dist: bestD};
+}
+
+function nearestTravFaceToCanvas(px, py) {
+  if (!state.showTrav) return {item:null, dist:Infinity};
+  let best=null, bestD=Infinity;
+  const thresh=20*devicePixelRatio;
+  for (const face of travFacesGeom) {
+    const p=project(face.centroid);
+    if (!p||!Number.isFinite(p.x)) continue;
+    const d=Math.hypot(p.x-px, p.y-py);
+    if (d<bestD) { bestD=d; best=face; }
+  }
+  return {item: bestD<=thresh?best:null, dist: bestD};
 }
 
 function hoverCellHtml(cell) {
   const hM=-fin(cell.center?.z);
   return [
     "<b>Obstacle cell</b>",
-    `<div>height above takeoff: <code>${hM.toFixed(2)} m</code></div>`,
+    `<div>height: <code>${hM.toFixed(2)} m</code></div>`,
     `<div>occupied_score: <code>${fin(cell.occupied_score).toFixed(2)}</code></div>`,
     `<div>free_score:     <code>${fin(cell.free_score).toFixed(2)}</code></div>`,
     `<div>confidence:     <code>${fin(cell.confidence).toFixed(2)}</code></div>`,
@@ -1533,12 +1551,11 @@ function hoverCellHtml(cell) {
     `<div class="copy-hint">click to copy</div>`,
   ].join("");
 }
-
 function hoverCellText(cell) {
   const hM=-fin(cell.center?.z);
   return [
     "Obstacle cell",
-    `height above takeoff: ${hM.toFixed(2)} m`,
+    `height: ${hM.toFixed(2)} m`,
     `occupied_score: ${fin(cell.occupied_score).toFixed(2)}`,
     `free_score:     ${fin(cell.free_score).toFixed(2)}`,
     `confidence:     ${fin(cell.confidence).toFixed(2)}`,
@@ -1546,43 +1563,86 @@ function hoverCellText(cell) {
   ].join("\\n");
 }
 
-let _hoverCell = null;
+function hoverTravHtml(face) {
+  const hM=(-face.vz).toFixed(1);
+  const type=face.isPartial?"Partial":"Occupied";
+  return [
+    `<b>Trav voxel</b> <span class="muted">${face.levelM}m LOD</span>`,
+    `<div>type: <code>${type}</code>  confidence: <code>${face.confidence.toFixed(2)}</code></div>`,
+    `<div>height: <code>${hM} m</code></div>`,
+    `<div>occ cells: <code>${face.occ}</code>  edge cells: <code>${face.edge}</code></div>`,
+    `<div class="muted">x=${face.vx.toFixed(1)}, y=${face.vy.toFixed(1)}, z=${face.vz.toFixed(1)}</div>`,
+    `<div class="copy-hint">click to copy</div>`,
+  ].join("");
+}
+function hoverTravText(face) {
+  const hM=(-face.vz).toFixed(1);
+  const type=face.isPartial?"Partial":"Occupied";
+  return [
+    `Trav voxel (${face.levelM}m LOD)`,
+    `type: ${type}  confidence: ${face.confidence.toFixed(2)}`,
+    `height: ${hM} m`,
+    `occ cells: ${face.occ}  edge cells: ${face.edge}`,
+    `x=${face.vx.toFixed(1)}, y=${face.vy.toFixed(1)}, z=${face.vz.toFixed(1)}`,
+  ].join("\\n");
+}
+
+// Active hover: {htmlFn, textFn} or null
+let _hover = null;
 let _copyFlashTimer = null;
+let _mouseDownX = 0, _mouseDownY = 0;
+
+function _showHoverCard(htmlFn, textFn, cx, cy) {
+  _hover = {htmlFn, textFn};
+  hoverCard.innerHTML = htmlFn();
+  hoverCard.style.left = `${cx+14}px`;
+  hoverCard.style.top  = `${cy+14}px`;
+  hoverCard.style.display = "block";
+}
+
+function _copyHover() {
+  if (!_hover || !hoverCard) return;
+  const text = _hover.textFn();
+  navigator.clipboard?.writeText(text).then(()=>{
+    if (_copyFlashTimer) clearTimeout(_copyFlashTimer);
+    hoverCard.innerHTML = _hover.htmlFn().replace(
+      '<div class="copy-hint">click to copy</div>',
+      '<div class="copy-flash">✓ Copied!</div>'
+    );
+    _copyFlashTimer = setTimeout(()=>{
+      if (_hover) hoverCard.innerHTML = _hover.htmlFn();
+    }, 1200);
+  });
+}
 
 canvas.addEventListener("mousemove", e=>{
   if (dragging||!hoverCard) return;
   const rect=canvas.getBoundingClientRect();
   const px=(e.clientX-rect.left)*devicePixelRatio;
   const py=(e.clientY-rect.top)*devicePixelRatio;
-  const cell=nearestObsCellToCanvas(px, py);
-  if (!cell) { hoverCard.style.display="none"; _hoverCell=null; return; }
-  _hoverCell=cell;
-  hoverCard.innerHTML=hoverCellHtml(cell);
-  hoverCard.style.left=`${e.clientX+14}px`;
-  hoverCard.style.top =`${e.clientY+14}px`;
-  hoverCard.style.display="block";
-});
-canvas.addEventListener("mouseleave", ()=>{ if (hoverCard) hoverCard.style.display="none"; _hoverCell=null; });
 
-// Click on hover card → copy plain-text info to clipboard
-if (hoverCard) {
-  hoverCard.addEventListener("click", ()=>{
-    if (!_hoverCell) return;
-    const text=hoverCellText(_hoverCell);
-    navigator.clipboard?.writeText(text).then(()=>{
-      if (_copyFlashTimer) clearTimeout(_copyFlashTimer);
-      hoverCard.innerHTML = hoverCellHtml(_hoverCell).replace(
-        "copy-hint", "copy-hint" // keep hint
-      ).replace(
-        '<div class="copy-hint">click to copy</div>',
-        '<div class="copy-flash">✓ Copied!</div>'
-      );
-      _copyFlashTimer = setTimeout(()=>{
-        if (_hoverCell) hoverCard.innerHTML=hoverCellHtml(_hoverCell);
-      }, 1200);
-    });
-  });
-}
+  const obsRes  = nearestObsCellToCanvas(px, py);
+  const travRes = nearestTravFaceToCanvas(px, py);
+
+  const cell = obsRes.item, face = travRes.item;
+  if (!cell && !face) { hoverCard.style.display="none"; _hover=null; return; }
+
+  // Pick whichever is closer to the cursor.
+  if (cell && (!face || obsRes.dist <= travRes.dist)) {
+    _showHoverCard(()=>hoverCellHtml(cell), ()=>hoverCellText(cell), e.clientX, e.clientY);
+  } else {
+    _showHoverCard(()=>hoverTravHtml(face), ()=>hoverTravText(face), e.clientX, e.clientY);
+  }
+});
+canvas.addEventListener("mouseleave", ()=>{ if (hoverCard) hoverCard.style.display="none"; _hover=null; });
+
+// Canvas click: copy hover info if cursor barely moved (not a drag).
+canvas.addEventListener("click", e=>{
+  if (Math.hypot(e.clientX-_mouseDownX, e.clientY-_mouseDownY) > 5) return;
+  _copyHover();
+});
+// Hover card click also copies (card is offset 14 px from cursor, still clickable).
+if (hoverCard) hoverCard.addEventListener("click", _copyHover);
 
 // ── canvas resize ──────────────────────────────────────────────────────────────
 

@@ -67,9 +67,13 @@ REQUIRED_SNIPPETS: dict[str, str] = {
     'trav type legend':          'id="trav-legend-type"',
     'drawTravFaces byType branch':'byType',
 
-    # ── hover card click-to-copy ─────────────────────────────────────────────
+    # ── hover card — obs + trav + click-to-copy ──────────────────────────────
     'hover card click handler':  'hoverCard.addEventListener("click"',
     'hoverCellText function':    'function hoverCellText(',
+    'hoverTravHtml function':    'function hoverTravHtml(',
+    'hoverTravText function':    'function hoverTravText(',
+    'nearestTravFace function':  'function nearestTravFaceToCanvas(',
+    'canvas click copy':         'canvas.addEventListener("click"',
     'clipboard write':           'navigator.clipboard',
     'copy flash element':        'copy-flash',
 
