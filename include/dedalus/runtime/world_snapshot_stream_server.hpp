@@ -84,12 +84,15 @@ private:
         std::uint64_t seq{0};
         std::shared_ptr<const WorldSnapshot> snapshot;
     };
-    // A traversability snapshot that has not yet been serialized.
+    // A traversability snapshot (full or delta) that has not yet been serialized.
     // The writer thread picks it up and calls serialize_traversability_snapshot().
+    // is_delta == false → emit "traversability_map_snapshot" (client clears + rebuilds).
+    // is_delta == true  → emit "traversability_map_delta"    (client merges changed cells).
     struct PendingTravSnapshot {
         std::uint64_t seq{0};
         std::uint64_t timestamp_ns{0};
         MissionLocalTraversabilityMapSnapshot snapshot;
+        bool is_delta{false};
     };
     // Queue items are either pre-serialized strings (all non-snapshot message
     // types), PendingSnapshots, or PendingTravSnapshots (serialized lazily on
@@ -99,8 +102,11 @@ private:
     void enqueue_line(std::string line);
     void enqueue_snapshot(std::uint64_t seq, std::shared_ptr<const WorldSnapshot> snapshot);
     [[nodiscard]] std::string serialize_snapshot(std::uint64_t seq, const WorldSnapshot& snapshot) const;
-    void enqueue_traversability_snapshot(std::uint64_t seq, std::uint64_t timestamp_ns, MissionLocalTraversabilityMapSnapshot snapshot);
-    [[nodiscard]] std::string serialize_traversability_snapshot(std::uint64_t seq, std::uint64_t timestamp_ns, const MissionLocalTraversabilityMapSnapshot& snapshot) const;
+    void enqueue_traversability_snapshot(std::uint64_t seq, std::uint64_t timestamp_ns,
+                                         MissionLocalTraversabilityMapSnapshot snapshot, bool is_delta);
+    [[nodiscard]] std::string serialize_traversability_snapshot(std::uint64_t seq, std::uint64_t timestamp_ns,
+                                                                const MissionLocalTraversabilityMapSnapshot& snapshot,
+                                                                bool is_delta) const;
     void publish_json_line(const std::string& line);
     void accept_loop();
     void http_accept_loop();
@@ -140,6 +146,11 @@ private:
     std::uint64_t serialize_total_us_{0};
     std::uint64_t enqueue_total_us_{0};
     std::uint64_t publish_total_us_{0};
+    // Delta watermark: max last_observed_timestamp_ns across all cells published so far.
+    // Zero on first publish → full snapshot (client clears + rebuilds).
+    // Non-zero → emit traversability_map_delta with only cells newer than this value.
+    // Protected by mutex_.
+    std::uint64_t trav_watermark_ns_{0U};
 };
 
 using WorldSnapshotStreamServerConfig = RuntimeEventStreamServerConfig;

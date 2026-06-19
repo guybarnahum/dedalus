@@ -222,6 +222,7 @@ const live = {
   pendingWorldSnapshot:    null,
   pendingWorldSnapshotSeq: null,
   pendingTravSnapshot: null,
+  pendingTravIsDelta: false,
   pendingGhostDetections: null,
   processingScheduled: false,
   coalescedDeltaFrames: 0,
@@ -1080,6 +1081,42 @@ function applyTravSnapshot(trav, {deferRender=false}={}) {
   return true;
 }
 
+function applyTravDelta(trav, {deferRender=false}={}) {
+  // Incremental update: merge changed cells into the existing map without clearing.
+  // Called when the server emits a traversability_map_delta event.
+  if (!trav||!Array.isArray(trav.cells)||trav.cells.length===0) return false;
+
+  const newCellSizeM  = fin(trav.cell_size_m, 0);
+  const newVCellSizeM = fin(trav.vertical_cell_size_m, 0);
+  if (newCellSizeM  >= 0.01) travCellSizeM  = newCellSizeM;
+  if (newVCellSizeM >= 0.01) travVCellSizeM = newVCellSizeM;
+
+  for (const raw of trav.cells) {
+    const center=asVec3(raw.center_map);
+    if (!center) continue;
+    const state_s=typeof raw.state==="string"?raw.state:"unknown";
+    const hx=travCellSizeM*0.5, hy=travCellSizeM*0.5, hz=travVCellSizeM*0.5;
+    const cell={
+      center, hx, hy, hz,
+      state: state_s,
+      occupied_score: fin(raw.occupied_score,0),
+      free_score:     fin(raw.free_score,0),
+      confidence:     fin(raw.confidence,0),
+      stale: raw.stale===true||state_s==="stale",
+    };
+    const k=travQuantKey(center.x, center.y, center.z);
+    travCellsByKey.set(k, cell);
+    // Update occupied key set: add or remove based on new state.
+    if (state_s==="occupied") { travOccupiedQKeys.add(k); }
+    else { travOccupiedQKeys.delete(k); }
+  }
+
+  buildTravFaces();
+
+  if (!deferRender) { updateMetrics(); scheduleDraw(); }
+  return true;
+}
+
 function applyGhostDetections(payload, {deferRender=false}={}) {
   const frame=payload.ghost_detections;
   if (!frame||typeof frame!=="object"||!Array.isArray(frame.detections)) return;
@@ -1121,15 +1158,17 @@ function processPending() {
   live.pendingDeltaCells=[]; live.pendingDeltaSeq=null;
   const pSnap=live.pendingWorldSnapshot, pSnapSeq=live.pendingWorldSnapshotSeq;
   live.pendingWorldSnapshot=null; live.pendingWorldSnapshotSeq=null;
-  const pTrav=live.pendingTravSnapshot;
-  live.pendingTravSnapshot=null;
+  const pTrav=live.pendingTravSnapshot; const pTravIsDelta=live.pendingTravIsDelta;
+  live.pendingTravSnapshot=null; live.pendingTravIsDelta=false;
   const pGhost=live.pendingGhostDetections;
   live.pendingGhostDetections=null;
 
   let changed=false;
   if (pCells.length>0)  changed=applyMissionObstacleMapDelta({cells:pCells}, pSeq, {deferRender:true})>0||changed;
   if (pSnap)            changed=applyWorldSnapshot(pSnap, pSnapSeq, {deferRender:true})||changed;
-  if (pTrav)            changed=applyTravSnapshot(pTrav, {deferRender:true})||changed;
+  if (pTrav)            changed=(pTravIsDelta
+                          ? applyTravDelta(pTrav, {deferRender:true})
+                          : applyTravSnapshot(pTrav, {deferRender:true}))||changed;
   if (pGhost)           { applyGhostDetections(pGhost, {deferRender:true}); changed=true; }
 
   if (changed) { recomputeBounds(); updateMetrics(); scheduleDraw(); }
@@ -1199,6 +1238,23 @@ function startLiveStream() {
       const trav=payload.traversability_map_snapshot;
       if (!trav||!Array.isArray(trav.cells)) return;
       live.pendingTravSnapshot=trav;
+      live.pendingTravIsDelta=false;  // full snapshot — client clears + rebuilds
+      scheduleLiveProcessing();
+    } catch(e) {}
+  });
+
+  source.addEventListener("traversability_map_delta", ev => {
+    try {
+      const payload=JSON.parse(ev.data);
+      const trav=payload.traversability_map_delta;
+      if (!trav||!Array.isArray(trav.cells)) return;
+      // Coalesce: if a previous delta is pending, apply it immediately before
+      // queuing this one so we do not lose intermediate state.
+      if (live.pendingTravSnapshot&&live.pendingTravIsDelta) {
+        applyTravDelta(live.pendingTravSnapshot, {deferRender:true});
+      }
+      live.pendingTravSnapshot=trav;
+      live.pendingTravIsDelta=true;  // incremental — client merges
       scheduleLiveProcessing();
     } catch(e) {}
   });

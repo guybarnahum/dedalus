@@ -142,28 +142,67 @@ void RuntimeEventStreamServer::on_mission_obstacle_map_delta(
 
 void RuntimeEventStreamServer::on_traversability_map_snapshot(
     const MissionLocalTraversabilityMapFrame& frame) {
-    // Assign a sequence number on the caller thread (preserves ordering),
-    // but defer the expensive to_compact_stream_json() to the writer thread.
-    const std::uint64_t seq = [this] {
+    // Read current watermark (calls to this method are serialized by the publisher's
+    // mutex, so no concurrent modification is possible, but we lock for correctness
+    // because trav_watermark_ns_ is also touched inside the seq-assignment lock below).
+    const std::uint64_t watermark = [this] {
+        std::lock_guard<std::mutex> lock{mutex_};
+        return trav_watermark_ns_;
+    }();
+
+    // Filter cells:
+    //   First publish  (watermark == 0): include all cells → full snapshot, client clears + rebuilds.
+    //   Subsequent     (watermark  > 0): include only cells newer than watermark → delta, client merges.
+    const bool is_delta = watermark > 0U;
+    MissionLocalTraversabilityMapSnapshot filtered;
+    filtered.config  = frame.snapshot.config;
+    filtered.summary = frame.snapshot.summary;
+
+    std::uint64_t new_watermark = watermark;
+    for (const auto& cell : frame.snapshot.cells) {
+        if (!is_delta || cell.last_observed_timestamp_ns > watermark) {
+            filtered.cells.push_back(cell);
+            if (cell.last_observed_timestamp_ns > new_watermark) {
+                new_watermark = cell.last_observed_timestamp_ns;
+            }
+        }
+    }
+
+    // Nothing changed — skip.
+    if (is_delta && filtered.cells.empty()) {
+        return;
+    }
+
+    // Assign seq, update watermark, enqueue — all under one lock to preserve ordering.
+    const std::uint64_t seq = [this, new_watermark] {
         std::lock_guard<std::mutex> lock{mutex_};
         ++traversability_map_snapshot_messages_;
+        trav_watermark_ns_ = new_watermark;
         return ++published_seq_;
     }();
-    enqueue_traversability_snapshot(seq, frame.timestamp_ns, frame.snapshot);
+    enqueue_traversability_snapshot(seq, frame.timestamp_ns, std::move(filtered), is_delta);
 }
 
 std::string RuntimeEventStreamServer::serialize_traversability_snapshot(
     std::uint64_t seq,
     std::uint64_t timestamp_ns,
-    const MissionLocalTraversabilityMapSnapshot& snapshot) const {
-    const auto payload = to_compact_stream_json(snapshot, 4096U);
+    const MissionLocalTraversabilityMapSnapshot& snapshot,
+    bool is_delta) const {
+    // Delta: no cell cap (already filtered to changed cells only).
+    // Full snapshot: cap at 4096 for SSE bandwidth.
+    const auto payload = to_compact_stream_json(snapshot, is_delta ? 0U : 4096U);
+    const char* const type = is_delta ? "traversability_map_delta" : "traversability_map_snapshot";
     std::string line;
-    line.reserve(payload.size() + 128U);
-    line += "{\"type\":\"traversability_map_snapshot\",\"seq\":";
+    line.reserve(payload.size() + 160U);
+    line += "{\"type\":\"";
+    line += type;
+    line += "\",\"seq\":";
     line += std::to_string(seq);
     line += ",\"timestamp_ns\":";
     line += std::to_string(timestamp_ns);
-    line += ",\"traversability_map_snapshot\":";
+    line += ",\"";
+    line += type;
+    line += "\":";
     line += payload;
     line += "}\n";
     return line;

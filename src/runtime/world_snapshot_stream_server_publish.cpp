@@ -118,7 +118,7 @@ void RuntimeEventStreamServer::enqueue_snapshot(
 
 void RuntimeEventStreamServer::enqueue_traversability_snapshot(
     std::uint64_t seq, std::uint64_t timestamp_ns,
-    MissionLocalTraversabilityMapSnapshot snapshot) {
+    MissionLocalTraversabilityMapSnapshot snapshot, bool is_delta) {
     const auto start = SteadyClock::now();
     {
         std::lock_guard<std::mutex> lock{mutex_};
@@ -126,7 +126,7 @@ void RuntimeEventStreamServer::enqueue_traversability_snapshot(
             send_queue_.pop_front();
             ++dropped_messages_;
         }
-        send_queue_.push_back(PendingTravSnapshot{seq, timestamp_ns, std::move(snapshot)});
+        send_queue_.push_back(PendingTravSnapshot{seq, timestamp_ns, std::move(snapshot), is_delta});
         enqueue_total_us_ += elapsed_us(start);
     }
     queue_cv_.notify_one();
@@ -223,7 +223,8 @@ void RuntimeEventStreamServer::writer_loop() {
         } else {
             auto& pending = std::get<PendingTravSnapshot>(item);
             const auto t0 = SteadyClock::now();
-            line = serialize_traversability_snapshot(pending.seq, pending.timestamp_ns, pending.snapshot);
+            line = serialize_traversability_snapshot(
+                pending.seq, pending.timestamp_ns, pending.snapshot, pending.is_delta);
             const auto serialize_us = elapsed_us(t0);
             std::lock_guard<std::mutex> lock{mutex_};
             serialize_total_us_ += serialize_us;

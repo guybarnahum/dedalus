@@ -28,6 +28,8 @@ REQUIRED_SNIPPETS: dict[str, str] = {
     'SSE world_snapshot listener':              'addEventListener("world_snapshot"',
     'SSE mission_obstacle_map_delta listener':  'addEventListener("mission_obstacle_map_delta"',
     'SSE traversability_map_snapshot listener': 'addEventListener("traversability_map_snapshot"',
+    'SSE traversability_map_delta listener':    'addEventListener("traversability_map_delta"',
+    'applyTravDelta function':                  'function applyTravDelta(',
     'SSE ghost_detections listener':            'addEventListener("ghost_detections"',
     'SSE mission_event listener':               'addEventListener("mission_event"',
 
@@ -150,7 +152,8 @@ def validate_html(path: Path) -> list[str]:
 
     # EventSource must handle all 5 event types by name
     for event_type in ["world_snapshot", "mission_obstacle_map_delta",
-                        "traversability_map_snapshot", "ghost_detections", "mission_event"]:
+                        "traversability_map_snapshot", "traversability_map_delta",
+                        "ghost_detections", "mission_event"]:
         if event_type not in js:
             failures.append(f"SSE event type not referenced in JS: {event_type!r}")
 
