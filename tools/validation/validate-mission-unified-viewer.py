@@ -58,6 +58,20 @@ REQUIRED_SNIPPETS: dict[str, str] = {
     'updateZoomDisplay function':'function updateZoomDisplay()',
     'zoom-val element':          'id="zoom-val"',
 
+    # ── trav color mode toggle ───────────────────────────────────────────────
+    'trav-color-btn element':    'id="trav-color-btn"',
+    'trav-color-tag element':    'id="trav-color-tag"',
+    'travColorByType state':     'travColorByType',
+    'trav height legend':        'id="trav-legend-height"',
+    'trav type legend':          'id="trav-legend-type"',
+    'drawTravFaces byType branch':'byType',
+
+    # ── hover card click-to-copy ─────────────────────────────────────────────
+    'hover card click handler':  'hoverCard.addEventListener("click"',
+    'hoverCellText function':    'function hoverCellText(',
+    'clipboard write':           'navigator.clipboard',
+    'copy flash element':        'copy-flash',
+
     # ── ghost detections ────────────────────────────────────────────────────
     'ghost detections state':       'ghostDetections',
     'applyGhostDetections function':'function applyGhostDetections(',

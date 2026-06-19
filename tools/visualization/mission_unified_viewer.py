@@ -61,9 +61,16 @@ h3 { font-size: 12px; margin: 10px 0 6px; color: #c0c4d0; text-transform: upperc
 .lod-row { display: flex; align-items: center; gap: 5px; margin-bottom: 2px; }
 .lod-row input[type=range] { flex: 1; accent-color: #5080e8; cursor: pointer; }
 .lod-end { font-size: 10px; color: #7a8099; white-space: nowrap; }
-.trav-legend { display: flex; gap: 8px; align-items: center; margin: 4px 0 8px; flex-wrap: wrap; }
+.trav-legend { display: flex; gap: 8px; align-items: center; margin: 4px 0 6px; flex-wrap: wrap; }
 .trav-swatch { display: inline-block; width: 12px; height: 12px; border-radius: 2px; vertical-align: middle; margin-right: 3px; }
 .trav-legend span { font-size: 11px; color: #9099b0; }
+.trav-color-toggle { margin-bottom: 8px; }
+.trav-mode-btn { display: flex; align-items: center; justify-content: space-between; width: 100%;
+  background: #1e2535; color: #d8dce8; border: 1px solid #333d54; border-radius: 5px;
+  padding: 5px 10px; cursor: pointer; font-size: 11px; margin-bottom: 5px; }
+.trav-mode-btn:hover { background: #28304a; }
+.trav-mode-btn .mode-tag { background: #2a3660; color: #7aa0f8; border-radius: 3px;
+  padding: 1px 6px; font-size: 10px; font-weight: bold; letter-spacing: 0.03em; }
 #status-bar { padding: 8px 14px; border-bottom: 1px solid #2b2f3a; display: flex; align-items: center; gap: 8px; font-size: 12px; }
 #status-dot { width: 8px; height: 8px; border-radius: 50%; background: #555; flex-shrink: 0; }
 #status-dot.live    { background: #30d060; box-shadow: 0 0 5px #30d060; }
@@ -79,13 +86,16 @@ h3 { font-size: 12px; margin: 10px 0 6px; color: #c0c4d0; text-transform: upperc
 .event-log-entry .ev-detail { color: #9099b0; }
 .height-ramp { height: 10px; border: 1px solid #3a4358; border-radius: 4px;
   background: linear-gradient(to right, #2641a8, #00a8d8, #3fbf6a, #e5d84c, #f08c2e, #d83b7d); margin: 4px 0; }
-#hover-card { position: fixed; display: none; pointer-events: none; z-index: 10;
+#hover-card { position: fixed; display: none; pointer-events: auto; cursor: pointer; z-index: 10;
   max-width: 290px; padding: 8px 10px; border: 1px solid #3a4358; border-radius: 7px;
   background: rgba(13, 16, 26, 0.96); box-shadow: 0 6px 18px rgba(0,0,0,0.4);
-  color: #e8e8e8; font-size: 11px; line-height: 1.4; }
+  color: #e8e8e8; font-size: 11px; line-height: 1.4; user-select: none; }
 #hover-card b { color: #ffffff; }
 #hover-card code { color: #a7d4ff; }
 #hover-card .muted { color: #7a8099; }
+#hover-card .copy-hint { color: #4a5270; font-size: 10px; margin-top: 4px; }
+#hover-card.copied { border-color: #30d060; }
+#hover-card .copy-flash { color: #30d060; font-size: 10px; margin-top: 4px; }
 ::-webkit-scrollbar { width: 5px; } ::-webkit-scrollbar-track { background: #0f1117; }
 ::-webkit-scrollbar-thumb { background: #2b3348; border-radius: 3px; }
 </style>
@@ -132,10 +142,19 @@ h3 { font-size: 12px; margin: 10px 0 6px; color: #c0c4d0; text-transform: upperc
         </div>
         <div style="text-align:center;font-size:11px;color:#9099b0">cell size: <b id="trav-lod-val" style="color:#c0c4d0">8m</b></div>
       </div>
-      <div class="trav-legend">
-        <span><span class="trav-swatch" style="background:rgba(190,55,45,0.85)"></span>Occupied</span>
-        <span><span class="trav-swatch" style="background:rgba(200,150,30,0.6)"></span>Partial</span>
-        <span><span class="trav-swatch" style="background:transparent;border:1px solid #3a4358"></span>Free</span>
+      <div class="trav-color-toggle">
+        <button class="trav-mode-btn" id="trav-color-btn">
+          Color mode <span class="mode-tag" id="trav-color-tag">Height</span>
+        </button>
+        <div id="trav-legend-height">
+          <div class="height-ramp" style="margin:2px 0 4px"></div>
+          <div style="display:flex;justify-content:space-between;font-size:10px;color:#7a8099"><span>low</span><span>high</span></div>
+        </div>
+        <div id="trav-legend-type" class="trav-legend" style="display:none">
+          <span><span class="trav-swatch" style="background:rgba(190,55,45,0.85)"></span>Occupied</span>
+          <span><span class="trav-swatch" style="background:rgba(200,150,30,0.6)"></span>Partial</span>
+          <span><span class="trav-swatch" style="background:transparent;border:1px solid #3a4358"></span>Free</span>
+        </div>
       </div>
 
       <h3>Metrics</h3>
@@ -218,6 +237,7 @@ const state = {
   showGhosts:      false,
   showSensing:     true,
   showTrajectory:  true,
+  travColorByType: false,   // false = height-based (default), true = occupied/partial type colors
 };
 
 // Obstacle cells
@@ -749,23 +769,30 @@ function drawTravFaces() {
   ctx.save();
   ctx.lineWidth = 0.5 * devicePixelRatio;
 
-  // Batch by shaded color key: one fill + one stroke per unique (type, shading) tuple.
-  // Occupied base: [190, 55, 45]; Partial base: [200, 150, 30].
-  // Per-face shading multiplies the base RGB to create directional lighting.
+  // Batch faces by shaded color key: 2 canvas calls per unique color.
+  // Color mode: height-based (default, matches obstacle map ramp) or type-based.
+  //   Type: occupied base [190,55,45], partial base [200,150,30].
+  //   Height: rgbForH(altitude) — same ramp as the obstacle cell layer.
+  // Shading (directional lighting) is applied in both modes.
+  const byType = state.travColorByType;
   const groups = new Map(); // colorKey → { fillStyle, strokeStyle, path }
 
   for (const face of sorted) {
     const ps = face.corners.map(c => project(c));
     if (ps.some(p => !Number.isFinite(p.x) || !Number.isFinite(p.y))) continue;
 
-    const base = face.isPartial ? [200, 150, 30] : [190, 55, 45];
-    const s    = face.shading;
-    const fr   = Math.round(base[0] * s);
-    const fg   = Math.round(base[1] * s);
-    const fb   = Math.round(base[2] * s);
-    const fa   = face.isPartial ? 0.60 : 0.82;
-    const sa   = Math.min(1, fa + 0.12);
-    const key  = `${fr},${fg},${fb},${face.isPartial?1:0}`;
+    const base = byType
+      ? (face.isPartial ? [200, 150, 30] : [190, 55, 45])
+      : rgbForH(Math.max(0, -face.centroid.z));
+    const s  = face.shading;
+    const fr = Math.round(base[0] * s);
+    const fg = Math.round(base[1] * s);
+    const fb = Math.round(base[2] * s);
+    const fa = byType
+      ? (face.isPartial ? 0.60 : 0.82)
+      : (face.isPartial ? 0.52 : 0.78);
+    const sa  = Math.min(1, fa + 0.12);
+    const key = `${fr},${fg},${fb},${face.isPartial?1:0}`;
 
     let g = groups.get(key);
     if (!g) {
@@ -1430,6 +1457,18 @@ function installViewControls() {
   for (const [id, fn] of toggles) {
     const cb=el(id); if (cb) cb.addEventListener("change", ()=>fn(cb.checked));
   }
+
+  // Trav color mode toggle: height (default) ↔ type (occupied/partial)
+  el("trav-color-btn")?.addEventListener("click", ()=>{
+    state.travColorByType = !state.travColorByType;
+    const tag = el("trav-color-tag");
+    if (tag) tag.textContent = state.travColorByType ? "Type" : "Height";
+    const lh = el("trav-legend-height");
+    const lt = el("trav-legend-type");
+    if (lh) lh.style.display = state.travColorByType ? "none"  : "";
+    if (lt) lt.style.display = state.travColorByType ? "flex"  : "none";
+    scheduleDraw();
+  });
 }
 
 // Canvas mouse interaction
@@ -1481,8 +1520,24 @@ function hoverCellHtml(cell) {
     `<div>free_score:     <code>${fin(cell.free_score).toFixed(2)}</code></div>`,
     `<div>confidence:     <code>${fin(cell.confidence).toFixed(2)}</code></div>`,
     `<div class="muted">x=${fin(cell.center.x).toFixed(2)}, y=${fin(cell.center.y).toFixed(2)}, z=${fin(cell.center.z).toFixed(2)}</div>`,
+    `<div class="copy-hint">click to copy</div>`,
   ].join("");
 }
+
+function hoverCellText(cell) {
+  const hM=-fin(cell.center?.z);
+  return [
+    "Obstacle cell",
+    `height above takeoff: ${hM.toFixed(2)} m`,
+    `occupied_score: ${fin(cell.occupied_score).toFixed(2)}`,
+    `free_score:     ${fin(cell.free_score).toFixed(2)}`,
+    `confidence:     ${fin(cell.confidence).toFixed(2)}`,
+    `x=${fin(cell.center.x).toFixed(2)}, y=${fin(cell.center.y).toFixed(2)}, z=${fin(cell.center.z).toFixed(2)}`,
+  ].join("\\n");
+}
+
+let _hoverCell = null;
+let _copyFlashTimer = null;
 
 canvas.addEventListener("mousemove", e=>{
   if (dragging||!hoverCard) return;
@@ -1490,13 +1545,34 @@ canvas.addEventListener("mousemove", e=>{
   const px=(e.clientX-rect.left)*devicePixelRatio;
   const py=(e.clientY-rect.top)*devicePixelRatio;
   const cell=nearestObsCellToCanvas(px, py);
-  if (!cell) { hoverCard.style.display="none"; return; }
+  if (!cell) { hoverCard.style.display="none"; _hoverCell=null; return; }
+  _hoverCell=cell;
   hoverCard.innerHTML=hoverCellHtml(cell);
   hoverCard.style.left=`${e.clientX+14}px`;
   hoverCard.style.top =`${e.clientY+14}px`;
   hoverCard.style.display="block";
 });
-canvas.addEventListener("mouseleave", ()=>{ if (hoverCard) hoverCard.style.display="none"; });
+canvas.addEventListener("mouseleave", ()=>{ if (hoverCard) hoverCard.style.display="none"; _hoverCell=null; });
+
+// Click on hover card → copy plain-text info to clipboard
+if (hoverCard) {
+  hoverCard.addEventListener("click", ()=>{
+    if (!_hoverCell) return;
+    const text=hoverCellText(_hoverCell);
+    navigator.clipboard?.writeText(text).then(()=>{
+      if (_copyFlashTimer) clearTimeout(_copyFlashTimer);
+      hoverCard.innerHTML = hoverCellHtml(_hoverCell).replace(
+        "copy-hint", "copy-hint" // keep hint
+      ).replace(
+        '<div class="copy-hint">click to copy</div>',
+        '<div class="copy-flash">✓ Copied!</div>'
+      );
+      _copyFlashTimer = setTimeout(()=>{
+        if (_hoverCell) hoverCard.innerHTML=hoverCellHtml(_hoverCell);
+      }, 1200);
+    });
+  });
+}
 
 // ── canvas resize ──────────────────────────────────────────────────────────────
 
