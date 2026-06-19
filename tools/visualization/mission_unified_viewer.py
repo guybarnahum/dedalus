@@ -594,7 +594,10 @@ function normalizeObsCell(raw) {
 function drawObstacleCells() {
   if (!state.showObstacles) return;
   const cells=[...obsCellsByKey.values()].filter(c=>c.center&&!c.live_seen_ms);
-  cells.sort((a,b)=>project(a.center).depth-project(b.center).depth);
+  // Sort by world Z descending: large NED-Z (near ground) drawn first,
+  // small/negative NED-Z (high altitude) drawn last → correct occlusion
+  // when viewed from above (higher cubes appear on top of ground-level ones).
+  cells.sort((a,b)=>b.center.z - a.center.z);
   for (const cell of cells) {
     const score=Math.max(cell.occupied_score||0, cell.free_score||0, cell.risk_score||0);
     const r=Math.max(2, Math.min(7, 2+score*0.4));
@@ -761,9 +764,11 @@ function buildTravFaces() {
 function drawTravFaces() {
   if (!state.showTrav || travFacesGeom.length === 0) return;
 
-  // Sort back-to-front for painter's algorithm.
+  // Sort by world Z descending: ground-level faces (large NED-Z) drawn first,
+  // high-altitude faces (small/negative NED-Z) drawn last → correct stacking
+  // when viewed from above. Matches the obstacle-cell sort order.
   const sorted = travFacesGeom.slice().sort(
-    (a,b) => project(a.centroid).depth - project(b.centroid).depth
+    (a,b) => b.centroid.z - a.centroid.z
   );
 
   ctx.save();
@@ -1424,8 +1429,8 @@ function installViewControls() {
     recomputeBounds();
     window.animateViewPreset(yaw, pitch, zoom, "center", cloneP(sceneCenter()));
   });
-  // 45°: look down at 45° pitch, no yaw twist — XY plane remains horizontal.
-  el("view-45")?.addEventListener("click", ()=>window.animateViewPreset(0, Math.PI/4, 1.0, "45"));
+  // 45°: NE isometric — yaw 45° + pitch 45° so XY plane is both tilted and rotated.
+  el("view-45")?.addEventListener("click", ()=>window.animateViewPreset(Math.PI/4, Math.PI/4, 1.0, "45"));
   el("view-side")?.addEventListener("click", ()=>window.animateViewPreset(Math.PI/2, 0, 1.0, "side"));
   el("view-top")?.addEventListener("click", ()=>window.animateViewPreset(0, Math.PI/2-0.01, 1.0, "top"));
   el("view-zoom-in")?.addEventListener("click", ()=>{

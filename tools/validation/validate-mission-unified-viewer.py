@@ -46,7 +46,8 @@ REQUIRED_SNIPPETS: dict[str, str] = {
     'occupied base color':       '[190, 55, 45]',
     'partial base color':        '[200, 150, 30]',
     'face shading multiply':     'base[0] * s',
-    'painter sort back-to-front':'project(a.centroid).depth - project(b.centroid).depth',
+    'trav sort back-to-front':   'b.centroid.z - a.centroid.z',
+    'obs sort back-to-front':    'b.center.z - a.center.z',
     'drawTravFaces called in draw': 'drawTravFaces()',
     # ── LOD slider ──────────────────────────────────────────────────────────
     'TRAV_LOD_LEVELS constant':  'const TRAV_LOD_LEVELS',
@@ -95,7 +96,7 @@ REQUIRED_SNIPPETS: dict[str, str] = {
 
     # ── view presets ────────────────────────────────────────────────────────
     'view center preset': 'animateViewPreset(yaw, pitch, zoom, "center"',
-    'view 45 preset':     'animateViewPreset(0, Math.PI/4, 1.0, "45")',
+    'view 45 preset':     'animateViewPreset(Math.PI/4, Math.PI/4, 1.0, "45")',
     'view side preset':   'animateViewPreset(Math.PI/2, 0',
     'view top preset':    'animateViewPreset(0, Math.PI/2-0.01',
 
