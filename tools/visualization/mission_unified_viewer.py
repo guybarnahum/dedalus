@@ -635,25 +635,33 @@ function buildTravFaces() {
   // State mapping per coarse voxel:
   //   occ > 0 && free > 0  → "partial"  (amber)
   //   occ > 0 && free == 0 → "occupied" (red)
-  //   occ == 0             → "free"     (transparent, skip)
+  //   occ == 0             → skip (no occupied evidence in this voxel)
+  //
+  // "Partial" definition: the depth-based detector rarely produces explicit
+  // free evidence, so we cannot use free-cell count to detect mixed voxels.
+  // Instead, a coarse voxel is "partial" when it contains both solidly-occupied
+  // 0.5 m cells (state="occupied"|"mixed") AND sub-threshold cells that are
+  // still in the map (state="unknown"|"stale").  These sub-threshold cells
+  // represent sensor hits that have not yet accumulated enough confidence —
+  // they mark the fuzzy boundary of the obstacle cloud.
 
-  const coarseGrid = new Map(); // coarseKey → {cx,cy,cz, occ, free, conf}
+  const coarseGrid = new Map(); // coarseKey → {cx,cy,cz, occ, edge, conf}
 
   for (const cell of travCellsByKey.values()) {
     if (!cell.center) continue;
     const s = cell.state;
-    const isOcc  = s === "occupied";
-    const isFree = s === "free" || s === "mixed";
-    if (!isOcc && !isFree) continue; // unknown / stale → ignore for LOD
+    const isOcc  = s === "occupied" || s === "mixed";
+    const isEdge = s === "unknown"  || s === "stale";
+    if (!isOcc && !isEdge) continue; // explicit free → not rendered
 
     const cx = Math.round(cell.center.x / levelM) * levelM;
     const cy = Math.round(cell.center.y / levelM) * levelM;
     const cz = Math.round(cell.center.z / levelM) * levelM;
     const k  = `${cx},${cy},${cz}`;
     let e = coarseGrid.get(k);
-    if (!e) { e = {cx, cy, cz, occ:0, free:0, conf:0}; coarseGrid.set(k, e); }
+    if (!e) { e = {cx, cy, cz, occ:0, edge:0, conf:0}; coarseGrid.set(k, e); }
     if (isOcc)  { e.occ++;  e.conf += cell.confidence; }
-    if (isFree) { e.free++; }
+    if (isEdge) { e.edge++; }
   }
 
   // ── Step 2: build neighbour-lookup set (any voxel with obstacles) ─────────────
@@ -667,26 +675,29 @@ function buildTravFaces() {
   if (occEntries.length > MAX_TRAV_DISPLAY) {
     if (state.ego) {
       const {x:ex, y:ey, z:ez} = state.ego;
-      occEntries.sort(([,[a]], [,[b]]) =>
+      occEntries.sort(([, a], [, b]) =>
         Math.hypot(a.cx-ex, a.cy-ey, a.cz-ez) - Math.hypot(b.cx-ex, b.cy-ey, b.cz-ez));
     }
     occEntries = occEntries.slice(0, MAX_TRAV_DISPLAY);
   }
 
   // ── Step 3: exterior-face extraction with per-face shading ───────────────────
-  // Face shading: visually top face (-Z in NED = higher altitude) is brightest.
-  //   dz == -1 → top face (upward-facing in scene)  → shading 1.00
-  //   dx or dy  → side faces                         → shading 0.75 / 0.60
-  //   dz == +1  → bottom face                        → shading 0.38
+  // Stronger directional shading so adjacent faces of the same color look
+  // clearly distinct, making 3-D stacking visible.
+  //   top  (dz == -1, upward in NED)  → 1.00  (full brightness)
+  //   ±X front/back faces             → 0.60 / 0.50
+  //   ±Y left/right faces             → 0.44 / 0.38
+  //   bottom (dz == +1)               → 0.20  (nearly black)
+  // Ratio top:bottom ≈ 5×  (was 2.6× before)
   const DIRS = [
-    [1,0,0, 0.75], [-1,0,0, 0.70],
-    [0,1,0, 0.62], [0,-1,0, 0.58],
-    [0,0,1, 0.38], [0,0,-1, 1.00],
+    [1,0,0, 0.60], [-1,0,0, 0.50],
+    [0,1,0, 0.44], [0,-1,0, 0.38],
+    [0,0,1, 0.20], [0,0,-1, 1.00],
   ];
 
   for (const [, e] of occEntries) {
-    const {cx, cy, cz, occ, free, conf} = e;
-    const isPartial = free > 0;
+    const {cx, cy, cz, occ, edge, conf} = e;
+    const isPartial = edge > 0; // coarse voxel has sub-threshold cells mixed with occupied → boundary
     const avgConf   = occ > 0 ? clamp(conf / occ, 0, 1) : 0.5;
 
     for (const [dx, dy, dz, shading] of DIRS) {
@@ -1382,10 +1393,12 @@ function startLiveStream() {
 
 function installViewControls() {
   el("view-center")?.addEventListener("click", ()=>{
+    // Re-center pan to the scene centroid without changing yaw/pitch.
     recomputeBounds();
-    window.animateViewPreset(0, 0, 1.0, "center", cloneP(sceneCenter()));
+    window.animateViewPreset(yaw, pitch, zoom, "center", cloneP(sceneCenter()));
   });
-  el("view-45")?.addEventListener("click", ()=>window.animateViewPreset(-Math.PI/4, Math.PI/4, 1.0, "45"));
+  // 45°: look down at 45° pitch, no yaw twist — XY plane remains horizontal.
+  el("view-45")?.addEventListener("click", ()=>window.animateViewPreset(0, Math.PI/4, 1.0, "45"));
   el("view-side")?.addEventListener("click", ()=>window.animateViewPreset(Math.PI/2, 0, 1.0, "side"));
   el("view-top")?.addEventListener("click", ()=>window.animateViewPreset(0, Math.PI/2-0.01, 1.0, "top"));
   el("view-zoom-in")?.addEventListener("click", ()=>{

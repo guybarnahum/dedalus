@@ -80,8 +80,8 @@ REQUIRED_SNIPPETS: dict[str, str] = {
     'toggle-trajectory checkbox': 'id="toggle-trajectory"',
 
     # ── view presets ────────────────────────────────────────────────────────
-    'view center preset': 'animateViewPreset(0, 0, 1.0',
-    'view 45 preset':     'animateViewPreset(-Math.PI/4, Math.PI/4',
+    'view center preset': 'animateViewPreset(yaw, pitch, zoom, "center"',
+    'view 45 preset':     'animateViewPreset(0, Math.PI/4, 1.0, "45")',
     'view side preset':   'animateViewPreset(Math.PI/2, 0',
     'view top preset':    'animateViewPreset(0, Math.PI/2-0.01',
 
