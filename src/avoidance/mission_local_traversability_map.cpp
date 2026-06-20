@@ -4,6 +4,7 @@
 #include <cmath>
 #include <functional>
 #include <limits>
+#include <numeric>
 
 namespace dedalus {
 namespace {
@@ -240,6 +241,16 @@ MissionLocalTraversabilityMapSnapshot MissionLocalTraversabilityMap::update_from
     has_last_update_ = true;
 
     refresh_summary();
+
+    // Prune cells that have decayed below the minimum score floor.
+    // Runs every prune_interval_ticks updates to amortise the O(N) vector compaction.
+    if (config_.prune_min_occupied_score > 0.0 &&
+        config_.prune_interval_ticks > 0U &&
+        (summary_.update_count % config_.prune_interval_ticks) == 0U) {
+        prune_weak_cells();
+        refresh_summary();
+    }
+
     return snapshot();
 }
 
@@ -478,6 +489,32 @@ TraversabilityQueryResult MissionLocalTraversabilityMap::query_sphere(
     }
 
     return result;
+}
+
+void MissionLocalTraversabilityMap::prune_weak_cells() {
+    if (!(config_.prune_min_occupied_score > 0.0) || cells_.empty()) {
+        return;
+    }
+
+    // Compact: move cells that should be retained to the front of the vector.
+    const auto keep_end = std::stable_partition(
+        cells_.begin(), cells_.end(),
+        [this](const StoredCell& stored) {
+            return stored.cell.occupied_score >= config_.prune_min_occupied_score;
+        });
+
+    if (keep_end == cells_.end()) {
+        return;  // nothing to evict
+    }
+
+    cells_.erase(keep_end, cells_.end());
+
+    // Rebuild index to match the compacted vector.
+    cell_index_.clear();
+    cell_index_.reserve(cells_.size());
+    for (std::size_t i = 0U; i < cells_.size(); ++i) {
+        cell_index_.emplace(cells_[i].key, i);
+    }
 }
 
 void MissionLocalTraversabilityMap::reset() {

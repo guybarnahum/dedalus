@@ -28,11 +28,19 @@ struct MissionLocalTraversabilityMapConfig {
     double free_threshold{1.0};
     double max_score{20.0};
 
-    double occupied_score_decay_per_second{0.0};
+    // Decay rates — evidence fades when a region is no longer observed.
+    // At 0.05/s an occupied cell decays from score 1.5 → 0.1 in ~28 s without
+    // re-observation, giving reasonable persistence for slow-moving platforms.
+    double occupied_score_decay_per_second{0.05};
     double free_score_decay_per_second{0.02};
     double confidence_decay_per_second{0.0};
 
     double stale_after_seconds{300.0};
+
+    // Pruning — evict cells whose occupied_score has decayed below this floor.
+    // prune_interval_ticks controls how often the O(N) sweep runs; 0 disables pruning.
+    double prune_min_occupied_score{0.1};
+    std::uint32_t prune_interval_ticks{10U};
 
     double required_clearance_m{1.5};
     double soft_clearance_m{3.0};
@@ -177,6 +185,9 @@ private:
     void apply_aging(TimePoint now);
     void recompute_derived_fields(TimePoint now, bool include_clearance = true);
     void refresh_summary();
+    // Evict cells whose occupied_score is below prune_min_occupied_score.
+    // Rebuilds cell_index_ after compacting the cells_ vector.
+    void prune_weak_cells();
 
     MissionLocalTraversabilityMapConfig config_;
     MissionLocalTraversabilityMapSummary summary_;

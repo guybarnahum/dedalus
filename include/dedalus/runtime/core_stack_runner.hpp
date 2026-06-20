@@ -7,6 +7,7 @@
 
 #include "dedalus/avoidance/local_flight_map.hpp"
 #include "dedalus/avoidance/mission_local_obstacle_map.hpp"
+#include "dedalus/avoidance/mission_local_planning_map.hpp"
 #include "dedalus/avoidance/mission_local_traversability_map.hpp"
 #include "dedalus/avoidance/mission_local_traversability_map_publisher.hpp"
 #include "dedalus/avoidance/mission_map_assimilator.hpp"
@@ -70,6 +71,8 @@ private:
     SensingCoverageProvider sensing_coverage_provider_;
     MissionLocalObstacleMap mission_local_obstacle_map_;
     MissionMapAssimilator mission_map_assimilator_;
+    // Level 2: compressed planning map rebuilt from Level 1 after each assimilator drain.
+    MissionLocalPlanningMap mission_local_planning_map_;
     MissionObstacleMapArtifactWriter mission_obstacle_map_artifact_writer_;
     MissionObstacleMapDeltaWriter mission_obstacle_map_delta_writer_;
     MissionTraversabilityMapArtifactWriter mission_traversability_map_artifact_writer_;

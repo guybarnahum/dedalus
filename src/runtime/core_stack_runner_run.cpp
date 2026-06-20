@@ -280,37 +280,59 @@ bool CoreStackRunner::run_once() {
             mission_map_assimilator_.status().drained_snapshot_count);
     }
 
-    // Publish the updated traversability map snapshot to any live subscribers
-    // (e.g. RuntimeEventStreamServer) when the assimilator drained at least one
-    // obstacle-map snapshot this tick.  Cells are capped at 4096 for streaming.
-    // Throttled to at most once every 2 seconds to avoid flooding the SSE stream.
+    // When the assimilator drained at least one obstacle-map snapshot this tick:
+    //  1. Rebuild the Level 2 planning map from the fresh Level 1 snapshot.
+    //  2. Publish Level 1 to SSE subscribers (throttled to once per 2 s).
     static constexpr std::uint64_t kTravPublishMinIntervalNs = 2'000'000'000ULL;
-    if (trav_map_updated && traversability_map_publisher_) {
-        const std::uint64_t now_ns =
-            mission_map_assimilator_.status().last_update_timestamp_ns;
-        const bool throttled =
-            last_trav_publish_ns_ != 0U &&
-            now_ns != 0U &&
-            (now_ns - last_trav_publish_ns_) < kTravPublishMinIntervalNs;
-        if (!throttled) {
-            start = SteadyClock::now();
-            // No cell cap: on_traversability_map_snapshot() filters to changed cells
-            // (delta) so the initial full snapshot must include every cell; subsequent
-            // publishes are cheap because only the changed subset is serialized.
-            auto trav_snapshot =
-                mission_map_assimilator_.traversability_map().snapshot();
-            MissionLocalTraversabilityMapFrame trav_frame;
-            trav_frame.timestamp_ns =
-                trav_snapshot.summary.last_update_timestamp_ns != 0U
-                    ? trav_snapshot.summary.last_update_timestamp_ns
-                    : mission_local_obstacle_map_snapshot.summary.last_update_timestamp_ns;
-            last_trav_publish_ns_ = trav_frame.timestamp_ns != 0U
-                ? trav_frame.timestamp_ns
-                : now_ns;
-            trav_frame.snapshot = std::move(trav_snapshot);
-            traversability_map_publisher_->publish(trav_frame);
-            if (timing_writer_) {
-                timing_writer_->record_stage("traversability_map_publisher.publish", duration_us(start));
+    if (trav_map_updated) {
+        start = SteadyClock::now();
+        // Take one snapshot and share it between L2 rebuild and SSE publish.
+        // No cell cap: the SSE subscriber delta-filters internally, so every
+        // cell must be present in the full snapshot.
+        auto trav_snapshot = mission_map_assimilator_.traversability_map().snapshot();
+        if (timing_writer_) {
+            timing_writer_->record_stage(
+                "mission_map_assimilator.traversability_snapshot", duration_us(start));
+        }
+
+        // ── Level 2: rebuild planning map ───────────────────────────────────
+        start = SteadyClock::now();
+        mission_local_planning_map_.update_from_traversability(trav_snapshot);
+        if (timing_writer_) {
+            timing_writer_->record_stage(
+                "planning_map.update_from_traversability", duration_us(start));
+            timing_writer_->record_stage(
+                "planning_map.l1_occupied_cells",
+                mission_local_planning_map_.snapshot().l1_occupied_cell_count);
+            timing_writer_->record_stage(
+                "planning_map.cell_count",
+                mission_local_planning_map_.cell_count());
+        }
+
+        // ── Level 1 SSE publish (throttled) ─────────────────────────────────
+        if (traversability_map_publisher_) {
+            const std::uint64_t now_ns =
+                mission_map_assimilator_.status().last_update_timestamp_ns;
+            const bool throttled =
+                last_trav_publish_ns_ != 0U &&
+                now_ns != 0U &&
+                (now_ns - last_trav_publish_ns_) < kTravPublishMinIntervalNs;
+            if (!throttled) {
+                start = SteadyClock::now();
+                MissionLocalTraversabilityMapFrame trav_frame;
+                trav_frame.timestamp_ns =
+                    trav_snapshot.summary.last_update_timestamp_ns != 0U
+                        ? trav_snapshot.summary.last_update_timestamp_ns
+                        : mission_local_obstacle_map_snapshot.summary.last_update_timestamp_ns;
+                last_trav_publish_ns_ = trav_frame.timestamp_ns != 0U
+                    ? trav_frame.timestamp_ns
+                    : now_ns;
+                trav_frame.snapshot = std::move(trav_snapshot);
+                traversability_map_publisher_->publish(trav_frame);
+                if (timing_writer_) {
+                    timing_writer_->record_stage(
+                        "traversability_map_publisher.publish", duration_us(start));
+                }
             }
         }
     }
