@@ -2,7 +2,10 @@
 
 #include <algorithm>
 #include <cmath>
+#include <fstream>
 #include <functional>
+#include <sstream>
+#include <string>
 
 namespace dedalus {
 
@@ -17,7 +20,7 @@ MissionLocalPlanningMap::MissionLocalPlanningMap(MissionLocalPlanningMapConfig c
     if (!(config_.min_occupied_score > 0.0)) {
         config_.min_occupied_score = 1.0;
     }
-    snapshot_.config = config_;
+    config_.free_evidence_weight = std::max(0.0, std::min(config_.free_evidence_weight, 1.0));
 }
 
 std::size_t MissionLocalPlanningMap::CellKeyHash::operator()(const CellKey& key) const noexcept {
@@ -50,50 +53,192 @@ Vec3 MissionLocalPlanningMap::center_for_key(const CellKey& key) const noexcept 
 
 void MissionLocalPlanningMap::update_from_traversability(
     const MissionLocalTraversabilityMapSnapshot& source) {
-    // Reset and rebuild from scratch each update.
-    snapshot_ = MissionLocalPlanningMapSnapshot{};
-    snapshot_.config = config_;
-    snapshot_.l1_input_cell_count = source.cells.size();
 
-    // Aggregate Level 1 occupied cells into the coarser planning grid.
-    struct Accumulator {
-        float max_occupied_score{0.0F};
-        float max_confidence{0.0F};
-        std::uint32_t count{0U};
-    };
-    // Optimistic pre-size: planning cells are larger so expect fewer of them.
-    std::unordered_map<CellKey, Accumulator, CellKeyHash> grid;
-    grid.reserve(std::max<std::size_t>(1U, source.cells.size() / 8U));
+    last_update_stats_ = MissionLocalPlanningMapUpdateStats{};
+    last_update_stats_.l1_input_cells = source.cells.size();
+
+    bool any_evicted = false;
 
     for (const auto& l1_cell : source.cells) {
-        if (l1_cell.occupied_score < config_.min_occupied_score) {
-            continue;
+        const bool is_occupied =
+            l1_cell.state == TraversabilityCellState::Occupied ||
+            l1_cell.state == TraversabilityCellState::Mixed;
+        const bool is_free =
+            l1_cell.state == TraversabilityCellState::ObservedFree;
+
+        if (!is_occupied && !is_free) {
+            continue;  // Unknown / Stale → no change to L2
         }
-        ++snapshot_.l1_occupied_cell_count;
 
         const auto key = key_for_point(l1_cell.center_map);
-        auto& acc = grid[key];
-        acc.max_occupied_score = std::max(
-            acc.max_occupied_score,
-            static_cast<float>(l1_cell.occupied_score));
-        acc.max_confidence = std::max(
-            acc.max_confidence,
-            static_cast<float>(l1_cell.confidence));
-        ++acc.count;
+
+        if (is_occupied && l1_cell.occupied_score >= config_.min_occupied_score) {
+            ++last_update_stats_.l1_occupied_merged;
+
+            const auto it = cell_index_.find(key);
+            if (it != cell_index_.end()) {
+                // Reinforce existing L2 cell.
+                auto& cell = cells_[it->second].cell;
+                cell.occupied_score = std::max(
+                    cell.occupied_score,
+                    static_cast<float>(l1_cell.occupied_score));
+                cell.confidence = std::max(
+                    cell.confidence,
+                    static_cast<float>(l1_cell.confidence));
+                ++cell.source_cell_count;
+            } else {
+                // Create new L2 cell.
+                MissionLocalPlanningCell cell;
+                cell.center_map = center_for_key(key);
+                cell.occupied_score = static_cast<float>(l1_cell.occupied_score);
+                cell.confidence = static_cast<float>(l1_cell.confidence);
+                cell.source_cell_count = 1U;
+                cells_.push_back(StoredCell{key, cell});
+                cell_index_.emplace(key, cells_.size() - 1U);
+            }
+        } else if (is_free) {
+            ++last_update_stats_.l1_free_applied;
+
+            const auto it = cell_index_.find(key);
+            if (it != cell_index_.end()) {
+                // Reduce the L2 voxel's occupied score by the free_evidence_weight.
+                // new_score = old_score * (1 - free_evidence_weight)
+                auto& cell = cells_[it->second].cell;
+                cell.occupied_score = static_cast<float>(
+                    cell.occupied_score * (1.0 - config_.free_evidence_weight));
+                if (cell.occupied_score < static_cast<float>(config_.min_occupied_score)) {
+                    // Mark for eviction: set score to 0 — evict_cleared_cells() sweeps.
+                    cell.occupied_score = 0.0F;
+                    ++last_update_stats_.cells_evicted;
+                    any_evicted = true;
+                }
+            }
+        }
     }
 
-    // Materialise planning cells from the aggregation grid.
-    snapshot_.cells.reserve(grid.size());
-    for (const auto& [key, acc] : grid) {
+    if (any_evicted) {
+        evict_cleared_cells();
+    }
+}
+
+void MissionLocalPlanningMap::evict_cleared_cells() {
+    // Compact: keep cells whose score is still at or above the floor.
+    const auto keep_end = std::stable_partition(
+        cells_.begin(), cells_.end(),
+        [](const StoredCell& sc) { return sc.cell.occupied_score > 0.0F; });
+
+    if (keep_end == cells_.end()) {
+        return;
+    }
+
+    cells_.erase(keep_end, cells_.end());
+
+    // Rebuild index.
+    cell_index_.clear();
+    cell_index_.reserve(cells_.size());
+    for (std::size_t i = 0U; i < cells_.size(); ++i) {
+        cell_index_.emplace(cells_[i].key, i);
+    }
+}
+
+MissionLocalPlanningMapSnapshot MissionLocalPlanningMap::snapshot() const {
+    MissionLocalPlanningMapSnapshot snap;
+    snap.config = config_;
+    snap.cell_count = cells_.size();
+    snap.last_update_stats = last_update_stats_;
+    snap.cells.reserve(cells_.size());
+    for (const auto& sc : cells_) {
+        snap.cells.push_back(sc.cell);
+    }
+    return snap;
+}
+
+void MissionLocalPlanningMap::reset() {
+    cells_.clear();
+    cell_index_.clear();
+    last_update_stats_ = MissionLocalPlanningMapUpdateStats{};
+}
+
+// ─── Persistence ─────────────────────────────────────────────────────────────
+//
+// Format (versioned text, one cell per line after the header):
+//
+//   planning_map_v1 cell_size=<m> vcell_size=<m> min_score=<f> free_weight=<f>
+//   <cx> <cy> <cz> <score> <conf> <count>
+//   ...
+
+bool MissionLocalPlanningMap::save_to_file(const std::filesystem::path& path) const {
+    std::ofstream f(path);
+    if (!f) {
+        return false;
+    }
+    f << "planning_map_v1"
+      << " cell_size=" << config_.cell_size_m
+      << " vcell_size=" << config_.vertical_cell_size_m
+      << " min_score=" << config_.min_occupied_score
+      << " free_weight=" << config_.free_evidence_weight
+      << "\n";
+    f.precision(9);
+    for (const auto& sc : cells_) {
+        const auto& c = sc.cell;
+        f << c.center_map.x << " "
+          << c.center_map.y << " "
+          << c.center_map.z << " "
+          << c.occupied_score << " "
+          << c.confidence << " "
+          << c.source_cell_count << "\n";
+    }
+    return f.good();
+}
+
+bool MissionLocalPlanningMap::load_from_file(const std::filesystem::path& path) {
+    std::ifstream f(path);
+    if (!f) {
+        return false;
+    }
+
+    std::string header;
+    if (!std::getline(f, header)) {
+        return false;
+    }
+    if (header.rfind("planning_map_v1", 0) != 0) {
+        return false;  // unrecognised version
+    }
+
+    reset();
+
+    double cx = 0.0, cy = 0.0, cz = 0.0;
+    float score = 0.0F, conf = 0.0F;
+    std::uint32_t count = 0U;
+
+    std::string line;
+    while (std::getline(f, line)) {
+        if (line.empty() || line[0] == '#') {
+            continue;
+        }
+        std::istringstream ss(line);
+        if (!(ss >> cx >> cy >> cz >> score >> conf >> count)) {
+            continue;
+        }
+        if (score < static_cast<float>(config_.min_occupied_score)) {
+            continue;  // skip cells that would be below the current floor
+        }
+
+        const Vec3 center{cx, cy, cz};
+        const auto key = key_for_point(center);
+        if (cell_index_.find(key) != cell_index_.end()) {
+            continue;  // duplicate (shouldn't happen in a well-formed file)
+        }
         MissionLocalPlanningCell cell;
-        cell.center_map = center_for_key(key);
-        cell.max_occupied_score = acc.max_occupied_score;
-        cell.confidence = acc.max_confidence;
-        cell.source_cell_count = acc.count;
-        snapshot_.cells.push_back(cell);
+        cell.center_map = center_for_key(key);  // re-snap to grid
+        cell.occupied_score = score;
+        cell.confidence = conf;
+        cell.source_cell_count = count;
+        cells_.push_back(StoredCell{key, cell});
+        cell_index_.emplace(key, cells_.size() - 1U);
     }
 
-    snapshot_.cell_count = snapshot_.cells.size();
+    return true;
 }
 
 }  // namespace dedalus

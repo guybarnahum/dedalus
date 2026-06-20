@@ -299,11 +299,18 @@ bool CoreStackRunner::run_once() {
         start = SteadyClock::now();
         mission_local_planning_map_.update_from_traversability(trav_snapshot);
         if (timing_writer_) {
+            const auto& pm_stats = mission_local_planning_map_.last_update_stats();
             timing_writer_->record_stage(
                 "planning_map.update_from_traversability", duration_us(start));
             timing_writer_->record_stage(
-                "planning_map.l1_occupied_cells",
-                mission_local_planning_map_.snapshot().l1_occupied_cell_count);
+                "planning_map.l1_occupied_merged",
+                pm_stats.l1_occupied_merged);
+            timing_writer_->record_stage(
+                "planning_map.l1_free_applied",
+                pm_stats.l1_free_applied);
+            timing_writer_->record_stage(
+                "planning_map.cells_evicted",
+                pm_stats.cells_evicted);
             timing_writer_->record_stage(
                 "planning_map.cell_count",
                 mission_local_planning_map_.cell_count());

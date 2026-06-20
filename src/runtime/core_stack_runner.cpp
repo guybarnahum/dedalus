@@ -2,6 +2,7 @@
 
 #include <utility>
 #include <vector>
+#include <filesystem>
 
 namespace dedalus {
 namespace {
@@ -22,7 +23,8 @@ CoreStackRunner::CoreStackRunner(CoreStackProviders providers, CoreStackRunnerCo
       mission_obstacle_map_artifact_writer_(MissionObstacleMapArtifactWriter::from_environment()),
       mission_obstacle_map_delta_writer_(MissionObstacleMapDeltaWriter::from_environment()),
       mission_traversability_map_artifact_writer_(
-          MissionTraversabilityMapArtifactWriter::from_environment()) {
+          MissionTraversabilityMapArtifactWriter::from_environment()),
+      planning_map_persistence_path_(std::move(config.planning_map_persistence_path)) {
     if (!snapshot_subscriber_handles_.empty()) {
         if (!snapshot_publisher_) {
             snapshot_publisher_ = std::make_shared<WorldSnapshotPublisher>();
@@ -30,6 +32,13 @@ CoreStackRunner::CoreStackRunner(CoreStackProviders providers, CoreStackRunnerCo
         for (const auto& sub : snapshot_subscriber_handles_) {
             snapshot_publisher_->subscribe(sub);
         }
+    }
+
+    // Load Level 2 planning map from the previous mission's persistence file, if present.
+    // A missing file is not an error — it simply means a fresh map starts from empty.
+    if (!planning_map_persistence_path_.empty() &&
+        std::filesystem::exists(planning_map_persistence_path_)) {
+        mission_local_planning_map_.load_from_file(planning_map_persistence_path_);
     }
 }
 
@@ -60,6 +69,18 @@ MissionMapFlushResult CoreStackRunner::finalize_mission_map_after_landing(const 
     auto result = mission_map_assimilator_.flush_after_landing(now);
     mission_traversability_map_artifact_writer_.write_final(
         mission_map_assimilator_.traversability_map().snapshot());
+
+    // Persist Level 2 planning map so it survives to the next mission.
+    // The file is written atomically via a temp-then-rename pattern to avoid
+    // leaving a half-written file if the process is interrupted.
+    if (!planning_map_persistence_path_.empty()) {
+        const auto tmp = std::filesystem::path{
+            planning_map_persistence_path_.string() + ".tmp"};
+        if (mission_local_planning_map_.save_to_file(tmp)) {
+            std::filesystem::rename(tmp, planning_map_persistence_path_);
+        }
+    }
+
     return result;
 }
 

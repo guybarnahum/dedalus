@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstddef>
+#include <filesystem>
 #include <memory>
 #include <optional>
 #include <vector>
@@ -37,6 +38,11 @@ struct CoreStackRunnerConfig {
     std::vector<std::shared_ptr<WorldSnapshotSubscriber>> snapshot_subscribers;
     AirSimDepthObstacleDetectorConfig airsim_depth_obstacle_detector;
     MissionMapAssimilatorConfig mission_map_assimilator;
+
+    // Optional path for Level 2 planning map cross-mission persistence.
+    // If set: the planning map is loaded from this file at construction
+    // (if it exists) and saved back at finalize_mission_map_after_landing().
+    std::filesystem::path planning_map_persistence_path;
 };
 
 class CoreStackRunner {
@@ -80,6 +86,8 @@ private:
     TrajectorySafetyEvaluator trajectory_safety_evaluator_;
     std::vector<CameraPointingState> camera_pointing_states_;
     std::optional<TimePoint> ghost_scenario_start_;
+    // Optional file path for Level 2 planning map cross-mission persistence.
+    std::filesystem::path planning_map_persistence_path_;
     // Throttle: timestamp (ns) of the last traversability snapshot published to
     // traversability_map_publisher_.  Publish at most once every
     // kTravPublishMinIntervalNs to avoid drowning the SSE stream.
