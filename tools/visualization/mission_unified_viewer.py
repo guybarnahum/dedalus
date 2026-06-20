@@ -158,7 +158,7 @@ h3 { font-size: 12px; margin: 10px 0 6px; color: #c0c4d0; text-transform: upperc
           <div class="height-ramp" style="margin:2px 0 4px"></div>
           <div style="display:flex;justify-content:space-between;font-size:10px;color:#7a8099"><span>low</span><span>high</span></div>
         </div>
-        <div id="trav-legend-type" class="trav-legend" style="display:none">
+        <div id="trav-legend-type" class="trav-legend" style="visibility:hidden">
           <span><span class="trav-swatch" style="background:rgba(190,55,45,0.85)"></span>Occupied</span>
           <span><span class="trav-swatch" style="background:rgba(200,150,30,0.6)"></span>Partial</span>
           <span><span class="trav-swatch" style="background:transparent;border:1px solid #3a4358"></span>Free</span>
@@ -520,7 +520,7 @@ window.animateZoom = function(targetZoom) {
 // Radial scale: sqrt(dist) — denser rings close-in, sparser far out.
 
 const _L0_FOV_DEG  = 75;    // half-FOV angle
-const _L0_INSET_RL = 230;   // logical radius px — 2× previous
+const _L0_INSET_RL = 184;   // logical radius px (80 % of original 230)
 
 function _l0DistColor(distM) {
   // Distance → RGB for hover/stationary mode
@@ -744,11 +744,11 @@ function drawL0PolarInset() {
 
   let labelY = CY + 10 * dpr;
   const [rr, rg, rb] = readoutRGB;
-  ctx.font = `bold ${TXL}px system-ui`;
+  ctx.font = `bold ${TS}px system-ui`;
   ctx.fillStyle = `rgba(${rr},${rg},${rb},0.98)`;
   ctx.textAlign = 'center'; ctx.textBaseline = 'top';
   ctx.fillText(readoutStr, CX, labelY);
-  labelY += TXL + 6 * dpr;
+  labelY += TS + 6 * dpr;
 
   if (!isMoving) {
     ctx.font = `bold ${TM}px system-ui`;
@@ -779,16 +779,14 @@ function drawL0ConeScope() {
 
   const dpr = devicePixelRatio;
 
-  // Panel: right-aligned, placed in the lower-right corner with fixed height.
-  // Keep it off the orientation gizmo (bottom-right, ~140px).
+  // Panel: anchored top-left, below the sidebar gap.
   const INSET_R  = _L0_INSET_RL * dpr;
   const MARGIN   = 24 * dpr;
   const PAD      = { l: 32*dpr, r: 10*dpr, t: 20*dpr, b: 24*dpr };
   const W        = Math.min(480 * dpr, INSET_R * 2 + MARGIN);  // cap width
   const H        = 148 * dpr;
-  // Anchor to bottom-right, above the orientation gizmo (140px) plus some gap
-  const panX     = canvas.width - W - MARGIN;
-  const panY     = canvas.height - H - 160 * dpr;
+  const panX     = MARGIN;
+  const panY     = MARGIN;
   const X0       = panX + PAD.l;
   const Y0       = panY + PAD.t;
   const PW       = W - PAD.l - PAD.r;
@@ -809,11 +807,12 @@ function drawL0ConeScope() {
   function elDegPx(deg) { return Y0 + (1 - (deg - EL_MIN) / (EL_MAX - EL_MIN)) * PH; }
 
   // Source bitmask → inner dot color
+  // GT = white, Depth = mid-gray, Visual = black
   function srcColor(src) {
-    if (src & 0x01) return 'rgba(224,64,32,0.88)';   // AirSimGT
-    if (src & 0x02) return 'rgba(32,160,224,0.88)';  // DepthProvider
-    if (src & 0x04) return 'rgba(224,192,32,0.88)';  // VisualObstacle
-    return 'rgba(160,100,220,0.80)';                  // other
+    if (src & 0x01) return 'rgba(255,255,255,0.95)';  // AirSimGT
+    if (src & 0x02) return 'rgba(140,140,140,0.90)';  // DepthProvider
+    if (src & 0x04) return 'rgba(20,20,20,0.95)';     // VisualObstacle
+    return 'rgba(140,140,140,0.70)';                   // other
   }
 
   ctx.save();
@@ -899,9 +898,9 @@ function drawL0ConeScope() {
   const LY = panY + H + 4 * dpr;
   ctx.font = `${TS2}px system-ui`; ctx.textBaseline = 'top';
   const srcs = [
-    ['rgba(224,64,32,0.88)',  'GT'],
-    ['rgba(32,160,224,0.88)', 'Depth'],
-    ['rgba(224,192,32,0.88)', 'Visual'],
+    ['rgba(255,255,255,0.95)', 'GT'],
+    ['rgba(140,140,140,0.90)', 'Depth'],
+    ['rgba(20,20,20,0.95)',    'Visual'],
   ];
   let lx = panX + PAD.l;
   for (const [col, lbl] of srcs) {
@@ -1859,6 +1858,16 @@ function applyWorldSnapshot(snap, seq, {deferRender=false}={}) {
           src: o.src | 0,
         }))
       : [];
+  } else {
+    // No LFM block in this snapshot — clear all L0 state so stale data is not displayed.
+    localFlightMapCells = [];
+    lfmNearestM         = Infinity;
+    lfmEgoSpeedMps      = 0;
+    lfmGlobalMinTTC     = Infinity;
+    lfmEscapeBody       = null;
+    lfmPolarSectors     = [];
+    lfmSphericalBins    = [];
+    lfmSensorObs        = [];
   }
 
   live.seq=seq??live.seq;
@@ -2225,8 +2234,8 @@ function installViewControls() {
     if (tag) tag.textContent = state.travColorByType ? "Type" : "Height";
     const lh = el("trav-legend-height");
     const lt = el("trav-legend-type");
-    if (lh) lh.style.display = state.travColorByType ? "none"  : "";
-    if (lt) lt.style.display = state.travColorByType ? "flex"  : "none";
+    if (lh) lh.style.visibility = state.travColorByType ? "hidden" : "visible";
+    if (lt) lt.style.visibility = state.travColorByType ? "visible" : "hidden";
     // L2 face colors depend on mode; rebuild geometry cache.
     buildPlanningFaces();
     scheduleDraw();
