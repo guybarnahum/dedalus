@@ -99,10 +99,12 @@ REQUIRED_SNIPPETS: dict[str, str] = {
     'toggle-trajectory checkbox': 'id="toggle-trajectory"',
 
     # ── view presets ────────────────────────────────────────────────────────
-    'view center preset': 'animateViewPreset(yaw, pitch, zoom, "center"',
-    'view 45 preset':     'animateViewPreset(yaw + Math.PI/4, Math.PI/4',
-    'view side preset':   'animateViewPreset(yaw + Math.PI/2, 0',
-    'view top preset':    'animateViewPreset(yaw + Math.PI/2, Math.PI/2-0.01',
+    'view center preset':       'animateViewPreset(yaw, pitch, zoom, "center"',
+    'snapToPreset function':    'function snapToPreset(',
+    'SNAP_YAWS_RAD constant':   'const SNAP_YAWS_RAD',
+    'view 45 preset wired':     "snapToPreset(Math.PI / 4)",
+    'view side preset wired':   "snapToPreset(0)",
+    'view top preset wired':    "snapToPreset(Math.PI / 2 - 0.01)",
 
     # ── connection + status ─────────────────────────────────────────────────
     'EventSource connection':     'new EventSource(',
