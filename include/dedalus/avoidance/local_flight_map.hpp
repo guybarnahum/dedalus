@@ -79,6 +79,43 @@ struct L0PolarRiskSector {
     bool has_obstacle{false};
 };
 
+// Per raw-evidence sensor observation, preserved before L1 aggregation.
+// Populated by collect_l0_sensor_observations() from the WorldSnapshot evidence list.
+// These carry the original sensor-frame angles and source tag — they are NOT
+// derived from the L1→L0 cell projection.
+struct L0SensorObservation {
+    // Body-frame spherical angles at observation time.
+    // az: atan2(right, fwd) → −π…+π; el: atan2(up, sqrt(fwd²+right²)) → −π/2…+π/2.
+    float az_body_rad{0.0F};
+    float el_body_rad{0.0F};
+
+    float range_m{std::numeric_limits<float>::infinity()};
+    float closing_speed_mps{0.0F};  // radial closing speed (m/s, positive = converging)
+    float ttc_s{std::numeric_limits<float>::infinity()};
+
+    OccupancySourceKind source_kind{OccupancySourceKind::DepthProvider};
+};
+
+// One cell of the 2-D azimuth × elevation spherical risk grid.
+// Populated by compute_l0_polar_risk(); consumers read without re-deriving.
+struct L0SphericalRiskBin {
+    float az_centre_deg{0.0F};  // bin centre azimuth, body frame (deg)
+    float el_centre_deg{0.0F};  // bin centre elevation, body frame (deg)
+
+    float min_ttc_s{std::numeric_limits<float>::infinity()};
+    float max_closing_speed_mps{0.0F};
+    float nearest_range_m{std::numeric_limits<float>::infinity()};
+
+    bool has_obstacle{false};
+
+    // Bitmask of sensor sources contributing to this bin.
+    // Bit 0 = AirSimGroundTruth/AirSimGroundTruthVisualEmulation
+    // Bit 1 = DepthProvider
+    // Bit 2 = VisualObstacleDetector
+    // Bit 3 = other / unknown
+    std::uint8_t source_mask{0U};
+};
+
 struct LocalFlightMapSnapshot {
     TimePoint timestamp;
     FrameId source_frame_id;
@@ -122,6 +159,18 @@ struct LocalFlightMapSnapshot {
     // Closing-speed-weighted escape direction in body frame (unit vector).
     // (0,0,0) when no converging obstacles exist.
     Vec3 escape_direction_body;
+
+    // ── Spherical sensor view ───────────────────────────────────────────────────
+    // Per-evidence observations from raw sensor evidence (before L1 merging).
+    // Populated by collect_l0_sensor_observations(); empty when not called.
+    std::vector<L0SensorObservation> sensor_observations;
+
+    // 2-D az×el risk grid (num_az_bins × num_el_bins cells).
+    // Layout: row-major, az index varies fastest.
+    // Populated by compute_l0_polar_risk() alongside polar_risk_sectors.
+    std::vector<L0SphericalRiskBin> spherical_risk_bins;
+    int spherical_num_az{0};  // number of azimuth bins used
+    int spherical_num_el{0};  // number of elevation bins used
 };
 
 struct LocalFlightMapIndex {
@@ -129,17 +178,30 @@ struct LocalFlightMapIndex {
     int iy{0};
 };
 
-// Compute per-sector closing-speed risk and populate LocalFlightMapSnapshot::polar_risk_sectors.
+// Compute per-sector and az×el-bin risk from the L0 cell list.
 //
-// velocity_body_mps: ego velocity in body frame (x = forward, y = right, z = down NED).
-//   Pass {0,0,0} when hovering — risk collapses to proximity weighting only.
-// num_sectors: number of azimuth buckets spanning 360°. Default 36 (10° each).
+// Populates: polar_risk_sectors (1-D az), spherical_risk_bins (2-D az×el),
+//            global_min_ttc_s, escape_direction_body, ego_speed_mps.
 //
-// This function is a pure computation on the already-built cell list; it does not
-// mutate the cell scores.  Call it after each update_from_mission_local_map().
+// velocity_body_mps: ego velocity in body frame (x=fwd, y=right, z=down NED).
+// num_az: azimuth bins spanning 360°. Default 36 (10° each).
+// num_el: elevation bins spanning ±(num_el/2 * el_step)°. Default 9 (10° each → ±45°).
 void compute_l0_polar_risk(LocalFlightMapSnapshot& snap,
                            Vec3 velocity_body_mps,
-                           int num_sectors = 36);
+                           int num_az = 36,
+                           int num_el = 9);
+
+// Populate LocalFlightMapSnapshot::sensor_observations from raw obstacle evidence.
+//
+// Call this after compute_l0_polar_risk(), passing the WorldSnapshot evidence list.
+// Uses each occupied evidence's bearing_rad / elevation_rad / range_m / source_kind
+// to build source-tagged TTC observations without re-projecting through the L1 map.
+//
+// max_obs: cap on number of observations stored (default 256).
+void collect_l0_sensor_observations(LocalFlightMapSnapshot& snap,
+                                    const std::vector<ObstacleEvidence>& evidence,
+                                    Vec3 velocity_body_mps,
+                                    std::size_t max_obs = 256U);
 
 class LocalFlightMapAccumulator {
 public:

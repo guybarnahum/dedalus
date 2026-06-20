@@ -371,8 +371,9 @@ bool CoreStackRunner::run_once() {
         timing_writer_->record_stage("local_flight_map.update_from_mission_local_map", duration_us(start));
     }
 
-    // Rotate map-frame velocity into body frame (yaw-only, NED convention) and
-    // compute the L0 polar risk map so flight response subscribers can read it.
+    // Rotate map-frame velocity into body frame (yaw-only, NED convention),
+    // compute the L0 polar + spherical risk grid, then collect per-sensor
+    // observations from the raw evidence list (source-tagged, bearing/elevation intact).
     {
         const double yaw = snapshot_for_annotation.ego.local_T_body.rotation_rpy.z;
         const double vx  = snapshot_for_annotation.ego.velocity_local.x;
@@ -383,6 +384,10 @@ bool CoreStackRunner::run_once() {
             0.0
         };
         compute_l0_polar_risk(snapshot_for_annotation.local_flight_map, vel_body);
+        collect_l0_sensor_observations(
+            snapshot_for_annotation.local_flight_map,
+            snapshot_for_annotation.obstacle_evidence,
+            vel_body);
     }
 
     start = SteadyClock::now();

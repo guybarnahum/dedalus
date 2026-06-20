@@ -269,11 +269,15 @@ let lfmCellSizeM = 0.5;
 let lfmForwardRangeM = 30;
 let lfmRearRangeM = 6;
 let lfmLateralRangeM = 15;
-// Pre-computed polar risk fields from C++ (compute_l0_polar_risk)
+// Pre-computed risk fields from C++ (compute_l0_polar_risk + collect_l0_sensor_observations)
 let lfmEgoSpeedMps   = 0;         // m/s
 let lfmGlobalMinTTC  = Infinity;  // s
 let lfmEscapeBody    = null;      // {x,y,z} unit vec body frame, or null
-let lfmPolarSectors  = [];        // [{az,vr,ttc,nr,obs}, …] 36 sectors
+let lfmPolarSectors  = [];        // [{az,vr,ttc,nr,obs}] 36 az sectors (1-D)
+let lfmSphericalBins = [];        // [{az,el,ttc,vr,nr,sm}] occupied bins only (2-D az×el)
+let lfmSphNumAz      = 36;
+let lfmSphNumEl      = 9;
+let lfmSensorObs     = [];        // [{az,el,r,vr,ttc,src}] raw sensor observations
 
 // Traversability (L1)
 const travCellsByKey = new Map();      // cellKey → trav cell (0.5 m raw cells from server)
@@ -601,32 +605,34 @@ function drawL0PolarInset() {
   const CX      = canvas.width - INSET_R - MARGIN;
   const CY      = INSET_R + MARGIN;
 
-  // √ radial scale: equal visual spacing per distance doubling.
-  const MAX_M    = Math.max(lfmForwardRangeM, 20);
-  const SCALE_SQ = (INSET_R - 8 * dpr) / Math.sqrt(MAX_M);
-  const RING_M   = [1, 3, 6, 12, 20];           // non-uniform, dense close-in
+  // TTC-radial scale: centre=0s, edge=MAX_TTC_S.
+  // Obstacles are positioned by reaction time, not physical distance.
+  const MAX_TTC_S = 10;                          // seconds at outer edge
+  const TTC_RINGS = [1, 2, 3, 5, 10];           // ring labels (s)
+  const USABLE_R  = INSET_R - 8 * dpr;
 
-  // Body-frame metres → canvas device px (√ radial mapping, direction preserved)
-  function l0XY(cx, cy) {
-    const d = Math.hypot(cx, cy);
-    if (d < 1e-6) return [CX, CY];
-    const r = SCALE_SQ * Math.sqrt(d);
-    return [CX + (cy / d) * r, CY - (cx / d) * r];
+  function ttcRadius(ttcS) {
+    if (!Number.isFinite(ttcS) || ttcS >= MAX_TTC_S) return USABLE_R;
+    return Math.max(4 * dpr, (ttcS / MAX_TTC_S) * USABLE_R);
   }
 
-  const TS  = 14 * dpr;   // small text (2× old 7 px)
-  const TM  = 16 * dpr;   // medium
-  const TL  = 18 * dpr;   // large (heading label)
-  const TXL = 20 * dpr;   // extra-large (readout)
+  // Body-frame azimuth → canvas XY at a given radius.
+  function azRadiusToPx(azRad, rPx) {
+    return [CX + Math.sin(azRad) * rPx, CY - Math.cos(azRad) * rPx];
+  }
+
+  const TS  = 14 * dpr;
+  const TM  = 16 * dpr;
+  const TL  = 18 * dpr;
+  const TXL = 20 * dpr;
 
   const UP   = -Math.PI / 2;
   const FOVR = _L0_FOV_DEG * Math.PI / 180;
   const ANG0 = UP - FOVR;
   const ANG1 = UP + FOVR;
 
-  // Use C++-computed risk state (no client-side recompute).
   const isMoving = lfmEgoSpeedMps > 0.3;
-  const CELL_R   = Math.max(4 * dpr, Math.min(14 * dpr, lfmCellSizeM * SCALE_SQ * 0.90));
+  const DOT_R    = 7 * dpr;
 
   ctx.save();
 
@@ -635,7 +641,7 @@ function drawL0PolarInset() {
   ctx.moveTo(CX, CY);
   ctx.arc(CX, CY, INSET_R, ANG0, ANG1);
   ctx.closePath();
-  ctx.fillStyle   = 'rgba(5,8,17,0.94)';
+  ctx.fillStyle   = 'rgba(5,8,17,0.96)';
   ctx.fill();
   ctx.strokeStyle = 'rgba(55,82,168,0.90)';
   ctx.lineWidth   = 2 * dpr;
@@ -648,14 +654,13 @@ function drawL0PolarInset() {
   ctx.closePath();
   ctx.clip();
 
-  // ── Range arcs (√-spaced) ─────────────────────────────────────────────────────
-  for (const rm of RING_M) {
-    const rPx = SCALE_SQ * Math.sqrt(rm);
-    if (rPx >= INSET_R - 6 * dpr) continue;
+  // ── TTC rings ─────────────────────────────────────────────────────────────────
+  for (const ts of TTC_RINGS) {
+    const rPx = ttcRadius(ts);
     ctx.beginPath();
     ctx.arc(CX, CY, rPx, ANG0, ANG1);
-    ctx.strokeStyle = rm <= 3 ? 'rgba(55,82,168,0.32)' : 'rgba(55,82,168,0.16)';
-    ctx.lineWidth   = (rm <= 3 ? 1.0 : 0.5) * dpr;
+    ctx.strokeStyle = ts <= 2 ? 'rgba(200,60,40,0.22)' : 'rgba(55,80,160,0.18)';
+    ctx.lineWidth   = (ts <= 2 ? 1.2 : 0.6) * dpr;
     ctx.stroke();
   }
 
@@ -664,43 +669,33 @@ function drawL0PolarInset() {
   ctx.lineWidth   = 0.5 * dpr;
   ctx.beginPath(); ctx.moveTo(CX, CY); ctx.lineTo(CX, CY - INSET_R + 3 * dpr); ctx.stroke();
 
-  // ── Obstacle cells — TTC (moving) or distance (hover) colour ─────────────────
-  // Per-cell TTC is looked up from the C++-computed sector it falls in.
+  // ── Obstacle cells — placed at TTC radius, coloured by TTC ───────────────────
   for (const cell of localFlightMapCells) {
-    const [px, py] = l0XY(cell.center.x, cell.center.y);
-    const [r, g, b] = isMoving
-      ? _l0RiskColor(_l0CellTTC(cell))
-      : _l0DistColor(Math.hypot(cell.center.x, cell.center.y));
-    const alpha = cell.occupied
-      ? Math.min(0.97, 0.70 + cell.occupied_score * 0.27) : 0.48;
-    ctx.fillStyle = `rgba(${r},${g},${b},${alpha})`;
-    ctx.beginPath(); ctx.arc(px, py, CELL_R, 0, Math.PI * 2); ctx.fill();
-    if (cell.occupied) {
-      ctx.strokeStyle = `rgba(${r},${g},${b},0.90)`;
-      ctx.lineWidth   = dpr;
-      ctx.stroke();
-    }
+    if (!cell.occupied) continue;
+    const azRad = Math.atan2(cell.center.y, cell.center.x); // body: atan2(right,fwd)
+    const ttc   = _l0CellTTC(cell);
+    const dist  = Math.hypot(cell.center.x, cell.center.y);
+    const rPx   = isMoving ? ttcRadius(ttc) : ttcRadius(dist); // hover: dist as proxy
+    const [px, py] = azRadiusToPx(azRad, rPx);
+    const [r, g, b] = isMoving ? _l0RiskColor(ttc) : _l0DistColor(dist);
+    const alpha = Math.min(0.97, 0.72 + cell.occupied_score * 0.25);
+    ctx.fillStyle   = `rgba(${r},${g},${b},${alpha})`;
+    ctx.strokeStyle = `rgba(${r},${g},${b},0.92)`;
+    ctx.lineWidth   = dpr;
+    ctx.beginPath(); ctx.arc(px, py, DOT_R, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
   }
 
-  // ── Escape vector — from C++ escape_direction_body (unit vec, body frame) ─────
+  // ── Escape vector ─────────────────────────────────────────────────────────────
   if (lfmEscapeBody && (Math.abs(lfmEscapeBody.x) + Math.abs(lfmEscapeBody.y)) > 0.1) {
     const ARM = INSET_R * 0.62;
-    // Body frame → canvas: Y(right)→+X, X(fwd)→−Y
     _drawRadarArrow(ctx, CX, CY,
-      CX + lfmEscapeBody.y * ARM,
-      CY - lfmEscapeBody.x * ARM,
+      CX + lfmEscapeBody.y * ARM, CY - lfmEscapeBody.x * ARM,
       'rgba(35,228,95,0.95)', 3 * dpr, 18 * dpr);
   }
 
-  // ── Flight vector — from C++ ego_speed_mps + egoYaw (world heading → body fwd) ─
-  // Body forward is always +X, so the flight vector points straight up (12 o'clock)
-  // scaled by confidence; show only when moving.
+  // ── Flight vector (body forward = 12 o'clock) ─────────────────────────────────
   if (isMoving) {
-    const ARM = INSET_R * 0.55;
-    // In the radar, body +X = straight up. We draw the flight vector as pointing
-    // in the forward direction (ego moves forward in body frame by definition).
-    _drawRadarArrow(ctx, CX, CY,
-      CX, CY - ARM,   // straight up = body forward
+    _drawRadarArrow(ctx, CX, CY, CX, CY - INSET_R * 0.52,
       'rgba(80,208,255,0.97)', 4 * dpr, 20 * dpr);
   }
 
@@ -709,33 +704,31 @@ function drawL0PolarInset() {
   ctx.beginPath(); ctx.arc(CX, CY, 6 * dpr, 0, Math.PI * 2); ctx.fill();
   ctx.strokeStyle = 'rgba(0,0,0,0.72)'; ctx.lineWidth = 1.5 * dpr; ctx.stroke();
 
-  ctx.restore();   // release clip
+  ctx.restore();
 
   // ── External labels ───────────────────────────────────────────────────────────
   ctx.save();
 
-  // Title
   ctx.font = `${TM}px system-ui`;
   ctx.fillStyle = 'rgba(58,78,162,0.72)';
   ctx.textAlign = 'center'; ctx.textBaseline = 'bottom';
-  ctx.fillText('L0 ego radar', CX, CY - INSET_R - 24 * dpr);
+  ctx.fillText('L0 TTC radar', CX, CY - INSET_R - 24 * dpr);
 
-  // Heading at 12 o'clock (replaces "fwd")
   ctx.font = `bold ${TL}px system-ui`;
   ctx.fillStyle = 'rgba(110,142,238,0.92)';
   ctx.textAlign = 'center'; ctx.textBaseline = 'bottom';
   ctx.fillText(`▲ ${_l0HeadingStr(state.egoYaw)}`, CX, CY - INSET_R - 1 * dpr);
 
-  // Range labels along 12 o'clock axis
+  // TTC ring labels
   ctx.font = `${TS}px system-ui`;
-  ctx.fillStyle = 'rgba(55,75,158,0.70)';
+  ctx.fillStyle = 'rgba(55,75,158,0.72)';
   ctx.textAlign = 'left'; ctx.textBaseline = 'middle';
-  for (const rm of RING_M) {
-    const rPx = SCALE_SQ * Math.sqrt(rm);
-    if (rPx < INSET_R - 5 * dpr) ctx.fillText(`${rm}m`, CX + 4 * dpr, CY - rPx);
+  for (const ts of TTC_RINGS) {
+    const rPx = ttcRadius(ts);
+    if (rPx < INSET_R - 5 * dpr) ctx.fillText(`${ts}s`, CX + 4 * dpr, CY - rPx);
   }
 
-  // ── Risk readout — sourced entirely from C++ pre-computed fields ──────────────
+  // Risk readout
   let readoutStr, readoutRGB;
   if (isMoving && Number.isFinite(lfmGlobalMinTTC)) {
     readoutStr = `TTC  ${lfmGlobalMinTTC.toFixed(1)} s`;
@@ -749,7 +742,6 @@ function drawL0PolarInset() {
   }
 
   let labelY = CY + 10 * dpr;
-
   const [rr, rg, rb] = readoutRGB;
   ctx.font = `bold ${TXL}px system-ui`;
   ctx.fillStyle = `rgba(${rr},${rg},${rb},0.98)`;
@@ -768,9 +760,155 @@ function drawL0PolarInset() {
   ctx.font = `${TS}px system-ui`;
   ctx.textBaseline = 'top';
   ctx.fillStyle = 'rgba(80,208,255,0.82)'; ctx.textAlign = 'right';
-  ctx.fillText('▶ flight', CX - 6 * dpr, labelY);
+  ctx.fillText('▶ flt', CX - 6 * dpr, labelY);
   ctx.fillStyle = 'rgba(35,228,95,0.82)';  ctx.textAlign = 'left';
-  ctx.fillText('▶ escape', CX + 6 * dpr, labelY);
+  ctx.fillText('▶ esc', CX + 6 * dpr, labelY);
+
+  ctx.restore();
+}
+
+// ── L0 sensor cone scope (az × el, source-tagged, TTC-coloured) ──────────────
+// Rectilinear projection of the sensor frustum. Each dot = one raw evidence
+// observation from C++, placed at its body-frame (az, el) angles.
+// Color outer ring = TTC risk; color inner dot = sensor source.
+function drawL0ConeScope() {
+  if (!state.showL0) return;
+  // Only draw when we have observations or spherical bins.
+  if (!lfmSensorObs.length && !lfmSphericalBins.length) return;
+
+  const dpr = devicePixelRatio;
+
+  // Panel dimensions and position (below the TTC radar, right-aligned)
+  const INSET_R  = _L0_INSET_RL * dpr;
+  const MARGIN   = 24 * dpr;
+  const PAD      = { l: 32*dpr, r: 10*dpr, t: 20*dpr, b: 24*dpr };
+  const W        = (INSET_R * 2 + MARGIN) | 0;  // same width as radar
+  const H        = (130 * dpr) | 0;
+  const X0       = canvas.width - W - MARGIN + PAD.l;
+  const Y0       = (INSET_R * 2 + MARGIN * 2 + 16 * dpr) + PAD.t;  // below radar
+  const PW       = W - PAD.l - PAD.r;
+  const PH       = H - PAD.t - PAD.b;
+
+  const AZ_MIN = -75, AZ_MAX = 75;   // degrees — match sensor FOV
+  const EL_MIN = -45, EL_MAX = 45;
+
+  function azPx(az_rad) {
+    const deg = az_rad * (180 / Math.PI);
+    return X0 + ((deg - AZ_MIN) / (AZ_MAX - AZ_MIN)) * PW;
+  }
+  function elPx(el_rad) {
+    const deg = el_rad * (180 / Math.PI);
+    return Y0 + (1 - (deg - EL_MIN) / (EL_MAX - EL_MIN)) * PH;
+  }
+  function azDegPx(deg) { return X0 + ((deg - AZ_MIN) / (AZ_MAX - AZ_MIN)) * PW; }
+  function elDegPx(deg) { return Y0 + (1 - (deg - EL_MIN) / (EL_MAX - EL_MIN)) * PH; }
+
+  // Source bitmask → inner dot color
+  function srcColor(src) {
+    if (src & 0x01) return 'rgba(224,64,32,0.88)';   // AirSimGT
+    if (src & 0x02) return 'rgba(32,160,224,0.88)';  // DepthProvider
+    if (src & 0x04) return 'rgba(224,192,32,0.88)';  // VisualObstacle
+    return 'rgba(160,100,220,0.80)';                  // other
+  }
+
+  ctx.save();
+
+  // Panel background
+  const panX = canvas.width - W - MARGIN;
+  const panY = INSET_R * 2 + MARGIN * 2 + 16 * dpr;
+  ctx.fillStyle   = 'rgba(5,8,17,0.94)';
+  ctx.strokeStyle = 'rgba(55,82,168,0.80)';
+  ctx.lineWidth   = 1.5 * dpr;
+  ctx.beginPath();
+  ctx.rect(panX, panY, W, H);
+  ctx.fill(); ctx.stroke();
+
+  // Clip to panel
+  ctx.beginPath(); ctx.rect(panX + PAD.l, panY + PAD.t, PW, PH); ctx.clip();
+
+  // Grid
+  ctx.setLineDash([2*dpr, 4*dpr]);
+  ctx.strokeStyle = 'rgba(55,80,160,0.16)'; ctx.lineWidth = 0.5 * dpr;
+  for (const az of [-60,-30,0,30,60]) {
+    const x = azDegPx(az);
+    ctx.beginPath(); ctx.moveTo(x, Y0); ctx.lineTo(x, Y0 + PH); ctx.stroke();
+  }
+  for (const el of [-30,0,30]) {
+    const y = elDegPx(el);
+    ctx.beginPath(); ctx.moveTo(X0, y); ctx.lineTo(X0 + PW, y); ctx.stroke();
+  }
+  ctx.setLineDash([]);
+
+  // Boresight cross-hair
+  ctx.strokeStyle = 'rgba(80,110,215,0.16)'; ctx.lineWidth = 0.5 * dpr;
+  ctx.beginPath(); ctx.moveTo(azDegPx(0), Y0); ctx.lineTo(azDegPx(0), Y0+PH); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(X0, elDegPx(0)); ctx.lineTo(X0+PW, elDegPx(0)); ctx.stroke();
+
+  // ── Spherical bins — background heat (occupied bins as faint colored cells) ──
+  for (const b of lfmSphericalBins) {
+    const [r, g, bl] = _l0RiskColor(b.ttc);
+    const x = azDegPx(b.az);
+    const azW = PW / lfmSphNumAz;
+    const elH = PH / lfmSphNumEl;
+    const y = elDegPx(b.el) - elH * 0.5;
+    ctx.fillStyle = `rgba(${r},${g},${bl},0.18)`;
+    ctx.fillRect(x - azW * 0.5, y, azW, elH);
+  }
+
+  // ── Per-sensor observations — dot per raw evidence contact ────────────────────
+  const isMoving = lfmEgoSpeedMps > 0.3;
+  for (const o of lfmSensorObs) {
+    if (!Number.isFinite(o.r) || o.r > 80) continue;
+    const px = azPx(o.az);
+    const py = elPx(o.el);
+    const ttc = o.ttc;
+    const [r, g, b] = isMoving ? _l0RiskColor(ttc) : _l0DistColor(o.r);
+    // Outer TTC halo
+    ctx.beginPath(); ctx.arc(px, py, 7 * dpr, 0, Math.PI * 2);
+    ctx.fillStyle = `rgba(${r},${g},${b},0.22)`; ctx.fill();
+    // Inner source dot
+    ctx.beginPath(); ctx.arc(px, py, 4 * dpr, 0, Math.PI * 2);
+    ctx.fillStyle = srcColor(1 << (o.src & 0x03)); ctx.fill();
+    // TTC ring stroke
+    ctx.beginPath(); ctx.arc(px, py, 7 * dpr, 0, Math.PI * 2);
+    ctx.strokeStyle = `rgba(${r},${g},${b},0.75)`; ctx.lineWidth = 1.5 * dpr; ctx.stroke();
+  }
+
+  ctx.restore();
+
+  // Labels outside clip
+  ctx.save();
+  const TS2 = 11 * dpr;
+  ctx.font = `${TS2}px system-ui`; ctx.fillStyle = 'rgba(55,75,148,0.75)';
+  ctx.textAlign = 'center'; ctx.textBaseline = 'bottom';
+  ctx.fillText('Sensor cone  az × el', panX + W / 2, panY + 2 * dpr);
+
+  ctx.textBaseline = 'top';
+  for (const az of [-60, 0, 60]) {
+    ctx.fillText(`${az}°`, azDegPx(az), panY + H - PAD.b + 2 * dpr);
+  }
+  ctx.textAlign = 'right'; ctx.textBaseline = 'middle';
+  for (const el of [-30, 0, 30]) {
+    ctx.fillText(`${el}°`, panX + PAD.l - 3 * dpr, elDegPx(el));
+  }
+
+  // Source legend (compact, below panel)
+  const LY = panY + H + 4 * dpr;
+  ctx.font = `${TS2}px system-ui`; ctx.textBaseline = 'top';
+  const srcs = [
+    ['rgba(224,64,32,0.88)',  'GT'],
+    ['rgba(32,160,224,0.88)', 'Depth'],
+    ['rgba(224,192,32,0.88)', 'Visual'],
+  ];
+  let lx = panX + PAD.l;
+  for (const [col, lbl] of srcs) {
+    ctx.fillStyle = col;
+    ctx.beginPath(); ctx.arc(lx + 5 * dpr, LY + 6 * dpr, 4 * dpr, 0, Math.PI * 2); ctx.fill();
+    ctx.fillStyle = 'rgba(55,75,148,0.70)';
+    ctx.textAlign = 'left';
+    ctx.fillText(lbl, lx + 12 * dpr, LY + 1 * dpr);
+    lx += (lbl.length * 6 + 20) * dpr;
+  }
 
   ctx.restore();
 }
@@ -1476,7 +1614,8 @@ function draw() {
   drawDroneMarker();
   if (state.firstBlocked) drawPoint(state.firstBlocked, "rgba(255,80,255,1.0)", 8);
   drawOrientationGizmo(); // fixed bottom-right
-  drawL0PolarInset();     // fixed top-right — drawn after gizmo to stay on top
+  drawL0PolarInset();     // fixed top-right: TTC radar
+  drawL0ConeScope();      // below radar: sensor az×el scope
 
   // Schedule next frame if live aging is active
   if (live.connected) {
@@ -1663,6 +1802,28 @@ function applyWorldSnapshot(snap, seq, {deferRender=false}={}) {
           ttc: fin(s.ttc, Infinity),
           nr:  fin(s.nr,  Infinity),
           obs: s.obs === true,
+        }))
+      : [];
+    lfmSphNumAz     = fin(lfm.spherical_num_az, 36) || 36;
+    lfmSphNumEl     = fin(lfm.spherical_num_el, 9)  || 9;
+    lfmSphericalBins = Array.isArray(lfm.spherical_risk_bins)
+      ? lfm.spherical_risk_bins.map(b => ({
+          az:  fin(b.az,  0),
+          el:  fin(b.el,  0),
+          ttc: fin(b.ttc, Infinity),
+          vr:  fin(b.vr,  0),
+          nr:  fin(b.nr,  Infinity),
+          sm:  b.sm | 0,
+        }))
+      : [];
+    lfmSensorObs = Array.isArray(lfm.sensor_observations)
+      ? lfm.sensor_observations.map(o => ({
+          az:  fin(o.az,  0),
+          el:  fin(o.el,  0),
+          r:   fin(o.r,   Infinity),
+          vr:  fin(o.vr,  0),
+          ttc: fin(o.ttc, Infinity),
+          src: o.src | 0,
         }))
       : [];
   }

@@ -441,6 +441,42 @@ void write_local_flight_map(std::ostringstream& out, const LocalFlightMapSnapsho
         out << "}";
     }
     if (!map.polar_risk_sectors.empty()) out << "\n    ";
+    out << "],\n";
+
+    // ── 2-D spherical risk bins ───────────────────────────────────────────────
+    out << "    \"spherical_num_az\": " << map.spherical_num_az << ",\n";
+    out << "    \"spherical_num_el\": " << map.spherical_num_el << ",\n";
+    out << "    \"spherical_risk_bins\": [";
+    for (std::size_t i = 0; i < map.spherical_risk_bins.size(); ++i) {
+        const auto& b = map.spherical_risk_bins[i];
+        if (!b.has_obstacle) { continue; }   // omit empty bins — viewer fills gaps as safe
+        if (i != 0) out << ",";
+        out << "\n      {";
+        out << "\"az\":" << b.az_centre_deg;
+        out << ",\"el\":" << b.el_centre_deg;
+        out << ",\"ttc\":"; write_float_or_null(out, b.min_ttc_s);
+        out << ",\"vr\":" << b.max_closing_speed_mps;
+        out << ",\"nr\":";  write_float_or_null(out, b.nearest_range_m);
+        out << ",\"sm\":" << static_cast<int>(b.source_mask);
+        out << "}";
+    }
+    out << "\n    ],\n";
+
+    // ── Per-sensor observations (source-tagged, body-frame spherical) ─────────
+    out << "    \"sensor_observations\": [";
+    for (std::size_t i = 0; i < map.sensor_observations.size(); ++i) {
+        const auto& o = map.sensor_observations[i];
+        if (i != 0) out << ",";
+        out << "\n      {";
+        out << "\"az\":" << o.az_body_rad;
+        out << ",\"el\":" << o.el_body_rad;
+        out << ",\"r\":";  write_float_or_null(out, o.range_m);
+        out << ",\"vr\":" << o.closing_speed_mps;
+        out << ",\"ttc\":"; write_float_or_null(out, o.ttc_s);
+        out << ",\"src\":" << static_cast<int>(o.source_kind);
+        out << "}";
+    }
+    if (!map.sensor_observations.empty()) out << "\n    ";
     out << "]\n";
     out << "  },\n";
 }
