@@ -239,6 +239,7 @@ const HEIGHT_COLOR_RAMP = [
 const state = {
   ego: null,
   egoYaw: null,
+  takeoffPos: null,          // first recorded ego position (home / launch point)
   trajectory: [],           // {x,y,z,live_seen_ms}
   sensingOverlays: [],
   firstBlocked: null,
@@ -778,14 +779,18 @@ function drawL0ConeScope() {
 
   const dpr = devicePixelRatio;
 
-  // Panel dimensions and position (below the TTC radar, right-aligned)
+  // Panel: right-aligned, placed in the lower-right corner with fixed height.
+  // Keep it off the orientation gizmo (bottom-right, ~140px).
   const INSET_R  = _L0_INSET_RL * dpr;
   const MARGIN   = 24 * dpr;
   const PAD      = { l: 32*dpr, r: 10*dpr, t: 20*dpr, b: 24*dpr };
-  const W        = (INSET_R * 2 + MARGIN) | 0;  // same width as radar
-  const H        = (130 * dpr) | 0;
-  const X0       = canvas.width - W - MARGIN + PAD.l;
-  const Y0       = (INSET_R * 2 + MARGIN * 2 + 16 * dpr) + PAD.t;  // below radar
+  const W        = Math.min(480 * dpr, INSET_R * 2 + MARGIN);  // cap width
+  const H        = 148 * dpr;
+  // Anchor to bottom-right, above the orientation gizmo (140px) plus some gap
+  const panX     = canvas.width - W - MARGIN;
+  const panY     = canvas.height - H - 160 * dpr;
+  const X0       = panX + PAD.l;
+  const Y0       = panY + PAD.t;
   const PW       = W - PAD.l - PAD.r;
   const PH       = H - PAD.t - PAD.b;
 
@@ -813,9 +818,7 @@ function drawL0ConeScope() {
 
   ctx.save();
 
-  // Panel background
-  const panX = canvas.width - W - MARGIN;
-  const panY = INSET_R * 2 + MARGIN * 2 + 16 * dpr;
+  // Panel background (panX/panY already computed above)
   ctx.fillStyle   = 'rgba(5,8,17,0.94)';
   ctx.strokeStyle = 'rgba(55,82,168,0.80)';
   ctx.lineWidth   = 1.5 * dpr;
@@ -1543,6 +1546,33 @@ function drawDroneMarker() {
   }
 }
 
+function drawTakeoffMarker() {
+  const p = state.takeoffPos;
+  if (!p) return;
+  const c = project(p);
+  if (!c) return;
+  const R = 9 * dpr;
+  ctx.save();
+  // Green diamond outline
+  ctx.strokeStyle = 'rgba(32,224,80,1.0)';
+  ctx.fillStyle   = 'rgba(5,12,8,0.85)';
+  ctx.lineWidth   = 2 * dpr;
+  ctx.beginPath();
+  ctx.moveTo(c.x,      c.y - R);
+  ctx.lineTo(c.x + R,  c.y);
+  ctx.lineTo(c.x,      c.y + R);
+  ctx.lineTo(c.x - R,  c.y);
+  ctx.closePath();
+  ctx.fill(); ctx.stroke();
+  // "H" label
+  ctx.fillStyle   = 'rgba(32,224,80,1.0)';
+  ctx.font        = `bold ${Math.round(9 * dpr)}px system-ui`;
+  ctx.textAlign   = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillText('H', c.x, c.y);
+  ctx.restore();
+}
+
 function drawTrajectory() {
   if (!state.showTrajectory||state.trajectory.length<2) return;
   const now=Date.now();
@@ -1611,6 +1641,7 @@ function draw() {
   if (state.showTrajectory) drawTrajectory();
   drawGhostDetections();
   drawSensingOverlays();
+  drawTakeoffMarker();
   drawDroneMarker();
   if (state.firstBlocked) drawPoint(state.firstBlocked, "rgba(255,80,255,1.0)", 8);
   drawOrientationGizmo(); // fixed bottom-right
@@ -1735,6 +1766,7 @@ function applyWorldSnapshot(snap, seq, {deferRender=false}={}) {
     live.egoUpdateCount++;
     state.ego=ego;
     const last=state.trajectory.length?state.trajectory[state.trajectory.length-1]:null;
+    if (!state.takeoffPos) state.takeoffPos = {...ego};
     if (!last||Math.hypot(last.x-ego.x,last.y-ego.y,last.z-ego.z)>0.05) {
       state.trajectory.push({...ego, live_seen_ms:Date.now()});
       if (state.trajectory.length>MAX_TRAJ_POINTS) state.trajectory.splice(0,state.trajectory.length-MAX_TRAJ_POINTS);

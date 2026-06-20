@@ -447,20 +447,24 @@ void write_local_flight_map(std::ostringstream& out, const LocalFlightMapSnapsho
     out << "    \"spherical_num_az\": " << map.spherical_num_az << ",\n";
     out << "    \"spherical_num_el\": " << map.spherical_num_el << ",\n";
     out << "    \"spherical_risk_bins\": [";
-    for (std::size_t i = 0; i < map.spherical_risk_bins.size(); ++i) {
-        const auto& b = map.spherical_risk_bins[i];
-        if (!b.has_obstacle) { continue; }   // omit empty bins — viewer fills gaps as safe
-        if (i != 0) out << ",";
-        out << "\n      {";
-        out << "\"az\":" << b.az_centre_deg;
-        out << ",\"el\":" << b.el_centre_deg;
-        out << ",\"ttc\":"; write_float_or_null(out, b.min_ttc_s);
-        out << ",\"vr\":" << b.max_closing_speed_mps;
-        out << ",\"nr\":";  write_float_or_null(out, b.nearest_range_m);
-        out << ",\"sm\":" << static_cast<int>(b.source_mask);
-        out << "}";
+    {
+        bool first_bin = true;
+        for (const auto& b : map.spherical_risk_bins) {
+            if (!b.has_obstacle) { continue; }   // omit empty bins — viewer treats gap as safe
+            if (!first_bin) { out << ","; }
+            first_bin = false;
+            out << "\n      {";
+            out << "\"az\":" << b.az_centre_deg;
+            out << ",\"el\":" << b.el_centre_deg;
+            out << ",\"ttc\":"; write_float_or_null(out, b.min_ttc_s);
+            out << ",\"vr\":" << b.max_closing_speed_mps;
+            out << ",\"nr\":";  write_float_or_null(out, b.nearest_range_m);
+            out << ",\"sm\":" << static_cast<int>(b.source_mask);
+            out << "}";
+        }
+        if (!first_bin) { out << "\n    "; }
     }
-    out << "\n    ],\n";
+    out << "],\n";
 
     // ── Per-sensor observations (source-tagged, body-frame spherical) ─────────
     out << "    \"sensor_observations\": [";
