@@ -1,5 +1,6 @@
 #include "dedalus/runtime/core_stack_runner.hpp"
 
+#include "dedalus/avoidance/local_flight_map.hpp"
 #include "dedalus/avoidance/mission_local_planning_map_publisher.hpp"
 #include "dedalus/avoidance/mission_local_traversability_map_publisher.hpp"
 #include "dedalus/sensing/airsim_depth_obstacle_detector.hpp"
@@ -368,6 +369,20 @@ bool CoreStackRunner::run_once() {
     snapshot_for_annotation.has_local_flight_map = true;
     if (timing_writer_) {
         timing_writer_->record_stage("local_flight_map.update_from_mission_local_map", duration_us(start));
+    }
+
+    // Rotate map-frame velocity into body frame (yaw-only, NED convention) and
+    // compute the L0 polar risk map so flight response subscribers can read it.
+    {
+        const double yaw = snapshot_for_annotation.ego.local_T_body.rotation_rpy.z;
+        const double vx  = snapshot_for_annotation.ego.velocity_local.x;
+        const double vy  = snapshot_for_annotation.ego.velocity_local.y;
+        const Vec3 vel_body{
+             vx * std::cos(yaw) + vy * std::sin(yaw),
+            -vx * std::sin(yaw) + vy * std::cos(yaw),
+            0.0
+        };
+        compute_l0_polar_risk(snapshot_for_annotation.local_flight_map, vel_body);
     }
 
     start = SteadyClock::now();

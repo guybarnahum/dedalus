@@ -210,4 +210,97 @@ bool LocalFlightMapAccumulator::evidence_is_usable(const ObstacleEvidence& evide
     return local_to_grid(evidence.center_local).has_value();
 }
 
+// ── L0 polar risk computation ─────────────────────────────────────────────────
+
+void compute_l0_polar_risk(LocalFlightMapSnapshot& snap,
+                           Vec3 velocity_body_mps,
+                           int num_sectors) {
+    constexpr double kMinDist  = 0.1;   // m  — ignore degenerate near-zero cells
+    constexpr double kMinSpeed = 0.05;  // m/s — treat slower as hover
+    constexpr double kEpsTTC   = 1e-6;  // s  — avoid div/0
+    constexpr double kProxBias = 1.0;   // proximity weight base: 1 / max(1m, dist)
+
+    if (num_sectors < 1) { num_sectors = 36; }
+
+    const double speed = std::hypot(velocity_body_mps.x, velocity_body_mps.y);
+    snap.ego_speed_mps = static_cast<float>(speed);
+
+    const double sector_width_deg = 360.0 / static_cast<double>(num_sectors);
+
+    // Initialise sectors.
+    snap.polar_risk_sectors.assign(static_cast<std::size_t>(num_sectors), L0PolarRiskSector{});
+    for (int s = 0; s < num_sectors; ++s) {
+        // Centre azimuths: sector 0 is centred on body-forward (0°).
+        // Layout: −180 + (s + 0.5) * width  so sector 0 spans [−5°, +5°] with 36 sectors.
+        const double centre = -180.0 + (static_cast<double>(s) + 0.5) * sector_width_deg;
+        snap.polar_risk_sectors[static_cast<std::size_t>(s)].azimuth_deg = static_cast<float>(centre);
+    }
+
+    // Weighted escape centroid accumulators (body frame XY only).
+    double wsum_x = 0.0, wsum_y = 0.0, wtotal = 0.0;
+    float  global_min_ttc = std::numeric_limits<float>::infinity();
+
+    const bool is_moving = (speed > kMinSpeed);
+
+    for (const auto& cell : snap.cells) {
+        if (!cell.occupied) { continue; }
+
+        const double cx   = cell.center_local.x;  // body +X = forward
+        const double cy   = cell.center_local.y;  // body +Y = right
+        const double dist = std::hypot(cx, cy);
+        if (dist < kMinDist) { continue; }
+
+        // Azimuth in body frame: atan2(right, fwd) → −180…+180°
+        const double az_deg = std::atan2(cy, cx) * (180.0 / M_PI);
+
+        // Map azimuth to sector index (shift to 0…360 range first).
+        const double shifted = az_deg + 180.0;
+        int sidx = static_cast<int>(shifted / sector_width_deg);
+        sidx = std::clamp(sidx, 0, num_sectors - 1);
+
+        auto& sector = snap.polar_risk_sectors[static_cast<std::size_t>(sidx)];
+        sector.has_obstacle = true;
+        if (static_cast<float>(dist) < sector.nearest_range_m) {
+            sector.nearest_range_m = static_cast<float>(dist);
+        }
+
+        // Radial closing speed: positive = ego converging toward obstacle.
+        double v_r = 0.0;
+        if (is_moving) {
+            v_r = (velocity_body_mps.x * cx + velocity_body_mps.y * cy) / dist;
+        }
+
+        if (static_cast<float>(v_r) > sector.max_closing_speed_mps) {
+            sector.max_closing_speed_mps = static_cast<float>(v_r);
+        }
+
+        if (v_r > kMinSpeed) {
+            const float ttc = static_cast<float>(dist / std::max(v_r, kEpsTTC));
+            if (ttc < sector.min_ttc_s) {
+                sector.min_ttc_s = ttc;
+            }
+            if (ttc < global_min_ttc) {
+                global_min_ttc = ttc;
+            }
+        }
+
+        // Closing-speed-weighted escape centroid (unit direction * weight).
+        const double prox_bias = kProxBias / std::max(kProxBias, dist);
+        const double w         = std::max(0.0, v_r) + prox_bias;
+        wsum_x += (cx / dist) * w;
+        wsum_y += (cy / dist) * w;
+        wtotal += w;
+    }
+
+    snap.global_min_ttc_s = global_min_ttc;
+
+    // Escape direction: opposite of the weighted threat centroid.
+    const double mag = std::hypot(wsum_x, wsum_y);
+    if (wtotal > 1e-9 && mag > 1e-9) {
+        snap.escape_direction_body = Vec3{-(wsum_x / mag), -(wsum_y / mag), 0.0};
+    } else {
+        snap.escape_direction_body = Vec3{0.0, 0.0, 0.0};
+    }
+}
+
 }  // namespace dedalus

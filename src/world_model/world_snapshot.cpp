@@ -420,6 +420,27 @@ void write_local_flight_map(std::ostringstream& out, const LocalFlightMapSnapsho
         out << "      }";
     }
     if (!debug_cells.empty()) out << "\n    ";
+    out << "],\n";
+
+    // ── L0 polar risk sectors ────────────────────────────────────────────────
+    out << "    \"ego_speed_mps\": " << map.ego_speed_mps << ",\n";
+    out << "    \"global_min_ttc_s\": ";
+    write_float_or_null(out, map.global_min_ttc_s);
+    out << ",\n";
+    out << "    \"escape_direction_body\": "; write_vec3(out, map.escape_direction_body); out << ",\n";
+    out << "    \"polar_risk_sectors\": [";
+    for (std::size_t i = 0; i < map.polar_risk_sectors.size(); ++i) {
+        const auto& s = map.polar_risk_sectors[i];
+        if (i != 0) out << ",";
+        out << "\n      {";
+        out << "\"az\":" << s.azimuth_deg;
+        out << ",\"vr\":" << s.max_closing_speed_mps;
+        out << ",\"ttc\":"; write_float_or_null(out, s.min_ttc_s);
+        out << ",\"nr\":";  write_float_or_null(out, s.nearest_range_m);
+        out << ",\"obs\":" << (s.has_obstacle ? "true" : "false");
+        out << "}";
+    }
+    if (!map.polar_risk_sectors.empty()) out << "\n    ";
     out << "]\n";
     out << "  },\n";
 }

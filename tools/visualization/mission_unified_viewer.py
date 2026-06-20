@@ -269,6 +269,11 @@ let lfmCellSizeM = 0.5;
 let lfmForwardRangeM = 30;
 let lfmRearRangeM = 6;
 let lfmLateralRangeM = 15;
+// Pre-computed polar risk fields from C++ (compute_l0_polar_risk)
+let lfmEgoSpeedMps   = 0;         // m/s
+let lfmGlobalMinTTC  = Infinity;  // s
+let lfmEscapeBody    = null;      // {x,y,z} unit vec body frame, or null
+let lfmPolarSectors  = [];        // [{az,vr,ttc,nr,obs}, …] 36 sectors
 
 // Traversability (L1)
 const travCellsByKey = new Map();      // cellKey → trav cell (0.5 m raw cells from server)
@@ -493,32 +498,57 @@ window.animateZoom = function(targetZoom) {
 
 // ── L0 ego radar inset ─────────────────────────────────────────────────────────
 //
-// Fixed top-right canvas inset.  Shows ego-local LocalFlightMap cells in a
-// FOV-arc sector (±75° from 12 o'clock = body forward = direction of movement).
-// Rear sector is not drawn — only what sensors can see forward.
+// Fixed top-right canvas inset — ±75° FOV sector, 12 o'clock = body heading.
 //
-// Visual encoding:
-//   Cells:    distance ramp  red < 5 m → orange → yellow → green > 20 m
-//   Cyan arrow:   actual velocity direction (body-frame flight vector)
-//   Green arrow:  escape direction (away from obstacle centroid)
-//   Yellow dot:   ego (drone) at arc vertex
+// RISK MODEL: per-cell risk = radial closing speed (m/s).
+//   v_r = dot(ego_velocity_body, cell_unit_dir_body).  TTC = dist / max(ε, v_r).
+//   Cells with v_r ≤ 0 (receding) are coloured green — no collision risk.
+//
+// Cell colour:
+//   Moving (speed > 0.3 m/s):  TTC ramp — red < 2 s, yellow < 5 s, green > 10 s
+//   Hover / takeoff / landing:  distance ramp — red < 3 m, green > 22 m
+//
+// Escape vector: closing-speed-weighted centroid of occupied cells.
+//   Points away from threats the drone is most actively converging on.
+//   Hover fallback: distance-weighted centroid.
+//
+// Radial scale: sqrt(dist) — denser rings close-in, sparser far out.
 
-// Distance → RGB (no alpha — set separately)
+const _L0_FOV_DEG  = 75;    // half-FOV angle
+const _L0_INSET_RL = 230;   // logical radius px — 2× previous
+
 function _l0DistColor(distM) {
-  if (distM <  3) return [225, 45,  35];
+  // Distance → RGB for hover/stationary mode
+  if (distM <  3) return [228, 42,  30];
   if (distM < 10) {
     const t = (distM - 3) / 7;
-    return [225, Math.round(45 + t * 150), Math.round(35 - t * 20)];
+    return [228, Math.round(42 + t * 158), Math.round(30 - t * 15)];
   }
   if (distM < 22) {
     const t = (distM - 10) / 12;
-    return [Math.round(225 - t * 180), Math.round(195 + t * 15), 15];
+    return [Math.round(228 - t * 188), Math.round(200 + t * 10), 15];
   }
-  return [45, 205, 65];
+  return [42, 210, 65];
 }
 
-// Draw a filled-head arrow (shaft + arrowhead).
-// All coords in device px.  color = CSS rgba string.
+function _l0RiskColor(ttcS) {
+  // TTC (s) → RGB for moving mode
+  if (!Number.isFinite(ttcS) || ttcS > 10) return [42, 210, 65];
+  if (ttcS > 5) {
+    const t = (10 - ttcS) / 5;
+    return [Math.round(42 + t * 186), 210, Math.round(65 - t * 55)];
+  }
+  if (ttcS > 2) {
+    const t = (5 - ttcS) / 3;
+    return [228, Math.round(210 - t * 168), 10];
+  }
+  if (ttcS > 0.8) {
+    const t = (2 - ttcS) / 1.2;
+    return [228, Math.round(42 - t * 28), 10];
+  }
+  return [238, 14, 8];
+}
+
 function _drawRadarArrow(ctx, x1, y1, x2, y2, color, lineW, headLen) {
   const dx = x2 - x1, dy = y2 - y1;
   const len = Math.hypot(dx, dy);
@@ -526,19 +556,40 @@ function _drawRadarArrow(ctx, x1, y1, x2, y2, color, lineW, headLen) {
   const ux = dx / len, uy = dy / len;
   const hl = Math.min(headLen, len * 0.42);
   const hw = hl * 0.44;
-  const px = -uy, py = ux;                   // perpendicular unit vector
-  // Shaft (stops short of head base so they don't overlap)
+  const perp = [-uy, ux];
   ctx.beginPath();
   ctx.moveTo(x1, y1);
   ctx.lineTo(x2 - ux * hl * 0.55, y2 - uy * hl * 0.55);
   ctx.strokeStyle = color; ctx.lineWidth = lineW; ctx.stroke();
-  // Arrowhead
   ctx.beginPath();
   ctx.moveTo(x2, y2);
-  ctx.lineTo(x2 - ux * hl + px * hw, y2 - uy * hl + py * hw);
-  ctx.lineTo(x2 - ux * hl - px * hw, y2 - uy * hl - py * hw);
+  ctx.lineTo(x2 - ux * hl + perp[0] * hw, y2 - uy * hl + perp[1] * hw);
+  ctx.lineTo(x2 - ux * hl - perp[0] * hw, y2 - uy * hl - perp[1] * hw);
   ctx.closePath();
   ctx.fillStyle = color; ctx.fill();
+}
+
+// Lookup the C++-computed TTC for a cell by matching its body-frame azimuth
+// to the nearest polar sector in lfmPolarSectors.
+function _l0CellTTC(cell) {
+  if (!lfmPolarSectors.length) return Infinity;
+  const az = Math.atan2(cell.center.y, cell.center.x) * (180 / Math.PI); // −180…+180
+  // Find the sector whose centre is nearest (wrap-safe via abs-diff ≤ 180).
+  let best = null, bestDiff = Infinity;
+  for (const s of lfmPolarSectors) {
+    let d = Math.abs(s.az - az);
+    if (d > 180) d = 360 - d;
+    if (d < bestDiff) { bestDiff = d; best = s; }
+  }
+  return best ? best.ttc : Infinity;
+}
+
+function _l0HeadingStr(yawRad) {
+  if (yawRad === null || !Number.isFinite(yawRad)) return '—';
+  const deg = ((yawRad * 180 / Math.PI) % 360 + 360) % 360;
+  const card = ['N','NNE','NE','ENE','E','ESE','SE','SSE',
+                 'S','SSW','SW','WSW','W','WNW','NW','NNW'][Math.round(deg / 22.5) % 16];
+  return `${Math.round(deg)}° ${card}`;
 }
 
 function drawL0PolarInset() {
@@ -546,174 +597,180 @@ function drawL0PolarInset() {
 
   const dpr     = devicePixelRatio;
   const MARGIN  = 24 * dpr;
-  const INSET_R = 115 * dpr;                    // larger radius
+  const INSET_R = _L0_INSET_RL * dpr;           // 230 × dpr device px
   const CX      = canvas.width - INSET_R - MARGIN;
-  const CY      = INSET_R + MARGIN;             // ego dot lives at (CX, CY)
+  const CY      = INSET_R + MARGIN;
 
-  const MAX_M   = Math.max(lfmForwardRangeM, 20);
-  const SCALE   = (INSET_R - 7 * dpr) / MAX_M; // device px per world metre
-  const CELL_R  = Math.max(2.5 * dpr, Math.min(7 * dpr, lfmCellSizeM * SCALE * 0.95));
+  // √ radial scale: equal visual spacing per distance doubling.
+  const MAX_M    = Math.max(lfmForwardRangeM, 20);
+  const SCALE_SQ = (INSET_R - 8 * dpr) / Math.sqrt(MAX_M);
+  const RING_M   = [1, 3, 6, 12, 20];           // non-uniform, dense close-in
 
-  // Canvas angle convention: 0 = 3 o'clock, increases clockwise (Y-down screen).
-  // 12 o'clock (body +X forward) = −π/2.
+  // Body-frame metres → canvas device px (√ radial mapping, direction preserved)
+  function l0XY(cx, cy) {
+    const d = Math.hypot(cx, cy);
+    if (d < 1e-6) return [CX, CY];
+    const r = SCALE_SQ * Math.sqrt(d);
+    return [CX + (cy / d) * r, CY - (cx / d) * r];
+  }
+
+  const TS  = 14 * dpr;   // small text (2× old 7 px)
+  const TM  = 16 * dpr;   // medium
+  const TL  = 18 * dpr;   // large (heading label)
+  const TXL = 20 * dpr;   // extra-large (readout)
+
   const UP   = -Math.PI / 2;
-  const FOVR = 75 * Math.PI / 180;   // ±75° half-FOV → 150° total
-  const ANG0 = UP - FOVR;            // left FOV boundary  (upper-left)
-  const ANG1 = UP + FOVR;            // right FOV boundary (upper-right)
+  const FOVR = _L0_FOV_DEG * Math.PI / 180;
+  const ANG0 = UP - FOVR;
+  const ANG1 = UP + FOVR;
+
+  // Use C++-computed risk state (no client-side recompute).
+  const isMoving = lfmEgoSpeedMps > 0.3;
+  const CELL_R   = Math.max(4 * dpr, Math.min(14 * dpr, lfmCellSizeM * SCALE_SQ * 0.90));
 
   ctx.save();
 
-  // ── FOV sector background (pie-slice shape) ──────────────────────────────────
+  // ── Sector background ─────────────────────────────────────────────────────────
   ctx.beginPath();
   ctx.moveTo(CX, CY);
-  ctx.arc(CX, CY, INSET_R, ANG0, ANG1);   // 150° arc clockwise through 12 o'clock
+  ctx.arc(CX, CY, INSET_R, ANG0, ANG1);
   ctx.closePath();
-  ctx.fillStyle   = 'rgba(6,9,18,0.93)';
+  ctx.fillStyle   = 'rgba(5,8,17,0.94)';
   ctx.fill();
-  ctx.strokeStyle = 'rgba(55,80,165,0.88)';
-  ctx.lineWidth   = 1.5 * dpr;
+  ctx.strokeStyle = 'rgba(55,82,168,0.90)';
+  ctx.lineWidth   = 2 * dpr;
   ctx.stroke();
 
-  // ── Clip all further drawing to the sector ───────────────────────────────────
+  // ── Clip to sector ────────────────────────────────────────────────────────────
   ctx.beginPath();
   ctx.moveTo(CX, CY);
   ctx.arc(CX, CY, INSET_R - 2 * dpr, ANG0, ANG1);
   ctx.closePath();
   ctx.clip();
 
-  // ── Range arcs (only within the FOV arc) ────────────────────────────────────
-  for (const rm of [5, 10, 20]) {
-    const rPx = rm * SCALE;
+  // ── Range arcs (√-spaced) ─────────────────────────────────────────────────────
+  for (const rm of RING_M) {
+    const rPx = SCALE_SQ * Math.sqrt(rm);
     if (rPx >= INSET_R - 6 * dpr) continue;
     ctx.beginPath();
     ctx.arc(CX, CY, rPx, ANG0, ANG1);
-    ctx.strokeStyle = 'rgba(55,80,165,0.18)';
-    ctx.lineWidth   = 0.5 * dpr;
+    ctx.strokeStyle = rm <= 3 ? 'rgba(55,82,168,0.32)' : 'rgba(55,82,168,0.16)';
+    ctx.lineWidth   = (rm <= 3 ? 1.0 : 0.5) * dpr;
     ctx.stroke();
   }
 
-  // ── Centre-line (12 o'clock / body-forward axis) ─────────────────────────────
-  ctx.strokeStyle = 'rgba(80,110,210,0.16)';
+  // ── Centre-line ───────────────────────────────────────────────────────────────
+  ctx.strokeStyle = 'rgba(80,110,215,0.14)';
   ctx.lineWidth   = 0.5 * dpr;
-  ctx.beginPath();
-  ctx.moveTo(CX, CY);
-  ctx.lineTo(CX, CY - INSET_R + 3 * dpr);
-  ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(CX, CY); ctx.lineTo(CX, CY - INSET_R + 3 * dpr); ctx.stroke();
 
-  // ── Obstacle cells — ramp-coloured by radial distance ───────────────────────
-  // Body frame → canvas: X(fwd) → −canvas_y, Y(right) → +canvas_x
+  // ── Obstacle cells — TTC (moving) or distance (hover) colour ─────────────────
+  // Per-cell TTC is looked up from the C++-computed sector it falls in.
   for (const cell of localFlightMapCells) {
-    const px    = CX + cell.center.y * SCALE;
-    const py    = CY - cell.center.x * SCALE;
-    const distM = Math.hypot(cell.center.x, cell.center.y);
-    const [r, g, b] = _l0DistColor(distM);
+    const [px, py] = l0XY(cell.center.x, cell.center.y);
+    const [r, g, b] = isMoving
+      ? _l0RiskColor(_l0CellTTC(cell))
+      : _l0DistColor(Math.hypot(cell.center.x, cell.center.y));
     const alpha = cell.occupied
-      ? Math.min(0.95, 0.68 + cell.occupied_score * 0.27)
-      : 0.48;  // inflated-only = slightly transparent
+      ? Math.min(0.97, 0.70 + cell.occupied_score * 0.27) : 0.48;
     ctx.fillStyle = `rgba(${r},${g},${b},${alpha})`;
-    ctx.beginPath();
-    ctx.arc(px, py, CELL_R, 0, Math.PI * 2);
-    ctx.fill();
-    // Bright halo on close occupied cells
-    if (cell.occupied && distM < 8) {
-      ctx.strokeStyle = `rgba(${r},${g},${b},0.88)`;
-      ctx.lineWidth   = 0.8 * dpr;
+    ctx.beginPath(); ctx.arc(px, py, CELL_R, 0, Math.PI * 2); ctx.fill();
+    if (cell.occupied) {
+      ctx.strokeStyle = `rgba(${r},${g},${b},0.90)`;
+      ctx.lineWidth   = dpr;
       ctx.stroke();
     }
   }
 
-  // ── Escape vector: opposite of occupied-cell centroid in body frame ──────────
-  {
-    let sumX = 0, sumY = 0, cnt = 0;
-    for (const c of localFlightMapCells) {
-      if (!c.occupied) continue;
-      sumX += c.center.x; sumY += c.center.y; cnt++;
-    }
-    if (cnt > 0 && Math.hypot(sumX, sumY) > 0.5) {
-      const mag  = Math.hypot(sumX, sumY);
-      const ARM  = INSET_R * 0.62;
-      const eDX  = -(sumY / mag) * ARM;   // body right component → canvas X
-      const eDY  =  (sumX / mag) * ARM;   // body fwd component → canvas -Y (flip)
-      _drawRadarArrow(ctx, CX, CY, CX + eDX, CY + eDY,
-        'rgba(35,225,95,0.94)', 2.2 * dpr, 12 * dpr);
-    }
+  // ── Escape vector — from C++ escape_direction_body (unit vec, body frame) ─────
+  if (lfmEscapeBody && (Math.abs(lfmEscapeBody.x) + Math.abs(lfmEscapeBody.y)) > 0.1) {
+    const ARM = INSET_R * 0.62;
+    // Body frame → canvas: Y(right)→+X, X(fwd)→−Y
+    _drawRadarArrow(ctx, CX, CY,
+      CX + lfmEscapeBody.y * ARM,
+      CY - lfmEscapeBody.x * ARM,
+      'rgba(35,228,95,0.95)', 3 * dpr, 18 * dpr);
   }
 
-  // ── Flight vector: actual velocity direction in body frame ───────────────────
-  {
-    const wVel = droneVelocityDir();   // unit vec in world frame (x=north, y=east)
-    if (wVel && state.egoYaw !== null) {
-      const yaw = state.egoYaw;
-      // World (north, east) → body (forward=bx, right=by) via NED yaw rotation
-      const bx  =  wVel.x * Math.cos(yaw) + wVel.y * Math.sin(yaw);
-      const by  = -wVel.x * Math.sin(yaw) + wVel.y * Math.cos(yaw);
-      const ARM = INSET_R * 0.55;
-      _drawRadarArrow(ctx, CX, CY,
-        CX + by * ARM, CY - bx * ARM,   // body right → canvas X, body fwd → canvas -Y
-        'rgba(80,205,255,0.96)', 2.5 * dpr, 13 * dpr);
-    }
+  // ── Flight vector — from C++ ego_speed_mps + egoYaw (world heading → body fwd) ─
+  // Body forward is always +X, so the flight vector points straight up (12 o'clock)
+  // scaled by confidence; show only when moving.
+  if (isMoving) {
+    const ARM = INSET_R * 0.55;
+    // In the radar, body +X = straight up. We draw the flight vector as pointing
+    // in the forward direction (ego moves forward in body frame by definition).
+    _drawRadarArrow(ctx, CX, CY,
+      CX, CY - ARM,   // straight up = body forward
+      'rgba(80,208,255,0.97)', 4 * dpr, 20 * dpr);
   }
 
-  // ── Ego dot (drone position = sector vertex) ─────────────────────────────────
-  ctx.fillStyle   = 'rgba(255,235,68,1.0)';
-  ctx.beginPath(); ctx.arc(CX, CY, 4.5 * dpr, 0, Math.PI * 2); ctx.fill();
-  ctx.strokeStyle = 'rgba(0,0,0,0.70)'; ctx.lineWidth = 1 * dpr; ctx.stroke();
+  // ── Ego dot ───────────────────────────────────────────────────────────────────
+  ctx.fillStyle   = 'rgba(255,236,68,1.0)';
+  ctx.beginPath(); ctx.arc(CX, CY, 6 * dpr, 0, Math.PI * 2); ctx.fill();
+  ctx.strokeStyle = 'rgba(0,0,0,0.72)'; ctx.lineWidth = 1.5 * dpr; ctx.stroke();
 
-  ctx.restore();  // ← release sector clip — all subsequent draws are unclipped
+  ctx.restore();   // release clip
 
-  // ── External labels ──────────────────────────────────────────────────────────
+  // ── External labels ───────────────────────────────────────────────────────────
   ctx.save();
 
-  // Title above the arc
-  ctx.font = `${8.5 * dpr}px system-ui`;
-  ctx.fillStyle = 'rgba(60,80,160,0.72)';
+  // Title
+  ctx.font = `${TM}px system-ui`;
+  ctx.fillStyle = 'rgba(58,78,162,0.72)';
   ctx.textAlign = 'center'; ctx.textBaseline = 'bottom';
-  ctx.fillText('L0 ego radar', CX, CY - INSET_R - 14 * dpr);
+  ctx.fillText('L0 ego radar', CX, CY - INSET_R - 24 * dpr);
 
-  // "▲ fwd" just above the 12 o'clock arc tip
-  ctx.font = `bold ${9 * dpr}px system-ui`;
-  ctx.fillStyle = 'rgba(110,140,235,0.84)';
+  // Heading at 12 o'clock (replaces "fwd")
+  ctx.font = `bold ${TL}px system-ui`;
+  ctx.fillStyle = 'rgba(110,142,238,0.92)';
   ctx.textAlign = 'center'; ctx.textBaseline = 'bottom';
-  ctx.fillText('▲ fwd', CX, CY - INSET_R - 0.5 * dpr);
+  ctx.fillText(`▲ ${_l0HeadingStr(state.egoYaw)}`, CX, CY - INSET_R - 1 * dpr);
 
-  // Range labels along the 12 o'clock axis (right of centre-line)
-  ctx.font = `${7 * dpr}px system-ui`;
-  ctx.fillStyle = 'rgba(55,75,155,0.68)';
+  // Range labels along 12 o'clock axis
+  ctx.font = `${TS}px system-ui`;
+  ctx.fillStyle = 'rgba(55,75,158,0.70)';
   ctx.textAlign = 'left'; ctx.textBaseline = 'middle';
-  for (const rm of [5, 10, 20]) {
-    const rPx = rm * SCALE;
-    if (rPx < INSET_R - 5 * dpr) {
-      ctx.fillText(`${rm}m`, CX + 3 * dpr, CY - rPx);
-    }
+  for (const rm of RING_M) {
+    const rPx = SCALE_SQ * Math.sqrt(rm);
+    if (rPx < INSET_R - 5 * dpr) ctx.fillText(`${rm}m`, CX + 4 * dpr, CY - rPx);
   }
 
-  // FOV edge labels — small, at the boundary line tips
-  const tipR  = INSET_R + 9 * dpr;
-  ctx.font = `${7.5 * dpr}px system-ui`;
-  ctx.fillStyle = 'rgba(65,90,175,0.58)';
-  ctx.textAlign = 'right'; ctx.textBaseline = 'middle';
-  ctx.fillText('−75°', CX + Math.cos(ANG0) * tipR, CY + Math.sin(ANG0) * tipR);
-  ctx.textAlign = 'left';
-  ctx.fillText('+75°', CX + Math.cos(ANG1) * tipR, CY + Math.sin(ANG1) * tipR);
+  // ── Risk readout — sourced entirely from C++ pre-computed fields ──────────────
+  let readoutStr, readoutRGB;
+  if (isMoving && Number.isFinite(lfmGlobalMinTTC)) {
+    readoutStr = `TTC  ${lfmGlobalMinTTC.toFixed(1)} s`;
+    readoutRGB = _l0RiskColor(lfmGlobalMinTTC);
+  } else if (Number.isFinite(lfmNearestM) && lfmNearestM < 9999) {
+    readoutStr = `${lfmNearestM.toFixed(1)} m`;
+    readoutRGB = _l0DistColor(lfmNearestM);
+  } else {
+    readoutStr = '—';
+    readoutRGB = [128, 148, 210];
+  }
 
-  // Nearest-obstacle readout (below ego; sector extends above, space is clear)
-  const haveDist = Number.isFinite(lfmNearestM) && lfmNearestM < 9999;
-  ctx.font = `${9.5 * dpr}px system-ui`;
-  ctx.fillStyle = (haveDist && lfmNearestM < 5)
-    ? 'rgba(240,65,45,0.96)'
-    : 'rgba(145,172,232,0.86)';
+  let labelY = CY + 10 * dpr;
+
+  const [rr, rg, rb] = readoutRGB;
+  ctx.font = `bold ${TXL}px system-ui`;
+  ctx.fillStyle = `rgba(${rr},${rg},${rb},0.98)`;
   ctx.textAlign = 'center'; ctx.textBaseline = 'top';
-  ctx.fillText(
-    haveDist ? `nearest ${lfmNearestM.toFixed(1)} m` : 'nearest —',
-    CX, CY + 8 * dpr);
+  ctx.fillText(readoutStr, CX, labelY);
+  labelY += TXL + 6 * dpr;
 
-  // Arrow legend
-  ctx.font = `${7.5 * dpr}px system-ui`;
+  if (!isMoving) {
+    ctx.font = `bold ${TM}px system-ui`;
+    ctx.fillStyle = 'rgba(95,118,200,0.72)';
+    ctx.textAlign = 'center'; ctx.textBaseline = 'top';
+    ctx.fillText('● HOVER', CX, labelY);
+    labelY += TM + 6 * dpr;
+  }
+
+  ctx.font = `${TS}px system-ui`;
   ctx.textBaseline = 'top';
-  ctx.fillStyle = 'rgba(80,205,255,0.82)'; ctx.textAlign = 'right';
-  ctx.fillText('▶ flight', CX - 5 * dpr, CY + 24 * dpr);
-  ctx.fillStyle = 'rgba(35,225,95,0.82)';  ctx.textAlign = 'left';
-  ctx.fillText('▶ escape', CX + 5 * dpr, CY + 24 * dpr);
+  ctx.fillStyle = 'rgba(80,208,255,0.82)'; ctx.textAlign = 'right';
+  ctx.fillText('▶ flight', CX - 6 * dpr, labelY);
+  ctx.fillStyle = 'rgba(35,228,95,0.82)';  ctx.textAlign = 'left';
+  ctx.fillText('▶ escape', CX + 6 * dpr, labelY);
 
   ctx.restore();
 }
@@ -1595,6 +1652,19 @@ function applyWorldSnapshot(snap, seq, {deferRender=false}={}) {
     lfmForwardRangeM    = fin(lfm.forward_range_m, 30) || 30;
     lfmRearRangeM       = fin(lfm.rear_range_m, 6) || 6;
     lfmLateralRangeM    = fin(lfm.lateral_range_m, 15) || 15;
+    // Pre-computed polar risk from C++
+    lfmEgoSpeedMps  = fin(lfm.ego_speed_mps, 0);
+    lfmGlobalMinTTC = fin(lfm.global_min_ttc_s, Infinity);
+    lfmEscapeBody   = asVec3(lfm.escape_direction_body) ?? null;
+    lfmPolarSectors = Array.isArray(lfm.polar_risk_sectors)
+      ? lfm.polar_risk_sectors.map(s => ({
+          az:  fin(s.az,  0),
+          vr:  fin(s.vr,  0),
+          ttc: fin(s.ttc, Infinity),
+          nr:  fin(s.nr,  Infinity),
+          obs: s.obs === true,
+        }))
+      : [];
   }
 
   live.seq=seq??live.seq;
