@@ -472,9 +472,10 @@ window.animateViewPreset = function(tYaw, tPitch, tZoom, _label="view", tCenter=
     const rawT = clamp((now-t0)/dur, 0, 1), t = window.easeInOutCubic(rawT);
     yaw=sYaw+dYaw*t; pitch=sPitch+(tPitch-sPitch)*t; zoom=sZoom+(tZoom-sZoom)*t;
     viewCenter=interpP(sCenter, fCenter, t);
+    updateZoomDisplay();
     draw();
     if (rawT < 1) { window.viewAnimationHandle=requestAnimationFrame(step); }
-    else { yaw=tYaw; pitch=tPitch; zoom=tZoom; viewCenter=cloneP(fCenter); window.viewAnimationHandle=null; draw(); }
+    else { yaw=tYaw; pitch=tPitch; zoom=tZoom; viewCenter=cloneP(fCenter); window.viewAnimationHandle=null; updateZoomDisplay(); draw(); }
   }
   window.viewAnimationHandle=requestAnimationFrame(step);
 };
@@ -2177,15 +2178,30 @@ function installViewControls() {
     recomputeBounds();
     window.animateViewPreset(yaw, pitch, zoom, "center", cloneP(sceneCenter()));
   });
-  // 45°: snap pitch to 45°, advance yaw +45° from current each press.
-  el("view-45")?.addEventListener("click", ()=>
-    window.animateViewPreset(yaw + Math.PI/4, Math.PI/4, 1.0, "45"));
-  // Side: snap pitch to 0 (horizontal), advance yaw +90° each press → cycles N/E/S/W.
-  el("view-side")?.addEventListener("click", ()=>
-    window.animateViewPreset(yaw + Math.PI/2, 0, 1.0, "side"));
-  // Top: snap pitch to near-vertical, advance yaw +90° each press.
-  el("view-top")?.addEventListener("click", ()=>
-    window.animateViewPreset(yaw + Math.PI/2, Math.PI/2-0.01, 1.0, "top"));
+  // ── Unified snap-to-preset logic ──────────────────────────────────────────────
+  // Canonical yaws: 45°, 135°, 225°, 315° (body-diagonals — balanced perspective).
+  // First press: snap pitch to target + nearest canonical yaw. Zoom preserved.
+  // Already on preset: advance +90° through the canonical cycle.
+  const SNAP_YAWS_RAD = [45, 135, 225, 315].map(d => d * Math.PI / 180);
+  const SNAP_TOL = 6 * Math.PI / 180;  // 6° tolerance for "are we already there?"
+
+  function snapToPreset(targetPitchRad) {
+    const normYaw = ((yaw % (2 * Math.PI)) + 2 * Math.PI) % (2 * Math.PI);
+    let nearestIdx = 0, nearestDist = Infinity;
+    for (let i = 0; i < SNAP_YAWS_RAD.length; i++) {
+      const d = Math.abs(window.shortestAngleDelta(normYaw, SNAP_YAWS_RAD[i]));
+      if (d < nearestDist) { nearestDist = d; nearestIdx = i; }
+    }
+    const atPitch     = Math.abs(pitch - targetPitchRad) < SNAP_TOL;
+    const atCanonical = nearestDist < SNAP_TOL;
+    // If already on this preset, step to next canonical; otherwise snap to nearest.
+    const targetIdx = (atPitch && atCanonical) ? (nearestIdx + 1) % 4 : nearestIdx;
+    window.animateViewPreset(SNAP_YAWS_RAD[targetIdx], targetPitchRad, zoom, "preset");
+  }
+
+  el("view-45")?.addEventListener("click",   () => snapToPreset(Math.PI / 4));
+  el("view-side")?.addEventListener("click", () => snapToPreset(0));
+  el("view-top")?.addEventListener("click",  () => snapToPreset(Math.PI / 2 - 0.01));
   el("view-zoom-in")?.addEventListener("click", ()=>{
     window.animateZoom(clamp(zoom * 1.25, 0.08, 25));
   });
