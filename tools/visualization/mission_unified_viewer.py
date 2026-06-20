@@ -493,129 +493,227 @@ window.animateZoom = function(targetZoom) {
 
 // ── L0 ego radar inset ─────────────────────────────────────────────────────────
 //
-// Fixed top-right canvas inset.  Renders LocalFlightMap debug_cells in ego-local
-// Cartesian coordinates (drone at centre, X = forward = up, Y = right = right).
-// Only occupied/inflated_blocked cells are shown (≤96 from server).
-// Range rings at 5 / 10 / 20 m.  Nearest-obstacle readout below inset.
+// Fixed top-right canvas inset.  Shows ego-local LocalFlightMap cells in a
+// FOV-arc sector (±75° from 12 o'clock = body forward = direction of movement).
+// Rear sector is not drawn — only what sensors can see forward.
+//
+// Visual encoding:
+//   Cells:    distance ramp  red < 5 m → orange → yellow → green > 20 m
+//   Cyan arrow:   actual velocity direction (body-frame flight vector)
+//   Green arrow:  escape direction (away from obstacle centroid)
+//   Yellow dot:   ego (drone) at arc vertex
+
+// Distance → RGB (no alpha — set separately)
+function _l0DistColor(distM) {
+  if (distM <  3) return [225, 45,  35];
+  if (distM < 10) {
+    const t = (distM - 3) / 7;
+    return [225, Math.round(45 + t * 150), Math.round(35 - t * 20)];
+  }
+  if (distM < 22) {
+    const t = (distM - 10) / 12;
+    return [Math.round(225 - t * 180), Math.round(195 + t * 15), 15];
+  }
+  return [45, 205, 65];
+}
+
+// Draw a filled-head arrow (shaft + arrowhead).
+// All coords in device px.  color = CSS rgba string.
+function _drawRadarArrow(ctx, x1, y1, x2, y2, color, lineW, headLen) {
+  const dx = x2 - x1, dy = y2 - y1;
+  const len = Math.hypot(dx, dy);
+  if (len < 2) return;
+  const ux = dx / len, uy = dy / len;
+  const hl = Math.min(headLen, len * 0.42);
+  const hw = hl * 0.44;
+  const px = -uy, py = ux;                   // perpendicular unit vector
+  // Shaft (stops short of head base so they don't overlap)
+  ctx.beginPath();
+  ctx.moveTo(x1, y1);
+  ctx.lineTo(x2 - ux * hl * 0.55, y2 - uy * hl * 0.55);
+  ctx.strokeStyle = color; ctx.lineWidth = lineW; ctx.stroke();
+  // Arrowhead
+  ctx.beginPath();
+  ctx.moveTo(x2, y2);
+  ctx.lineTo(x2 - ux * hl + px * hw, y2 - uy * hl + py * hw);
+  ctx.lineTo(x2 - ux * hl - px * hw, y2 - uy * hl - py * hw);
+  ctx.closePath();
+  ctx.fillStyle = color; ctx.fill();
+}
 
 function drawL0PolarInset() {
   if (!state.showL0) return;
 
   const dpr     = devicePixelRatio;
-  const MARGIN  = 20 * dpr;        // gap from canvas edge
-  const INSET_R = 80 * dpr;        // inset radius (device px)
-  const CX      = canvas.width  - INSET_R - MARGIN;
-  const CY      = INSET_R + MARGIN;
-  // Scale: fit the forward range into the inset radius with a small inner pad.
-  const MAX_M   = Math.max(lfmForwardRangeM, lfmLateralRangeM, 15);
-  const SCALE   = (INSET_R - 4 * dpr) / MAX_M;   // device px per world metre
-  const CELL_R  = Math.max(2 * dpr, Math.min(5 * dpr, lfmCellSizeM * SCALE * 0.8));
+  const MARGIN  = 24 * dpr;
+  const INSET_R = 115 * dpr;                    // larger radius
+  const CX      = canvas.width - INSET_R - MARGIN;
+  const CY      = INSET_R + MARGIN;             // ego dot lives at (CX, CY)
+
+  const MAX_M   = Math.max(lfmForwardRangeM, 20);
+  const SCALE   = (INSET_R - 7 * dpr) / MAX_M; // device px per world metre
+  const CELL_R  = Math.max(2.5 * dpr, Math.min(7 * dpr, lfmCellSizeM * SCALE * 0.95));
+
+  // Canvas angle convention: 0 = 3 o'clock, increases clockwise (Y-down screen).
+  // 12 o'clock (body +X forward) = −π/2.
+  const UP   = -Math.PI / 2;
+  const FOVR = 75 * Math.PI / 180;   // ±75° half-FOV → 150° total
+  const ANG0 = UP - FOVR;            // left FOV boundary  (upper-left)
+  const ANG1 = UP + FOVR;            // right FOV boundary (upper-right)
 
   ctx.save();
 
-  // ── Background disc ──────────────────────────────────────────────────────────
+  // ── FOV sector background (pie-slice shape) ──────────────────────────────────
   ctx.beginPath();
-  ctx.arc(CX, CY, INSET_R, 0, Math.PI * 2);
-  ctx.fillStyle   = 'rgba(8,11,20,0.87)';
+  ctx.moveTo(CX, CY);
+  ctx.arc(CX, CY, INSET_R, ANG0, ANG1);   // 150° arc clockwise through 12 o'clock
+  ctx.closePath();
+  ctx.fillStyle   = 'rgba(6,9,18,0.93)';
   ctx.fill();
-  ctx.strokeStyle = 'rgba(50,70,130,0.75)';
-  ctx.lineWidth   = 1 * dpr;
+  ctx.strokeStyle = 'rgba(55,80,165,0.88)';
+  ctx.lineWidth   = 1.5 * dpr;
   ctx.stroke();
 
-  // ── Clip everything inside the disc ─────────────────────────────────────────
+  // ── Clip all further drawing to the sector ───────────────────────────────────
   ctx.beginPath();
-  ctx.arc(CX, CY, INSET_R - 1 * dpr, 0, Math.PI * 2);
+  ctx.moveTo(CX, CY);
+  ctx.arc(CX, CY, INSET_R - 2 * dpr, ANG0, ANG1);
+  ctx.closePath();
   ctx.clip();
 
-  // ── Range rings ─────────────────────────────────────────────────────────────
-  for (const ringM of [5, 10, 20]) {
-    const rPx = ringM * SCALE;
-    if (rPx >= INSET_R) continue;
+  // ── Range arcs (only within the FOV arc) ────────────────────────────────────
+  for (const rm of [5, 10, 20]) {
+    const rPx = rm * SCALE;
+    if (rPx >= INSET_R - 6 * dpr) continue;
     ctx.beginPath();
-    ctx.arc(CX, CY, rPx, 0, Math.PI * 2);
-    ctx.strokeStyle = 'rgba(50,70,130,0.28)';
+    ctx.arc(CX, CY, rPx, ANG0, ANG1);
+    ctx.strokeStyle = 'rgba(55,80,165,0.18)';
     ctx.lineWidth   = 0.5 * dpr;
     ctx.stroke();
-    // Tiny label at 3 o'clock (rightward = +Y = right in body frame)
-    ctx.fillStyle      = 'rgba(60,85,145,0.60)';
-    ctx.font           = `${7 * dpr}px system-ui`;
-    ctx.textAlign      = 'left';
-    ctx.textBaseline   = 'top';
-    ctx.fillText(`${ringM}m`, CX + rPx + 1 * dpr, CY + 1 * dpr);
   }
 
-  // ── Cross-hair ───────────────────────────────────────────────────────────────
-  ctx.strokeStyle = 'rgba(50,70,130,0.28)';
+  // ── Centre-line (12 o'clock / body-forward axis) ─────────────────────────────
+  ctx.strokeStyle = 'rgba(80,110,210,0.16)';
   ctx.lineWidth   = 0.5 * dpr;
   ctx.beginPath();
-  ctx.moveTo(CX, CY - INSET_R + 1 * dpr); ctx.lineTo(CX, CY + INSET_R - 1 * dpr);
-  ctx.moveTo(CX - INSET_R + 1 * dpr, CY); ctx.lineTo(CX + INSET_R - 1 * dpr, CY);
+  ctx.moveTo(CX, CY);
+  ctx.lineTo(CX, CY - INSET_R + 3 * dpr);
   ctx.stroke();
 
-  // ── L0 cells ─────────────────────────────────────────────────────────────────
-  // Ego-local body frame → inset canvas:
-  //   X (forward) → up  → inset_y = CY − x * SCALE
-  //   Y (right)   → right → inset_x = CX + y * SCALE
+  // ── Obstacle cells — ramp-coloured by radial distance ───────────────────────
+  // Body frame → canvas: X(fwd) → −canvas_y, Y(right) → +canvas_x
   for (const cell of localFlightMapCells) {
-    const px = CX + cell.center.y * SCALE;
-    const py = CY - cell.center.x * SCALE;
-    if (Math.hypot(px - CX, py - CY) > INSET_R - 2 * dpr) continue;
-    const alpha = cell.occupied ? (0.55 + cell.occupied_score * 0.35) : 0.65;
-    ctx.fillStyle = cell.occupied
-      ? `rgba(220,60,50,${alpha})`
-      : 'rgba(220,140,30,0.65)';   // inflated-only → amber
+    const px    = CX + cell.center.y * SCALE;
+    const py    = CY - cell.center.x * SCALE;
+    const distM = Math.hypot(cell.center.x, cell.center.y);
+    const [r, g, b] = _l0DistColor(distM);
+    const alpha = cell.occupied
+      ? Math.min(0.95, 0.68 + cell.occupied_score * 0.27)
+      : 0.48;  // inflated-only = slightly transparent
+    ctx.fillStyle = `rgba(${r},${g},${b},${alpha})`;
     ctx.beginPath();
     ctx.arc(px, py, CELL_R, 0, Math.PI * 2);
     ctx.fill();
+    // Bright halo on close occupied cells
+    if (cell.occupied && distM < 8) {
+      ctx.strokeStyle = `rgba(${r},${g},${b},0.88)`;
+      ctx.lineWidth   = 0.8 * dpr;
+      ctx.stroke();
+    }
   }
 
-  // ── Forward tick (shows which direction is "ahead") ──────────────────────────
-  ctx.strokeStyle = 'rgba(140,160,220,0.55)';
-  ctx.lineWidth   = 1.5 * dpr;
-  ctx.beginPath();
-  ctx.moveTo(CX, CY - INSET_R + 3 * dpr);
-  ctx.lineTo(CX, CY - INSET_R + 10 * dpr);
-  ctx.stroke();
+  // ── Escape vector: opposite of occupied-cell centroid in body frame ──────────
+  {
+    let sumX = 0, sumY = 0, cnt = 0;
+    for (const c of localFlightMapCells) {
+      if (!c.occupied) continue;
+      sumX += c.center.x; sumY += c.center.y; cnt++;
+    }
+    if (cnt > 0 && Math.hypot(sumX, sumY) > 0.5) {
+      const mag  = Math.hypot(sumX, sumY);
+      const ARM  = INSET_R * 0.62;
+      const eDX  = -(sumY / mag) * ARM;   // body right component → canvas X
+      const eDY  =  (sumX / mag) * ARM;   // body fwd component → canvas -Y (flip)
+      _drawRadarArrow(ctx, CX, CY, CX + eDX, CY + eDY,
+        'rgba(35,225,95,0.94)', 2.2 * dpr, 12 * dpr);
+    }
+  }
 
-  // ── Ego dot (drone) ──────────────────────────────────────────────────────────
-  ctx.fillStyle = 'rgba(255,230,64,1.0)';
-  ctx.beginPath();
-  ctx.arc(CX, CY, 3.5 * dpr, 0, Math.PI * 2);
-  ctx.fill();
+  // ── Flight vector: actual velocity direction in body frame ───────────────────
+  {
+    const wVel = droneVelocityDir();   // unit vec in world frame (x=north, y=east)
+    if (wVel && state.egoYaw !== null) {
+      const yaw = state.egoYaw;
+      // World (north, east) → body (forward=bx, right=by) via NED yaw rotation
+      const bx  =  wVel.x * Math.cos(yaw) + wVel.y * Math.sin(yaw);
+      const by  = -wVel.x * Math.sin(yaw) + wVel.y * Math.cos(yaw);
+      const ARM = INSET_R * 0.55;
+      _drawRadarArrow(ctx, CX, CY,
+        CX + by * ARM, CY - bx * ARM,   // body right → canvas X, body fwd → canvas -Y
+        'rgba(80,205,255,0.96)', 2.5 * dpr, 13 * dpr);
+    }
+  }
 
-  ctx.restore();  // release clip
+  // ── Ego dot (drone position = sector vertex) ─────────────────────────────────
+  ctx.fillStyle   = 'rgba(255,235,68,1.0)';
+  ctx.beginPath(); ctx.arc(CX, CY, 4.5 * dpr, 0, Math.PI * 2); ctx.fill();
+  ctx.strokeStyle = 'rgba(0,0,0,0.70)'; ctx.lineWidth = 1 * dpr; ctx.stroke();
 
-  // ── Labels outside the clip region ───────────────────────────────────────────
+  ctx.restore();  // ← release sector clip — all subsequent draws are unclipped
+
+  // ── External labels ──────────────────────────────────────────────────────────
   ctx.save();
-  ctx.font      = `bold ${8 * dpr}px system-ui`;
-  ctx.fillStyle = 'rgba(110,130,200,0.80)';
 
-  // Cardinal labels: F / B / L / R
+  // Title above the arc
+  ctx.font = `${8.5 * dpr}px system-ui`;
+  ctx.fillStyle = 'rgba(60,80,160,0.72)';
   ctx.textAlign = 'center'; ctx.textBaseline = 'bottom';
-  ctx.fillText('F', CX, CY - INSET_R - 1 * dpr);
-  ctx.textBaseline = 'top';
-  ctx.fillText('B', CX, CY + INSET_R + 2 * dpr);
+  ctx.fillText('L0 ego radar', CX, CY - INSET_R - 14 * dpr);
+
+  // "▲ fwd" just above the 12 o'clock arc tip
+  ctx.font = `bold ${9 * dpr}px system-ui`;
+  ctx.fillStyle = 'rgba(110,140,235,0.84)';
+  ctx.textAlign = 'center'; ctx.textBaseline = 'bottom';
+  ctx.fillText('▲ fwd', CX, CY - INSET_R - 0.5 * dpr);
+
+  // Range labels along the 12 o'clock axis (right of centre-line)
+  ctx.font = `${7 * dpr}px system-ui`;
+  ctx.fillStyle = 'rgba(55,75,155,0.68)';
+  ctx.textAlign = 'left'; ctx.textBaseline = 'middle';
+  for (const rm of [5, 10, 20]) {
+    const rPx = rm * SCALE;
+    if (rPx < INSET_R - 5 * dpr) {
+      ctx.fillText(`${rm}m`, CX + 3 * dpr, CY - rPx);
+    }
+  }
+
+  // FOV edge labels — small, at the boundary line tips
+  const tipR  = INSET_R + 9 * dpr;
+  ctx.font = `${7.5 * dpr}px system-ui`;
+  ctx.fillStyle = 'rgba(65,90,175,0.58)';
   ctx.textAlign = 'right'; ctx.textBaseline = 'middle';
-  ctx.fillText('L', CX - INSET_R - 2 * dpr, CY);
+  ctx.fillText('−75°', CX + Math.cos(ANG0) * tipR, CY + Math.sin(ANG0) * tipR);
   ctx.textAlign = 'left';
-  ctx.fillText('R', CX + INSET_R + 2 * dpr, CY);
+  ctx.fillText('+75°', CX + Math.cos(ANG1) * tipR, CY + Math.sin(ANG1) * tipR);
 
-  // Title
-  ctx.font      = `${8 * dpr}px system-ui`;
-  ctx.fillStyle = 'rgba(70,90,155,0.70)';
-  ctx.textAlign = 'center'; ctx.textBaseline = 'bottom';
-  ctx.fillText('L0 ego radar', CX, CY - INSET_R - 11 * dpr);
-
-  // Nearest-obstacle readout below
+  // Nearest-obstacle readout (below ego; sector extends above, space is clear)
   const haveDist = Number.isFinite(lfmNearestM) && lfmNearestM < 9999;
-  const distStr  = haveDist ? `⊙ ${lfmNearestM.toFixed(1)} m` : '⊙ —';
-  ctx.font      = `${8.5 * dpr}px system-ui`;
+  ctx.font = `${9.5 * dpr}px system-ui`;
   ctx.fillStyle = (haveDist && lfmNearestM < 5)
-    ? 'rgba(240,80,55,0.92)'
-    : 'rgba(150,170,220,0.80)';
-  ctx.textAlign    = 'center';
+    ? 'rgba(240,65,45,0.96)'
+    : 'rgba(145,172,232,0.86)';
+  ctx.textAlign = 'center'; ctx.textBaseline = 'top';
+  ctx.fillText(
+    haveDist ? `nearest ${lfmNearestM.toFixed(1)} m` : 'nearest —',
+    CX, CY + 8 * dpr);
+
+  // Arrow legend
+  ctx.font = `${7.5 * dpr}px system-ui`;
   ctx.textBaseline = 'top';
-  ctx.fillText(distStr, CX, CY + INSET_R + 4 * dpr);
+  ctx.fillStyle = 'rgba(80,205,255,0.82)'; ctx.textAlign = 'right';
+  ctx.fillText('▶ flight', CX - 5 * dpr, CY + 24 * dpr);
+  ctx.fillStyle = 'rgba(35,225,95,0.82)';  ctx.textAlign = 'left';
+  ctx.fillText('▶ escape', CX + 5 * dpr, CY + 24 * dpr);
 
   ctx.restore();
 }
