@@ -1551,6 +1551,7 @@ function drawTakeoffMarker() {
   if (!p) return;
   const c = project(p);
   if (!c) return;
+  const dpr = devicePixelRatio;
   const R = 9 * dpr;
   ctx.save();
   // Green diamond outline
