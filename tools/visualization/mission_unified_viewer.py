@@ -132,6 +132,7 @@ h3 { font-size: 12px; margin: 10px 0 6px; color: #c0c4d0; text-transform: upperc
 
       <h3>Layers</h3>
       <div class="layer-controls">
+        <button class="layer-btn active" id="toggle-l0"><span>L0 ego radar</span><span class="ltog"></span></button>
         <button class="layer-btn active" id="toggle-planning"><span>L2 planning map</span><span class="ltog"></span></button>
         <button class="layer-btn active" id="toggle-trav"><span>L1 traversability</span><span class="ltog"></span></button>
         <button class="layer-btn" id="toggle-obstacles"><span>Raw evidence</span><span class="ltog"></span></button>
@@ -167,6 +168,7 @@ h3 { font-size: 12px; margin: 10px 0 6px; color: #c0c4d0; text-transform: upperc
       <h3>Metrics</h3>
       <div class="metric"><span>Stream source</span><code id="m-source">—</code></div>
       <div class="metric"><span>Seq</span><b id="m-seq">0</b></div>
+      <div class="metric"><span>L0 ego cells</span><b id="m-l0-cells">0</b></div>
       <div class="metric"><span>L2 planning cells</span><b id="m-plan-cells">0</b></div>
       <div class="metric"><span>L1 trav cells</span><b id="m-trav-cells">0</b></div>
       <div class="metric"><span>Trav ext. faces</span><b id="m-trav-faces">0</b></div>
@@ -185,6 +187,7 @@ h3 { font-size: 12px; margin: 10px 0 6px; color: #c0c4d0; text-transform: upperc
       </div>
       <div class="hint" style="margin-bottom:2px">
         Yellow = ego/path · White = sensing direction · Magenta = first blocked ·
+        L0 radar (top-right): red=occupied, amber=inflated ·
         L2 planning: slate-blue persistent voxels ·
         L1 trav: red=occupied, amber=partial, shading=depth ·
         Cyan dot = ghost · Arrow = velocity
@@ -247,6 +250,7 @@ const state = {
   showGhosts:      false,
   showSensing:     true,
   showTrajectory:  true,
+  showL0:          true,    // L0 ego radar inset (top-right corner)
   travColorByType: false,   // false = height-based (default), true = occupied/partial type colors
 };
 
@@ -257,6 +261,14 @@ const planningCellsByKey = new Map();  // quantKey → planning cell
 const obsCellsByKey = new Map();       // cellKey → normalized cell
 const liveObsEventsByKey = new Map();
 let   liveObsEvents = [];              // for age-decay rendering
+
+// L0 ego-local flight map (ego-local Cartesian, up to 96 occupied/inflated cells)
+let localFlightMapCells = [];     // parsed debug_cells — ego-local (X=fwd, Y=right, Z=down)
+let lfmNearestM = Infinity;       // nearest obstacle range among debug_cells
+let lfmCellSizeM = 0.5;
+let lfmForwardRangeM = 30;
+let lfmRearRangeM = 6;
+let lfmLateralRangeM = 15;
 
 // Traversability (L1)
 const travCellsByKey = new Map();      // cellKey → trav cell (0.5 m raw cells from server)
@@ -478,6 +490,135 @@ window.animateZoom = function(targetZoom) {
   }
   window.viewAnimationHandle = requestAnimationFrame(step);
 };
+
+// ── L0 ego radar inset ─────────────────────────────────────────────────────────
+//
+// Fixed top-right canvas inset.  Renders LocalFlightMap debug_cells in ego-local
+// Cartesian coordinates (drone at centre, X = forward = up, Y = right = right).
+// Only occupied/inflated_blocked cells are shown (≤96 from server).
+// Range rings at 5 / 10 / 20 m.  Nearest-obstacle readout below inset.
+
+function drawL0PolarInset() {
+  if (!state.showL0) return;
+
+  const dpr     = devicePixelRatio;
+  const MARGIN  = 20 * dpr;        // gap from canvas edge
+  const INSET_R = 80 * dpr;        // inset radius (device px)
+  const CX      = canvas.width  - INSET_R - MARGIN;
+  const CY      = INSET_R + MARGIN;
+  // Scale: fit the forward range into the inset radius with a small inner pad.
+  const MAX_M   = Math.max(lfmForwardRangeM, lfmLateralRangeM, 15);
+  const SCALE   = (INSET_R - 4 * dpr) / MAX_M;   // device px per world metre
+  const CELL_R  = Math.max(2 * dpr, Math.min(5 * dpr, lfmCellSizeM * SCALE * 0.8));
+
+  ctx.save();
+
+  // ── Background disc ──────────────────────────────────────────────────────────
+  ctx.beginPath();
+  ctx.arc(CX, CY, INSET_R, 0, Math.PI * 2);
+  ctx.fillStyle   = 'rgba(8,11,20,0.87)';
+  ctx.fill();
+  ctx.strokeStyle = 'rgba(50,70,130,0.75)';
+  ctx.lineWidth   = 1 * dpr;
+  ctx.stroke();
+
+  // ── Clip everything inside the disc ─────────────────────────────────────────
+  ctx.beginPath();
+  ctx.arc(CX, CY, INSET_R - 1 * dpr, 0, Math.PI * 2);
+  ctx.clip();
+
+  // ── Range rings ─────────────────────────────────────────────────────────────
+  for (const ringM of [5, 10, 20]) {
+    const rPx = ringM * SCALE;
+    if (rPx >= INSET_R) continue;
+    ctx.beginPath();
+    ctx.arc(CX, CY, rPx, 0, Math.PI * 2);
+    ctx.strokeStyle = 'rgba(50,70,130,0.28)';
+    ctx.lineWidth   = 0.5 * dpr;
+    ctx.stroke();
+    // Tiny label at 3 o'clock (rightward = +Y = right in body frame)
+    ctx.fillStyle      = 'rgba(60,85,145,0.60)';
+    ctx.font           = `${7 * dpr}px system-ui`;
+    ctx.textAlign      = 'left';
+    ctx.textBaseline   = 'top';
+    ctx.fillText(`${ringM}m`, CX + rPx + 1 * dpr, CY + 1 * dpr);
+  }
+
+  // ── Cross-hair ───────────────────────────────────────────────────────────────
+  ctx.strokeStyle = 'rgba(50,70,130,0.28)';
+  ctx.lineWidth   = 0.5 * dpr;
+  ctx.beginPath();
+  ctx.moveTo(CX, CY - INSET_R + 1 * dpr); ctx.lineTo(CX, CY + INSET_R - 1 * dpr);
+  ctx.moveTo(CX - INSET_R + 1 * dpr, CY); ctx.lineTo(CX + INSET_R - 1 * dpr, CY);
+  ctx.stroke();
+
+  // ── L0 cells ─────────────────────────────────────────────────────────────────
+  // Ego-local body frame → inset canvas:
+  //   X (forward) → up  → inset_y = CY − x * SCALE
+  //   Y (right)   → right → inset_x = CX + y * SCALE
+  for (const cell of localFlightMapCells) {
+    const px = CX + cell.center.y * SCALE;
+    const py = CY - cell.center.x * SCALE;
+    if (Math.hypot(px - CX, py - CY) > INSET_R - 2 * dpr) continue;
+    const alpha = cell.occupied ? (0.55 + cell.occupied_score * 0.35) : 0.65;
+    ctx.fillStyle = cell.occupied
+      ? `rgba(220,60,50,${alpha})`
+      : 'rgba(220,140,30,0.65)';   // inflated-only → amber
+    ctx.beginPath();
+    ctx.arc(px, py, CELL_R, 0, Math.PI * 2);
+    ctx.fill();
+  }
+
+  // ── Forward tick (shows which direction is "ahead") ──────────────────────────
+  ctx.strokeStyle = 'rgba(140,160,220,0.55)';
+  ctx.lineWidth   = 1.5 * dpr;
+  ctx.beginPath();
+  ctx.moveTo(CX, CY - INSET_R + 3 * dpr);
+  ctx.lineTo(CX, CY - INSET_R + 10 * dpr);
+  ctx.stroke();
+
+  // ── Ego dot (drone) ──────────────────────────────────────────────────────────
+  ctx.fillStyle = 'rgba(255,230,64,1.0)';
+  ctx.beginPath();
+  ctx.arc(CX, CY, 3.5 * dpr, 0, Math.PI * 2);
+  ctx.fill();
+
+  ctx.restore();  // release clip
+
+  // ── Labels outside the clip region ───────────────────────────────────────────
+  ctx.save();
+  ctx.font      = `bold ${8 * dpr}px system-ui`;
+  ctx.fillStyle = 'rgba(110,130,200,0.80)';
+
+  // Cardinal labels: F / B / L / R
+  ctx.textAlign = 'center'; ctx.textBaseline = 'bottom';
+  ctx.fillText('F', CX, CY - INSET_R - 1 * dpr);
+  ctx.textBaseline = 'top';
+  ctx.fillText('B', CX, CY + INSET_R + 2 * dpr);
+  ctx.textAlign = 'right'; ctx.textBaseline = 'middle';
+  ctx.fillText('L', CX - INSET_R - 2 * dpr, CY);
+  ctx.textAlign = 'left';
+  ctx.fillText('R', CX + INSET_R + 2 * dpr, CY);
+
+  // Title
+  ctx.font      = `${8 * dpr}px system-ui`;
+  ctx.fillStyle = 'rgba(70,90,155,0.70)';
+  ctx.textAlign = 'center'; ctx.textBaseline = 'bottom';
+  ctx.fillText('L0 ego radar', CX, CY - INSET_R - 11 * dpr);
+
+  // Nearest-obstacle readout below
+  const haveDist = Number.isFinite(lfmNearestM) && lfmNearestM < 9999;
+  const distStr  = haveDist ? `⊙ ${lfmNearestM.toFixed(1)} m` : '⊙ —';
+  ctx.font      = `${8.5 * dpr}px system-ui`;
+  ctx.fillStyle = (haveDist && lfmNearestM < 5)
+    ? 'rgba(240,80,55,0.92)'
+    : 'rgba(150,170,220,0.80)';
+  ctx.textAlign    = 'center';
+  ctx.textBaseline = 'top';
+  ctx.fillText(distStr, CX, CY + INSET_R + 4 * dpr);
+
+  ctx.restore();
+}
 
 // ── draw helpers ───────────────────────────────────────────────────────────────
 
@@ -1179,7 +1320,8 @@ function draw() {
   drawSensingOverlays();
   drawDroneMarker();
   if (state.firstBlocked) drawPoint(state.firstBlocked, "rgba(255,80,255,1.0)", 8);
-  drawOrientationGizmo(); // fixed bottom-right — drawn last so it is always on top
+  drawOrientationGizmo(); // fixed bottom-right
+  drawL0PolarInset();     // fixed top-right — drawn after gizmo to stay on top
 
   // Schedule next frame if live aging is active
   if (live.connected) {
@@ -1217,6 +1359,7 @@ function updateMetrics() {
   const b=state.bounds;
   el("m-source").textContent = live.source;
   el("m-seq").textContent    = String(live.seq);
+  el("m-l0-cells").textContent   = String(localFlightMapCells.length);
   el("m-plan-cells").textContent = String(planningCellsByKey.size);
   el("m-obs-cells").textContent  = String(obsCellsByKey.size);
   el("m-trav-cells").textContent = String(travCellsByKey.size);
@@ -1326,6 +1469,34 @@ function applyWorldSnapshot(snap, seq, {deferRender=false}={}) {
       raw_evidence_count:   fin(mission.raw_evidence_count),
       compacted_evidence_count: fin(mission.compacted_evidence_count),
     });
+  }
+
+  // L0 ego-local flight map: debug_cells = up to 96 occupied||inflated_blocked cells,
+  // already sorted occupied-first then by nearest_range_m ascending.
+  // center_local [x,y,z]: X=forward, Y=right, Z=down (body frame).
+  const lfm=snap.local_flight_map;
+  if (lfm&&typeof lfm==="object"&&Array.isArray(lfm.debug_cells)) {
+    const parsed=[];
+    let nearestM=Infinity;
+    for (const raw of lfm.debug_cells) {
+      const center=asVec3(raw.center_local);
+      if (!center) continue;
+      const nr=fin(raw.nearest_range_m, Infinity);
+      if (nr<nearestM) nearestM=nr;
+      parsed.push({
+        center,
+        occupied: raw.occupied===true,
+        inflated: raw.inflated_blocked===true,
+        occupied_score: fin(raw.occupied_score, 0),
+        recently_observed: raw.recently_observed===true,
+      });
+    }
+    localFlightMapCells = parsed;
+    lfmNearestM         = nearestM;
+    lfmCellSizeM        = fin(lfm.cell_size_m, 0.5) || 0.5;
+    lfmForwardRangeM    = fin(lfm.forward_range_m, 30) || 30;
+    lfmRearRangeM       = fin(lfm.rear_range_m, 6) || 6;
+    lfmLateralRangeM    = fin(lfm.lateral_range_m, 15) || 15;
   }
 
   live.seq=seq??live.seq;
@@ -1666,6 +1837,7 @@ function installViewControls() {
 
   // Layer toggle buttons: click toggles .active class and matching state flag.
   const layerToggles=[
+    ["toggle-l0",         "showL0"],
     ["toggle-planning",   "showPlanning"],
     ["toggle-trav",       "showTrav"],
     ["toggle-obstacles",  "showObstacles"],
