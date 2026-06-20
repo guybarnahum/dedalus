@@ -54,9 +54,15 @@ h3 { font-size: 12px; margin: 10px 0 6px; color: #c0c4d0; text-transform: upperc
 .zoom-control button { background: #1e2535; color: #d8dce8; border: 1px solid #333d54; border-radius: 5px; padding: 4px 12px; cursor: pointer; font-size: 15px; font-weight: bold; line-height: 1; }
 .zoom-control button:hover { background: #28304a; }
 .zoom-control span { flex: 1; text-align: center; font-size: 12px; color: #c0c4d0; font-variant-numeric: tabular-nums; }
-.layer-controls { display: flex; flex-direction: column; gap: 5px; margin-bottom: 8px; }
-.layer-controls label { display: flex; align-items: center; gap: 7px; font-size: 12px; color: #c0c4d0; cursor: pointer; }
-.layer-controls input[type=checkbox] { accent-color: #5080e8; }
+.layer-controls { display: flex; flex-direction: column; gap: 4px; margin-bottom: 8px; }
+.layer-btn { display: flex; align-items: center; justify-content: space-between; width: 100%;
+  background: #151b28; color: #6a738a; border: 1px solid #222a3a; border-radius: 5px;
+  padding: 5px 10px; cursor: pointer; font-size: 12px; text-align: left; transition: none; }
+.layer-btn:hover { background: #1a2235; color: #9099b0; }
+.layer-btn.active { background: #1e2a44; color: #d8dce8; border-color: #3a5090; }
+.layer-btn.active:hover { background: #253258; }
+.layer-btn .ltog { width: 8px; height: 8px; border-radius: 50%; background: #2a2f3e; flex-shrink: 0; }
+.layer-btn.active .ltog { background: #5080e8; box-shadow: 0 0 4px #5080e870; }
 .lod-control { margin-bottom: 8px; }
 .lod-row { display: flex; align-items: center; gap: 5px; margin-bottom: 2px; }
 .lod-row input[type=range] { flex: 1; accent-color: #5080e8; cursor: pointer; }
@@ -126,26 +132,26 @@ h3 { font-size: 12px; margin: 10px 0 6px; color: #c0c4d0; text-transform: upperc
 
       <h3>Layers</h3>
       <div class="layer-controls">
-        <label><input type="checkbox" id="toggle-planning" checked> L2 planning map</label>
-        <label><input type="checkbox" id="toggle-trav" checked> L1 traversability</label>
-        <label><input type="checkbox" id="toggle-obstacles"> Raw evidence</label>
-        <label><input type="checkbox" id="toggle-ghosts"> Ghost detections</label>
-        <label><input type="checkbox" id="toggle-sensing" checked> Sensing volumes</label>
-        <label><input type="checkbox" id="toggle-trajectory" checked> Trajectory</label>
+        <button class="layer-btn active" id="toggle-planning"><span>L2 planning map</span><span class="ltog"></span></button>
+        <button class="layer-btn active" id="toggle-trav"><span>L1 traversability</span><span class="ltog"></span></button>
+        <button class="layer-btn" id="toggle-obstacles"><span>Raw evidence</span><span class="ltog"></span></button>
+        <button class="layer-btn" id="toggle-ghosts"><span>Ghost detections</span><span class="ltog"></span></button>
+        <button class="layer-btn active" id="toggle-sensing"><span>Sensing volumes</span><span class="ltog"></span></button>
+        <button class="layer-btn active" id="toggle-trajectory"><span>Trajectory</span><span class="ltog"></span></button>
       </div>
 
-      <h3>Traversability LOD</h3>
+      <h3>L1 LOD &amp; Color</h3>
       <div class="lod-control">
         <div class="lod-row">
           <span class="lod-end">32m</span>
           <input type="range" id="trav-lod" min="0" max="6" step="1" value="2">
           <span class="lod-end">0.5m</span>
         </div>
-        <div style="text-align:center;font-size:11px;color:#9099b0">cell size: <b id="trav-lod-val" style="color:#c0c4d0">8m</b></div>
+        <div style="text-align:center;font-size:11px;color:#9099b0">L1 cell size: <b id="trav-lod-val" style="color:#c0c4d0">8m</b> · L2 native: 1m</div>
       </div>
       <div class="trav-color-toggle">
         <button class="trav-mode-btn" id="trav-color-btn">
-          Color mode <span class="mode-tag" id="trav-color-tag">Height</span>
+          L1 &amp; L2 color mode <span class="mode-tag" id="trav-color-tag">Height</span>
         </button>
         <div id="trav-legend-height">
           <div class="height-ramp" style="margin:2px 0 4px"></div>
@@ -557,10 +563,15 @@ function drawOrientationGizmo() {
 
 // ── L2 planning map rendering ──────────────────────────────────────────────────
 //
-// Planning cells are rendered as muted slate-blue dots, drawn first so they
-// appear behind L1 traversability and raw evidence cells.  Each cell is a
-// coarse 1×1×2 m voxel.  Opacity scales with occupied_score to give a visual
-// sense of evidence strength (stronger blue = more accumulated evidence).
+// L2 cells are rendered as exterior voxel faces — the same algorithm as L1 but:
+//   • Native cell size: 1 m XY / 2 m Z (no LOD aggregation needed — L2 is already coarse)
+//   • Same color mode as L1 (height ramp or type colors) so the two layers read
+//     consistently; L2 uses lower alpha so it reads as a persistent base layer
+//   • Face alpha ~0.35 (L1 is ~0.78) to visually distinguish persistent vs current data
+//
+// Why no LOD slider for L2: L1's slider aggregates raw 0.5 m cells into coarser voxels.
+// L2 cells are already 1 m — they are the coarse layer.  Rendering at native size is
+// the correct "LOD" for L2.
 
 function planningQuantKey(x, y, z, cellSizeM, vCellSizeM) {
   const qx = Math.round(x / cellSizeM);
@@ -569,56 +580,158 @@ function planningQuantKey(x, y, z, cellSizeM, vCellSizeM) {
   return `${qx},${qy},${qz}`;
 }
 
+let planCellSizeM  = 1.0;
+let planVCellSizeM = 2.0;
+let planFacesGeom  = [];   // pre-built exterior face geometry for L2
+
 function applyPlanningSnapshot(plan, {deferRender=false}={}) {
   if (!plan || !Array.isArray(plan.cells)) return false;
 
-  const cellSizeM  = fin(plan.cell_size_m, 1.0);
-  const vCellSizeM = fin(plan.vertical_cell_size_m, 2.0);
+  planCellSizeM  = fin(plan.cell_size_m, 1.0)  || 1.0;
+  planVCellSizeM = fin(plan.vertical_cell_size_m, 2.0) || 2.0;
 
-  // Full snapshot: replace all planning cells.
   planningCellsByKey.clear();
 
   for (const raw of plan.cells) {
     const center = asVec3(raw.center_map);
     if (!center) continue;
     planningCellsByKey.set(
-      planningQuantKey(center.x, center.y, center.z, cellSizeM, vCellSizeM),
+      planningQuantKey(center.x, center.y, center.z, planCellSizeM, planVCellSizeM),
       {
         center,
         occupied_score:    fin(raw.occupied_score, 0),
         confidence:        fin(raw.confidence, 0),
         source_cell_count: fin(raw.source_cell_count, 0),
-        cellSizeM,
-        vCellSizeM,
       }
     );
   }
 
+  buildPlanningFaces();
   if (!deferRender) { updateMetrics(); scheduleDraw(); }
   return true;
 }
 
-function drawPlanningCells() {
+function buildPlanningFaces() {
+  planFacesGeom = [];
   if (!state.showPlanning || planningCellsByKey.size === 0) return;
-  const cells = [...planningCellsByKey.values()];
-  // Sort back-to-front (large NED-Z = near ground drawn first)
-  cells.sort((a, b) => b.center.z - a.center.z);
-  ctx.save();
-  for (const cell of cells) {
-    if (!cell.center) continue;
-    // Score range: min_occupied_score (1.0) to ~15.0.
-    // Map to alpha [0.20, 0.65] so strong evidence is more visible.
-    const scoreNorm = clamp((cell.occupied_score - 0.5) / 14.5, 0, 1);
-    const alpha = 0.20 + scoreNorm * 0.45;
-    // Radius scales with score (3–8 px)
-    const r = Math.max(3, Math.min(8, 3 + scoreNorm * 5));
-    const pp = project(cell.center);
-    if (!pp || !Number.isFinite(pp.x)) continue;
-    ctx.fillStyle = `rgba(80,120,220,${alpha.toFixed(2)})`;
-    ctx.beginPath();
-    ctx.arc(pp.x, pp.y, r * devicePixelRatio, 0, Math.PI * 2);
-    ctx.fill();
+
+  const csM  = planCellSizeM;
+  const vcM  = planVCellSizeM;
+  const halfX = csM * 0.5;
+  const halfY = csM * 0.5;
+  const halfZ = vcM * 0.5;
+
+  // Build neighbour-lookup set using the same quantised keys.
+  const occKeys = new Set(planningCellsByKey.keys());
+
+  const DIRS = [
+    [1,0,0, 0.60], [-1,0,0, 0.50],
+    [0,1,0, 0.44], [0,-1,0, 0.38],
+    [0,0,1, 0.20], [0,0,-1, 1.00],
+  ];
+
+  for (const cell of planningCellsByKey.values()) {
+    const {center, occupied_score, confidence} = cell;
+    if (!center) continue;
+
+    const cx = center.x, cy = center.y, cz = center.z;
+
+    for (const [dx, dy, dz, shading] of DIRS) {
+      // Neighbour key: offset by one cell in this direction.
+      const nk = planningQuantKey(
+        cx + dx * csM, cy + dy * csM, cz + dz * vcM,
+        csM, vcM);
+      if (occKeys.has(nk)) continue;   // interior face — skip
+
+      let corners;
+      if (dx !== 0) {
+        const fx = cx + dx * halfX;
+        corners = [
+          {x:fx, y:cy-halfY, z:cz-halfZ}, {x:fx, y:cy+halfY, z:cz-halfZ},
+          {x:fx, y:cy+halfY, z:cz+halfZ}, {x:fx, y:cy-halfY, z:cz+halfZ},
+        ];
+      } else if (dy !== 0) {
+        const fy = cy + dy * halfY;
+        corners = [
+          {x:cx-halfX, y:fy, z:cz-halfZ}, {x:cx+halfX, y:fy, z:cz-halfZ},
+          {x:cx+halfX, y:fy, z:cz+halfZ}, {x:cx-halfX, y:fy, z:cz+halfZ},
+        ];
+      } else {
+        const fz = cz + dz * halfZ;
+        corners = [
+          {x:cx-halfX, y:cy-halfY, z:fz}, {x:cx+halfX, y:cy-halfY, z:fz},
+          {x:cx+halfX, y:cy+halfY, z:fz}, {x:cx-halfX, y:cy+halfY, z:fz},
+        ];
+      }
+      planFacesGeom.push({
+        corners,
+        centroid: {
+          x: (corners[0].x+corners[2].x)*0.5,
+          y: (corners[0].y+corners[2].y)*0.5,
+          z: (corners[0].z+corners[2].z)*0.5,
+        },
+        shading,
+        occupied_score,
+        confidence,
+        cx, cy, cz,
+      });
+    }
   }
+}
+
+function drawPlanningFaces() {
+  if (!state.showPlanning || planFacesGeom.length === 0) return;
+
+  const sorted = planFacesGeom.slice().sort((a,b) => b.centroid.z - a.centroid.z);
+
+  ctx.save();
+  ctx.lineWidth = 0.5 * devicePixelRatio;
+
+  const byType = state.travColorByType;
+  // L2 uses same color mode as L1, but lower alpha (~0.40 fill vs ~0.78 for L1).
+  // "Type" for L2: all cells are occupied (L2 evicts sub-threshold), so use
+  // a distinct muted blue-grey base in type mode to separate from L1's red.
+  const L2_TYPE_BASE = [60, 100, 200];   // muted slate-blue for type mode
+  const L2_FILL_SCALE = 0.42;           // L1 uses 0.78/0.60 — L2 is dimmer
+
+  const groups = new Map();
+
+  for (const face of sorted) {
+    const ps = face.corners.map(c => project(c));
+    if (ps.some(p => !Number.isFinite(p.x) || !Number.isFinite(p.y))) continue;
+
+    const base = byType
+      ? L2_TYPE_BASE
+      : rgbForH(Math.max(0, -face.centroid.z));
+    const s  = face.shading;
+    const fr = Math.round(base[0] * s);
+    const fg = Math.round(base[1] * s);
+    const fb = Math.round(base[2] * s);
+    const fa = L2_FILL_SCALE;
+    const sa = Math.min(1, fa + 0.12);
+    const key = `${fr},${fg},${fb}`;
+
+    let g = groups.get(key);
+    if (!g) {
+      g = {
+        fillStyle:   `rgba(${fr},${fg},${fb},${fa})`,
+        strokeStyle: `rgba(${fr},${fg},${fb},${sa})`,
+        path: new Path2D(),
+      };
+      groups.set(key, g);
+    }
+    g.path.moveTo(ps[0].x, ps[0].y);
+    for (let i=1; i<ps.length; i++) g.path.lineTo(ps[i].x, ps[i].y);
+    g.path.closePath();
+  }
+
+  for (const {fillStyle, strokeStyle, path} of groups.values()) {
+    ctx.fillStyle   = fillStyle;
+    ctx.strokeStyle = strokeStyle;
+    ctx.fill(path);
+    ctx.stroke(path);
+  }
+
   ctx.restore();
 }
 
@@ -1057,7 +1170,7 @@ function scheduleDraw() {
 
 function draw() {
   ctx.clearRect(0, 0, canvas.width, canvas.height);
-  drawPlanningCells();   // L2 persistent planning map (slate-blue, back-most layer)
+  drawPlanningFaces();   // L2 persistent planning map (exterior faces, back-most layer)
   drawTravFaces();       // L1 traversability exterior surface
   drawObstacleCells();   // raw evidence cells (demoted, off by default)
   drawLiveAgingOverlay(); // live delta events with age decay
@@ -1543,23 +1656,32 @@ function installViewControls() {
     lodSlider.addEventListener("input", ()=>{
       travDisplayLevelM = TRAV_LOD_LEVELS[Number(lodSlider.value)];
       el("trav-lod-val").textContent = travDisplayLevelM + "m";
-      buildTravFaces();
+      buildTravFaces();      // L1 only: aggregates 0.5 m cells at new LOD
+      // L2 is not re-built here — it renders at its own native 1m cell size
       scheduleDraw();
     });
   }
 
   updateZoomDisplay();
 
-  const toggles=[
-    ["toggle-planning",   v=>{ state.showPlanning    =v; scheduleDraw(); }],
-    ["toggle-obstacles",  v=>{ state.showObstacles   =v; scheduleDraw(); }],
-    ["toggle-trav",       v=>{ state.showTrav        =v; scheduleDraw(); }],
-    ["toggle-ghosts",     v=>{ state.showGhosts      =v; scheduleDraw(); }],
-    ["toggle-sensing",    v=>{ state.showSensing     =v; scheduleDraw(); }],
-    ["toggle-trajectory", v=>{ state.showTrajectory  =v; scheduleDraw(); }],
+  // Layer toggle buttons: click toggles .active class and matching state flag.
+  const layerToggles=[
+    ["toggle-planning",   "showPlanning"],
+    ["toggle-trav",       "showTrav"],
+    ["toggle-obstacles",  "showObstacles"],
+    ["toggle-ghosts",     "showGhosts"],
+    ["toggle-sensing",    "showSensing"],
+    ["toggle-trajectory", "showTrajectory"],
   ];
-  for (const [id, fn] of toggles) {
-    const cb=el(id); if (cb) cb.addEventListener("change", ()=>fn(cb.checked));
+  for (const [id, stateKey] of layerToggles) {
+    const btn=el(id);
+    if (!btn) continue;
+    btn.addEventListener("click", ()=>{
+      state[stateKey] = !state[stateKey];
+      btn.classList.toggle("active", state[stateKey]);
+      if (stateKey==="showPlanning") buildPlanningFaces();
+      scheduleDraw();
+    });
   }
 
   // Trav color mode toggle: height (default) ↔ type (occupied/partial)
@@ -1571,6 +1693,8 @@ function installViewControls() {
     const lt = el("trav-legend-type");
     if (lh) lh.style.display = state.travColorByType ? "none"  : "";
     if (lt) lt.style.display = state.travColorByType ? "flex"  : "none";
+    // L2 face colors depend on mode; rebuild geometry cache.
+    buildPlanningFaces();
     scheduleDraw();
   });
 }
