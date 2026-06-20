@@ -126,8 +126,9 @@ h3 { font-size: 12px; margin: 10px 0 6px; color: #c0c4d0; text-transform: upperc
 
       <h3>Layers</h3>
       <div class="layer-controls">
-        <label><input type="checkbox" id="toggle-obstacles" checked> Obstacle map</label>
-        <label><input type="checkbox" id="toggle-trav" checked> Traversability surface</label>
+        <label><input type="checkbox" id="toggle-planning" checked> L2 planning map</label>
+        <label><input type="checkbox" id="toggle-trav" checked> L1 traversability</label>
+        <label><input type="checkbox" id="toggle-obstacles"> Raw evidence</label>
         <label><input type="checkbox" id="toggle-ghosts"> Ghost detections</label>
         <label><input type="checkbox" id="toggle-sensing" checked> Sensing volumes</label>
         <label><input type="checkbox" id="toggle-trajectory" checked> Trajectory</label>
@@ -160,9 +161,10 @@ h3 { font-size: 12px; margin: 10px 0 6px; color: #c0c4d0; text-transform: upperc
       <h3>Metrics</h3>
       <div class="metric"><span>Stream source</span><code id="m-source">—</code></div>
       <div class="metric"><span>Seq</span><b id="m-seq">0</b></div>
-      <div class="metric"><span>Obstacle cells</span><b id="m-obs-cells">0</b></div>
-      <div class="metric"><span>Trav cells</span><b id="m-trav-cells">0</b></div>
+      <div class="metric"><span>L2 planning cells</span><b id="m-plan-cells">0</b></div>
+      <div class="metric"><span>L1 trav cells</span><b id="m-trav-cells">0</b></div>
       <div class="metric"><span>Trav ext. faces</span><b id="m-trav-faces">0</b></div>
+      <div class="metric"><span>Raw evidence cells</span><b id="m-obs-cells">0</b></div>
       <div class="metric"><span>Ghost detections</span><b id="m-ghosts">0</b></div>
       <div class="metric"><span>World snapshots</span><b id="m-ws-count">0</b></div>
       <div class="metric"><span>Ego updates</span><b id="m-ego-count">0</b></div>
@@ -177,7 +179,8 @@ h3 { font-size: 12px; margin: 10px 0 6px; color: #c0c4d0; text-transform: upperc
       </div>
       <div class="hint" style="margin-bottom:2px">
         Yellow = ego/path · White = sensing direction · Magenta = first blocked ·
-        Trav: red=occupied, amber=partial, shading=depth ·
+        L2 planning: slate-blue persistent voxels ·
+        L1 trav: red=occupied, amber=partial, shading=depth ·
         Cyan dot = ghost · Arrow = velocity
       </div>
 
@@ -232,20 +235,24 @@ const state = {
   firstBlocked: null,
   bounds: {min_x:-10, max_x:10, min_y:-10, max_y:10, min_z:-5, max_z:5},
   diagnostics: {},
-  showObstacles:   true,
-  showTrav:        true,
+  showPlanning:    true,    // L2 persistent planning map (checked by default)
+  showObstacles:   false,   // raw evidence (demoted — unchecked by default)
+  showTrav:        true,    // L1 traversability (primary)
   showGhosts:      false,
   showSensing:     true,
   showTrajectory:  true,
   travColorByType: false,   // false = height-based (default), true = occupied/partial type colors
 };
 
-// Obstacle cells
+// L2 planning cells (persistent, slate-blue base layer)
+const planningCellsByKey = new Map();  // quantKey → planning cell
+
+// Obstacle cells (raw evidence)
 const obsCellsByKey = new Map();       // cellKey → normalized cell
 const liveObsEventsByKey = new Map();
 let   liveObsEvents = [];              // for age-decay rendering
 
-// Traversability
+// Traversability (L1)
 const travCellsByKey = new Map();      // cellKey → trav cell (0.5 m raw cells from server)
 let   travOccupiedQKeys = new Set();   // raw quantized key → present (used by delta merge)
 let   travFacesGeom = [];              // pre-built exterior face geometry (at current LOD)
@@ -274,6 +281,7 @@ const live = {
   pendingWorldSnapshotSeq: null,
   pendingTravSnapshot: null,
   pendingTravIsDelta: false,
+  pendingPlanningSnapshot: null,
   pendingGhostDetections: null,
   processingScheduled: false,
   coalescedDeltaFrames: 0,
@@ -544,6 +552,73 @@ function drawOrientationGizmo() {
   ctx.arc(cx, cy, 3*dpr, 0, Math.PI*2);
   ctx.fill();
 
+  ctx.restore();
+}
+
+// ── L2 planning map rendering ──────────────────────────────────────────────────
+//
+// Planning cells are rendered as muted slate-blue dots, drawn first so they
+// appear behind L1 traversability and raw evidence cells.  Each cell is a
+// coarse 1×1×2 m voxel.  Opacity scales with occupied_score to give a visual
+// sense of evidence strength (stronger blue = more accumulated evidence).
+
+function planningQuantKey(x, y, z, cellSizeM, vCellSizeM) {
+  const qx = Math.round(x / cellSizeM);
+  const qy = Math.round(y / cellSizeM);
+  const qz = Math.round(z / vCellSizeM);
+  return `${qx},${qy},${qz}`;
+}
+
+function applyPlanningSnapshot(plan, {deferRender=false}={}) {
+  if (!plan || !Array.isArray(plan.cells)) return false;
+
+  const cellSizeM  = fin(plan.cell_size_m, 1.0);
+  const vCellSizeM = fin(plan.vertical_cell_size_m, 2.0);
+
+  // Full snapshot: replace all planning cells.
+  planningCellsByKey.clear();
+
+  for (const raw of plan.cells) {
+    const center = asVec3(raw.center_map);
+    if (!center) continue;
+    planningCellsByKey.set(
+      planningQuantKey(center.x, center.y, center.z, cellSizeM, vCellSizeM),
+      {
+        center,
+        occupied_score:    fin(raw.occupied_score, 0),
+        confidence:        fin(raw.confidence, 0),
+        source_cell_count: fin(raw.source_cell_count, 0),
+        cellSizeM,
+        vCellSizeM,
+      }
+    );
+  }
+
+  if (!deferRender) { updateMetrics(); scheduleDraw(); }
+  return true;
+}
+
+function drawPlanningCells() {
+  if (!state.showPlanning || planningCellsByKey.size === 0) return;
+  const cells = [...planningCellsByKey.values()];
+  // Sort back-to-front (large NED-Z = near ground drawn first)
+  cells.sort((a, b) => b.center.z - a.center.z);
+  ctx.save();
+  for (const cell of cells) {
+    if (!cell.center) continue;
+    // Score range: min_occupied_score (1.0) to ~15.0.
+    // Map to alpha [0.20, 0.65] so strong evidence is more visible.
+    const scoreNorm = clamp((cell.occupied_score - 0.5) / 14.5, 0, 1);
+    const alpha = 0.20 + scoreNorm * 0.45;
+    // Radius scales with score (3–8 px)
+    const r = Math.max(3, Math.min(8, 3 + scoreNorm * 5));
+    const pp = project(cell.center);
+    if (!pp || !Number.isFinite(pp.x)) continue;
+    ctx.fillStyle = `rgba(80,120,220,${alpha.toFixed(2)})`;
+    ctx.beginPath();
+    ctx.arc(pp.x, pp.y, r * devicePixelRatio, 0, Math.PI * 2);
+    ctx.fill();
+  }
   ctx.restore();
 }
 
@@ -982,8 +1057,9 @@ function scheduleDraw() {
 
 function draw() {
   ctx.clearRect(0, 0, canvas.width, canvas.height);
-  drawTravFaces();       // traversability exterior surface (back, painted first)
-  drawObstacleCells();   // mission obstacle map cells
+  drawPlanningCells();   // L2 persistent planning map (slate-blue, back-most layer)
+  drawTravFaces();       // L1 traversability exterior surface
+  drawObstacleCells();   // raw evidence cells (demoted, off by default)
   drawLiveAgingOverlay(); // live delta events with age decay
   if (state.showTrajectory) drawTrajectory();
   drawGhostDetections();
@@ -1028,6 +1104,7 @@ function updateMetrics() {
   const b=state.bounds;
   el("m-source").textContent = live.source;
   el("m-seq").textContent    = String(live.seq);
+  el("m-plan-cells").textContent = String(planningCellsByKey.size);
   el("m-obs-cells").textContent  = String(obsCellsByKey.size);
   el("m-trav-cells").textContent = String(travCellsByKey.size);
   // m-trav-faces updated in drawTravFaces()
@@ -1293,6 +1370,8 @@ function processPending() {
   live.pendingWorldSnapshot=null; live.pendingWorldSnapshotSeq=null;
   const pTrav=live.pendingTravSnapshot; const pTravIsDelta=live.pendingTravIsDelta;
   live.pendingTravSnapshot=null; live.pendingTravIsDelta=false;
+  const pPlan=live.pendingPlanningSnapshot;
+  live.pendingPlanningSnapshot=null;
   const pGhost=live.pendingGhostDetections;
   live.pendingGhostDetections=null;
 
@@ -1302,12 +1381,13 @@ function processPending() {
   if (pTrav)            changed=(pTravIsDelta
                           ? applyTravDelta(pTrav, {deferRender:true})
                           : applyTravSnapshot(pTrav, {deferRender:true}))||changed;
+  if (pPlan)            changed=applyPlanningSnapshot(pPlan, {deferRender:true})||changed;
   if (pGhost)           { applyGhostDetections(pGhost, {deferRender:true}); changed=true; }
 
   if (changed) { recomputeBounds(); updateMetrics(); scheduleDraw(); }
   else { updateMetrics(); }
 
-  if ((live.pendingDeltaCells.length||live.pendingWorldSnapshot||live.pendingTravSnapshot||live.pendingGhostDetections)
+  if ((live.pendingDeltaCells.length||live.pendingWorldSnapshot||live.pendingTravSnapshot||live.pendingPlanningSnapshot||live.pendingGhostDetections)
       && !live.processingScheduled) {
     scheduleLiveProcessing();
   }
@@ -1372,6 +1452,16 @@ function startLiveStream() {
       if (!trav||!Array.isArray(trav.cells)) return;
       live.pendingTravSnapshot=trav;
       live.pendingTravIsDelta=false;  // full snapshot — client clears + rebuilds
+      scheduleLiveProcessing();
+    } catch(e) {}
+  });
+
+  source.addEventListener("planning_map_snapshot", ev => {
+    try {
+      const payload=JSON.parse(ev.data);
+      const plan=payload.planning_map_snapshot;
+      if (!plan||!Array.isArray(plan.cells)) return;
+      live.pendingPlanningSnapshot=plan;  // always full snapshot for P1
       scheduleLiveProcessing();
     } catch(e) {}
   });
@@ -1461,7 +1551,8 @@ function installViewControls() {
   updateZoomDisplay();
 
   const toggles=[
-    ["toggle-obstacles",  v=>{ state.showObstacles  =v; scheduleDraw(); }],
+    ["toggle-planning",   v=>{ state.showPlanning    =v; scheduleDraw(); }],
+    ["toggle-obstacles",  v=>{ state.showObstacles   =v; scheduleDraw(); }],
     ["toggle-trav",       v=>{ state.showTrav        =v; scheduleDraw(); }],
     ["toggle-ghosts",     v=>{ state.showGhosts      =v; scheduleDraw(); }],
     ["toggle-sensing",    v=>{ state.showSensing     =v; scheduleDraw(); }],

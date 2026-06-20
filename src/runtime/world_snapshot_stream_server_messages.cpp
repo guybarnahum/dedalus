@@ -1,5 +1,6 @@
 #include "dedalus/runtime/world_snapshot_stream_server.hpp"
 
+#include "dedalus/avoidance/mission_local_planning_map_publisher.hpp"
 #include "dedalus/avoidance/mission_local_traversability_map_publisher.hpp"
 #include "dedalus/core/json_utils.hpp"
 #include "dedalus/world_model/world_snapshot.hpp"
@@ -216,5 +217,38 @@ std::string RuntimeEventStreamServer::serialize_traversability_snapshot(
     return line;
 }
 
+void RuntimeEventStreamServer::on_planning_map_snapshot(
+    const MissionLocalPlanningMapFrame& frame) {
+    // Full snapshot every time — L2 is small (~3-6K cells) so no delta protocol needed for P1.
+    // Publish only if there are cells to display.
+    if (frame.snapshot.cell_count == 0U && frame.snapshot.cells.empty()) {
+        return;
+    }
+
+    const std::uint64_t seq = [this] {
+        std::lock_guard<std::mutex> lock{mutex_};
+        ++planning_map_snapshot_messages_;
+        return ++published_seq_;
+    }();
+    enqueue_planning_snapshot(seq, frame.timestamp_ns, frame.snapshot);
+}
+
+std::string RuntimeEventStreamServer::serialize_planning_snapshot(
+    std::uint64_t seq,
+    std::uint64_t timestamp_ns,
+    const MissionLocalPlanningMapSnapshot& snapshot) const {
+    // No cap: L2 is small by design.
+    const auto payload = to_compact_stream_json(snapshot, 0U);
+    std::string line;
+    line.reserve(payload.size() + 160U);
+    line += "{\"type\":\"planning_map_snapshot\",\"seq\":";
+    line += std::to_string(seq);
+    line += ",\"timestamp_ns\":";
+    line += std::to_string(timestamp_ns);
+    line += ",\"planning_map_snapshot\":";
+    line += payload;
+    line += "}\n";
+    return line;
+}
 
 }  // namespace dedalus

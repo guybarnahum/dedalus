@@ -12,6 +12,7 @@
 #include <variant>
 #include <vector>
 
+#include "dedalus/avoidance/mission_local_planning_map_publisher.hpp"
 #include "dedalus/avoidance/mission_local_traversability_map_publisher.hpp"
 #include "dedalus/avoidance/mission_obstacle_map_delta_writer.hpp"
 #include "dedalus/behavior/mission_runtime.hpp"
@@ -50,12 +51,19 @@ struct RuntimeEventStreamServerStats {
     std::uint64_t mission_event_messages{0};
     std::uint64_t mission_obstacle_map_delta_messages{0};
     std::uint64_t traversability_map_snapshot_messages{0};
+    std::uint64_t planning_map_snapshot_messages{0};
     std::uint64_t serialize_total_us{0};
     std::uint64_t enqueue_total_us{0};
     std::uint64_t publish_total_us{0};
 };
 
-class RuntimeEventStreamServer final : public WorldSnapshotSubscriber, public GhostDetectionsSubscriber, public MissionEventSubscriber, public MissionObstacleMapDeltaSubscriber, public MissionLocalTraversabilityMapSubscriber {
+class RuntimeEventStreamServer final
+    : public WorldSnapshotSubscriber,
+      public GhostDetectionsSubscriber,
+      public MissionEventSubscriber,
+      public MissionObstacleMapDeltaSubscriber,
+      public MissionLocalTraversabilityMapSubscriber,
+      public MissionLocalPlanningMapSubscriber {
 public:
     explicit RuntimeEventStreamServer(RuntimeEventStreamServerConfig config);
     ~RuntimeEventStreamServer() override;
@@ -72,6 +80,7 @@ public:
     void on_mission_event(const MissionEvent& event) override;
     void on_mission_obstacle_map_delta(const MissionObstacleMapDeltaFrame& frame) override;
     void on_traversability_map_snapshot(const MissionLocalTraversabilityMapFrame& frame) override;
+    void on_planning_map_snapshot(const MissionLocalPlanningMapFrame& frame) override;
 
     [[nodiscard]] std::uint16_t port() const;
     [[nodiscard]] std::uint16_t http_port() const;
@@ -94,10 +103,17 @@ private:
         MissionLocalTraversabilityMapSnapshot snapshot;
         bool is_delta{false};
     };
+    // A Level 2 planning map snapshot (always full — L2 is small, no delta for P1).
+    // The writer thread picks it up and calls serialize_planning_snapshot().
+    struct PendingPlanningSnapshot {
+        std::uint64_t seq{0};
+        std::uint64_t timestamp_ns{0};
+        MissionLocalPlanningMapSnapshot snapshot;
+    };
     // Queue items are either pre-serialized strings (all non-snapshot message
-    // types), PendingSnapshots, or PendingTravSnapshots (serialized lazily on
-    // the writer thread).
-    using QueueItem = std::variant<std::string, PendingSnapshot, PendingTravSnapshot>;
+    // types), PendingSnapshots, PendingTravSnapshots, or PendingPlanningSnapshots
+    // (serialized lazily on the writer thread).
+    using QueueItem = std::variant<std::string, PendingSnapshot, PendingTravSnapshot, PendingPlanningSnapshot>;
 
     void enqueue_line(std::string line);
     void enqueue_snapshot(std::uint64_t seq, std::shared_ptr<const WorldSnapshot> snapshot);
@@ -107,6 +123,10 @@ private:
     [[nodiscard]] std::string serialize_traversability_snapshot(std::uint64_t seq, std::uint64_t timestamp_ns,
                                                                 const MissionLocalTraversabilityMapSnapshot& snapshot,
                                                                 bool is_delta) const;
+    void enqueue_planning_snapshot(std::uint64_t seq, std::uint64_t timestamp_ns,
+                                   MissionLocalPlanningMapSnapshot snapshot);
+    [[nodiscard]] std::string serialize_planning_snapshot(std::uint64_t seq, std::uint64_t timestamp_ns,
+                                                          const MissionLocalPlanningMapSnapshot& snapshot) const;
     void publish_json_line(const std::string& line);
     void accept_loop();
     void http_accept_loop();
@@ -143,6 +163,7 @@ private:
     std::uint64_t mission_event_messages_{0};
     std::uint64_t mission_obstacle_map_delta_messages_{0};
     std::uint64_t traversability_map_snapshot_messages_{0};
+    std::uint64_t planning_map_snapshot_messages_{0};
     std::uint64_t serialize_total_us_{0};
     std::uint64_t enqueue_total_us_{0};
     std::uint64_t publish_total_us_{0};

@@ -256,6 +256,7 @@ RuntimeEventStreamServerStats RuntimeEventStreamServer::stats() const {
         .mission_event_messages = mission_event_messages_,
         .mission_obstacle_map_delta_messages = mission_obstacle_map_delta_messages_,
         .traversability_map_snapshot_messages = traversability_map_snapshot_messages_,
+        .planning_map_snapshot_messages = planning_map_snapshot_messages_,
         .serialize_total_us = serialize_total_us_,
         .enqueue_total_us = enqueue_total_us_,
         .publish_total_us = publish_total_us_};

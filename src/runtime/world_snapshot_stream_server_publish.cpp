@@ -132,6 +132,22 @@ void RuntimeEventStreamServer::enqueue_traversability_snapshot(
     queue_cv_.notify_one();
 }
 
+void RuntimeEventStreamServer::enqueue_planning_snapshot(
+    std::uint64_t seq, std::uint64_t timestamp_ns,
+    MissionLocalPlanningMapSnapshot snapshot) {
+    const auto start = SteadyClock::now();
+    {
+        std::lock_guard<std::mutex> lock{mutex_};
+        if (send_queue_.size() >= config_.max_send_queue_depth) {
+            send_queue_.pop_front();
+            ++dropped_messages_;
+        }
+        send_queue_.push_back(PendingPlanningSnapshot{seq, timestamp_ns, std::move(snapshot)});
+        enqueue_total_us_ += elapsed_us(start);
+    }
+    queue_cv_.notify_one();
+}
+
 void RuntimeEventStreamServer::publish_json_line(const std::string& line) {
     const auto start = SteadyClock::now();
 
@@ -207,9 +223,10 @@ void RuntimeEventStreamServer::writer_loop() {
             send_queue_.pop_front();
         }
 
-        // For PendingSnapshots and PendingTravSnapshots, serialize here on the
-        // writer thread so that the expensive to_json() / to_compact_stream_json()
-        // never runs on the hot path.  All other message types are pre-serialized.
+        // For PendingSnapshots, PendingTravSnapshots, and PendingPlanningSnapshots,
+        // serialize here on the writer thread so that the expensive
+        // to_json() / to_compact_stream_json() never runs on the hot path.
+        // All other message types are pre-serialized strings.
         std::string line;
         if (std::holds_alternative<std::string>(item)) {
             line = std::move(std::get<std::string>(item));
@@ -220,11 +237,19 @@ void RuntimeEventStreamServer::writer_loop() {
             const auto serialize_us = elapsed_us(t0);
             std::lock_guard<std::mutex> lock{mutex_};
             serialize_total_us_ += serialize_us;
-        } else {
+        } else if (std::holds_alternative<PendingTravSnapshot>(item)) {
             auto& pending = std::get<PendingTravSnapshot>(item);
             const auto t0 = SteadyClock::now();
             line = serialize_traversability_snapshot(
                 pending.seq, pending.timestamp_ns, pending.snapshot, pending.is_delta);
+            const auto serialize_us = elapsed_us(t0);
+            std::lock_guard<std::mutex> lock{mutex_};
+            serialize_total_us_ += serialize_us;
+        } else {
+            auto& pending = std::get<PendingPlanningSnapshot>(item);
+            const auto t0 = SteadyClock::now();
+            line = serialize_planning_snapshot(
+                pending.seq, pending.timestamp_ns, pending.snapshot);
             const auto serialize_us = elapsed_us(t0);
             std::lock_guard<std::mutex> lock{mutex_};
             serialize_total_us_ += serialize_us;

@@ -1,5 +1,6 @@
 #include "dedalus/runtime/core_stack_runner.hpp"
 
+#include "dedalus/avoidance/mission_local_planning_map_publisher.hpp"
 #include "dedalus/avoidance/mission_local_traversability_map_publisher.hpp"
 #include "dedalus/sensing/airsim_depth_obstacle_detector.hpp"
 
@@ -339,6 +340,21 @@ bool CoreStackRunner::run_once() {
                 if (timing_writer_) {
                     timing_writer_->record_stage(
                         "traversability_map_publisher.publish", duration_us(start));
+                }
+
+                // ── Level 2 SSE publish (piggybacks on L1 throttle) ─────────
+                // L2 is small (~3-6K cells); publish a full snapshot every time
+                // L1 is published.  The timestamp is the same as L1's frame.
+                if (planning_map_publisher_) {
+                    start = SteadyClock::now();
+                    MissionLocalPlanningMapFrame pm_frame;
+                    pm_frame.timestamp_ns = trav_frame.timestamp_ns;
+                    pm_frame.snapshot = mission_local_planning_map_.snapshot();
+                    planning_map_publisher_->publish(pm_frame);
+                    if (timing_writer_) {
+                        timing_writer_->record_stage(
+                            "planning_map_publisher.publish", duration_us(start));
+                    }
                 }
             }
         }
