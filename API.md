@@ -58,6 +58,60 @@ This document maps the runtime architecture, every major component interface, an
 
 ---
 
+## 1b. Three-Level Obstacle Map
+
+See `docs/two-level-obstacle-map.md` for the full architecture, lifecycle tables, and open design questions.
+
+### L0 — Ego-local reflexive map (`LocalFlightMap`)
+
+**Header:** `include/dedalus/avoidance/local_flight_map.hpp`
+
+Bounded ego-radius Cartesian voxel crop, rebuilt every tick. Drives `TrajectorySafetyEvaluator` for emergency/reflexive avoidance. Not published over SSE. Planned direction: polar cone representation.
+
+### L1 — Mission accumulator (`MissionLocalTraversabilityMap`)
+
+**Header:** `include/dedalus/avoidance/mission_local_traversability_map.hpp`
+
+| Config field | Default | Description |
+|---|---|---|
+| `cell_size_m` | 0.5 m | XY voxel size |
+| `vertical_cell_size_m` | 0.5 m | Z voxel size |
+| `occupied_threshold` | 1.0 | Score to classify a cell Occupied |
+| `occupied_score_decay_per_second` | 0.05 | Time decay rate (0 = no decay) |
+| `prune_min_occupied_score` | 0.1 | Score floor; cells below evicted |
+| `prune_interval_ticks` | 10 | Prune every N assimilator ticks |
+
+Internal storage: `std::vector<StoredCell>` + `unordered_map<CellKey, size_t>`. Uniform 0.5 m voxels. Published to SSE as `traversability_map_snapshot` (full) and `traversability_map_delta` (incremental), throttled to ≤1 per 2 s.
+
+### L2 — Persistent planning map (`MissionLocalPlanningMap`)
+
+**Header:** `include/dedalus/avoidance/mission_local_planning_map.hpp`
+
+| Config field | Default | Description |
+|---|---|---|
+| `cell_size_m` | 1.0 m | XY voxel size |
+| `vertical_cell_size_m` | 2.0 m | Z voxel size |
+| `min_occupied_score` | 1.0 | Project only L1 cells at/above this |
+| `free_evidence_weight` | 0.5 | Score fraction removed per free observation |
+
+Evidence-keyed incremental update (not a full rebuild):
+- L1 **Occupied** cells: max-merge `occupied_score` and `confidence` into L2 voxel.
+- L1 **ObservedFree** cells: `new_score = old_score * (1 - free_evidence_weight)`; evict if score drops below `min_occupied_score`.
+- L1 **Unknown / Stale / absent**: no change.
+
+No time decay. Persistence:
+
+```cpp
+bool save_to_file(const std::filesystem::path& path) const;
+bool load_from_file(const std::filesystem::path& path);
+```
+
+File format: `planning_map_v1` versioned text, one cell per line. Written atomically via temp-then-rename.
+
+`CoreStackRunnerConfig::planning_map_persistence_path` controls the path. L2 is loaded at `CoreStackRunner` construction (if the file exists) and saved at `finalize_mission_map_after_landing()`.
+
+---
+
 ## 2. Core Primitive Types (`include/dedalus/core/types.hpp`)
 
 | Type | Description |

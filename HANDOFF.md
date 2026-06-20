@@ -12,6 +12,7 @@ First read:
   LLM.md
 
 Then read:
+  docs/two-level-obstacle-map.md
   docs/runtime_dataflow.md
   docs/mission_local_obstacle_mapping_architecture.md
   docs/dynamic_mission_flight_path_map_architecture.md
@@ -71,13 +72,40 @@ Active development state:
   The current work is still diagnostics / visualization / persistence plumbing.
   Do not add planner blocking, replanning, or command-sink obstacle avoidance semantics unless explicitly requested.
 
+Three-level obstacle map architecture (see docs/two-level-obstacle-map.md):
+  L0  LocalFlightMap (ego-local, reflexive avoidance)
+        Cartesian voxels, ~0.5 m, bounded ego-radius crop, rebuilt every tick.
+        Drives TrajectorySafetyEvaluator / emergency avoidance.
+        Planned direction: polar cone representation (range × azimuth × elevation)
+          to match depth-sensor data format and make O(1) forward-cone queries.
+        Viewer: planned ego sub-window inset showing the real-time avoidance layer.
+  L1  MissionLocalTraversabilityMap (mission-local accumulator)
+        Currently: flat std::vector<StoredCell> + unordered_map. Uniform 0.5 m voxels.
+        Time-based score decay (0.05/s); cells pruned below score floor 0.1.
+        Lifetime: per-flight session. Streamed to viewer as traversability overlay.
+        Planned direction: octree for multi-resolution queries at site scale.
+  L2  MissionLocalPlanningMap (cross-mission persistent planning map)
+        Currently: flat vector + hashmap, 1 m × 1 m × 2 m voxels (~16× fewer than L1).
+        Evidence-keyed: occupied L1 cells max-merge in; free-space evidence evicts.
+        No time decay — cells persist between missions via disk save/load.
+        Saved at finalize_mission_map_after_landing(); loaded at process start.
+        Planned direction: OctoMap-style octree for adaptive resolution.
+
+  What the viewer shows today:
+    Obstacle cells = raw MissionLocalObstacleMap evidence (transient, per-tick).
+    Trav cells     = L1 MissionLocalTraversabilityMap (accumulated, filtered).
+    L1 is the semantically meaningful layer; raw evidence is noisy sensor input.
+    Goal: make L1 the primary obstacle view; raw evidence as optional debug overlay.
+    Planned: ego sub-window showing L0 LocalFlightMap crop.
+
 Representation boundary to preserve:
   Read docs/mission_map_data_representations_and_retention.md before changing retention, map storage, or viewer/data plumbing.
-  Keep these four representations distinct:
-    1. detector raw evidence (`ObstacleEvidence`) — temporary live input for emergency/reflexive avoidance and map update,
-    2. ego-relative reflexive avoidance map (`LocalFlightMapSnapshot`) — bounded current-hazard working set,
-    3. mission/site foundational planning map — mission-derived traversability update now, future persistent site-frame planning memory,
-    4. visualization/debug/replay representation — streamable/exportable/operator-facing, not the runtime/control storage format.
+  Keep these representations distinct:
+    raw evidence (`ObstacleEvidence`) — temporary live input for map update,
+    L0 ego-local reflexive map (`LocalFlightMapSnapshot`) — current-hazard working set,
+    L1 mission accumulator (`MissionLocalTraversabilityMap`) — per-flight filtered map,
+    L2 planning map (`MissionLocalPlanningMap`) — cross-mission persistent store,
+    visualization/debug/replay representation — not the runtime/control storage format.
   Raw evidence can be forgotten only after:
     - active flight/emergency window is clear,
     - mission-local evidence has been compacted,
@@ -89,7 +117,10 @@ Representation boundary to preserve:
 Current validated architecture:
   AirSim DepthPlanar / obstacle evidence
     -> CoreStackRunner
-    -> MissionLocalObstacleMap
+    -> MissionLocalObstacleMap (raw evidence, per-tick)
+    -> MissionMapAssimilator
+         -> L1: MissionLocalTraversabilityMap (0.5 m voxels, time-decay 0.05/s, pruning)
+         -> L2: MissionLocalPlanningMap (1 m × 2 m voxels, evidence-keyed, disk-backed)
     -> mission-local obstacle map deltas
     -> RuntimeEventStreamServer
          -> raw TCP JSONL on --world-snapshot-stream-port (default 7788)
@@ -162,10 +193,14 @@ Most recent operator observations:
   - tick_overrun and dist_to_home_xy_m diagnostic events now visible in mission event stream.
 
 Immediate next tasks:
-  1. Clarify the durable planner-facing site map: the current MissionLocalTraversabilityMap is a
-     mission-derived foundational artifact, not yet the complete cross-mission site planning map.
-  2. Keep runtime preload diagnostics-only until separately validated.
-  3. Do not add planner/control coupling yet.
+  1. Viewer: add ego sub-window showing L0 LocalFlightMap crop (reflexive avoidance layer).
+  2. Viewer: make L1 traversability the primary obstacle view; demote raw evidence to optional debug overlay.
+  3. Open architecture questions to resolve before implementing:
+       a. L0: polar cone representation (range × azimuth × elevation) vs current Cartesian voxels.
+       b. L2: OctoMap-style octree vs current flat coarser-voxel hashmap.
+  4. Wire L2 planning_map_persistence_path into the run_mission.sh wrapper and app config.
+  5. Keep runtime preload diagnostics-only until separately validated.
+  6. Do not add planner/control coupling yet.
 
 Runtime commands used for validated viewer workflow:
   Generate mission-local obstacle viewer HTML:

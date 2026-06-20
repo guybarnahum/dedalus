@@ -524,7 +524,7 @@ Milestone 3 should not own full obstacle avoidance. It should prove that object-
 
 ## 7. Post-Milestone 3 Spatial Autonomy
 
-After M3, the same behaviors should become obstacle-aware. The architecture should insert tactical avoidance between behavior and the flight sink:
+After M3, the same behaviors should become obstacle-aware. The architecture inserts tactical avoidance between behavior and the flight sink:
 
 ```text
 BehaviorController
@@ -536,29 +536,59 @@ BehaviorController
 
 The sink still receives bounded velocity/yaw intent only.
 
+### Three-Level Obstacle Map Architecture
+
+The spatial layer is structured as three complementary obstacle maps:
+
+```text
+L0  LocalFlightMap          ego-local, per-tick, reflexive emergency avoidance
+                             Cartesian voxels (→ polar cones: planned direction)
+                             Viewer: ego sub-window (planned)
+
+L1  MissionLocalTraversabilityMap   mission-local accumulator, per-flight
+                             0.5 m uniform voxels
+                             Time-based score decay (0.05/s), score-floor pruning
+                             Streamed to viewer as traversability overlay
+
+L2  MissionLocalPlanningMap  cross-mission persistent planning map
+                             1 m × 1 m × 2 m voxels (16× fewer than L1)
+                             No time decay; evidence-keyed (free space evicts)
+                             Disk-backed: saved at landing, loaded at startup
+                             Planned: OctoMap-style octree for adaptive resolution
+```
+
+Evidence flows: depth sensor → raw obstacle map → L1 accumulator → L2 planning map (incremental).
+
+L2 gives the planner a memory of obstacles that persists across power cycles. A structure mapped on a prior mission is still present until the drone explicitly observes free space at that location. Current tactical sensing (L0/L1) always overrides stale L2 memory.
+
+See `docs/two-level-obstacle-map.md` for the full architecture, lifecycle tables, and open design questions.
+
 Post-M3 roadmap:
 
 ```text
-4.0 Local tactical occupancy map
-  Build a drone-relative real-time occupancy map from vision and ego motion.
+4.0 Local tactical occupancy map (L0 + L1)  ✅ Implemented
+  L0: ego-local Cartesian voxel crop driving TrajectorySafetyEvaluator.
+  L1: mission-local accumulator with time decay and score-floor pruning.
 
 5.0 Reactive obstacle avoidance planner
-  Modify desired behavior velocity into safe velocity using tactical occupancy.
+  Modify desired behavior velocity into safe velocity using L0 / L1.
 
-6.0 Persistent traverse map / flight memory
-  Remember known-safe corridors, blocked regions, risk/cost surfaces, and preferred lanes across flights.
+6.0 Persistent traverse map (L2)  ✅ Implemented
+  L2 planning map: evidence-keyed, disk-backed, cross-mission persistence.
+  Open: OctoMap octree, polar cone L0, path planner integration.
 
 7.0 Cached flight solutions
   Cache and reuse successful route solutions when the environment is similar.
 
 8.0 Tactical map and drone POV visualization
-  Visualize both drone-relative / takeoff-origin maps and drone POV overlays.
+  L0 ego sub-window in viewer (planned).
+  L1 as primary obstacle view; raw evidence as optional debug overlay (planned).
 
 9.0 Integrated spatial autonomy demo
-  Demonstrate object-conditioned behavior with live obstacle avoidance and persistent map updates.
+  Object-conditioned behavior with live obstacle avoidance and persistent map updates.
 
 10.0 Multi-flight site memory
-  Maintain site-local memory across missions.
+  Maintain site-local memory across missions using L2 as the foundation.
 ```
 
 Persistent memory is advisory, not truth. Current tactical sensing overrides stale memory.

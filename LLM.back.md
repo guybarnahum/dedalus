@@ -735,3 +735,41 @@ Compaction/fusion belongs in MissionLocalObstacleMap.
 
 4.3A-D were diagnostics/observability slices only. They did not add planner blocking, replanning, command gating, or command-sink coupling. Future avoidance/control work should start as a separately scoped 6.x effort.
 
+---
+
+## H17. Two-Level Obstacle Map — Milestone History
+
+Prior to this milestone, MissionLocalTraversabilityMap had:
+  occupied_score_decay_per_second = 0.0  (no decay — cells accumulated forever)
+  No pruning — cells were never removed from cells_ / cell_index_
+  No cross-mission persistence — RAM-only, lost at process exit
+
+The two-level map introduced:
+
+L1 enhancements (MissionLocalTraversabilityMap):
+  occupied_score_decay_per_second = 0.05  (decays from 1.5 → 0.1 in ~28 s)
+  prune_min_occupied_score = 0.1         (eviction floor)
+  prune_interval_ticks = 10              (O(N) compaction every 10 assimilator ticks)
+  prune_weak_cells(): stable_partition + index rebuild
+
+L2 (MissionLocalPlanningMap, new class):
+  1 m × 1 m × 2 m voxels
+  Evidence-keyed: occupied max-merges in; free-space multiplicatively evicts
+    (free_evidence_weight = 0.5; 1 observation clears barely-occupied cell,
+     ~4 observations clear max-evidence cell)
+  No time decay — absence of observation ≠ free space
+  Disk persistence: planning_map_v1 text format, one cell per line
+  Atomic save via temp-then-rename
+  CoreStackRunnerConfig::planning_map_persistence_path wires the file path
+
+Open architectural questions documented in docs/two-level-obstacle-map.md:
+  L0: should LocalFlightMap use polar cone representation?
+  L1: octree for multi-resolution at site scale?
+  L2: OctoMap-style octree as long-term direction?
+
+Viewer state at this milestone:
+  Raw evidence (MissionLocalObstacleMap deltas) shown as "obstacle cells"
+  L1 traversability shown as "trav cells" with exterior face rendering
+  L0 ego sub-window planned but not yet implemented
+  Raw evidence is transient sensor input; L1 is the accumulated filtered view
+

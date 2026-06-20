@@ -49,6 +49,24 @@ The AirSim overlay is now a subscriber/renderer only: it consumes `ghost_detecti
 
 See [docs/runtime_dataflow.md](docs/runtime_dataflow.md) for the full source → publisher → server → subscriber → sink diagrams.
 
+## Spatial Mapping — Three-Level Obstacle Map
+
+Dedalus maintains three obstacle map levels with different roles, lifetimes, and resolutions. See [docs/two-level-obstacle-map.md](docs/two-level-obstacle-map.md) for the full architecture.
+
+| Level | Class | Resolution | Lifetime | Decay | Purpose |
+|-------|-------|-----------|----------|-------|---------|
+| **L0** | `LocalFlightMap` | ~0.5 m Cartesian voxels, ego-bounded | Per-tick | Implicit (ego crop) | Reflexive / emergency avoidance |
+| **L1** | `MissionLocalTraversabilityMap` | 0.5 m uniform voxels | Per-flight | Time-based (0.05/s) | In-flight accumulated obstacle map |
+| **L2** | `MissionLocalPlanningMap` | 1 m × 1 m × 2 m voxels | Cross-mission | Evidence-only (free space evicts) | Persistent site planning map |
+
+Evidence flows: depth sensor → raw `MissionLocalObstacleMap` → L1 accumulator → L2 planning map (incremental, evidence-keyed).
+
+L2 is saved to disk at mission end and reloaded at startup, giving the planner a memory of obstacles that persists across power cycles. A building mapped last month is still there next month unless the drone explicitly observes free space at that location.
+
+**Open architectural directions:**
+- L0: replace Cartesian voxels with polar cone representation (range × azimuth × elevation) to match depth-sensor data format and enable O(1) forward-cone queries for emergency avoidance.
+- L2: replace flat coarser-voxel hashmap with OctoMap-style octree for adaptive resolution and multi-resolution planning queries.
+
 ## The Three-Tier Architecture (Sim-First Development)
 To guarantee stability and prevent hardware loss, Dedalus enforces a strict separation of environments:
 

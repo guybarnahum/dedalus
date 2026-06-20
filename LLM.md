@@ -86,7 +86,16 @@ Milestone 2.30A: slow moving SEL animal sequence validation. Complete: ghost_far
 Milestone 2.30B: moving-target stress matrix. Complete: medium, side-motion, and diagonal far-animal trajectories validated.
 Milestone 4.1C.2/4.1C.3: AirSim depth-frame classless obstacle detector core, sidecar acquisition, CoreStackRunner handoff, sampling fix, and OSD visualization are live-validated.
 Milestone 4.3A-D: classless obstacle-map diagnostics hardening is complete: provider-neutral map-level compaction, no AirSim detector-side coalescing, local-flight exclusion diagnostics, WorldSnapshot serialization, and viewer observability.
-Active next slice: 4.3E documentation / handoff consolidation; after that, resume persistent obstacle-memory schema/artifact alignment using canonical `MissionLocalObstacleCell` counters. Runtime preload remains diagnostics-only until validated.
+Two-level obstacle map (L1+L2) is implemented and syntax-validated:
+  L1 MissionLocalTraversabilityMap: occupied_score_decay_per_second=0.05, prune_min_occupied_score=0.1, prune_interval_ticks=10.
+  L2 MissionLocalPlanningMap: 1 m × 1 m × 2 m voxels, evidence-keyed incremental update (occupied max-merges in, free-space evicts), disk persistence via save_to_file/load_from_file, atomic temp-then-rename. CoreStackRunner::planning_map_persistence_path_ controls the file path; loaded at construction, saved at finalize_mission_map_after_landing().
+  See docs/two-level-obstacle-map.md for the full L0/L1/L2 architecture, lifecycle, and open questions.
+
+Active next slice: 4.3E documentation / handoff consolidation; after that:
+  - Viewer: ego sub-window showing L0 LocalFlightMap crop.
+  - Resolve open architecture questions: L0 polar cones, L2 octree.
+  - Wire L2 persistence path into run_mission.sh.
+  Runtime preload remains diagnostics-only until validated.
 ```
 
 ---
@@ -107,6 +116,15 @@ AirSim live frame + ego sidecar
              -> PerceptionPipelineOutput.obstacle_evidence
              -> classless airsim_depth_obstacle_detector evidence
            -> PerceptionPipelineOutput.observations
+  -> MissionLocalObstacleMap (raw evidence, per-tick)
+  -> MissionMapAssimilator
+       -> L1: MissionLocalTraversabilityMap
+              flat 0.5 m voxels, time-decay 0.05/s, prune floor 0.1
+              -> traversability_map_publisher -> SSE stream (throttled 2 s)
+       -> L2: MissionLocalPlanningMap
+              1 m × 1 m × 2 m voxels, evidence-keyed (no time decay)
+              -> load at startup from planning_map_persistence_path
+              -> save at finalize_mission_map_after_landing()
   -> InMemoryWorldModel
   -> WorldSnapshotPublisher
        -> LatestWorldSnapshotSubscriber
