@@ -16,10 +16,10 @@
 //
 // query_occupied_in_box
 // ──────────────────────
-// Converts the world-frame bbox to integer key ranges, then iterates all
-// candidate keys and checks cell_index_.  O(Nx × Ny × Nz) where N is the
-// number of voxels spanning the box on each axis — typically fast for
-// planning-scale queries.
+// Iterates the occupied cell index (O(N_cells)) and checks each cell's
+// world-frame centre against the bbox.  This is O(N_cells) regardless of
+// box size — far better than key enumeration for the typical case where the
+// map is sparse relative to the query window.
 
 #include "dedalus/avoidance/mission_local_planning_map.hpp"
 
@@ -121,36 +121,17 @@ std::vector<Vec3> MissionLocalPlanningMap::query_occupied_in_box(
 
     const float min_score = static_cast<float>(config_.min_occupied_score);
 
-    // Cell xi has centre at (xi+0.5)*size.  We want all xi where centre is
-    // within [min, max], i.e. xi in [ceil(min/size - 0.5), floor(max/size - 0.5)].
-    const int xi_lo = static_cast<int>(
-        std::ceil(bbox.min.x / config_.cell_size_m - 0.5));
-    const int xi_hi = static_cast<int>(
-        std::floor(bbox.max.x / config_.cell_size_m - 0.5));
-    const int yi_lo = static_cast<int>(
-        std::ceil(bbox.min.y / config_.cell_size_m - 0.5));
-    const int yi_hi = static_cast<int>(
-        std::floor(bbox.max.y / config_.cell_size_m - 0.5));
-    const int zi_lo = static_cast<int>(
-        std::ceil(bbox.min.z / config_.vertical_cell_size_m - 0.5));
-    const int zi_hi = static_cast<int>(
-        std::floor(bbox.max.z / config_.vertical_cell_size_m - 0.5));
-
     std::vector<Vec3> result;
-
-    for (int xi = xi_lo; xi <= xi_hi; ++xi) {
-        for (int yi = yi_lo; yi <= yi_hi; ++yi) {
-            for (int zi = zi_lo; zi <= zi_hi; ++zi) {
-                const CellKey key{xi, yi, zi};
-                const auto it = cell_index_.find(key);
-                if (it != cell_index_.end() &&
-                    cells_[it->second].cell.occupied_score >= min_score) {
-                    result.push_back(cells_[it->second].cell.center_map);
-                }
-            }
+    for (const auto& [key, idx] : cell_index_) {
+        const auto& entry = cells_[idx];
+        if (entry.cell.occupied_score < min_score) continue;
+        const Vec3& p = entry.cell.center_map;
+        if (p.x >= bbox.min.x && p.x <= bbox.max.x &&
+            p.y >= bbox.min.y && p.y <= bbox.max.y &&
+            p.z >= bbox.min.z && p.z <= bbox.max.z) {
+            result.push_back(p);
         }
     }
-
     return result;
 }
 

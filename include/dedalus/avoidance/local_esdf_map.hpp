@@ -65,7 +65,8 @@ public:
     // compute_esdf populates cells_ directly.
     friend LocalESDFMap compute_esdf(const MissionLocalPlanningMap& l2,
                                      const Vec3& centre_world,
-                                     double window_half_m,
+                                     double horiz_half_m,
+                                     double vert_half_m,
                                      double d0_m);
 
 private:
@@ -88,14 +89,18 @@ private:
 // ─── Free function ─────────────────────────────────────────────────────────
 //
 // Compute an ESDF from the in-memory L2 window centred on centre_world.
-//   window_half_m : half-extent of the compute window on each axis (world units).
-//   d0_m          : truncation radius — only cells with |d| < d0 are stored.
+//   horiz_half_m : half-extent in X and Y (world metres).
+//   vert_half_m  : half-extent in Z  (world metres).
+//                  Separate parameter because L2's vertical cell size (2 m) is
+//                  coarser than XY (1 m); a 80×80×20 m window needs horiz=40, vert=10.
+//   d0_m         : truncation radius — only cells with |d| < d0 are stored.
 //
 // l2.slide_window() should be called before this to ensure the region is loaded.
 // Cell sizes are inherited from l2.config() — no separate config needed.
 [[nodiscard]] LocalESDFMap compute_esdf(const MissionLocalPlanningMap& l2,
                                          const Vec3& centre_world,
-                                         double window_half_m,
+                                         double horiz_half_m,
+                                         double vert_half_m,
                                          double d0_m);
 
 }  // namespace dedalus

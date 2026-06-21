@@ -102,3 +102,9 @@ target_compile_options(dedalus_core
         -Wextra
         -Wpedantic
 )
+
+# compute_esdf is a tight numeric kernel; ensure it compiles at -O2 even in
+# Debug builds so the perf test (< 5 ms for 80×80×20 m) stays green.
+set_source_files_properties(avoidance/compute_esdf.cpp
+    PROPERTIES COMPILE_OPTIONS "-O2"
+)
