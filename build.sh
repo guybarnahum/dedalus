@@ -22,10 +22,7 @@ cd "$(git rev-parse --show-toplevel)"
 
 git pull --ff-only
 
-# Configure if the cache is missing (fresh checkout or after a cache wipe).
-if [ ! -f "$BUILD_DIR/CMakeCache.txt" ]; then
-  cmake -S . -B "$BUILD_DIR" -DCMAKE_BUILD_TYPE=RelWithDebInfo
-fi
+cmake -S . -B "$BUILD_DIR" -DCMAKE_BUILD_TYPE=RelWithDebInfo
 
 cmake --build "$BUILD_DIR" -j"$(dedalus_build_jobs)"
 
