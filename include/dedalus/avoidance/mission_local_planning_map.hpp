@@ -83,6 +83,11 @@ struct MissionLocalPlanningMapSnapshot {
     std::size_t cell_count{0U};
     MissionLocalPlanningMapUpdateStats last_update_stats;
     std::vector<MissionLocalPlanningCell> cells;
+    // Stage 5: incremental streaming.
+    // seq      — monotonically increasing map version at snapshot time.
+    // is_delta — true when cells contains only cells changed since a prior seq.
+    std::uint64_t seq{0U};
+    bool is_delta{false};
 };
 
 // ─── class ───────────────────────────────────────────────────────────────────
@@ -107,7 +112,13 @@ public:
     void update_from_traversability(const MissionLocalTraversabilityMapSnapshot& source);
 
     // Materialise a snapshot for publishing / inspection.  O(N) copy.
-    MissionLocalPlanningMapSnapshot snapshot() const;
+    // since_seq == 0  → full snapshot (all cells); snap.is_delta = false.
+    // since_seq  > 0  → delta snapshot (only cells written after since_seq);
+    //                   snap.is_delta = true.  snap.seq is always map_seq_.
+    MissionLocalPlanningMapSnapshot snapshot(std::uint64_t since_seq = 0U) const;
+
+    // Current map sequence number (monotonically increasing, one per update call).
+    std::uint64_t current_seq() const noexcept { return map_seq_; }
 
     // Discard all L2 cells.
     void reset();
@@ -176,6 +187,7 @@ private:
     struct StoredCell {
         CellKey key;
         MissionLocalPlanningCell cell;
+        std::uint64_t write_seq{0U};  // map_seq_ at last write (Stage 5)
     };
 
     CellKey key_for_point(const Vec3& point) const noexcept;
@@ -218,6 +230,10 @@ private:
     // Sliding-window state (Stage 2).
     Vec3 last_slide_pos_{};
     bool slide_initialized_{false};
+
+    // Stage 5: monotonically increasing version counter.
+    // Incremented once per update_from_traversability() call.
+    std::uint64_t map_seq_{0U};
 };
 
 }  // namespace dedalus

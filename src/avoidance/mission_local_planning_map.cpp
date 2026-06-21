@@ -54,6 +54,7 @@ Vec3 MissionLocalPlanningMap::center_for_key(const CellKey& key) const noexcept 
 void MissionLocalPlanningMap::update_from_traversability(
     const MissionLocalTraversabilityMapSnapshot& source) {
 
+    ++map_seq_;  // Stage 5: bump version before any writes this tick
     last_update_stats_ = MissionLocalPlanningMapUpdateStats{};
     last_update_stats_.l1_input_cells = source.cells.size();
 
@@ -83,14 +84,15 @@ void MissionLocalPlanningMap::update_from_traversability(
             const auto it = cell_index_.find(key);
             if (it != cell_index_.end()) {
                 // Reinforce existing L2 cell.
-                auto& cell = cells_[it->second].cell;
-                cell.occupied_score = std::max(
-                    cell.occupied_score,
+                auto& sc = cells_[it->second];
+                sc.cell.occupied_score = std::max(
+                    sc.cell.occupied_score,
                     static_cast<float>(l1_cell.occupied_score));
-                cell.confidence = std::max(
-                    cell.confidence,
+                sc.cell.confidence = std::max(
+                    sc.cell.confidence,
                     static_cast<float>(l1_cell.confidence));
-                ++cell.source_cell_count;
+                ++sc.cell.source_cell_count;
+                sc.write_seq = map_seq_;  // Stage 5
             } else {
                 // Create new L2 cell.
                 MissionLocalPlanningCell cell;
@@ -98,7 +100,7 @@ void MissionLocalPlanningMap::update_from_traversability(
                 cell.occupied_score = static_cast<float>(l1_cell.occupied_score);
                 cell.confidence = static_cast<float>(l1_cell.confidence);
                 cell.source_cell_count = 1U;
-                cells_.push_back(StoredCell{key, cell});
+                cells_.push_back(StoredCell{key, cell, map_seq_});  // Stage 5
                 cell_index_.emplace(key, cells_.size() - 1U);
             }
             // Capture the updated cell value at mark-time so the flush thread
@@ -111,17 +113,18 @@ void MissionLocalPlanningMap::update_from_traversability(
             if (it != cell_index_.end()) {
                 // Reduce the L2 voxel's occupied score by the free_evidence_weight.
                 // new_score = old_score * (1 - free_evidence_weight)
-                auto& cell = cells_[it->second].cell;
-                cell.occupied_score = static_cast<float>(
-                    cell.occupied_score * (1.0 - config_.free_evidence_weight));
-                if (cell.occupied_score < static_cast<float>(config_.min_occupied_score)) {
+                auto& sc = cells_[it->second];
+                sc.cell.occupied_score = static_cast<float>(
+                    sc.cell.occupied_score * (1.0 - config_.free_evidence_weight));
+                if (sc.cell.occupied_score < static_cast<float>(config_.min_occupied_score)) {
                     // Mark for eviction: set score to 0 — evict_cleared_cells() sweeps.
-                    cell.occupied_score = 0.0F;
+                    sc.cell.occupied_score = 0.0F;
                     ++last_update_stats_.cells_evicted;
                     any_evicted = true;
                     local_evicted.push_back(key);
                 } else {
-                    local_dirty.emplace_back(key, cell);
+                    sc.write_seq = map_seq_;  // Stage 5
+                    local_dirty.emplace_back(key, sc.cell);
                 }
             }
         }
@@ -164,14 +167,18 @@ void MissionLocalPlanningMap::evict_cleared_cells() {
     }
 }
 
-MissionLocalPlanningMapSnapshot MissionLocalPlanningMap::snapshot() const {
+MissionLocalPlanningMapSnapshot MissionLocalPlanningMap::snapshot(std::uint64_t since_seq) const {
     MissionLocalPlanningMapSnapshot snap;
     snap.config = config_;
     snap.cell_count = cells_.size();
     snap.last_update_stats = last_update_stats_;
-    snap.cells.reserve(cells_.size());
+    snap.seq = map_seq_;
+    snap.is_delta = (since_seq > 0U);
+    snap.cells.reserve(since_seq == 0U ? cells_.size() : 0U);
     for (const auto& sc : cells_) {
-        snap.cells.push_back(sc.cell);
+        if (sc.write_seq > since_seq) {
+            snap.cells.push_back(sc.cell);
+        }
     }
     return snap;
 }
@@ -180,6 +187,7 @@ void MissionLocalPlanningMap::reset() {
     cells_.clear();
     cell_index_.clear();
     last_update_stats_ = MissionLocalPlanningMapUpdateStats{};
+    map_seq_ = 0U;
 }
 
 // ─── Persistence ─────────────────────────────────────────────────────────────

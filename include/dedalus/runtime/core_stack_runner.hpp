@@ -98,6 +98,8 @@ private:
     // Only started when planning_map_persistence_path_ is non-empty.
     std::atomic<bool> planning_map_flush_stop_{false};
     std::thread       planning_map_flush_thread_;
+    // Stage 5: last L2 seq number sent to SSE; used to produce delta snapshots.
+    std::uint64_t     l2_last_published_seq_{0U};
     // Throttle: timestamp (ns) of the last traversability snapshot published to
     // traversability_map_publisher_.  Publish at most once every
     // kTravPublishMinIntervalNs to avoid drowning the SSE stream.

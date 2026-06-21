@@ -219,9 +219,10 @@ std::string RuntimeEventStreamServer::serialize_traversability_snapshot(
 
 void RuntimeEventStreamServer::on_planning_map_snapshot(
     const MissionLocalPlanningMapFrame& frame) {
-    // Full snapshot every time — L2 is small (~3-6K cells) so no delta protocol needed for P1.
-    // Publish only if there are cells to display.
-    if (frame.snapshot.cell_count == 0U && frame.snapshot.cells.empty()) {
+    // Delta snapshots (is_delta == true) are published even when cells is empty:
+    // an empty delta is a no-op for the client, but it still advances the seq watermark.
+    // Full snapshots with no cells are suppressed (nothing to render).
+    if (!frame.snapshot.is_delta && frame.snapshot.cells.empty()) {
         return;
     }
 
@@ -239,13 +240,21 @@ std::string RuntimeEventStreamServer::serialize_planning_snapshot(
     const MissionLocalPlanningMapSnapshot& snapshot) const {
     // No cap: L2 is small by design.
     const auto payload = to_compact_stream_json(snapshot, 0U);
+    // Stage 5: emit "planning_map_delta" for incremental updates; full type otherwise.
+    const char* const type = snapshot.is_delta ? "planning_map_delta" : "planning_map_snapshot";
     std::string line;
-    line.reserve(payload.size() + 160U);
-    line += "{\"type\":\"planning_map_snapshot\",\"seq\":";
+    line.reserve(payload.size() + 200U);
+    line += "{\"type\":\"";
+    line += type;
+    line += "\",\"seq\":";
     line += std::to_string(seq);
+    line += ",\"map_seq\":";
+    line += std::to_string(snapshot.seq);
     line += ",\"timestamp_ns\":";
     line += std::to_string(timestamp_ns);
-    line += ",\"planning_map_snapshot\":";
+    line += ",\"";
+    line += type;
+    line += "\":";
     line += payload;
     line += "}\n";
     return line;

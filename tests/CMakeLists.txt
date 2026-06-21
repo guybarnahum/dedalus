@@ -299,6 +299,13 @@ dedalus_add_native_test(
 )
 
 dedalus_add_native_test(
+    NAME mission_local_planning_map_streaming
+    LAYER unit
+    TAGS avoidance mission_local_map streaming
+    SOURCES unit/test_mission_local_planning_map_streaming.cpp
+)
+
+dedalus_add_native_test(
     NAME mission_traversability_map_artifact_writer
     LAYER unit
     TAGS avoidance mission_local_map traversability artifacts

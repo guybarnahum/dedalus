@@ -355,8 +355,9 @@ bool CoreStackRunner::run_once() {
                     start = SteadyClock::now();
                     MissionLocalPlanningMapFrame pm_frame;
                     pm_frame.timestamp_ns = trav_frame.timestamp_ns;
-                    pm_frame.snapshot = mission_local_planning_map_.snapshot();
+                    pm_frame.snapshot = mission_local_planning_map_.snapshot(l2_last_published_seq_);
                     planning_map_publisher_->publish(pm_frame);
+                    l2_last_published_seq_ = pm_frame.snapshot.seq;
                     if (timing_writer_) {
                         timing_writer_->record_stage(
                             "planning_map_publisher.publish", duration_us(start));
