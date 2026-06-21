@@ -55,6 +55,12 @@ struct MissionLocalPlanningMapConfig {
     // At 0.5 a cell at score 1.5 clears after one observation; a cell at 15.0
     // (max evidence) takes ~4 free observations to drop below min_occupied_score.
     double free_evidence_weight{0.5};
+
+    // Sliding-window horizon (Stage 2).  Cells beyond 2×horizon_m from the
+    // drone are evicted from memory (they remain in the DB for re-entry).
+    // slide_window() is a no-op when no DB is open.
+    // Slide is triggered when the drone moves more than horizon_m/4.
+    double horizon_m{150.0};
 };
 
 struct MissionLocalPlanningCell {
@@ -125,6 +131,14 @@ public:
     //   Called at finalize / destructor.  Returns true on success.
     bool close_db();
 
+    // ── Sliding window (Stage 2) ─────────────────────────────────────────────
+    // slide_window(): call every tick with the current drone world-frame position.
+    //   No-op if no DB is open or the drone has not moved > horizon_m/4.
+    //   When triggered:
+    //     1. Evicts in-memory cells beyond 2×horizon_m (still in DB for re-entry).
+    //     2. Loads cells from DB within drone_pos ± horizon_m not yet in memory.
+    void slide_window(const Vec3& drone_pos);
+
 private:
     struct CellKey {
         int x{0};
@@ -151,6 +165,15 @@ private:
     // Rebuilds cell_index_ after compacting cells_.
     void evict_cleared_cells();
 
+    // Remove cells beyond evict_radius_m from centre from the in-memory store.
+    // Does NOT add to evicted_keys_ — evicted cells remain in the DB.
+    void evict_far_cells(const Vec3& centre, double evict_radius_m);
+
+    // Load cells from the open DB within centre ± horizon_m that are not yet
+    // in cell_index_.  If a cell is also in dirty_cells_, its dirty value takes
+    // precedence over the (stale) DB value.
+    void load_window_from_db(const Vec3& centre);
+
     MissionLocalPlanningMapConfig config_;
     MissionLocalPlanningMapUpdateStats last_update_stats_{};
 
@@ -171,6 +194,10 @@ private:
     std::unordered_map<CellKey, MissionLocalPlanningCell, CellKeyHash> dirty_cells_;
     // Keys evicted since the last flush (to be DELETEd from the DB).
     std::unordered_set<CellKey, CellKeyHash> evicted_keys_;
+
+    // Sliding-window state (Stage 2).
+    Vec3 last_slide_pos_{};
+    bool slide_initialized_{false};
 };
 
 }  // namespace dedalus

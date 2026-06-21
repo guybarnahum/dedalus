@@ -282,6 +282,11 @@ bool CoreStackRunner::run_once() {
             mission_map_assimilator_.status().drained_snapshot_count);
     }
 
+    // Slide the L2 in-memory window to follow the drone.
+    // No-op when no DB is open or the drone has not moved > horizon_m/4.
+    mission_local_planning_map_.slide_window(
+        snapshot_for_annotation.ego.local_T_body.position);
+
     // When the assimilator drained at least one obstacle-map snapshot this tick:
     //  1. Rebuild the Level 2 planning map from the fresh Level 1 snapshot.
     //  2. Publish Level 1 to SSE subscribers (throttled to once per 2 s).
