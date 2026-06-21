@@ -93,7 +93,7 @@ target_compile_features(dedalus_core PUBLIC cxx_std_20)
 
 target_link_libraries(dedalus_core
     PRIVATE
-        SQLite3::SQLite3
+        sqlite3
 )
 
 target_compile_options(dedalus_core
