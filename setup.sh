@@ -147,7 +147,7 @@ if [ ! -f /var/lib/apt/periodic/update-success-stamp ] || [ $(find /var/lib/apt/
   run_and_log "Update APT cache" sudo apt-get update
 fi
 
-run_and_log "Install core tools" sudo DEBIAN_FRONTEND=noninteractive apt-get install -y build-essential cmake git wget curl ninja-build python3 python-is-python3 python3-pip libacl1-dev unzip ffmpeg
+run_and_log "Install core tools" sudo DEBIAN_FRONTEND=noninteractive apt-get install -y build-essential cmake git wget curl ninja-build python3 python-is-python3 python3-pip libacl1-dev unzip ffmpeg libsqlite3-dev
 
 if ! command -v docker &>/dev/null; then
   run_and_log "Install Docker Server" sudo apt-get install -y docker.io docker-compose-v2
@@ -249,18 +249,24 @@ fi
 
 # ---------------- Step 5: PX4 SITL ----------------
 echo "✈️  Building PX4 SITL..."
-if [ ! -f "$PX4_DIR/.installed" ]; then
-  if [ -d "$PX4_DIR" ]; then
+if [ ! -f "$PX4_DIR/.built" ]; then
+  if [ -d "$PX4_DIR" ] && [ ! -f "$PX4_DIR/.installed" ]; then
     run_and_log "Remove broken PX4 clone" rm -rf "$PX4_DIR"
   fi
-  run_and_log "Clone PX4" git clone --recursive https://github.com/PX4/PX4-Autopilot.git "$PX4_DIR"
+  if [ ! -d "$PX4_DIR" ]; then
+    run_and_log "Clone PX4" git clone --recursive https://github.com/PX4/PX4-Autopilot.git "$PX4_DIR"
+  fi
   cd "$PX4_DIR"
-  run_and_log "Install PX4 dependencies" bash ./Tools/setup/ubuntu.sh --no-nuttx --no-sim-tools
-  touch .installed
+  if [ ! -f ".installed" ]; then
+    run_and_log "Install PX4 dependencies" bash ./Tools/setup/ubuntu.sh --no-nuttx --no-sim-tools
+    touch .installed
+  fi
+  run_and_log "Build PX4 SITL" make px4_sitl
+  touch .built
   cd "$REPO_ROOT"
-  echo "✅ PX4 source staged."
+  echo "✅ PX4 SITL built and staged."
 else
-  echo "✅ PX4 build directory found. Skipping."
+  echo "✅ PX4 SITL already built. Skipping."
 fi
 
 # ----------------- PYTHON VIRTUAL ENVIRONMENT -----------------
@@ -307,12 +313,6 @@ run_and_log "Verify PX4 Python build dependencies" python -c "import em, yaml, j
 
 echo "✅ Python environment ready at $VENV_PATH"
 # --------------------------------------------------------------
-
-echo "🔨 Verifying PX4 SITL build artifacts..."
-cd "$PX4_DIR"
-run_and_log "Build PX4 SITL" make px4_sitl
-cd "$REPO_ROOT"
-echo "✅ PX4 SITL build verified."
 
 # ---------------- Step 6: Pre-load Environments ----------------
 echo "🌍 Pre-loading Colosseum Environments..."

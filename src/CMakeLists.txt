@@ -1,5 +1,3 @@
-find_package(SQLite3 REQUIRED)
-
 add_library(dedalus_core
     geometry/pose_transform.cpp
     avoidance/local_flight_map.cpp
