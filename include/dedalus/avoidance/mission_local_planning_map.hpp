@@ -5,6 +5,7 @@
 #include <filesystem>
 #include <functional>
 #include <mutex>
+#include <optional>
 #include <unordered_map>
 #include <unordered_set>
 #include <vector>
@@ -138,6 +139,25 @@ public:
     //     1. Evicts in-memory cells beyond 2×horizon_m (still in DB for re-entry).
     //     2. Loads cells from DB within drone_pos ± horizon_m not yet in memory.
     void slide_window(const Vec3& drone_pos);
+
+    // ── L2 planning query API (Stage 2.5) ────────────────────────────────────
+    // Pure queries — no side effects on L2 state.  Operate on the in-memory
+    // window only; call slide_window() first to ensure the relevant region is
+    // loaded.
+
+    // ray_cast(): march a ray from origin in direction dir (need not be
+    //   normalised) up to max_range_m.  Returns the world-frame centre of the
+    //   first occupied L2 cell hit, or nullopt if the ray reaches max_range_m
+    //   through free / unmapped space.
+    [[nodiscard]] std::optional<Vec3> ray_cast(const Vec3& origin,
+                                               const Vec3& dir,
+                                               double max_range_m) const noexcept;
+
+    // query_occupied_in_box(): return the world-frame centres of all occupied
+    //   L2 cells whose centres fall within the axis-aligned box [bbox.min,
+    //   bbox.max].  Result order is unspecified.
+    [[nodiscard]] std::vector<Vec3> query_occupied_in_box(
+        const Bounds3& bbox) const;
 
 private:
     struct CellKey {

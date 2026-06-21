@@ -11,6 +11,7 @@ add_library(dedalus_core
     avoidance/mission_local_planning_map.cpp
     avoidance/mission_local_planning_map_sqlite.cpp
     avoidance/mission_local_planning_map_spatial.cpp
+    avoidance/mission_local_planning_map_query.cpp
     avoidance/mission_local_planning_map_publisher.cpp
     avoidance/mission_map_assimilator.cpp
     avoidance/mission_obstacle_map_artifact_writer.cpp
