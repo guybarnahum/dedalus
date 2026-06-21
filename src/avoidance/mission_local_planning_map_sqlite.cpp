@@ -10,9 +10,8 @@
 //         count  INTEGER,
 //         updated_ns  INTEGER)
 //
-//   cells_rtree  USING rtree(id, min_xi,max_xi, min_yi,max_yi, min_zi,max_zi)
-//     — kept in sync with cells via AFTER INSERT / AFTER UPDATE / AFTER DELETE
-//       triggers so Stage 2 spatial queries can use it without extra bookkeeping.
+// The R-tree index and sync triggers are added in Stage 2 (spatial eviction).
+// Stage 1 keeps only the cells table to meet the < 50 ms flush latency target.
 //
 // Thread-safety
 // ─────────────
@@ -45,6 +44,7 @@ void exec(sqlite3* db, const char* sql) noexcept {
 }
 
 // DDL executed once on open.
+// R-tree and sync triggers are deferred to Stage 2.
 const char* kSchema = R"(
 PRAGMA journal_mode=WAL;
 PRAGMA synchronous=NORMAL;
@@ -59,38 +59,6 @@ CREATE TABLE IF NOT EXISTS cells (
     updated_ns INTEGER NOT NULL DEFAULT 0,
     PRIMARY KEY (xi, yi, zi)
 );
-
-CREATE VIRTUAL TABLE IF NOT EXISTS cells_rtree USING rtree(
-    id,
-    min_xi, max_xi,
-    min_yi, max_yi,
-    min_zi, max_zi
-);
-
-CREATE TRIGGER IF NOT EXISTS cells_ai
-    AFTER INSERT ON cells
-BEGIN
-    INSERT OR REPLACE INTO cells_rtree
-        (id, min_xi, max_xi, min_yi, max_yi, min_zi, max_zi)
-    VALUES
-        (new.rowid, new.xi, new.xi, new.yi, new.yi, new.zi, new.zi);
-END;
-
-CREATE TRIGGER IF NOT EXISTS cells_au
-    AFTER UPDATE ON cells
-BEGIN
-    UPDATE cells_rtree SET
-        min_xi=new.xi, max_xi=new.xi,
-        min_yi=new.yi, max_yi=new.yi,
-        min_zi=new.zi, max_zi=new.zi
-    WHERE id=old.rowid;
-END;
-
-CREATE TRIGGER IF NOT EXISTS cells_ad
-    AFTER DELETE ON cells
-BEGIN
-    DELETE FROM cells_rtree WHERE id=old.rowid;
-END;
 )";
 
 const char* kUpsert =
