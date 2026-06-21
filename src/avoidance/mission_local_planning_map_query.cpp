@@ -121,14 +121,20 @@ std::vector<Vec3> MissionLocalPlanningMap::query_occupied_in_box(
 
     const float min_score = static_cast<float>(config_.min_occupied_score);
 
-    const int xi_lo = static_cast<int>(std::floor(bbox.min.x / config_.cell_size_m));
-    const int xi_hi = static_cast<int>(std::floor(bbox.max.x / config_.cell_size_m));
-    const int yi_lo = static_cast<int>(std::floor(bbox.min.y / config_.cell_size_m));
-    const int yi_hi = static_cast<int>(std::floor(bbox.max.y / config_.cell_size_m));
+    // Cell xi has centre at (xi+0.5)*size.  We want all xi where centre is
+    // within [min, max], i.e. xi in [ceil(min/size - 0.5), floor(max/size - 0.5)].
+    const int xi_lo = static_cast<int>(
+        std::ceil(bbox.min.x / config_.cell_size_m - 0.5));
+    const int xi_hi = static_cast<int>(
+        std::floor(bbox.max.x / config_.cell_size_m - 0.5));
+    const int yi_lo = static_cast<int>(
+        std::ceil(bbox.min.y / config_.cell_size_m - 0.5));
+    const int yi_hi = static_cast<int>(
+        std::floor(bbox.max.y / config_.cell_size_m - 0.5));
     const int zi_lo = static_cast<int>(
-        std::floor(bbox.min.z / config_.vertical_cell_size_m));
+        std::ceil(bbox.min.z / config_.vertical_cell_size_m - 0.5));
     const int zi_hi = static_cast<int>(
-        std::floor(bbox.max.z / config_.vertical_cell_size_m));
+        std::floor(bbox.max.z / config_.vertical_cell_size_m - 0.5));
 
     std::vector<Vec3> result;
 
