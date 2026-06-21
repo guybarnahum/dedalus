@@ -3,6 +3,7 @@
 #include <cstddef>
 #include <functional>
 #include <unordered_map>
+#include <vector>
 
 #include "dedalus/core/types.hpp"
 
