@@ -84,53 +84,68 @@ Representation boundaries — keep these distinct:
 Full plan with validation criteria is in LLM.md Section 4. Summary:
 
 ```
-Stage 1  L2 SQLite persistence
-           Replace plain-text save/load with SQLite + WAL + R-tree.
-           Add dirty-cell set; background flush thread (10 s interval, dirty only).
-           Startup: spatial query for local window around drone.
-           Validate: roundtrip, partial load, flush < 50 ms, crash recovery, ctests.
+Stage 1    L2 SQLite persistence
+             Replace plain-text save/load with SQLite + WAL + R-tree.
+             Add dirty-cell set; background flush thread (10 s, dirty cells only).
+             Startup: spatial query for local window around drone.
+             Validate: roundtrip, partial load, flush < 50 ms, crash recovery, ctests.
 
-Stage 2  Bounded in-memory L2 + spatial eviction
-           Cap in-memory to ±150 m of drone; slide_window() on movement > 37 m.
-           Evict far cells; stream in new cells from SQLite.
-           Validate: memory bounded over 2 km flight; slide < 5 ms.
+Stage 2    Bounded in-memory L2 + spatial eviction
+             Cap in-memory to ±150 m of drone; slide_window() on movement > 37 m.
+             Evict far cells; stream in new cells from SQLite.
+             Validate: memory bounded over 2 km flight; slide < 5 ms.
 
-Stage 3  L3 EDT compute (free function, no IPC)
-           compute_esdf(l2, centre, window, d0) → LocalESDFMap.
-           Meijster 3D separable EDT, O(N). Sparse hash map (shell cells only).
-           Signed field (negative inside occupied, clamped −0.5 m).
-           Validate: flat-wall + corner correctness; perf < 5 ms on 80×80×20 m.
+Stage 2.5  L2 planning API: ray_cast + query_occupied_in_box
+             ray_cast(origin, dir, max_range) → optional<Vec3>: first occupied hit.
+             query_occupied_in_box(bbox) → vector<Vec3>: all occupied cells in box.
+             Pure query, no side effects on L2 state.
+             Validate: hit at correct distance; nullopt through free space; < 1 ms.
+             [L1 OctoMap: insert here before any L2 structural change; defer until needed]
 
-Stage 4  L3 incremental updates
-           update_incremental(dirty_voxels): recompute within d0 of dirty cells.
-           update_tube(trajectory, radius): JIT narrow-band for path validation.
-           Validate: incremental ≡ full (< 0.01 m); < 1 ms for 50 dirty cells.
+Stage 3    L3 EDT compute (free function, no IPC)
+             compute_esdf(l2, centre, window, d0) → LocalESDFMap.
+             Meijster 3D separable EDT, O(N). Sparse hash map (shell cells only).
+             Signed field (negative inside occupied, clamped −0.5 m).
+             Validate: flat-wall + corner correctness; perf < 5 ms on 80×80×20 m.
 
-Stage 5  Incremental L2 SSE streaming
-           Distance-sorted chunked initial load (500 cells/msg, 50 ms yield).
-           Delta mode after initial load (sequence watermark).
-           Validate: no spike > 20 ms per message; complete after full stream.
+Stage 4    L3 incremental updates
+             update_incremental(dirty_voxels): recompute within d0 of dirty cells.
+             update_tube(trajectory, radius): JIT narrow-band for path validation.
+             Validate: incremental ≡ full (< 0.01 m); < 1 ms for 50 dirty cells.
 
-Stage 6  L3 SSE streaming + viewer gradient arrows
-           esdf_delta SSE event; drawESDFArrows() in viewer.
-           3D arrows colored by clearance; toggle in layer controls.
-           Validate: arrows correct; render < 4 ms; contract validator green.
+Stage 5    Incremental L2 SSE streaming
+             Distance-sorted chunked initial load (500 cells/msg, 50 ms yield).
+             Delta mode after initial load (sequence watermark).
+             Validate: no spike > 20 ms per message; complete after full stream.
 
-Stage 7  Navigation function + trajectory optimizer
-           compute_navigation_function(l2, goal) → NavigationMap (Dijkstra).
-           optimize_trajectory(nav, l3, start, goal, config) → Trajectory.
-           Minimum-snap + ESDF soft penalty. TrajectoryConfig: energy/clearance/time weights.
-           Validate: topology, collision-free, snap bounded, weight monotonicity.
+Stage 6    L3 SSE streaming + viewer
+             a) esdf_delta SSE event; drawESDFArrows() — 3D arrows colored by clearance;
+                toggle in layer controls.
+             b) L3 net repulsion vector in L0 radar inset (amber), alongside L0 escape
+                vector (green). Both reflexive and planned guidance in one view.
+             Validate: arrows correct; render < 4 ms; net vector consistent with arrows;
+                       contract validator green.
 
-Stage 8  L0/L3 calibration (no new code)
-           Sim run: L0 trigger rate vs L3 clearance margin.
-           Target: 0 L0 triggers when d_min > 2 m on planned trajectory.
+Stage 7    Navigation function + trajectory optimizer
+             compute_navigation_function(l2, goal) → NavigationMap (Dijkstra on L2,
+               uses ray_cast + query_occupied_in_box from Stage 2.5).
+             optimize_trajectory(nav, l3, start, goal, config) → Trajectory.
+               Minimum-snap + ESDF soft penalty; uses update_tube() (Stage 4).
+             TrajectoryConfig: energy_weight, clearance_weight, time_weight.
+             Validate: topology, collision-free, snap bounded, weight monotonicity.
+
+Stage 8    L0/L3 calibration (no new code)
+             Sim run: L0 trigger rate vs L3 clearance margin.
+             Target: 0 L0 triggers when d_min > 2 m on planned trajectory.
 
 Dependencies:
-  Stage 1 → Stage 2 → Stage 5
-  Stage 3 → Stage 4 → Stage 6
-                    → Stage 7 → Stage 8
-  Stages 1–2 and 3–4 independent (can be parallelised).
+  Stage 1 → Stage 2 → Stage 2.5 → Stage 7 → Stage 8
+                     → Stage 5         ↑
+  Stage 3 → Stage 4 → Stage 6    Stage 4 ↗
+  Stages 1 and 3 independent (can be parallelised).
+  Stage 2.5 must follow Stage 2.
+  Stage 7 depends on Stage 2.5 (queries) AND Stage 4 (update_tube).
+  [L1 OctoMap: gate before L2 structural change; defer until needed]
 ```
 
 ---
@@ -219,6 +234,7 @@ git push
 - Do not couple obstacle persistence, map-building policy, or sensing coverage to a flight command sink.
 - Do not add avoidance/replanning/control behavior from persistent memory until explicitly scoped and validated.
 - Do not add planner/control coupling at L3 until Stage 8 is explicitly scoped.
+- Do not change L2's in-memory voxel structure without first implementing L1 OctoMap (Stage 2.5 gate).
 - Do not introduce AirSim detector-side coalescing/flags (removed in 4.3A — map-level compaction owned by MissionLocalObstacleMap).
 - Do not merge L0/L1/L2/L3 representations or use one layer's storage format for another's role.
 - Do not name files, validators, scripts, or symbols after planning labels or temporary session shorthand.

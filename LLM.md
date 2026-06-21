@@ -193,6 +193,18 @@ Called from `CoreStackRunner::run_once()` when drone moves > `horizon/4`.
 
 Validation: memory stays bounded over 2 km flight; continuity on re-entry; slide latency < 5 ms.
 
+### Stage 2.5 — L2 planning API (`ray_cast` + `query_occupied_in_box`)
+
+Add two query primitives directly on `MissionLocalPlanningMap` — these are L2-level, independent of L3:
+- `ray_cast(origin, dir, max_range_m) → optional<Vec3>`: march through L2 voxels along a ray; return first occupied hit. Used by the navigation function (Stage 7) and feasibility checks.
+- `query_occupied_in_box(bbox) → vector<Vec3>`: return centres of all occupied cells within an axis-aligned box. Used by the trajectory optimizer for local collision checking.
+
+These are pure query functions — no side effects on L2 state.
+
+Validation: ray through known wall returns hit at correct distance; ray through free space returns nullopt; bbox query returns exactly the expected cells; both complete in < 1 ms for a 40×40×20 m query volume.
+
+**L1 OctoMap gate:** If L2's in-memory structure ever changes (e.g., to octree or multi-resolution), L1 OctoMap must come first — L2 is built from L1 leaf nodes. The current flat hashmap is fine for Stages 1–7. Explicitly defer L1 OctoMap until L2 structure needs to change; re-evaluate before any L2 structural refactor.
+
 ### Stage 3 — L3 EDT compute (free function)
 
 `compute_esdf(l2, centre_world, window_half_m, d0_m) → LocalESDFMap`.
@@ -217,21 +229,25 @@ After initial load: delta mode — only cells touched since client's sequence wa
 
 Validation: no single SSE message > 20 ms; complete after full stream; delta sends only changed cells.
 
-### Stage 6 — L3 SSE streaming + viewer gradient arrows
+### Stage 6 — L3 SSE streaming + viewer
 
-New SSE event `esdf_delta`: changed shell cells as `{x,y,z,d,gx,gy,gz}`.
-Viewer: `drawESDFArrows()` — 3D line segments from cell centre in gradient direction,
+Two viewer additions:
+
+**a) ESDF gradient arrows (new layer):** New SSE event `esdf_delta`: changed shell cells as `{x,y,z,d,gx,gy,gz}`.
+`drawESDFArrows()` — 3D line segments from cell centre in gradient direction,
 colored by clearance (red d<1 m, yellow d<3 m, green d<d0). Toggle in layer controls.
 
-Validation: arrows point away from known obstacle; render < 4 ms for 2k shell cells; contract validator green.
+**b) L3 net vector in L0 radar inset:** Compute the net L3 repulsion vector at the drone's position from the ESDF field. Draw it in the existing L0 radar inset alongside the reactive escape vector — same inset, distinct color (amber). Operators see both: immediate threat response (L0 escape, green) and pre-computed planned guidance (L3 net, amber) co-located in one view.
+
+Validation: ESDF arrows point away from known obstacle; render < 4 ms for 2k shell cells; L3 net vector visible in radar inset and directionally consistent with ESDF arrows; contract validator green.
 
 ### Stage 7 — Navigation function + trajectory optimizer
 
-`compute_navigation_function(l2, goal) → NavigationMap`: Dijkstra wavefront, no local minima.
-`optimize_trajectory(nav_map, l3, start, goal, config) → Trajectory`: minimum-snap + ESDF soft penalty.
+`compute_navigation_function(l2, goal) → NavigationMap`: Dijkstra wavefront on L2 grid using `ray_cast` and `query_occupied_in_box` (Stage 2.5). No local minima by construction.
+`optimize_trajectory(nav_map, l3, start, goal, config) → Trajectory`: minimum-snap polynomial + ESDF soft penalty. Uses `update_tube()` (Stage 4) for JIT L3 refinement along each candidate path.
 `TrajectoryConfig`: `energy_weight`, `clearance_weight`, `time_weight`.
 
-Validation: topology correctness in maze; all waypoints `is_clear(r_vehicle)`; snap bounded; weight monotonicity.
+Validation: topology correctness in maze; all waypoints `is_clear(r_vehicle)`; snap bounded; weight monotonicity; obstacle-avoidance routes around wall.
 
 ### Stage 8 — L0 / L3 calibration
 
@@ -241,12 +257,18 @@ Target: 0 L0 triggers when trajectory `d_min > 2 m`.
 ### Dependencies
 
 ```
-Stage 1 → Stage 2 → Stage 5
-Stage 3 → Stage 4 → Stage 6
-                  → Stage 7 → Stage 8
+Stage 1 → Stage 2 → Stage 2.5 ─────────────────────────→ Stage 7 → Stage 8
+                       │                                      ↑
+                       └──────────────────→ Stage 5      Stage 4
+                                                             ↑
+Stage 3 ──────────────────────────────────────────→ Stage 4 → Stage 6
+
+[L1 OctoMap: gate before any L2 structural change; defer until needed]
 ```
 
-Stages 1–2 and 3–4 are independent and can proceed in parallel.
+Stages 1–2 and Stage 3 are independent and can proceed in parallel.
+Stage 2.5 must follow Stage 2 (needs the bounded in-memory store).
+Stage 7 depends on both Stage 2.5 (ray_cast/bbox queries) and Stage 4 (update_tube).
 
 ---
 
