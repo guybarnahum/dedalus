@@ -1,9 +1,11 @@
 #pragma once
 
+#include <atomic>
 #include <cstddef>
 #include <filesystem>
 #include <memory>
 #include <optional>
+#include <thread>
 #include <vector>
 
 #include "dedalus/avoidance/local_flight_map.hpp"
@@ -92,6 +94,10 @@ private:
     std::optional<TimePoint> ghost_scenario_start_;
     // Optional file path for Level 2 planning map cross-mission persistence.
     std::filesystem::path planning_map_persistence_path_;
+    // Background flush thread: calls flush_dirty_to_db() every 10 s.
+    // Only started when planning_map_persistence_path_ is non-empty.
+    std::atomic<bool> planning_map_flush_stop_{false};
+    std::thread       planning_map_flush_thread_;
     // Throttle: timestamp (ns) of the last traversability snapshot published to
     // traversability_map_publisher_.  Publish at most once every
     // kTravPublishMinIntervalNs to avoid drowning the SSE stream.

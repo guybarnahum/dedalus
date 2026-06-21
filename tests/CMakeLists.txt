@@ -264,6 +264,13 @@ dedalus_add_native_test(
 )
 
 dedalus_add_native_test(
+    NAME mission_local_planning_map_sqlite
+    LAYER unit
+    TAGS avoidance mission_local_map sqlite persistence
+    SOURCES unit/test_mission_local_planning_map_sqlite.cpp
+)
+
+dedalus_add_native_test(
     NAME mission_traversability_map_artifact_writer
     LAYER unit
     TAGS avoidance mission_local_map traversability artifacts

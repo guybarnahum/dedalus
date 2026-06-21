@@ -1,3 +1,5 @@
+find_package(SQLite3 REQUIRED)
+
 add_library(dedalus_core
     geometry/pose_transform.cpp
     avoidance/local_flight_map.cpp
@@ -7,6 +9,7 @@ add_library(dedalus_core
     avoidance/mission_local_obstacle_map.cpp
     avoidance/mission_local_traversability_map.cpp
     avoidance/mission_local_planning_map.cpp
+    avoidance/mission_local_planning_map_sqlite.cpp
     avoidance/mission_local_planning_map_publisher.cpp
     avoidance/mission_map_assimilator.cpp
     avoidance/mission_obstacle_map_artifact_writer.cpp
@@ -83,6 +86,11 @@ target_include_directories(dedalus_core
 )
 
 target_compile_features(dedalus_core PUBLIC cxx_std_20)
+
+target_link_libraries(dedalus_core
+    PRIVATE
+        SQLite3::SQLite3
+)
 
 target_compile_options(dedalus_core
     PRIVATE

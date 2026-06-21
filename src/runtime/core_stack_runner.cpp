@@ -1,8 +1,10 @@
 #include "dedalus/runtime/core_stack_runner.hpp"
 
+#include <chrono>
+#include <filesystem>
+#include <thread>
 #include <utility>
 #include <vector>
-#include <filesystem>
 
 namespace dedalus {
 namespace {
@@ -35,15 +37,32 @@ CoreStackRunner::CoreStackRunner(CoreStackProviders providers, CoreStackRunnerCo
         }
     }
 
-    // Load Level 2 planning map from the previous mission's persistence file, if present.
-    // A missing file is not an error — it simply means a fresh map starts from empty.
-    if (!planning_map_persistence_path_.empty() &&
-        std::filesystem::exists(planning_map_persistence_path_)) {
-        mission_local_planning_map_.load_from_file(planning_map_persistence_path_);
+    // Open (or create) the Level 2 SQLite persistence DB.  A missing file is not
+    // an error — open_db() creates a fresh DB with the correct schema.
+    // A missing path means no persistence this session.
+    if (!planning_map_persistence_path_.empty()) {
+        mission_local_planning_map_.open_db(planning_map_persistence_path_);
+
+        // Start background flush thread: drains dirty cells every 10 s.
+        planning_map_flush_stop_.store(false, std::memory_order_relaxed);
+        planning_map_flush_thread_ = std::thread([this] {
+            while (!planning_map_flush_stop_.load(std::memory_order_acquire)) {
+                std::this_thread::sleep_for(std::chrono::seconds(10));
+                if (!planning_map_flush_stop_.load(std::memory_order_acquire)) {
+                    mission_local_planning_map_.flush_dirty_to_db();
+                }
+            }
+        });
     }
 }
 
 CoreStackRunner::~CoreStackRunner() {
+    // Stop the flush thread before finalizing (prevents concurrent flush during close_db).
+    planning_map_flush_stop_.store(true, std::memory_order_release);
+    if (planning_map_flush_thread_.joinable()) {
+        planning_map_flush_thread_.join();
+    }
+
     try {
         const auto latest = snapshot();
         (void)finalize_mission_map_after_landing(latest.timestamp);
@@ -71,15 +90,9 @@ MissionMapFlushResult CoreStackRunner::finalize_mission_map_after_landing(const 
     mission_traversability_map_artifact_writer_.write_final(
         mission_map_assimilator_.traversability_map().snapshot());
 
-    // Persist Level 2 planning map so it survives to the next mission.
-    // The file is written atomically via a temp-then-rename pattern to avoid
-    // leaving a half-written file if the process is interrupted.
+    // Final flush + close the SQLite DB (WAL checkpoint included in sqlite3_close).
     if (!planning_map_persistence_path_.empty()) {
-        const auto tmp = std::filesystem::path{
-            planning_map_persistence_path_.string() + ".tmp"};
-        if (mission_local_planning_map_.save_to_file(tmp)) {
-            std::filesystem::rename(tmp, planning_map_persistence_path_);
-        }
+        mission_local_planning_map_.close_db();
     }
 
     return result;

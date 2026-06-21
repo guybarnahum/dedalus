@@ -59,6 +59,11 @@ void MissionLocalPlanningMap::update_from_traversability(
 
     bool any_evicted = false;
 
+    // Collect dirty cells (key + value at mark-time) and evicted keys locally
+    // — single lock acquisition at the end.
+    std::vector<std::pair<CellKey, MissionLocalPlanningCell>> local_dirty;
+    std::vector<CellKey> local_evicted;
+
     for (const auto& l1_cell : source.cells) {
         const bool is_occupied =
             l1_cell.state == TraversabilityCellState::Occupied ||
@@ -96,6 +101,9 @@ void MissionLocalPlanningMap::update_from_traversability(
                 cells_.push_back(StoredCell{key, cell});
                 cell_index_.emplace(key, cells_.size() - 1U);
             }
+            // Capture the updated cell value at mark-time so the flush thread
+            // never needs to read cells_ directly.
+            local_dirty.emplace_back(key, cells_[cell_index_.at(key)].cell);
         } else if (is_free) {
             ++last_update_stats_.l1_free_applied;
 
@@ -111,6 +119,9 @@ void MissionLocalPlanningMap::update_from_traversability(
                     cell.occupied_score = 0.0F;
                     ++last_update_stats_.cells_evicted;
                     any_evicted = true;
+                    local_evicted.push_back(key);
+                } else {
+                    local_dirty.emplace_back(key, cell);
                 }
             }
         }
@@ -118,6 +129,18 @@ void MissionLocalPlanningMap::update_from_traversability(
 
     if (any_evicted) {
         evict_cleared_cells();
+    }
+
+    // Merge into shared dirty/evicted maps under a single lock.
+    if (!local_dirty.empty() || !local_evicted.empty()) {
+        std::lock_guard<std::mutex> lk(db_mutex_);
+        for (const auto& [k, c] : local_dirty) {
+            dirty_cells_[k] = c;  // last write wins if key appears multiple times
+        }
+        for (const auto& k : local_evicted) {
+            dirty_cells_.erase(k);  // evicted cell is no longer "dirty"
+            evicted_keys_.insert(k);
+        }
     }
 }
 

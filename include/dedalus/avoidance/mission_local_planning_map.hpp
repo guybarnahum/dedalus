@@ -4,7 +4,9 @@
 #include <cstdint>
 #include <filesystem>
 #include <functional>
+#include <mutex>
 #include <unordered_map>
+#include <unordered_set>
 #include <vector>
 
 #include "dedalus/avoidance/mission_local_traversability_map.hpp"
@@ -103,10 +105,25 @@ public:
     // Discard all L2 cells.
     void reset();
 
-    // Persistence.  Format: versioned text, one cell per line.
+    // ── Text persistence (legacy / debug) ────────────────────────────────────
     // Returns true on success.
     bool save_to_file(const std::filesystem::path& path) const;
     bool load_from_file(const std::filesystem::path& path);
+
+    // ── SQLite persistence (Stage 1+) ────────────────────────────────────────
+    // open_db(): open or create a SQLite DB at path (WAL mode, R-tree schema).
+    //   Loads all cells with score >= min_occupied_score into memory.
+    //   Returns true on success.
+    bool open_db(const std::filesystem::path& path);
+
+    // flush_dirty_to_db(): UPSERT dirty cells + DELETE evicted cells from the
+    //   open DB.  Clears both sets.  Safe to call from a background thread.
+    //   No-op and returns true if no DB is open.
+    bool flush_dirty_to_db();
+
+    // close_db(): final flush_dirty_to_db() then sqlite3_close().
+    //   Called at finalize / destructor.  Returns true on success.
+    bool close_db();
 
 private:
     struct CellKey {
@@ -139,6 +156,21 @@ private:
 
     std::vector<StoredCell> cells_;
     std::unordered_map<CellKey, std::size_t, CellKeyHash> cell_index_;
+
+    // SQLite persistence — opaque sqlite3* stored as void* so sqlite3.h stays
+    // out of this header.  Null when no DB is open.
+    void* db_{nullptr};
+
+    // Mutex protecting dirty_cells_ and evicted_keys_ — modified by the main
+    // loop (update_from_traversability) and drained by the flush thread.
+    mutable std::mutex db_mutex_;
+
+    // Cells modified or created since the last flush (key → cell value at mark
+    // time).  Cell value is captured in update_from_traversability() so the
+    // flush thread never reads cells_ directly, avoiding a data race.
+    std::unordered_map<CellKey, MissionLocalPlanningCell, CellKeyHash> dirty_cells_;
+    // Keys evicted since the last flush (to be DELETEd from the DB).
+    std::unordered_set<CellKey, CellKeyHash> evicted_keys_;
 };
 
 }  // namespace dedalus
