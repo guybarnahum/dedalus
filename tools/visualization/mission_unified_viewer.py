@@ -139,6 +139,7 @@ h3 { font-size: 12px; margin: 10px 0 6px; color: #c0c4d0; text-transform: upperc
         <button class="layer-btn" id="toggle-ghosts"><span>Ghost detections</span><span class="ltog"></span></button>
         <button class="layer-btn active" id="toggle-sensing"><span>Sensing volumes</span><span class="ltog"></span></button>
         <button class="layer-btn active" id="toggle-trajectory"><span>Trajectory</span><span class="ltog"></span></button>
+        <button class="layer-btn" id="toggle-esdf"><span>L3 ESDF arrows</span><span class="ltog"></span></button>
       </div>
 
       <h3>L1 LOD &amp; Color</h3>
@@ -252,6 +253,7 @@ const state = {
   showSensing:     true,
   showTrajectory:  true,
   showL0:          true,    // L0 ego radar inset (top-right corner)
+  showEsdf:        false,   // L3 ESDF gradient arrows (off by default)
   travColorByType: false,   // false = height-based (default), true = occupied/partial type colors
 };
 
@@ -279,6 +281,11 @@ let lfmSphericalBins = [];        // [{az,el,ttc,vr,nr,sm}] occupied bins only (
 let lfmSphNumAz      = 36;
 let lfmSphNumEl      = 9;
 let lfmSensorObs     = [];        // [{az,el,r,vr,ttc,src}] raw sensor observations
+
+// L3 ESDF (Stage 6): shell cells from C++ compute_esdf, emitted as esdf_delta SSE events.
+const esdfCellsByKey = new Map();   // quantKey → {x,y,z,d,gx,gy,gz}
+let   esdfNetRepulsion = null;      // {x,y,z} world-frame APF repulsion at drone position
+let   esdfD0M = 5.0;               // truncation radius from last snapshot
 
 // Traversability (L1)
 const travCellsByKey = new Map();      // cellKey → trav cell (0.5 m raw cells from server)
@@ -693,6 +700,20 @@ function drawL0PolarInset() {
     _drawRadarArrow(ctx, CX, CY,
       CX + lfmEscapeBody.y * ARM, CY - lfmEscapeBody.x * ARM,
       'rgba(35,228,95,0.95)', 3 * dpr, 18 * dpr);
+  }
+
+  // ── L3 ESDF net repulsion (amber, planning guidance) ─────────────────────────
+  if (esdfNetRepulsion) {
+    const yaw=state.egoYaw||0;
+    const bx= esdfNetRepulsion.x*Math.cos(yaw)+esdfNetRepulsion.y*Math.sin(yaw);
+    const by=-esdfNetRepulsion.x*Math.sin(yaw)+esdfNetRepulsion.y*Math.cos(yaw);
+    const mag=Math.hypot(bx,by);
+    if (mag>0.001) {
+      const nx=bx/mag,ny=by/mag;
+      const ARM=INSET_R*0.55;
+      _drawRadarArrow(ctx,CX,CY,CX+ny*ARM,CY-nx*ARM,
+        'rgba(255,165,0,0.90)',3*dpr,16*dpr);
+    }
   }
 
   // ── Flight vector (body forward = 12 o'clock) ─────────────────────────────────
@@ -1633,6 +1654,34 @@ function scheduleDraw() {
   requestAnimationFrame(()=>{ drawScheduled=false; draw(); });
 }
 
+// L3 ESDF gradient arrows — colored by clearance distance.
+function drawESDFArrows() {
+  if (!state.showEsdf || esdfCellsByKey.size===0) return;
+  for (const cell of esdfCellsByKey.values()) {
+    const d=cell.d;
+    const [r,g,b]=d<1?[228,42,30]:d<3?[228,200,30]:[42,200,65];
+    const scale=(esdfD0M-Math.abs(d))/esdfD0M*4.0;
+    if (scale<=0) continue;
+    const tip={x:cell.x+cell.gx*scale,y:cell.y+cell.gy*scale,z:cell.z+cell.gz*scale};
+    const pa=project({x:cell.x,y:cell.y,z:cell.z});
+    const pb=project(tip);
+    ctx.beginPath(); ctx.moveTo(pa.x,pa.y); ctx.lineTo(pb.x,pb.y);
+    ctx.strokeStyle=`rgba(${r},${g},${b},0.75)`;
+    ctx.lineWidth=1.5*devicePixelRatio;
+    ctx.stroke();
+    const dx=pb.x-pa.x,dy=pb.y-pa.y,len=Math.hypot(dx,dy);
+    if (len>3) {
+      const ux=dx/len,uy=dy/len,hw=3*devicePixelRatio,hl=6*devicePixelRatio;
+      ctx.beginPath(); ctx.moveTo(pb.x,pb.y);
+      ctx.lineTo(pb.x-ux*hl+uy*hw,pb.y-uy*hl-ux*hw);
+      ctx.lineTo(pb.x-ux*hl-uy*hw,pb.y-uy*hl+ux*hw);
+      ctx.closePath();
+      ctx.fillStyle=`rgba(${r},${g},${b},0.75)`;
+      ctx.fill();
+    }
+  }
+}
+
 function draw() {
   ctx.clearRect(0, 0, canvas.width, canvas.height);
   drawPlanningFaces();   // L2 persistent planning map (exterior faces, back-most layer)
@@ -1642,6 +1691,7 @@ function draw() {
   if (state.showTrajectory) drawTrajectory();
   drawGhostDetections();
   drawSensingOverlays();
+  drawESDFArrows();       // L3 ESDF gradient arrows (above surfaces, below UI overlays)
   drawTakeoffMarker();
   drawDroneMarker();
   if (state.firstBlocked) drawPoint(state.firstBlocked, "rgba(255,80,255,1.0)", 8);
@@ -2138,6 +2188,24 @@ function startLiveStream() {
     } catch(e) {}
   });
 
+  source.addEventListener("esdf_delta", ev => {
+    try {
+      const payload=JSON.parse(ev.data);
+      const esdf=payload.esdf_delta;
+      if (!esdf) return;
+      if (!esdf.is_delta) esdfCellsByKey.clear();
+      esdfD0M=esdf.d0_m||5.0;
+      if (esdf.net_rep) esdfNetRepulsion=esdf.net_rep;
+      if (Array.isArray(esdf.cells)) {
+        for (const c of esdf.cells) {
+          const key=`${Math.round(c.x*2)}_${Math.round(c.y*2)}_${Math.round(c.z*2)}`;
+          esdfCellsByKey.set(key,c);
+        }
+      }
+      scheduleDraw();
+    } catch(e) {}
+  });
+
   source.addEventListener("ghost_detections", ev => {
     try {
       const payload=JSON.parse(ev.data);
@@ -2231,6 +2299,7 @@ function installViewControls() {
     ["toggle-ghosts",     "showGhosts"],
     ["toggle-sensing",    "showSensing"],
     ["toggle-trajectory", "showTrajectory"],
+    ["toggle-esdf",       "showEsdf"],
   ];
   for (const [id, stateKey] of layerToggles) {
     const btn=el(id);

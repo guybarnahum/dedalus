@@ -62,4 +62,18 @@ bool LocalESDFMap::is_clear(const Vec3& pos, double r) const noexcept {
     return static_cast<double>(query(pos).d) >= r;
 }
 
+// ─── snapshot ────────────────────────────────────────────────────────────────
+
+LocalESDFMapSnapshot LocalESDFMap::snapshot(const Vec3& query_pos, double repulsion_k) const {
+    LocalESDFMapSnapshot snap;
+    snap.config = config_;
+    snap.cell_count = cells_.size();
+    snap.cells.reserve(cells_.size());
+    for (const auto& [key, cell] : cells_) {
+        snap.cells.push_back(cell);
+    }
+    snap.net_repulsion = repulsion(query_pos, config_.d0_m, repulsion_k);
+    return snap;
+}
+
 }  // namespace dedalus

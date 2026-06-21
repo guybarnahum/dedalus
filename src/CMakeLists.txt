@@ -14,6 +14,7 @@ add_library(dedalus_core
     avoidance/mission_local_planning_map_query.cpp
     avoidance/local_esdf_map.cpp
     avoidance/local_esdf_map_incremental.cpp
+    avoidance/local_esdf_map_publisher.cpp
     avoidance/compute_esdf.cpp
     avoidance/mission_local_planning_map_publisher.cpp
     avoidance/mission_map_assimilator.cpp

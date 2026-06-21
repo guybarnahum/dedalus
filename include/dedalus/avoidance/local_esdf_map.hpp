@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstddef>
+#include <cstdint>
 #include <functional>
 #include <unordered_map>
 #include <vector>
@@ -44,6 +45,16 @@ struct LocalESDFQueryResult {
     Vec3  grad;           // unit gradient; zero if outside window
 };
 
+// Snapshot of the ESDF map for SSE streaming (Stage 6).
+struct LocalESDFMapSnapshot {
+    LocalESDFConfig config;
+    std::size_t cell_count{0U};
+    std::vector<LocalESDFCell> cells;  // all stored shell cells
+    Vec3  net_repulsion;               // APF repulsion force at a query point (world frame)
+    std::uint64_t seq{0U};
+    bool  is_delta{false};
+};
+
 class LocalESDFMap {
 public:
     explicit LocalESDFMap(LocalESDFConfig cfg = {}) : config_(cfg) {}
@@ -76,6 +87,12 @@ public:
     void update_incremental(const MissionLocalPlanningMap& l2,
                             const std::vector<Vec3>& dirty_world_positions,
                             double d0_m);
+
+    // Snapshot all shell cells + compute net repulsion at query_pos.
+    // Repulsion scale k: APF gain (default 1.0).
+    // is_delta=false on a full recompute; the caller sets it.
+    [[nodiscard]] LocalESDFMapSnapshot snapshot(
+        const Vec3& query_pos, double repulsion_k = 1.0) const;
 
     // update_tube: compute or refresh the ESDF along a proposed trajectory.
     // Only the bounding volume of the waypoints, expanded by tube_radius_m + d0,

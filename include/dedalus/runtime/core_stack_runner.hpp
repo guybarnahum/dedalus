@@ -8,6 +8,8 @@
 #include <thread>
 #include <vector>
 
+#include "dedalus/avoidance/local_esdf_map.hpp"
+#include "dedalus/avoidance/local_esdf_map_publisher.hpp"
 #include "dedalus/avoidance/local_flight_map.hpp"
 #include "dedalus/avoidance/mission_local_obstacle_map.hpp"
 #include "dedalus/avoidance/mission_local_planning_map.hpp"
@@ -38,6 +40,8 @@ struct CoreStackRunnerConfig {
     std::shared_ptr<MissionLocalTraversabilityMapPublisher> traversability_map_publisher;
     // Optional: publish Level 2 planning map snapshots to SSE subscribers.
     std::shared_ptr<MissionLocalPlanningMapPublisher> planning_map_publisher;
+    // Optional: publish L3 ESDF snapshots to SSE subscribers (Stage 6).
+    std::shared_ptr<LocalESDFMapPublisher> esdf_map_publisher;
     // Subscribers subscribed to snapshot_publisher at construction time.
     // CoreStackRunner retains these shared_ptrs (the publisher holds weak refs).
     std::vector<std::shared_ptr<WorldSnapshotSubscriber>> snapshot_subscribers;
@@ -78,6 +82,7 @@ private:
     std::shared_ptr<MissionObstacleMapDeltaPublisher> mission_obstacle_map_delta_publisher_;
     std::shared_ptr<MissionLocalTraversabilityMapPublisher> traversability_map_publisher_;
     std::shared_ptr<MissionLocalPlanningMapPublisher> planning_map_publisher_;
+    std::shared_ptr<LocalESDFMapPublisher> esdf_map_publisher_;
     std::vector<std::shared_ptr<WorldSnapshotSubscriber>> snapshot_subscriber_handles_;
     AirSimDepthObstacleDetectorConfig airsim_depth_obstacle_detector_config_;
     SensingCoverageProvider sensing_coverage_provider_;
@@ -85,6 +90,9 @@ private:
     MissionMapAssimilator mission_map_assimilator_;
     // Level 2: compressed planning map rebuilt from Level 1 after each assimilator drain.
     MissionLocalPlanningMap mission_local_planning_map_;
+    // Level 3: ESDF derived from the local L2 window.  Recomputed on each L2 publish tick.
+    LocalESDFMap esdf_map_;
+    std::uint64_t esdf_seq_{0U};
     MissionObstacleMapArtifactWriter mission_obstacle_map_artifact_writer_;
     MissionObstacleMapDeltaWriter mission_obstacle_map_delta_writer_;
     MissionTraversabilityMapArtifactWriter mission_traversability_map_artifact_writer_;

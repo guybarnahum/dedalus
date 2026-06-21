@@ -306,6 +306,13 @@ dedalus_add_native_test(
 )
 
 dedalus_add_native_test(
+    NAME esdf_streaming
+    LAYER unit
+    TAGS avoidance esdf streaming
+    SOURCES unit/test_esdf_streaming.cpp
+)
+
+dedalus_add_native_test(
     NAME mission_traversability_map_artifact_writer
     LAYER unit
     TAGS avoidance mission_local_map traversability artifacts

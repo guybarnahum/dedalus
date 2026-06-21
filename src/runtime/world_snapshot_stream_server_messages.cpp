@@ -1,5 +1,6 @@
 #include "dedalus/runtime/world_snapshot_stream_server.hpp"
 
+#include "dedalus/avoidance/local_esdf_map_publisher.hpp"
 #include "dedalus/avoidance/mission_local_planning_map_publisher.hpp"
 #include "dedalus/avoidance/mission_local_traversability_map_publisher.hpp"
 #include "dedalus/core/json_utils.hpp"
@@ -255,6 +256,40 @@ std::string RuntimeEventStreamServer::serialize_planning_snapshot(
     line += ",\"";
     line += type;
     line += "\":";
+    line += payload;
+    line += "}\n";
+    return line;
+}
+
+void RuntimeEventStreamServer::on_esdf_snapshot(const LocalESDFMapFrame& frame) {
+    // Skip empty snapshots (ESDF not yet computed).
+    if (frame.snapshot.cell_count == 0U && frame.snapshot.cells.empty()) {
+        return;
+    }
+
+    const std::uint64_t seq = [this] {
+        std::lock_guard<std::mutex> lock{mutex_};
+        ++esdf_snapshot_messages_;
+        return ++published_seq_;
+    }();
+    enqueue_esdf_snapshot(seq, frame.timestamp_ns, frame.snapshot);
+}
+
+std::string RuntimeEventStreamServer::serialize_esdf_snapshot(
+    std::uint64_t seq,
+    std::uint64_t timestamp_ns,
+    const LocalESDFMapSnapshot& snapshot) const {
+    const auto payload = to_compact_stream_json(snapshot, 0U);
+    // Always emit "esdf_delta" — the viewer merges cells; is_delta=false → full reset.
+    std::string line;
+    line.reserve(payload.size() + 200U);
+    line += "{\"type\":\"esdf_delta\",\"seq\":";
+    line += std::to_string(seq);
+    line += ",\"map_seq\":";
+    line += std::to_string(snapshot.seq);
+    line += ",\"timestamp_ns\":";
+    line += std::to_string(timestamp_ns);
+    line += ",\"esdf_delta\":";
     line += payload;
     line += "}\n";
     return line;

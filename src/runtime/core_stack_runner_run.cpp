@@ -1,5 +1,7 @@
 #include "dedalus/runtime/core_stack_runner.hpp"
 
+#include "dedalus/avoidance/local_esdf_map.hpp"
+#include "dedalus/avoidance/local_esdf_map_publisher.hpp"
 #include "dedalus/avoidance/local_flight_map.hpp"
 #include "dedalus/avoidance/mission_local_planning_map_publisher.hpp"
 #include "dedalus/avoidance/mission_local_traversability_map_publisher.hpp"
@@ -361,6 +363,33 @@ bool CoreStackRunner::run_once() {
                     if (timing_writer_) {
                         timing_writer_->record_stage(
                             "planning_map_publisher.publish", duration_us(start));
+                    }
+                }
+
+                // ── Level 3 ESDF (piggybacks on L2 publish tick) ────────────
+                // Recompute the full ESDF centred on the drone's current position.
+                // Window: ±40 m XY, ±10 m Z, d0 = 5 m.  Takes ~6 ms at -O2.
+                if (esdf_map_publisher_) {
+                    static constexpr double kESDFHorizHalfM = 40.0;
+                    static constexpr double kESDFVertHalfM  = 10.0;
+                    static constexpr double kESDFD0M        = 5.0;
+                    start = SteadyClock::now();
+                    const Vec3& drone_pos =
+                        snapshot_for_annotation.ego.local_T_body.position;
+                    esdf_map_ = compute_esdf(mission_local_planning_map_,
+                                            drone_pos,
+                                            kESDFHorizHalfM,
+                                            kESDFVertHalfM,
+                                            kESDFD0M);
+                    LocalESDFMapFrame esdf_frame;
+                    esdf_frame.timestamp_ns = trav_frame.timestamp_ns;
+                    esdf_frame.snapshot = esdf_map_.snapshot(drone_pos, 1.0);
+                    esdf_frame.snapshot.seq = ++esdf_seq_;
+                    esdf_map_publisher_->publish(esdf_frame);
+                    if (timing_writer_) {
+                        timing_writer_->record_stage("esdf.compute_and_publish", duration_us(start));
+                        timing_writer_->record_stage("esdf.cell_count",
+                            esdf_map_.cell_count());
                     }
                 }
             }

@@ -148,6 +148,22 @@ void RuntimeEventStreamServer::enqueue_planning_snapshot(
     queue_cv_.notify_one();
 }
 
+void RuntimeEventStreamServer::enqueue_esdf_snapshot(
+    std::uint64_t seq, std::uint64_t timestamp_ns,
+    LocalESDFMapSnapshot snapshot) {
+    const auto start = SteadyClock::now();
+    {
+        std::lock_guard<std::mutex> lock{mutex_};
+        if (send_queue_.size() >= config_.max_send_queue_depth) {
+            send_queue_.pop_front();
+            ++dropped_messages_;
+        }
+        send_queue_.push_back(PendingESDFSnapshot{seq, timestamp_ns, std::move(snapshot)});
+        enqueue_total_us_ += elapsed_us(start);
+    }
+    queue_cv_.notify_one();
+}
+
 void RuntimeEventStreamServer::publish_json_line(const std::string& line) {
     const auto start = SteadyClock::now();
 
@@ -245,10 +261,18 @@ void RuntimeEventStreamServer::writer_loop() {
             const auto serialize_us = elapsed_us(t0);
             std::lock_guard<std::mutex> lock{mutex_};
             serialize_total_us_ += serialize_us;
-        } else {
+        } else if (std::holds_alternative<PendingPlanningSnapshot>(item)) {
             auto& pending = std::get<PendingPlanningSnapshot>(item);
             const auto t0 = SteadyClock::now();
             line = serialize_planning_snapshot(
+                pending.seq, pending.timestamp_ns, pending.snapshot);
+            const auto serialize_us = elapsed_us(t0);
+            std::lock_guard<std::mutex> lock{mutex_};
+            serialize_total_us_ += serialize_us;
+        } else {
+            auto& pending = std::get<PendingESDFSnapshot>(item);
+            const auto t0 = SteadyClock::now();
+            line = serialize_esdf_snapshot(
                 pending.seq, pending.timestamp_ns, pending.snapshot);
             const auto serialize_us = elapsed_us(t0);
             std::lock_guard<std::mutex> lock{mutex_};
