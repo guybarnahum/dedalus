@@ -1,423 +1,150 @@
 # Dedalus LLM Operating Brief
 
-This file is the active orientation document for a new LLM session. Keep it short, current, and action-oriented. Historical notes and superseded debugging context live in `LLM.back.md`.
+Active orientation document for a new LLM session. Keep short, current, and action-oriented.
+Historical notes and superseded context live in `LLM.back.md`.
 
-Repository:
+Repository: `guybarnahum/dedalus`
 
-```text
-guybarnahum/dedalus
+---
+
+## Current Handoff State
+
 ```
+Viewer (mission_unified_viewer.py / build/viewer.html):
+  - L0 TTC radar (top-right inset): TTC-radial positioning, escape/flight vectors,
+    HOVER mode, 80% size, heading label.
+  - L0 sensor cone scope (top-left inset): az×el rectilinear panel, source-tagged dots
+    (white=GT, gray=Depth, black=Visual), TTC halo coloring.
+  - L0 C++ compute: compute_l0_polar_risk() + collect_l0_sensor_observations() in
+    local_flight_map.cpp, serialized via world_snapshot SSE stream.
+  - Viewer cosmetics: unified snap-to-preset (45°/Top/Side), zoom preserved across
+    preset transitions, zoom display updates during animation.
+  - Takeoff/home marker: green diamond "H" at first recorded ego position.
+  - JSON serialization bug (spherical_risk_bins) fixed: bool first_bin pattern.
+  - All 44/44 ctests pass. Viewer contract validator: 0 violations.
 
-Current handoff state:
+L0/L1/L2 obstacle map: implemented and operator-validated.
+  See docs/two-level-obstacle-map.md for full architecture.
 
-```text
-2.26E is complete and live-validated by the operator.
-2.27A is complete and live-validated by the operator.
-2.27B is complete and locally/live validated by build/tests plus the circle trajectory validator.
-2.28B is complete: no-shim repo layout migration is validated.
-2.28B.1 is complete: generated third-party dependencies are staged under third_party/ and validated from empty-state setup.
-2.28C is complete: camera/gimbal target-stare policy, runtime dispatch, hardware/simulation sinks, and one-command AirSim mission workflow are validated.
-2.29A-E are complete: multi-stage behavior sequence parsing/runtime, AirSim sequence configs, far-person SEL run, active step observability, canonical per-step yaw/camera mode validation, and mixed-mode yaw/camera validation are complete.
-2.30A-B are complete: slow moving far-animal SEL validation and moving-target stress matrix are validated. See docs/selected_entity_slow_moving_animal_validation.md and docs/moving_target_behavior_validation_results.md.
-
-4.1C AirSim depth obstacle detector dataflow is live-validated: AirSim DepthPlanar now reaches FramePacket.depth_frame, CoreStackRunner, WorldSnapshot.obstacle_evidence, and the AirSim OSD as classless `airsim_depth_obstacle_detector` volumetric evidence. See docs/airsim_depth_obstacle_detector_validation.md.
-
-5Q-5U obstacle-memory default path is compact-delta-first and SQLite-backed. Current main is operator-validated after the refactor/CI cleanup stack: tests pass and `simulation/airsim/run_mission.sh` invocation works. DRY_RUN was not attempted and should not be assumed available.
-
-R3 live mission-local obstacle viewer is operator-validated: Dedalus runtime serves `/healthz`, `/events`, and `mission_local_obstacle_viewer.html` from one HTTP/SSE port; browser viewer consumes live `world_snapshot` and `mission_obstacle_map_delta` events; ego pose follows `snapshot.ego.position_local`; live trajectory samples age yellow with a 0-2s bright hold and 2-10s fade; live obstacle delta samples age red through a coalesced visual event layer; AirSim orbit handedness matches the viewer; left-panel view preset buttons are available.
-
-4.3A-D are complete as diagnostics/observability slices: obstacle evidence compaction/fusion is centralized in `MissionLocalObstacleMap`; AirSim detector-side coalescing/flags are removed; `LocalFlightMapAccumulator::update_from_mission_local_map(...)` reports mission-cell projection / inflated exclusion diagnostics; `WorldSnapshot` serializes the new counters; the existing mission-local obstacle viewer displays raw/compacted/duplicate evidence plus projected/exclusion metrics.
-
-GitHub workflow policy: CI and staging run the fast CTest subset (`-LE 'synthetic|scenario'`) plus core-stack smoke validation. Production keeps full CTest as the release gate plus core-stack smoke validation. See docs/ctest_validation_layers.md.
-
-Active next work: 4.3E documentation / handoff consolidation, then continue persistent obstacle-memory schema/artifact alignment using the canonical mission-local counters. Avoid changing flight/runtime semantics unless explicitly scoped.
-
-GitHub status checks may be absent; continue to run local build/tests after code changes.
+Next: L2 SQLite persistence (Stage 1 of L2/L3 plan below).
 ```
 
 ---
 
 ## 0. Ground-Truth Patch Policy
 
-Ground-truth patch policy:
+```
+Before offering code changes, inspect the current repo files that define the call
+path, data flow, flags, schemas, tests, and scripts being changed.
 
-```text
-Before offering code changes, inspect the current repo files that define the call path, data flow, flags, schemas, tests, and scripts being changed.
+Do not guess file structure, option names, parser blocks, test layout, function
+signatures, enum values, generated artifact paths, or runtime wiring.
 
-Do not guess file structure, option names, parser blocks, test layout, function signatures, enum values, generated artifact paths, or runtime wiring.
-
-Do not assume a wrapper script forwards a flag just because the binary supports it. Verify the wrapper parser and pass-through path.
-
-Do not assume a test failure is stale or caused by rebuild state until checking the source assertion, target path, and build output.
+Do not assume a wrapper script forwards a flag just because the binary supports it.
+Verify the wrapper parser and pass-through path.
 
 When enhancing runtime or data-flow code, first trace:
-  source of data
-  owning publisher / accumulator
-  serialization boundary
-  transport or artifact writer
-  consuming test / tool / viewer
-  validation command
+  source of data → owning publisher/accumulator → serialization boundary
+  → transport or artifact writer → consuming test/tool/viewer → validation command
 
-Prefer small, anchored patches against inspected code. If the local file structure differs from the expected anchor, stop and request/inspect the relevant block instead of emitting increasingly broad regex patches.
+Prefer small, anchored patches against inspected code. If the local file structure
+differs from the expected anchor, stop and inspect instead of emitting broad patches.
 
-Balance architectural purity, implementation efficiency, and development risk. Use C++ when the feature belongs in the runtime ownership boundary; use Python/tools only for diagnostics, offline conversion, or intentionally external workflows.
+Balance architectural purity, implementation efficiency, and development risk.
+Use C++ when the feature belongs in the runtime ownership boundary; use Python/tools
+only for diagnostics, offline conversion, or intentionally external workflows.
 ```
 
 ---
 
 ## 1. Active Milestones
 
-```text
-Milestones 2.20-2.23: implemented / validated.
-Milestone 2.24: TargetSelector, ghost validation, reprojection validation, world-model evidence plumbing. Implemented through 2.24G.9 baseline.
-Milestone 2.25: ObjectBehaviorMissionController skeleton and bounded follow baseline. Implemented.
-Milestone 2.26: AirSim ghost behavior validation, live runtime-event stream, AirSim existing-object binding, follow arrival control, and live overlay / OSD. Complete after 2.26E validation.
-Milestone 2.27A: robust circle behavior with continuous orbit-capture control law and orbit-count completion. Complete after 3-orbit AirSim validation.
-Milestone 2.27B: validation hardening for circle/orbit behavior. Complete after validator CLI, validator test, runbook update, 34/34 CTest, and live trajectory validator pass.
-Milestone 2.28B: no-shim target/tool/dependency layout migration. Complete after empty-state setup and live AirSim validation.
-Milestone 2.28B.1: generated dependency staging under third_party/. Complete after PX4 SITL, iceoryx, and Colosseum assets staged under third_party and no stale generated dirs under root/simulation.
-Milestone 2.28C: camera/gimbal pointing foundation. Complete after typed C++ CameraPointingCommand, lifecycle camera policy, runtime CameraPointingSink dispatch, native C++ MAVLink gimbal sink, AirSim camera bridge, one-command run_mission.sh, and canonical post-run validation.
-Milestone 2.29A: behavior spec sequence schema foundation. Complete: BehaviorSpec carries optional yaw_mode and camera_pointing_mode per behavior node / sequence step.
-Milestone 2.29B: sequence runtime execution. Complete: ObjectBehaviorMissionController executes approach -> circle sequence steps and applies per-step yaw/camera overrides during ExecuteMission.
-Milestone 2.29C: AirSim sequence config and canonical sequence validation. Complete: sequence config/spec plus validate-mission-artifacts --expect-sequence and run_mission.sh sequence validation flags.
-Milestone 2.29D: far static SEL and observability validation. Complete: BRPlayer_36 far-person sequence run validates active step fields and per-step yaw/camera mode assertions.
-Milestone 2.29E: mixed-mode sequence validation. Complete: static far-person approach target/target -> circle trajectory/target validated.
-Milestone 2.30A: slow moving SEL animal sequence validation. Complete: ghost_far_animal_001 at 0.20 m/s validated.
-Milestone 2.30B: moving-target stress matrix. Complete: medium, side-motion, and diagonal far-animal trajectories validated.
-Milestone 4.1C.2/4.1C.3: AirSim depth-frame classless obstacle detector core, sidecar acquisition, CoreStackRunner handoff, sampling fix, and OSD visualization are live-validated.
-Milestone 4.3A-D: classless obstacle-map diagnostics hardening is complete: provider-neutral map-level compaction, no AirSim detector-side coalescing, local-flight exclusion diagnostics, WorldSnapshot serialization, and viewer observability.
-Two-level obstacle map (L1+L2) is implemented and syntax-validated:
-  L1 MissionLocalTraversabilityMap: occupied_score_decay_per_second=0.05, prune_min_occupied_score=0.1, prune_interval_ticks=10.
-  L2 MissionLocalPlanningMap: 1 m × 1 m × 2 m voxels, evidence-keyed incremental update (occupied max-merges in, free-space evicts), disk persistence via save_to_file/load_from_file, atomic temp-then-rename. CoreStackRunner::planning_map_persistence_path_ controls the file path; loaded at construction, saved at finalize_mission_map_after_landing().
-  See docs/two-level-obstacle-map.md for the full L0/L1/L2 architecture, lifecycle, and open questions.
+```
+Milestones 2.20–2.30B: complete (behavior/follow/circle/sequence). See LLM.back.md.
+Milestone 4.1C: AirSim depth obstacle detector, live-validated.
+Milestone 4.3A-D: obstacle diagnostics hardening, complete.
+Milestone 4.3F: viewer polish (view presets, coloring, vectors), operator-validated.
+Milestone 4.3G: viewer HTML contract validator, complete.
 
-Active next slice: 4.3E documentation / handoff consolidation; after that:
-  - Viewer: ego sub-window showing L0 LocalFlightMap crop.
-  - Resolve open architecture questions: L0 polar cones, L2 octree.
-  - Wire L2 persistence path into run_mission.sh.
-  Runtime preload remains diagnostics-only until validated.
+Two-level obstacle map (L0+L1+L2): implemented and syntax-validated.
+  L0  LocalFlightMapSnapshot: ego-local, 0.5 m cells, polar risk + sensor cone scope.
+        compute_l0_polar_risk() + collect_l0_sensor_observations() run each tick.
+        Serialized in WorldSnapshot SSE stream. Viewer: TTC radar + cone scope insets.
+  L1  MissionLocalTraversabilityMap: 0.5 m voxels, decay 0.05/s, pruned at 0.1.
+        Streamed to viewer as traversability surface (exterior voxel faces, LOD).
+  L2  MissionLocalPlanningMap: 1 m × 1 m × 2 m voxels, evidence-keyed, no time decay.
+        Flat vector + hashmap. Save/load: versioned plain text (planning_map_v1).
+        Saved at finalize_mission_map_after_landing(); loaded at process start.
+
+Active next slice: L2 SQLite persistence + L3 ESDF (see Section 4).
 ```
 
 ---
 
 ## 2. Current Runtime Architecture
 
-```text
+```
 AirSim live frame + ego sidecar
   -> AirSimFrameSource
   -> FrameHintEgoProvider
   -> CoreStackRunner
-       -> optional GhostTargetProvider::frame_at(...)
-            -> GhostDetectionsPublisher
-        -> SensingCoverageProvider
-             -> obstacle_sensing_volumes
-        -> optional FramePacket.depth_frame
-             -> AirSimDepthObstacleDetector
-             -> PerceptionPipelineOutput.obstacle_evidence
-             -> classless airsim_depth_obstacle_detector evidence
-           -> PerceptionPipelineOutput.observations
+       -> GhostTargetProvider -> GhostDetectionsPublisher
+       -> SensingCoverageProvider -> obstacle_sensing_volumes
+       -> AirSimDepthObstacleDetector -> PerceptionPipelineOutput.obstacle_evidence
   -> MissionLocalObstacleMap (raw evidence, per-tick)
   -> MissionMapAssimilator
-       -> L1: MissionLocalTraversabilityMap
-              flat 0.5 m voxels, time-decay 0.05/s, prune floor 0.1
-              -> traversability_map_publisher -> SSE stream (throttled 2 s)
-       -> L2: MissionLocalPlanningMap
-              1 m × 1 m × 2 m voxels, evidence-keyed (no time decay)
-              -> load at startup from planning_map_persistence_path
-              -> save at finalize_mission_map_after_landing()
-  -> InMemoryWorldModel
-  -> WorldSnapshotPublisher
+       -> L1: MissionLocalTraversabilityMap (0.5 m, decay 0.05/s)
+              -> traversability_map_publisher -> SSE (throttled 2 s)
+       -> L2: MissionLocalPlanningMap (1 m×2 m, evidence-keyed, disk-backed)
+              -> MissionLocalPlanningMapPublisher -> SSE
+  -> InMemoryWorldModel -> WorldSnapshotPublisher
        -> LatestWorldSnapshotSubscriber
        -> ArtifactSnapshotWriter
-       -> optional RuntimeEventStreamServer
+       -> RuntimeEventStreamServer (TCP JSONL + HTTP/SSE)
   -> LatestWorldSnapshot
-  -> MissionRuntime async loop
-       -> MissionEventPublisher
-  -> ObjectBehaviorMissionController
-       -> BehaviorSpec sequence runtime
-            -> active_behavior() step selection
-            -> approach standoff step
-            -> robust circle/orbit step
-            -> behavior_sequence_step_start / behavior_sequence_step_complete
-            -> behavior_tick_sample active step observability
-       -> VelocityCommand policy for vehicle translation/yaw
-       -> CameraPointingCommand policy for target/home/landing/neutral camera pitch
-  -> Px4BridgeCommandSink
-       -> persistent tools/px4/px4-command-bridge.py
-       -> PX4 shell: arm, takeoff, land, disarm
-       -> pymavlink: OFFBOARD velocity setpoints
-       -> LOCAL_POSITION_NED feedback climb to safe height
-  -> CameraPointingSink
-       -> NullCameraPointingSink by default
-       -> MavlinkGimbalPointingSink for real PX4/MAVLink gimbals
-       -> runtime event projection for AirSim camera bridge compatibility
-  -> PX4 / AirSim
+       -> compute_l0_polar_risk(snap.local_flight_map, vel_body)
+       -> collect_l0_sensor_observations(snap.local_flight_map, snap.obstacle_evidence, vel_body)
+  -> MissionRuntime -> ObjectBehaviorMissionController
+       -> BehaviorSpec sequence runtime (approach → circle steps)
+       -> VelocityCommand / CameraPointingCommand
+  -> Px4BridgeCommandSink -> PX4 / AirSim
 ```
 
-Runtime stream camera side-channel for AirSim:
-
-```text
-dedalus_mission_loop --world-snapshot-stream-port 47770
-  -> mission_event camera_pointing_intent
-  -> simulation/airsim/scripts/airsim-camera-pointing-bridge.py
-  -> AirSim simSetCameraPose(front_center, pitch)
-  -> AirSim simSetCameraPose(0, pitch)
+Sidecar viewer path:
 ```
-
-Runtime-event stream:
-
-```text
-dedalus_mission_loop --world-snapshot-stream-port 47770
-  -> one TCP JSONL stream with:
-       ghost_detections
-       world_snapshot
-       mission_event
-```
-
-Repo layout boundary:
-
-```text
-simulation/airsim/
-  Dedalus-owned AirSim target runtime scripts, settings, logs, and AirSim-specific validation.
-
-simulation/airsim/run.sh
-  Starts AirSim / PX4 SITL runtime.
-
-simulation/airsim/run_mission.sh
-  Starts mission-loop + AirSim camera bridge + overlay + post-run validation in tmux.
-  It now has a friendly AirSim RPC preflight so running it before run.sh exits with useful instructions.
-  It supports sequence validation flags:
-    --expect-sequence
-    --expect-sequence-steps approach,circle
-    --expect-sequence-step-modes approach:target:target,circle:target:target
-    --validation-complete-reason sequence_complete
-
-simulation/airsim/stop.sh
-  Normal way to stop AirSim / PX4 SITL runtime.
-
-cleanup.sh
-  Root cleanup/reset helper for rebuild/reset state. Do not present cleanup.sh as the normal simulation stop command.
-
-third_party/
-  Generated external dependency checkouts/downloads:
-    PX4-Autopilot/
-    iceoryx_build/
-    colosseum_environments/
-
-tools/px4/
-  Dedalus PX4/MAVLink protocol tools.
-
-tools/mission/
-  Canonical mission artifact validators and summaries.
-
-tools/validation/
-  Behavior/trajectory-specific validators.
-
-config/behaviors/
-  Behavior specs, trajectories, and ghost fixture assets.
-```
-
-Naming and artifact convention:
-
-```text
-Use architectural capability names, not planning labels or arbitrary placeholders.
-
-Prefer names that encode the stable subsystem, runtime boundary, contract, scenario, or artifact role:
-  out/object_behavior_airsim_existing_object_circle
-  out/mission_loop_snapshots
-  tools/mission/validate-obstacle-sensing-evidence-snapshots.py
-  tools/mission/validate-mission-artifacts.py
-  simulation/airsim/run_mission.sh
-  obstacle_sensing_volumes
-  obstacle_evidence
-  runtime_event_stream
-  world_snapshot
-
-Avoid names based on planning labels or temporary session language:
-  track4
-  milestone_XXX
-  phase_YYY
-  latest_run
-  mission_YYYY
-  foo.json
-  temp.json
-  ad-hoc simulation/artifacts/mission_* unless that is the actual architectural path produced by the repo
-
-When referring to output directories, use the concrete `--output-dir` value or the named directory printed by `dedalus_mission_loop` / `run_mission.sh`.
-```
-
-Core boundary:
-
-```text
-WorldSnapshot is autonomy state.
-PerceptionPipelineOutput is evidence.
-Ghost detections enter through the same Observation3D path as real detections.
-Artifacts are evidence/debug outputs, not IPC.
-Overlay is a subscriber/renderer only.
+RuntimeEventStreamServer TCP JSONL (port 7788 / --world-snapshot-stream-port)
+  -> dedalus_viewer (apps/dedalus_viewer.cpp)
+       --host/--port: upstream TCP
+       --http-port: browser-facing SSE (default 8090)
+       --replay-dir: replay from artifact dir
+       --static-root / --static-default-file: static HTML serving
+  -> tools/visualization/mission_unified_viewer.py -> build/viewer.html
+       Pure SPA; all state from /events SSE stream.
+       Renders: L0 TTC radar + cone scope, L1 trav surface, L2 planning cells,
+                obstacle evidence, ghost detections, trajectory, sensing volumes,
+                mission event log, orientation gizmo, takeoff marker.
+  -> tools/validation/validate-mission-unified-viewer.py (0 violations gate)
 ```
 
 ---
 
-## 3. Completed Capabilities Through 2.29D
+## 3. Persistent Obstacle Memory (5Q–5U, complete)
 
-AirSim existing-object binding:
+Default path: compact-delta-first, SQLite-backed.
 
-```text
-config/core_stack_object_behavior_airsim_existing_object.yaml
-  -> binds ghost_person_001 to BRPlayer_01_96 by default
-
-config/core_stack_object_behavior_airsim_existing_object_circle.yml
-  -> circle validation config using explicit existing-object binding
-
-config/core_stack_object_behavior_airsim_existing_object_sequence.yml
-  -> approach -> circle sequence config for BRPlayer_01_96 / ghost_person_001
-
-config/core_stack_object_behavior_airsim_existing_object_sequence_far_person.yml
-  -> approach -> circle sequence config for BRPlayer_36 / ghost_far_person_001
-
-config/behaviors/circle_existing_object_person.yaml
-  -> circle behavior spec for the validated existing-object path
-
-config/behaviors/sequence_approach_circle_existing_object.yaml
-  -> sequence behavior spec for ghost_person_001
-
-config/behaviors/sequence_approach_circle_far_person.yaml
-  -> sequence behavior spec for ghost_far_person_001 / BRPlayer_36
-
-simulation/airsim/scripts/airsim-list-objects.py
-  -> lists selectable scene objects by class/distance; used to pick BRPlayer_36 as a farther static person target
-
-simulation/airsim/scripts/airsim-object-poses.py
-  -> calls AirSim simGetObjectPose(object_name)
-  -> returns compact JSON object poses
-
-GhostTargetProvider(AirSimGhostObjectSourceConfig)
-  -> converts selected AirSim object poses to GhostDetectionState
-  -> emits GhostDetectionsFrame + Observation3D list
 ```
-
-Follow behavior:
-
-```text
-ObjectBehaviorMissionController consumes WorldSnapshot agents through TargetSelector.
-Follow uses target-relative observation geometry.
-Follow arrival command is:
-  command_velocity = target_velocity + closing_velocity
-Static targets converge to zero relative velocity.
-Moving targets converge toward matched target velocity.
-Follow no longer relies on latching yaw to hide target-location drift.
-```
-
-Circle behavior:
-
-```text
-Circle is implemented as a continuous orbit-capture control law, not follow-with-sideways-offset and not a brittle waypoint script.
-
-Command law:
-  desired_velocity =
-      target_velocity
-    + tangent_velocity_at_current_radial_angle
-    + radial_correction_velocity
-    + altitude_correction_velocity
-
-Behavior is robust to imperfect insertion geometry:
-  - starts outside radius -> radial correction inward while tangential motion is active
-  - starts inside radius -> radial correction outward while tangential motion is active
-  - starts near radius but at arbitrary bearing -> enters orbit from current radial angle
-  - overshoots -> radial correction recovers on subsequent ticks
-  - once orbit mode is reached -> orbit_mode_latched remains true until completion/reset
-
-For known static AirSim existing-object bindings, object_behavior_zero_target_velocity may be enabled so the controller does not velocity-match synthetic/static-object velocity noise. This zeroes target_velocity only; tangent velocity remains active.
-
-Moving-target validation through 2.30B shows the orbit law is not direction-specific across +X, +Y, and diagonal target-center motion. Medium, side-motion, and diagonal far-animal trajectories all completed sequence behavior with stable orbit radius and correct target velocity propagation. See `docs/moving_target_behavior_validation_results.md`.
-```
-
-Sequence behavior:
-
-```text
-behavior.type: sequence is implemented in ObjectBehaviorMissionController.
-The controller tracks sequence_step_index_ and active_behavior().
-Approach steps complete when standoff is reached:
-  range <= stop_distance_m + position_tolerance_m
-Circle steps complete by orbit_count or duration_s.
-Intermediate step completion emits:
-  behavior_sequence_step_complete
-  behavior_sequence_step_start for next step
-Final step completion emits:
-  behavior_complete reason=sequence_complete
-
-Sequence step observability is present in behavior_tick_sample:
-  active_behavior
-  active_yaw_mode
-  active_camera_pointing_mode
-  sequence_step_index
-
-## Persistent obstacle memory checkpoint
-
-```text
-5A-5G mission-local obstacle mapping path:
-  AirSim DepthPlanar / future obstacle providers
-    -> ObstacleEvidence
-    -> MissionLocalObstacleMap
-    -> LocalFlightMapSnapshot ego crop
-    -> TrajectorySafetyEvaluator read-only diagnostics
-    -> WorldSnapshot mission_local_obstacle_map diagnostics
-    -> offline mission-local viewer
-```
-
-The next work is persistent obstacle memory:
-
-```text
-5H export mission_obstacle_map.json from snapshots
-5I merge mission maps into maps/<site_id>/site_obstacle_map.json
-5J compute age/freshness/active score as derived fields
-5K add run_mission.sh post-process hooks
-5L preload prior site map into mission-local accumulator as diagnostics
-5M optional streaming map deltas
-5N planner/control use only after explicit validation
-```
-
-Decay policy:
-
-- Store absolute timestamps with explicit `time_unit: unix_ns`.
-- Store raw evidence primitives: first/last seen, last confirmed occupied, last observed free, last in sensing frustum, positive/negative counts, source stats.
-- Do not blindly decay/delete obstacles because a site has not been visited.
-- Normalize cell age against whole-site staleness:
-  `relative_gap_seconds = max(0, cell_age_seconds - site_staleness_seconds)`.
-- Strong decay should come from contradiction or revisits without reconfirmation, not calendar time alone.
-- Persisted maps are site-local, not necessarily geodetic/global, until a real site anchor is available.
-```
-
-
-## Current validated obstacle-memory pipeline — 5Q through 5U
-
-The default AirSim obstacle-memory path is now compact-delta-first and SQLite-backed.
-
 Runtime:
-- AirSim depth obstacle evidence feeds the mission-local obstacle map.
-- Runtime writes compact `mission_obstacle_map_deltas.jsonl`.
-- Full `mission_obstacle_map_full.json` is debug/export-only by default and is enabled with `--write-full-obstacle-map-artifact`.
+  AirSim depth evidence -> mission_local_obstacle_map_deltas.jsonl (compact delta)
+  --write-full-obstacle-map-artifact adds mission_obstacle_map_full.json (debug only)
 
 Post-mission:
-- `mission_obstacle_map_deltas.jsonl` is imported into `mission_obstacle_map_deltas.sqlite`.
-- The delta SQLite DB is compacted into `maps/<site_id>/site_obstacle_map.sqlite`.
-- `out/<run>/obstacle_memory_manifest.json` records the selected merge path, site/mission ids, artifact paths, existence, and sizes.
-
-Validation:
-- `tools/avoidance/validate_obstacle_memory_manifest.py` validates the manifest schema, ids, selected site-map format, expected merge path, and artifact existence/size consistency.
-- When `--merge-obstacle-map` is enabled, validation waits up to `OBSTACLE_MEMORY_MANIFEST_WAIT_SECONDS` seconds for the manifest.
-- Default wait is 360 seconds when merging is enabled, or can be overridden with `DEDALUS_OBSTACLE_MEMORY_MANIFEST_WAIT_SECONDS=<seconds>`.
-- Manifest validation covers `sqlite`, `json`, `both`, and `sqlite-full-json` formats through integration coverage.
-
-Validated default path:
-```text
-mission_obstacle_map_deltas.jsonl
-  -> mission_obstacle_map_deltas.sqlite
-  -> maps/<site_id>/site_obstacle_map.sqlite
-  -> out/<run>/obstacle_memory_manifest.json
+  mission_obstacle_map_deltas.jsonl
+    -> mission_obstacle_map_deltas.sqlite
+    -> maps/<site_id>/site_obstacle_map.sqlite
+    -> out/<run>/obstacle_memory_manifest.json
 ```
 
-Important commands:
+Key commands:
 ```bash
 simulation/airsim/run_mission.sh \
   --output-dir out/<run> \
@@ -425,39 +152,132 @@ simulation/airsim/run_mission.sh \
   --obstacle-map-site-id <site_id> \
   --obstacle-map-site-frame-id airsim_world \
   --obstacle-map-mission-id <mission_id>
-```
 
-Debug full JSON:
-```bash
-simulation/airsim/run_mission.sh \
-  --output-dir out/<run> \
-  --merge-obstacle-map \
-  --write-full-obstacle-map-artifact \
-  --obstacle-map-site-id <site_id> \
-  --obstacle-map-site-frame-id airsim_world \
-  --obstacle-map-mission-id <mission_id>
-```
-
-Manifest validator:
-```bash
 python3 tools/avoidance/validate_obstacle_memory_manifest.py \
   out/<run>/obstacle_memory_manifest.json \
-  --site-id <site_id> \
-  --site-frame-id airsim_world \
-  --mission-id <mission_id> \
-  --site-map-format sqlite
+  --site-id <site_id> --site-frame-id airsim_world \
+  --mission-id <mission_id> --site-map-format sqlite
 ```
 
-## Patch output and safety policy
+---
 
-When providing patch snippets:
+## 4. L2 SQLite + L3 ESDF Implementation Plan
 
-- Do not append routine `grep`, `diff`, or code-section inspection commands after a patch.
-- Patch scripts may inspect files internally, but normal output must be limited to concise `OK:` / `ERROR:` status lines.
-- Do not dump code sections as validation output. It is noisy and usually does not help human review.
-- Do not call `sys.exit()`, `raise SystemExit`, shell `exit`, or otherwise intentionally terminate the user's shell/session from generated patch snippets.
-- Do not rely on `set -e` behavior for patch control flow.
-- Do not assume generated runtime directories such as `out/...`, logs, snapshots, artifacts, or validation output exist inside patch logic unless the user explicitly provided them for that patch.
-- If a guarded patch cannot find an expected anchor, print a concise `ERROR:` explaining what failed and do not write partial changes.
-- Use prose summaries plus build/test/runtime commands for validation. Keep patch output human-readable and short.
+### Layer stack
 
+```
+L0  LocalFlightMapSnapshot      ego-local, 0.5 m, rebuilt every tick
+                                → reflexive avoidance, TTC, escape vector
+L1  MissionLocalTraversabilityMap  per-flight accumulator, decay 0.05/s, 0.5 m
+                                → current sensor picture, feeds L2
+L2  MissionLocalPlanningMap     persistent site map, 1 m voxels
+                                → durable obstacle memory across flights
+L3  LocalESDFMap                ESDF derived from local L2 window
+                                → distance field + gradient = planning primitive
+```
+
+### Stage 1 — L2 SQLite persistence
+
+Replace plain-text save/load with SQLite + WAL.
+Schema: `cells(xi,yi,zi INTEGER PK, score REAL, confidence REAL, count INTEGER, updated_ns INTEGER)` + R-tree index.
+Add dirty-cell set to `MissionLocalPlanningMap`; flush background thread every 10 s (dirty cells only).
+Startup: spatial query for window around last known drone position.
+
+Validation: roundtrip 10k cells; partial load by bbox; flush latency < 50 ms; crash recovery (WAL); ctests green.
+
+### Stage 2 — Bounded in-memory L2 with spatial eviction
+
+Cap in-memory L2 to `±horizon_m` (default 150 m) of drone position.
+`slide_window(drone_pos)`: evict cells beyond `2×horizon`, stream in newly entered cells from SQLite.
+Called from `CoreStackRunner::run_once()` when drone moves > `horizon/4`.
+
+Validation: memory stays bounded over 2 km flight; continuity on re-entry; slide latency < 5 ms.
+
+### Stage 3 — L3 EDT compute (free function)
+
+`compute_esdf(l2, centre_world, window_half_m, d0_m) → LocalESDFMap`.
+3D separable EDT (Meijster, O(N)); sparse hash map of shell cells only (`|d| < d0`).
+Signed: negative inside occupied, clamped at −0.5 m. Gradient `∇d` precomputed per shell cell.
+Interface: `query(pos) → (d, grad)`, `repulsion(pos, d0, k) → Vec3`, `is_clear(pos, r) → bool`.
+
+Validation: flat-wall correctness; corner geometry; signed field; perf < 5 ms on 80×80×20 m window; all ctests green.
+
+### Stage 4 — L3 incremental updates
+
+`update_incremental(l2, dirty_voxels, d0)`: recompute ESDF within d0 of each dirty voxel only.
+`update_tube(trajectory_points, tube_radius)`: JIT refinement along a proposed path.
+Wired: `update_incremental()` after each L1→L2 step; `update_tube()` from trajectory planner (Stage 7).
+
+Validation: incremental ≡ full recompute (< 0.01 m error); incremental < 1 ms for 50 dirty cells; tube < 2 ms.
+
+### Stage 5 — Incremental L2 SSE streaming
+
+Replace full-snapshot emission with distance-sorted chunked streaming (500 cells/message, 50 ms yield).
+After initial load: delta mode — only cells touched since client's sequence watermark.
+
+Validation: no single SSE message > 20 ms; complete after full stream; delta sends only changed cells.
+
+### Stage 6 — L3 SSE streaming + viewer gradient arrows
+
+New SSE event `esdf_delta`: changed shell cells as `{x,y,z,d,gx,gy,gz}`.
+Viewer: `drawESDFArrows()` — 3D line segments from cell centre in gradient direction,
+colored by clearance (red d<1 m, yellow d<3 m, green d<d0). Toggle in layer controls.
+
+Validation: arrows point away from known obstacle; render < 4 ms for 2k shell cells; contract validator green.
+
+### Stage 7 — Navigation function + trajectory optimizer
+
+`compute_navigation_function(l2, goal) → NavigationMap`: Dijkstra wavefront, no local minima.
+`optimize_trajectory(nav_map, l3, start, goal, config) → Trajectory`: minimum-snap + ESDF soft penalty.
+`TrajectoryConfig`: `energy_weight`, `clearance_weight`, `time_weight`.
+
+Validation: topology correctness in maze; all waypoints `is_clear(r_vehicle)`; snap bounded; weight monotonicity.
+
+### Stage 8 — L0 / L3 calibration
+
+No new code. Simulation run: L0 trigger rate vs L3 clearance margin.
+Target: 0 L0 triggers when trajectory `d_min > 2 m`.
+
+### Dependencies
+
+```
+Stage 1 → Stage 2 → Stage 5
+Stage 3 → Stage 4 → Stage 6
+                  → Stage 7 → Stage 8
+```
+
+Stages 1–2 and 3–4 are independent and can proceed in parallel.
+
+---
+
+## 5. Architecture Boundaries
+
+```
+WorldSnapshot           autonomy state
+PerceptionPipelineOutput  evidence
+Ghost detections        enter through same Observation3D path as real detections
+Artifacts               evidence/debug outputs, not IPC
+Overlay                 subscriber/renderer only
+L0                      reflexive avoidance — no planner coupling
+L3                      planning primitive — no flight command coupling until Stage 8 scoped
+```
+
+Do not:
+- Add planner blocking, replanning, or command-sink avoidance unless explicitly scoped.
+- Use YOLO/DETR/classifier outputs as prerequisite for obstacle avoidance.
+- Derive visual obstacle coverage from vehicle yaw alone.
+- Couple obstacle persistence, map-building, or sensing coverage to a flight command sink.
+- Name files, validators, scripts, or symbols after planning labels or temporary session shorthand.
+
+---
+
+## 6. Patch Output and Safety Policy
+
+```
+- Patch scripts: concise OK:/ERROR: lines only. No grep/diff dumps after patches.
+- Do not call sys.exit(), raise SystemExit, shell exit from generated patch snippets.
+- Do not rely on set -e for patch control flow.
+- Do not assume out/, generated artifacts, runtime logs, or validation dirs exist
+  inside patch logic unless explicitly provided for that patch.
+- If anchors do not match, print ERROR and do not write partial changes.
+```
