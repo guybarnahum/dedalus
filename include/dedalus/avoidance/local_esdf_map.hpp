@@ -63,6 +63,29 @@ public:
     // (d(pos) ≥ r).
     [[nodiscard]] bool is_clear(const Vec3& pos, double r) const noexcept;
 
+    // ── Incremental updates (Stage 4) ───────────────────────────────────────
+    //
+    // update_incremental: after a set of L2 cells change, recompute only the
+    // ESDF sub-window that covers those cells + d0_m margin.  Cells outside
+    // the sub-window are unchanged.  Equivalent to a full recompute within
+    // the affected region (< 0.01 m error); typically < 1 ms for 50 dirty cells.
+    //
+    // dirty_world_positions: world-frame centres of L2 cells that changed.
+    // d0_m: truncation radius for this update (use the same value as the
+    //        original compute_esdf call).
+    void update_incremental(const MissionLocalPlanningMap& l2,
+                            const std::vector<Vec3>& dirty_world_positions,
+                            double d0_m);
+
+    // update_tube: compute or refresh the ESDF along a proposed trajectory.
+    // Only the bounding volume of the waypoints, expanded by tube_radius_m + d0,
+    // is (re-)computed — cells outside this volume are unchanged.  Intended for
+    // JIT path validation by the trajectory optimizer (Stage 7).
+    // Uses config_.d0_m as the truncation radius.
+    void update_tube(const MissionLocalPlanningMap& l2,
+                     const std::vector<Vec3>& waypoints,
+                     double tube_radius_m);
+
     // compute_esdf populates cells_ directly.
     friend LocalESDFMap compute_esdf(const MissionLocalPlanningMap& l2,
                                      const Vec3& centre_world,

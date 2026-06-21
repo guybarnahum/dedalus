@@ -13,6 +13,7 @@ add_library(dedalus_core
     avoidance/mission_local_planning_map_spatial.cpp
     avoidance/mission_local_planning_map_query.cpp
     avoidance/local_esdf_map.cpp
+    avoidance/local_esdf_map_incremental.cpp
     avoidance/compute_esdf.cpp
     avoidance/mission_local_planning_map_publisher.cpp
     avoidance/mission_map_assimilator.cpp
@@ -103,8 +104,10 @@ target_compile_options(dedalus_core
         -Wpedantic
 )
 
-# compute_esdf is a tight numeric kernel; ensure it compiles at -O2 even in
-# Debug builds so the perf test (< 5 ms for 80×80×20 m) stays green.
-set_source_files_properties(avoidance/compute_esdf.cpp
+# These files are tight numeric kernels; compile at -O2 even in Debug builds
+# so perf tests stay green.
+set_source_files_properties(
+    avoidance/compute_esdf.cpp
+    avoidance/local_esdf_map_incremental.cpp
     PROPERTIES COMPILE_OPTIONS "-O2"
 )

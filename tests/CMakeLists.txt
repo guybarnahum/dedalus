@@ -292,6 +292,13 @@ dedalus_add_native_test(
 )
 
 dedalus_add_native_test(
+    NAME local_esdf_map_incremental
+    LAYER unit
+    TAGS avoidance esdf planning
+    SOURCES unit/test_local_esdf_map_incremental.cpp
+)
+
+dedalus_add_native_test(
     NAME mission_traversability_map_artifact_writer
     LAYER unit
     TAGS avoidance mission_local_map traversability artifacts
