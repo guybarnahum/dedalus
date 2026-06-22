@@ -139,7 +139,7 @@ h3 { font-size: 12px; margin: 10px 0 6px; color: #c0c4d0; text-transform: upperc
         <button class="layer-btn" id="toggle-ghosts"><span>Ghost detections</span><span class="ltog"></span></button>
         <button class="layer-btn active" id="toggle-sensing"><span>Sensing volumes</span><span class="ltog"></span></button>
         <button class="layer-btn active" id="toggle-trajectory"><span>Trajectory</span><span class="ltog"></span></button>
-        <button class="layer-btn" id="toggle-esdf"><span>L3 ESDF arrows</span><span class="ltog"></span></button>
+        <button class="layer-btn" id="toggle-esdf"><span>L3 ESDF</span><span class="ltog"></span></button>
       </div>
 
       <h3>L1 LOD &amp; Color</h3>
@@ -171,6 +171,7 @@ h3 { font-size: 12px; margin: 10px 0 6px; color: #c0c4d0; text-transform: upperc
       <div class="metric"><span>Seq</span><b id="m-seq">0</b></div>
       <div class="metric"><span>L0 ego cells</span><b id="m-l0-cells">0</b></div>
       <div class="metric"><span>L2 planning cells</span><b id="m-plan-cells">0</b></div>
+      <div class="metric"><span>L3 ESDF cells</span><b id="m-esdf-cells">0</b></div>
       <div class="metric"><span>L1 trav cells</span><b id="m-trav-cells">0</b></div>
       <div class="metric"><span>Trav ext. faces</span><b id="m-trav-faces">0</b></div>
       <div class="metric"><span>Raw evidence cells</span><b id="m-obs-cells">0</b></div>
@@ -285,7 +286,10 @@ let lfmSensorObs     = [];        // [{az,el,r,vr,ttc,src}] raw sensor observati
 // L3 ESDF (Stage 6): shell cells from C++ compute_esdf, emitted as esdf_delta SSE events.
 const esdfCellsByKey = new Map();   // quantKey → {x,y,z,d,gx,gy,gz}
 let   esdfNetRepulsion = null;      // {x,y,z} world-frame APF repulsion at drone position
-let   esdfD0M = 5.0;               // truncation radius from last snapshot
+let   esdfD0M        = 5.0;        // truncation radius from last snapshot
+let   esdfCellSizeM  = 1.0;        // XY cell size (inherited from L2)
+let   esdfVCellSizeM = 2.0;        // Z  cell size (inherited from L2)
+let   esdfFacesGeom  = [];         // pre-built exterior face geometry for L3
 
 // Traversability (L1)
 const travCellsByKey = new Map();      // cellKey → trav cell (0.5 m raw cells from server)
@@ -1039,6 +1043,10 @@ function planningQuantKey(x, y, z, cellSizeM, vCellSizeM) {
   return `${qx},${qy},${qz}`;
 }
 
+function esdfQuantKey(x, y, z) {
+  return `${Math.round(x/esdfCellSizeM)},${Math.round(y/esdfCellSizeM)},${Math.round(z/esdfVCellSizeM)}`;
+}
+
 let planCellSizeM  = 1.0;
 let planVCellSizeM = 2.0;
 let planFacesGeom  = [];   // pre-built exterior face geometry for L2
@@ -1191,6 +1199,117 @@ function drawPlanningFaces() {
     ctx.stroke(path);
   }
 
+  ctx.restore();
+}
+
+// ── L3 ESDF cell rendering ────────────────────────────────────────────────────
+//
+// ESDF shell cells rendered as exterior voxel faces, like L2 but colored by
+// clearance distance:  red (d<1m) · amber (d<3m) · green (d≥3m).
+// Negative-d cells (inside occupied) are skipped.
+// Faces are pre-built by buildESDFFaces() whenever cell data changes or the
+// toggle is flipped, then replayed in drawESDFFaces() each frame.
+
+function buildESDFFaces() {
+  esdfFacesGeom = [];
+  if (!state.showEsdf || esdfCellsByKey.size === 0) return;
+
+  const csM  = esdfCellSizeM;
+  const vcM  = esdfVCellSizeM;
+  const halfX = csM * 0.5;
+  const halfY = csM * 0.5;
+  const halfZ = vcM * 0.5;
+
+  const occKeys = new Set();
+  for (const c of esdfCellsByKey.values()) {
+    occKeys.add(esdfQuantKey(c.x, c.y, c.z));
+  }
+
+  const DIRS = [
+    [1,0,0, 0.60], [-1,0,0, 0.50],
+    [0,1,0, 0.44], [0,-1,0, 0.38],
+    [0,0,1, 0.20], [0,0,-1, 1.00],
+  ];
+
+  for (const cell of esdfCellsByKey.values()) {
+    if (cell.d < 0) continue;  // inside obstacle — no face
+    const cx = cell.x, cy = cell.y, cz = cell.z;
+    for (const [dx, dy, dz, shading] of DIRS) {
+      const nk = esdfQuantKey(cx+dx*csM, cy+dy*csM, cz+dz*vcM);
+      if (occKeys.has(nk)) continue;  // interior face — skip
+
+      let corners;
+      if (dx !== 0) {
+        const fx = cx + dx*halfX;
+        corners = [
+          {x:fx,y:cy-halfY,z:cz-halfZ},{x:fx,y:cy+halfY,z:cz-halfZ},
+          {x:fx,y:cy+halfY,z:cz+halfZ},{x:fx,y:cy-halfY,z:cz+halfZ},
+        ];
+      } else if (dy !== 0) {
+        const fy = cy + dy*halfY;
+        corners = [
+          {x:cx-halfX,y:fy,z:cz-halfZ},{x:cx+halfX,y:fy,z:cz-halfZ},
+          {x:cx+halfX,y:fy,z:cz+halfZ},{x:cx-halfX,y:fy,z:cz+halfZ},
+        ];
+      } else {
+        const fz = cz + dz*halfZ;
+        corners = [
+          {x:cx-halfX,y:cy-halfY,z:fz},{x:cx+halfX,y:cy-halfY,z:fz},
+          {x:cx+halfX,y:cy+halfY,z:fz},{x:cx-halfX,y:cy+halfY,z:fz},
+        ];
+      }
+      esdfFacesGeom.push({
+        corners,
+        centroid: {
+          x:(corners[0].x+corners[2].x)*0.5,
+          y:(corners[0].y+corners[2].y)*0.5,
+          z:(corners[0].z+corners[2].z)*0.5,
+        },
+        shading,
+        d: cell.d,
+      });
+    }
+  }
+}
+
+function drawESDFFaces() {
+  if (!state.showEsdf || esdfFacesGeom.length === 0) return;
+
+  const sorted = esdfFacesGeom.slice().sort((a,b) => b.centroid.z - a.centroid.z);
+
+  ctx.save();
+  ctx.lineWidth = 0.5 * devicePixelRatio;
+
+  const groups = new Map();
+  for (const face of sorted) {
+    const ps = face.corners.map(c => project(c));
+    if (ps.some(p => !Number.isFinite(p.x) || !Number.isFinite(p.y))) continue;
+
+    const d = face.d, s = face.shading;
+    let r, g, b, fa;
+    if      (d < 1) { r=200; g=40;  b=30;  fa=0.45; }
+    else if (d < 3) { r=200; g=150; b=30;  fa=0.38; }
+    else            { r=40;  g=180; b=60;  fa=0.30; }
+    const fr=Math.round(r*s), fg=Math.round(g*s), fb=Math.round(b*s);
+    const key=`${fr},${fg},${fb}`;
+    let grp=groups.get(key);
+    if (!grp) {
+      grp={
+        fillStyle:   `rgba(${fr},${fg},${fb},${fa})`,
+        strokeStyle: `rgba(${fr},${fg},${fb},${Math.min(1,fa+0.10)})`,
+        path: new Path2D(),
+      };
+      groups.set(key,grp);
+    }
+    grp.path.moveTo(ps[0].x,ps[0].y);
+    for (let i=1;i<ps.length;i++) grp.path.lineTo(ps[i].x,ps[i].y);
+    grp.path.closePath();
+  }
+
+  for (const {fillStyle, strokeStyle, path} of groups.values()) {
+    ctx.fillStyle=fillStyle; ctx.strokeStyle=strokeStyle;
+    ctx.fill(path); ctx.stroke(path);
+  }
   ctx.restore();
 }
 
@@ -1686,6 +1805,7 @@ function drawESDFArrows() {
 function draw() {
   ctx.clearRect(0, 0, canvas.width, canvas.height);
   drawPlanningFaces();   // L2 persistent planning map (exterior faces, back-most layer)
+  drawESDFFaces();       // L3 ESDF shell cells colored by clearance distance
   drawTravFaces();       // L1 traversability exterior surface
   drawObstacleCells();   // raw evidence cells (demoted, off by default)
   drawLiveAgingOverlay(); // live delta events with age decay
@@ -1737,7 +1857,8 @@ function updateMetrics() {
   el("m-source").textContent = live.source;
   el("m-seq").textContent    = String(live.seq);
   el("m-l0-cells").textContent   = String(localFlightMapCells.length);
-  el("m-plan-cells").textContent = String(planningCellsByKey.size);
+  el("m-plan-cells").textContent  = String(planningCellsByKey.size);
+  el("m-esdf-cells").textContent  = String(esdfCellsByKey.size);
   el("m-obs-cells").textContent  = String(obsCellsByKey.size);
   el("m-trav-cells").textContent = String(travCellsByKey.size);
   // m-trav-faces updated in drawTravFaces()
@@ -2230,14 +2351,16 @@ function startLiveStream() {
       const esdf=payload.esdf_delta;
       if (!esdf) return;
       if (!esdf.is_delta) esdfCellsByKey.clear();
-      esdfD0M=esdf.d0_m||5.0;
+      esdfD0M        = esdf.d0_m         || 5.0;
+      esdfCellSizeM  = esdf.cell_size_m  || 1.0;
+      esdfVCellSizeM = esdf.vcell_size_m || 2.0;
       if (esdf.net_rep) esdfNetRepulsion=esdf.net_rep;
       if (Array.isArray(esdf.cells)) {
         for (const c of esdf.cells) {
-          const key=`${Math.round(c.x*2)}_${Math.round(c.y*2)}_${Math.round(c.z*2)}`;
-          esdfCellsByKey.set(key,c);
+          esdfCellsByKey.set(esdfQuantKey(c.x, c.y, c.z), c);
         }
       }
+      buildESDFFaces();
       scheduleDraw();
     } catch(e) {}
   });
@@ -2344,6 +2467,7 @@ function installViewControls() {
       state[stateKey] = !state[stateKey];
       btn.classList.toggle("active", state[stateKey]);
       if (stateKey==="showPlanning") buildPlanningFaces();
+      if (stateKey==="showEsdf")    buildESDFFaces();
       scheduleDraw();
     });
   }
