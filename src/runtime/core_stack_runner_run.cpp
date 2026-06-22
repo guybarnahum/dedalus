@@ -288,6 +288,10 @@ bool CoreStackRunner::run_once() {
     // No-op when no DB is open or the drone has not moved > horizon_m/4.
     mission_local_planning_map_.slide_window(
         snapshot_for_annotation.ego.local_T_body.position);
+    // Newly loaded cells carry their original write_seq (not current map_seq_),
+    // so they won't appear in dirty_centers_since().  Force a full ESDF recompute
+    // to cover the newly entered window region.
+    if (esdf_map_publisher_) { esdf_needs_full_recompute_ = true; }
 
     // When the assimilator drained at least one obstacle-map snapshot this tick:
     //  1. Rebuild the Level 2 planning map from the fresh Level 1 snapshot.
@@ -367,8 +371,10 @@ bool CoreStackRunner::run_once() {
                 }
 
                 // ── Level 3 ESDF (piggybacks on L2 publish tick) ────────────
-                // Recompute the full ESDF centred on the drone's current position.
-                // Window: ±40 m XY, ±10 m Z, d0 = 5 m.  Takes ~6 ms at -O2.
+                // Three paths, in order of priority:
+                //  1. Full recompute  — startup or post-slide_window (~6 ms, rare)
+                //  2. Incremental     — dirty L2 cells only via update_incremental (<1 ms)
+                //  3. Skip cell update — L2 unchanged; re-snapshot for updated net_rep
                 if (esdf_map_publisher_) {
                     static constexpr double kESDFHorizHalfM = 40.0;
                     static constexpr double kESDFVertHalfM  = 10.0;
@@ -376,15 +382,42 @@ bool CoreStackRunner::run_once() {
                     start = SteadyClock::now();
                     const Vec3& drone_pos =
                         snapshot_for_annotation.ego.local_T_body.position;
-                    esdf_map_ = compute_esdf(mission_local_planning_map_,
-                                            drone_pos,
-                                            kESDFHorizHalfM,
-                                            kESDFVertHalfM,
-                                            kESDFD0M);
+                    const std::uint64_t cur_l2_seq =
+                        mission_local_planning_map_.current_seq();
+                    bool is_full = false;
+
+                    if (esdf_needs_full_recompute_) {
+                        // Path 1: full recompute (startup / slide_window).
+                        esdf_map_ = compute_esdf(mission_local_planning_map_,
+                                                 drone_pos,
+                                                 kESDFHorizHalfM,
+                                                 kESDFVertHalfM,
+                                                 kESDFD0M);
+                        esdf_last_l2_seq_       = cur_l2_seq;
+                        esdf_needs_full_recompute_ = false;
+                        is_full = true;
+                    } else if (cur_l2_seq != esdf_last_l2_seq_) {
+                        // Path 2: incremental — update only cells near dirty L2 voxels.
+                        auto delta = mission_local_planning_map_.snapshot(esdf_last_l2_seq_);
+                        esdf_last_l2_seq_ = cur_l2_seq;
+                        if (!delta.cells.empty()) {
+                            std::vector<Vec3> dirty;
+                            dirty.reserve(delta.cells.size());
+                            for (const auto& c : delta.cells) {
+                                dirty.push_back(c.center_map);
+                            }
+                            esdf_map_.update_incremental(
+                                mission_local_planning_map_, dirty, kESDFD0M);
+                        }
+                        // is_full stays false → viewer merges delta cells
+                    }
+                    // Path 3 (L2 unchanged): fall through — just re-snapshot below.
+
                     LocalESDFMapFrame esdf_frame;
-                    esdf_frame.timestamp_ns = trav_frame.timestamp_ns;
-                    esdf_frame.snapshot = esdf_map_.snapshot(drone_pos, 1.0);
-                    esdf_frame.snapshot.seq = ++esdf_seq_;
+                    esdf_frame.timestamp_ns          = trav_frame.timestamp_ns;
+                    esdf_frame.snapshot              = esdf_map_.snapshot(drone_pos, 1.0);
+                    esdf_frame.snapshot.seq          = ++esdf_seq_;
+                    esdf_frame.snapshot.is_delta     = !is_full;
                     esdf_map_publisher_->publish(esdf_frame);
                     if (timing_writer_) {
                         timing_writer_->record_stage("esdf.compute_and_publish", duration_us(start));

@@ -90,9 +90,13 @@ private:
     MissionMapAssimilator mission_map_assimilator_;
     // Level 2: compressed planning map rebuilt from Level 1 after each assimilator drain.
     MissionLocalPlanningMap mission_local_planning_map_;
-    // Level 3: ESDF derived from the local L2 window.  Recomputed on each L2 publish tick.
-    LocalESDFMap esdf_map_;
-    std::uint64_t esdf_seq_{0U};
+    // Level 3: ESDF derived from L2.  Updated incrementally; full recompute on startup
+    // and after slide_window().  esdf_needs_full_recompute_ starts true so the first
+    // tick after load produces a full snapshot (is_delta=false) for connecting viewers.
+    LocalESDFMap      esdf_map_;
+    std::uint64_t     esdf_seq_{0U};
+    std::uint64_t     esdf_last_l2_seq_{0U};
+    bool              esdf_needs_full_recompute_{true};
     MissionObstacleMapArtifactWriter mission_obstacle_map_artifact_writer_;
     MissionObstacleMapDeltaWriter mission_obstacle_map_delta_writer_;
     MissionTraversabilityMapArtifactWriter mission_traversability_map_artifact_writer_;
