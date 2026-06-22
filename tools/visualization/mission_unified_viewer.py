@@ -317,6 +317,7 @@ const live = {
   pendingTravSnapshot: null,
   pendingTravIsDelta: false,
   pendingPlanningSnapshot: null,
+  pendingPlanningIsDelta: false,
   pendingGhostDetections: null,
   processingScheduled: false,
   coalescedDeltaFrames: 0,
@@ -1997,6 +1998,27 @@ function applyTravSnapshot(trav, {deferRender=false}={}) {
   return true;
 }
 
+function applyPlanningDelta(plan, {deferRender=false}={}) {
+  // Incremental update: merge changed L2 cells without clearing the full map.
+  if (!plan || !Array.isArray(plan.cells) || plan.cells.length === 0) return false;
+  const csM = fin(plan.cell_size_m, planCellSizeM) || planCellSizeM;
+  const vcM = fin(plan.vertical_cell_size_m, planVCellSizeM) || planVCellSizeM;
+  for (const raw of plan.cells) {
+    const center = asVec3(raw.center_map);
+    if (!center) continue;
+    planningCellsByKey.set(
+      planningQuantKey(center.x, center.y, center.z, csM, vcM),
+      { center,
+        occupied_score:    fin(raw.occupied_score, 0),
+        confidence:        fin(raw.confidence, 0),
+        source_cell_count: fin(raw.source_cell_count, 0) }
+    );
+  }
+  buildPlanningFaces();
+  if (!deferRender) { updateMetrics(); scheduleDraw(); }
+  return true;
+}
+
 function applyTravDelta(trav, {deferRender=false}={}) {
   // Incremental update: merge changed cells into the existing map without clearing.
   // Called when the server emits a traversability_map_delta event.
@@ -2076,8 +2098,8 @@ function processPending() {
   live.pendingWorldSnapshot=null; live.pendingWorldSnapshotSeq=null;
   const pTrav=live.pendingTravSnapshot; const pTravIsDelta=live.pendingTravIsDelta;
   live.pendingTravSnapshot=null; live.pendingTravIsDelta=false;
-  const pPlan=live.pendingPlanningSnapshot;
-  live.pendingPlanningSnapshot=null;
+  const pPlan=live.pendingPlanningSnapshot; const pPlanIsDelta=live.pendingPlanningIsDelta;
+  live.pendingPlanningSnapshot=null; live.pendingPlanningIsDelta=false;
   const pGhost=live.pendingGhostDetections;
   live.pendingGhostDetections=null;
 
@@ -2087,7 +2109,9 @@ function processPending() {
   if (pTrav)            changed=(pTravIsDelta
                           ? applyTravDelta(pTrav, {deferRender:true})
                           : applyTravSnapshot(pTrav, {deferRender:true}))||changed;
-  if (pPlan)            changed=applyPlanningSnapshot(pPlan, {deferRender:true})||changed;
+  if (pPlan)            changed=(pPlanIsDelta
+                          ? applyPlanningDelta(pPlan, {deferRender:true})
+                          : applyPlanningSnapshot(pPlan, {deferRender:true}))||changed;
   if (pGhost)           { applyGhostDetections(pGhost, {deferRender:true}); changed=true; }
 
   if (changed) { recomputeBounds(); updateMetrics(); scheduleDraw(); }
@@ -2167,7 +2191,19 @@ function startLiveStream() {
       const payload=JSON.parse(ev.data);
       const plan=payload.planning_map_snapshot;
       if (!plan||!Array.isArray(plan.cells)) return;
-      live.pendingPlanningSnapshot=plan;  // always full snapshot for P1
+      live.pendingPlanningSnapshot=plan;
+      live.pendingPlanningIsDelta=false;  // full snapshot — clear + rebuild
+      scheduleLiveProcessing();
+    } catch(e) {}
+  });
+
+  source.addEventListener("planning_map_delta", ev => {
+    try {
+      const payload=JSON.parse(ev.data);
+      const plan=payload.planning_map_delta;
+      if (!plan||!Array.isArray(plan.cells)) return;
+      live.pendingPlanningSnapshot=plan;
+      live.pendingPlanningIsDelta=true;   // incremental — merge only
       scheduleLiveProcessing();
     } catch(e) {}
   });
