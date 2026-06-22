@@ -99,13 +99,12 @@ private:
     };
     // A traversability snapshot (full or delta) that has not yet been serialized.
     // The writer thread picks it up and calls serialize_traversability_snapshot().
-    // is_delta == false → emit "traversability_map_snapshot" (client clears + rebuilds).
-    // is_delta == true  → emit "traversability_map_delta"    (client merges changed cells).
+    // snapshot.is_delta == false → emit "traversability_map_snapshot".
+    // snapshot.is_delta == true  → emit "traversability_map_delta".
     struct PendingTravSnapshot {
         std::uint64_t seq{0};
         std::uint64_t timestamp_ns{0};
         MissionLocalTraversabilityMapSnapshot snapshot;
-        bool is_delta{false};
     };
     // A Level 2 planning map snapshot (always full — L2 is small, no delta for P1).
     // The writer thread picks it up and calls serialize_planning_snapshot().
@@ -127,11 +126,11 @@ private:
     void enqueue_line(std::string line);
     void enqueue_snapshot(std::uint64_t seq, std::shared_ptr<const WorldSnapshot> snapshot);
     [[nodiscard]] std::string serialize_snapshot(std::uint64_t seq, const WorldSnapshot& snapshot) const;
+    void enqueue_item(QueueItem item);
     void enqueue_traversability_snapshot(std::uint64_t seq, std::uint64_t timestamp_ns,
-                                         MissionLocalTraversabilityMapSnapshot snapshot, bool is_delta);
+                                         MissionLocalTraversabilityMapSnapshot snapshot);
     [[nodiscard]] std::string serialize_traversability_snapshot(std::uint64_t seq, std::uint64_t timestamp_ns,
-                                                                const MissionLocalTraversabilityMapSnapshot& snapshot,
-                                                                bool is_delta) const;
+                                                                const MissionLocalTraversabilityMapSnapshot& snapshot) const;
     void enqueue_planning_snapshot(std::uint64_t seq, std::uint64_t timestamp_ns,
                                    MissionLocalPlanningMapSnapshot snapshot);
     [[nodiscard]] std::string serialize_planning_snapshot(std::uint64_t seq, std::uint64_t timestamp_ns,

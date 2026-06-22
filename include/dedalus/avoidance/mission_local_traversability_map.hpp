@@ -123,6 +123,9 @@ struct MissionLocalTraversabilityMapSnapshot {
     MissionLocalTraversabilityMapConfig config;
     MissionLocalTraversabilityMapSummary summary;
     std::vector<MissionLocalTraversabilityCell> cells;
+    // false → full snapshot (client clears + rebuilds)
+    // true  → delta (client merges changed cells only)
+    bool is_delta{false};
 };
 
 struct TraversabilityQueryResult {

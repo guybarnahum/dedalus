@@ -157,8 +157,9 @@ void RuntimeEventStreamServer::on_traversability_map_snapshot(
     //   Subsequent     (watermark  > 0): include only cells newer than watermark → delta, client merges.
     const bool is_delta = watermark > 0U;
     MissionLocalTraversabilityMapSnapshot filtered;
-    filtered.config  = frame.snapshot.config;
-    filtered.summary = frame.snapshot.summary;
+    filtered.config   = frame.snapshot.config;
+    filtered.summary  = frame.snapshot.summary;
+    filtered.is_delta = is_delta;
 
     std::uint64_t new_watermark = watermark;
     for (const auto& cell : frame.snapshot.cells) {
@@ -188,20 +189,19 @@ void RuntimeEventStreamServer::on_traversability_map_snapshot(
         trav_watermark_ns_ = effective_watermark;
         return ++published_seq_;
     }();
-    enqueue_traversability_snapshot(seq, frame.timestamp_ns, std::move(filtered), is_delta);
+    enqueue_traversability_snapshot(seq, frame.timestamp_ns, std::move(filtered));
 }
 
 std::string RuntimeEventStreamServer::serialize_traversability_snapshot(
     std::uint64_t seq,
     std::uint64_t timestamp_ns,
-    const MissionLocalTraversabilityMapSnapshot& snapshot,
-    bool is_delta) const {
+    const MissionLocalTraversabilityMapSnapshot& snapshot) const {
     // No cap in either case:
     //   Delta   — already filtered to changed cells only; count is inherently small.
     //   Snapshot — must include all cells so the watermark covers the full map.
     //              Sending the full map once is acceptable given the 2 s throttle.
     const auto payload = to_compact_stream_json(snapshot, 0U);
-    const char* const type = is_delta ? "traversability_map_delta" : "traversability_map_snapshot";
+    const char* const type = snapshot.is_delta ? "traversability_map_delta" : "traversability_map_snapshot";
     std::string line;
     line.reserve(payload.size() + 160U);
     line += "{\"type\":\"";
