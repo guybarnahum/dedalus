@@ -17,6 +17,10 @@ namespace {
 
 using SteadyClock = std::chrono::steady_clock;
 
+static constexpr double kESDFHorizHalfM = 40.0;
+static constexpr double kESDFVertHalfM  = 10.0;
+static constexpr double kESDFD0M        = 5.0;
+
 std::int64_t duration_us(const SteadyClock::time_point start) {
     return std::chrono::duration_cast<std::chrono::microseconds>(SteadyClock::now() - start).count();
 }
@@ -293,6 +297,30 @@ bool CoreStackRunner::run_once() {
     // to cover the newly entered window region.
     if (esdf_map_publisher_) { esdf_needs_full_recompute_ = true; }
 
+    // ── L3 eager startup publish ─────────────────────────────────────────────
+    // On the very first tick: if L2 (or a persisted ESDF cache) already has cells,
+    // compute and publish L3 now — don't wait for a traversability update.
+    // This ensures SSE clients always receive the persistent ESDF immediately
+    // on connect rather than waiting for the first new obstacle event.
+    if (esdf_map_publisher_ && esdf_seq_ == 0U) {
+        const Vec3& drone_pos = snapshot_for_annotation.ego.local_T_body.position;
+        if (esdf_map_.cell_count() == 0U && mission_local_planning_map_.cell_count() > 0U) {
+            // No cache loaded — derive from current L2 window.
+            esdf_map_ = compute_esdf(mission_local_planning_map_, drone_pos,
+                                     kESDFHorizHalfM, kESDFVertHalfM, kESDFD0M);
+            esdf_last_l2_seq_          = mission_local_planning_map_.current_seq();
+            esdf_needs_full_recompute_ = false;
+        }
+        if (esdf_map_.cell_count() > 0U) {
+            LocalESDFMapFrame esdf_frame;
+            esdf_frame.timestamp_ns      = frame->timestamp.timestamp_ns;
+            esdf_frame.snapshot          = esdf_map_.snapshot(drone_pos, 1.0);
+            esdf_frame.snapshot.seq      = ++esdf_seq_;
+            esdf_frame.snapshot.is_delta = false;  // always full on startup
+            esdf_map_publisher_->publish(esdf_frame);
+        }
+    }
+
     // When the assimilator drained at least one obstacle-map snapshot this tick:
     //  1. Rebuild the Level 2 planning map from the fresh Level 1 snapshot.
     //  2. Publish Level 1 to SSE subscribers (throttled to once per 2 s).
@@ -376,9 +404,6 @@ bool CoreStackRunner::run_once() {
                 //  2. Incremental     — dirty L2 cells only via update_incremental (<1 ms)
                 //  3. Skip cell update — L2 unchanged; re-snapshot for updated net_rep
                 if (esdf_map_publisher_) {
-                    static constexpr double kESDFHorizHalfM = 40.0;
-                    static constexpr double kESDFVertHalfM  = 10.0;
-                    static constexpr double kESDFD0M        = 5.0;
                     start = SteadyClock::now();
                     const Vec3& drone_pos =
                         snapshot_for_annotation.ego.local_T_body.position;

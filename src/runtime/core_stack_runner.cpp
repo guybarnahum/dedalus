@@ -28,7 +28,8 @@ CoreStackRunner::CoreStackRunner(CoreStackProviders providers, CoreStackRunnerCo
       mission_obstacle_map_delta_writer_(MissionObstacleMapDeltaWriter::from_environment()),
       mission_traversability_map_artifact_writer_(
           MissionTraversabilityMapArtifactWriter::from_environment()),
-      planning_map_persistence_path_(std::move(config.planning_map_persistence_path)) {
+      planning_map_persistence_path_(std::move(config.planning_map_persistence_path)),
+      esdf_persistence_path_(std::move(config.esdf_persistence_path)) {
     if (!snapshot_subscriber_handles_.empty()) {
         if (!snapshot_publisher_) {
             snapshot_publisher_ = std::make_shared<WorldSnapshotPublisher>();
@@ -54,6 +55,16 @@ CoreStackRunner::CoreStackRunner(CoreStackProviders providers, CoreStackRunnerCo
                 }
             }
         });
+    }
+
+    // Load persisted ESDF if available.  A successful load means the shell cells
+    // from the previous session are already in memory; the first tick will skip
+    // the full recompute and instead publish the cached cells immediately.
+    if (!esdf_persistence_path_.empty() &&
+        std::filesystem::exists(esdf_persistence_path_)) {
+        if (esdf_map_.load(esdf_persistence_path_)) {
+            esdf_needs_full_recompute_ = false;
+        }
     }
 }
 
@@ -94,6 +105,12 @@ MissionMapFlushResult CoreStackRunner::finalize_mission_map_after_landing(const 
     // Final flush + close the SQLite DB (WAL checkpoint included in sqlite3_close).
     if (!planning_map_persistence_path_.empty()) {
         mission_local_planning_map_.close_db();
+    }
+
+    // Persist the ESDF so it is ready on the next startup without a recompute.
+    // save() is best-effort at shutdown; ignore the return value intentionally.
+    if (!esdf_persistence_path_.empty() && esdf_map_.cell_count() > 0U) {
+        (void)esdf_map_.save(esdf_persistence_path_);
     }
 
     return result;

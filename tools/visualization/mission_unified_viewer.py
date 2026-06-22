@@ -133,13 +133,13 @@ h3 { font-size: 12px; margin: 10px 0 6px; color: #c0c4d0; text-transform: upperc
       <h3>Layers</h3>
       <div class="layer-controls">
         <button class="layer-btn active" id="toggle-l0"><span>L0 ego radar</span><span class="ltog"></span></button>
-        <button class="layer-btn active" id="toggle-planning"><span>L2 planning map</span><span class="ltog"></span></button>
         <button class="layer-btn active" id="toggle-trav"><span>L1 traversability</span><span class="ltog"></span></button>
+        <button class="layer-btn active" id="toggle-planning"><span>L2 planning map</span><span class="ltog"></span></button>
+        <button class="layer-btn active" id="toggle-esdf"><span>L3 ESDF</span><span class="ltog"></span></button>
         <button class="layer-btn" id="toggle-obstacles"><span>Raw evidence</span><span class="ltog"></span></button>
         <button class="layer-btn" id="toggle-ghosts"><span>Ghost detections</span><span class="ltog"></span></button>
         <button class="layer-btn active" id="toggle-sensing"><span>Sensing volumes</span><span class="ltog"></span></button>
         <button class="layer-btn active" id="toggle-trajectory"><span>Trajectory</span><span class="ltog"></span></button>
-        <button class="layer-btn" id="toggle-esdf"><span>L3 ESDF</span><span class="ltog"></span></button>
       </div>
 
       <h3>L1 LOD &amp; Color</h3>
@@ -254,7 +254,7 @@ const state = {
   showSensing:     true,
   showTrajectory:  true,
   showL0:          true,    // L0 ego radar inset (top-right corner)
-  showEsdf:        false,   // L3 ESDF gradient arrows (off by default)
+  showEsdf:        true,    // L3 ESDF (on by default — peer of L2)
   travColorByType: false,   // false = height-based (default), true = occupied/partial type colors
 };
 

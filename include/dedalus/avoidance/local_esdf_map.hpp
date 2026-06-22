@@ -2,6 +2,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <filesystem>
 #include <functional>
 #include <unordered_map>
 #include <vector>
@@ -102,6 +103,16 @@ public:
     void update_tube(const MissionLocalPlanningMap& l2,
                      const std::vector<Vec3>& waypoints,
                      double tube_radius_m);
+
+    // ── Persistence ────────────────────────────────────────────────────────────
+    //
+    // save(): write all shell cells to a binary file (magic 'ESDF', version 1).
+    //         Returns false on I/O error; does not throw.
+    // load(): restore cells from a previously saved file.  Replaces all current
+    //         cells.  Returns false if the file is missing, corrupt, or versioned
+    //         differently.  On failure the map is left empty.
+    [[nodiscard]] bool save(const std::filesystem::path& path) const;
+    [[nodiscard]] bool load(const std::filesystem::path& path);
 
     // compute_esdf populates cells_ directly.
     friend LocalESDFMap compute_esdf(const MissionLocalPlanningMap& l2,
