@@ -67,6 +67,45 @@ std::vector<ObstacleSensingVolume> obstacle_sensing_volumes_from(const SensingCo
 bool CoreStackRunner::run_once() {
     const auto run_once_start = SteadyClock::now();
 
+    // ── Startup publish of persisted L2 and L3 maps ──────────────────────────
+    // Runs on the very first call, before blocking on the frame source.
+    // open_db() pre-loads all SQLite cells so cell_count() is valid immediately.
+    // Publishing here (not after next_frame()) means the SSE cache is populated
+    // even when no flight is active and frames never arrive.
+    if (esdf_seq_ == 0U) {
+        // If no ESDF binary was loaded from disk but L2 has cells, compute L3.
+        if (esdf_map_publisher_ &&
+            esdf_map_.cell_count() == 0U &&
+            mission_local_planning_map_.cell_count() > 0U) {
+            ESDFWindow w;
+            if (esdf_window_from_l2(mission_local_planning_map_, kESDFD0M, &w)) {
+                esdf_map_ = compute_esdf(mission_local_planning_map_,
+                                         w.centre, w.horiz_half, w.vert_half,
+                                         kESDFD0M, kESDFSampleSpacingM);
+                esdf_last_l2_seq_          = mission_local_planning_map_.current_seq();
+                esdf_needs_full_recompute_ = false;
+            }
+        }
+        // Publish full L2 snapshot so connecting viewers see the persisted map.
+        if (planning_map_publisher_ && mission_local_planning_map_.cell_count() > 0U) {
+            MissionLocalPlanningMapFrame pm_frame;
+            pm_frame.timestamp_ns      = 0U;
+            pm_frame.snapshot          = mission_local_planning_map_.snapshot(0U);
+            pm_frame.snapshot.is_delta = false;
+            planning_map_publisher_->publish(pm_frame);
+            l2_last_published_seq_ = pm_frame.snapshot.seq;
+        }
+        // Publish full L3 snapshot (cells from disk load or just computed above).
+        if (esdf_map_publisher_ && esdf_map_.cell_count() > 0U) {
+            LocalESDFMapFrame esdf_frame;
+            esdf_frame.timestamp_ns      = 0U;
+            esdf_frame.snapshot          = esdf_map_.snapshot(Vec3{0.0, 0.0, 0.0}, 1.0);
+            esdf_frame.snapshot.seq      = ++esdf_seq_;
+            esdf_frame.snapshot.is_delta = false;
+            esdf_map_publisher_->publish(esdf_frame);
+        }
+    }
+
     auto start = SteadyClock::now();
     auto frame = providers_.frame_source->next_frame();
     const auto frame_available_time = SteadyClock::now();
@@ -320,34 +359,6 @@ bool CoreStackRunner::run_once() {
     // so they won't appear in dirty_centers_since().  Force a full ESDF recompute
     // to cover the newly entered window region.
     if (esdf_map_publisher_) { esdf_needs_full_recompute_ = true; }
-
-    // ── L3 eager startup publish ─────────────────────────────────────────────
-    // On the very first tick: if L2 (or a persisted ESDF cache) already has cells,
-    // compute and publish L3 now — don't wait for a traversability update.
-    // This ensures SSE clients always receive the persistent ESDF immediately
-    // on connect rather than waiting for the first new obstacle event.
-    if (esdf_map_publisher_ && esdf_seq_ == 0U) {
-        const Vec3& drone_pos = snapshot_for_annotation.ego.local_T_body.position;
-        if (esdf_map_.cell_count() == 0U && mission_local_planning_map_.cell_count() > 0U) {
-            // No cache loaded — compute from the full in-memory L2 extent.
-            ESDFWindow w;
-            if (esdf_window_from_l2(mission_local_planning_map_, kESDFD0M, &w)) {
-                esdf_map_ = compute_esdf(mission_local_planning_map_,
-                                         w.centre, w.horiz_half, w.vert_half,
-                                         kESDFD0M, kESDFSampleSpacingM);
-                esdf_last_l2_seq_          = mission_local_planning_map_.current_seq();
-                esdf_needs_full_recompute_ = false;
-            }
-        }
-        if (esdf_map_.cell_count() > 0U) {
-            LocalESDFMapFrame esdf_frame;
-            esdf_frame.timestamp_ns      = frame->timestamp.timestamp_ns;
-            esdf_frame.snapshot          = esdf_map_.snapshot(drone_pos, 1.0);
-            esdf_frame.snapshot.seq      = ++esdf_seq_;
-            esdf_frame.snapshot.is_delta = false;  // always full on startup
-            esdf_map_publisher_->publish(esdf_frame);
-        }
-    }
 
     // When the assimilator drained at least one obstacle-map snapshot this tick:
     //  1. Rebuild the Level 2 planning map from the fresh Level 1 snapshot.

@@ -5,10 +5,20 @@
 #include "dedalus/avoidance/local_esdf_map_publisher.hpp"
 
 #include <algorithm>
+#include <cmath>
 #include <cstdio>
 #include <string>
 
 namespace dedalus {
+namespace {
+
+// Replace NaN / Inf with 0.0 so every value we format is a valid JSON number.
+// snprintf("%.4g", NAN) produces "nan" on most platforms, which is not JSON.
+inline double jf(double v) noexcept {
+    return std::isfinite(v) ? v : 0.0;
+}
+
+}  // namespace
 
 void LocalESDFMapPublisher::subscribe(std::shared_ptr<LocalESDFMapSubscriber> subscriber) {
     std::lock_guard<std::mutex> lock{mutex_};
@@ -49,14 +59,14 @@ std::string to_compact_stream_json(const LocalESDFMapSnapshot& snap, std::size_t
     // Header
     std::snprintf(buf, sizeof(buf),
         "{\"cell_size_m\":%.4g,\"vcell_size_m\":%.4g,\"d0_m\":%.4g,\"is_delta\":%s",
-        cfg.cell_size_m, cfg.vertical_cell_size_m, cfg.d0_m,
+        jf(cfg.cell_size_m), jf(cfg.vertical_cell_size_m), jf(cfg.d0_m),
         snap.is_delta ? "true" : "false");
     out += buf;
 
     // Net repulsion
     std::snprintf(buf, sizeof(buf),
         ",\"net_rep\":{\"x\":%.5g,\"y\":%.5g,\"z\":%.5g}",
-        nr.x, nr.y, nr.z);
+        jf(nr.x), jf(nr.y), jf(nr.z));
     out += buf;
 
     // Cells array
@@ -68,10 +78,10 @@ std::string to_compact_stream_json(const LocalESDFMapSnapshot& snap, std::size_t
             "{\"x\":%.4g,\"y\":%.4g,\"z\":%.4g,\"d\":%.4g"
             ",\"gx\":%.4g,\"gy\":%.4g,\"gz\":%.4g"
             ",\"sgx\":%.4g,\"sgy\":%.4g,\"sgz\":%.4g}",
-            c.centre.x, c.centre.y, c.centre.z,
-            static_cast<double>(c.d),
-            c.grad.x, c.grad.y, c.grad.z,
-            c.sgrad.x, c.sgrad.y, c.sgrad.z);
+            jf(c.centre.x), jf(c.centre.y), jf(c.centre.z),
+            jf(static_cast<double>(c.d)),
+            jf(c.grad.x), jf(c.grad.y), jf(c.grad.z),
+            jf(c.sgrad.x), jf(c.sgrad.y), jf(c.sgrad.z));
         out += buf;
     }
     out += "]}";

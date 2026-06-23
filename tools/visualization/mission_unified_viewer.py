@@ -376,6 +376,7 @@ const esdfCellsByKey = new Map();   // quantKey → {x,y,z,d,gx,gy,gz}
 let   esdfNetRepulsion = null;      // {x,y,z} world-frame APF repulsion at drone position
 let   esdfD0M        = 5.0;        // truncation radius from last snapshot
 let   esdfMsgCount   = 0;          // total esdf_delta messages received
+let   esdfConsecErrors = 0;        // consecutive parse failures (resets on success)
 let   esdfDMin       = Infinity;   // min d across all stored cells (for stats)
 let   esdfDMax       = -Infinity;  // max d across all stored cells
 let   esdfArrowGeom  = [];         // sparse smoothed arrows pre-built by buildESDFArrows()
@@ -2529,6 +2530,7 @@ function startLiveStream() {
       const payload=JSON.parse(ev.data);
       const esdf=payload.esdf_delta;
       if (!esdf) return;
+      esdfConsecErrors = 0;   // reset on any successful parse
       esdfMsgCount++;
       const wasFull = !esdf.is_delta;
       if (wasFull) { esdfCellsByKey.clear(); esdfDMin=Infinity; esdfDMax=-Infinity; }
@@ -2554,7 +2556,19 @@ function startLiveStream() {
         `seq=${payload.map_seq??"-"} ${wasFull?"FULL":"delta"} cells=${inCells.length} total=${esdfCellsByKey.size} d0=${esdfD0M} cs=${esdfCellSizeM} ${repStr}`);
       if (DEBUG) console.log("[esdf_delta]", {seq:payload.map_seq, full:wasFull, cells:inCells.length, total:esdfCellsByKey.size, faces:esdfFacesGeom.length, dMin:esdfDMin.toFixed(2), dMax:esdfDMax.toFixed(2)});
       scheduleDraw();
-    } catch(e) { dbgLog("esdf_delta", `PARSE ERROR: ${e.message}`); }
+    } catch(e) {
+      esdfConsecErrors++;
+      dbgLog("esdf_delta", `PARSE ERROR (${esdfConsecErrors}): ${e.message}`);
+      // After 3 consecutive failures the SSE stream is likely misaligned.
+      // Close this connection and reconnect — the server replays the last
+      // full L2/L3 snapshot to new clients, so we recover immediately.
+      if (esdfConsecErrors >= 3) {
+        esdfConsecErrors = 0;
+        dbgLog("esdf_delta", "stream corrupt — reconnecting SSE");
+        source.close();
+        setTimeout(startLiveStream, 500);
+      }
+    }
   });
 
   source.addEventListener("ghost_detections", ev => {
