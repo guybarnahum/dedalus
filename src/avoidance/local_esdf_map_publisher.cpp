@@ -44,7 +44,7 @@ std::string to_compact_stream_json(const LocalESDFMapSnapshot& snap, std::size_t
     std::string out;
     out.reserve(200U + n * 110U);
 
-    char buf[128];
+    char buf[256];
 
     // Header
     std::snprintf(buf, sizeof(buf),
