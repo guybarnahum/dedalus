@@ -5,6 +5,7 @@
 
 #include "dedalus/avoidance/local_esdf_map.hpp"
 
+#include <algorithm>
 #include <cmath>
 #include <cstdio>
 
@@ -59,6 +60,68 @@ Vec3 LocalESDFMap::repulsion(const Vec3& pos, double d0, double k) const noexcep
     // Use sgrad (smoothed direction) for APF; exact d is preserved for safety.
     const Vec3& dir = cell.sgrad;
     return Vec3{scale * dir.x, scale * dir.y, scale * dir.z};
+}
+
+// ─── repulsion_smoothed ──────────────────────────────────────────────────────
+//
+// Velocity-aware APF repulsion.  The repulsion force F = k·(1/d−1/d0)/d²·dir
+// is averaged over a Gaussian kernel of radius R(v) = clamp(v²/(2·a_max), R_min, d0)
+// in world space.  R_min = cell_size_m (one cell).
+//
+// Each cell's contribution is weighted by exp(−‖Δx‖²/(2σ²)), σ=R/2.
+// The weighted sum is divided by the total weight to give the average force;
+// this preserves physical units (m/s² when k has appropriate scaling).
+//
+// Complexity: O((2·iR+1)³) unordered_map probes per call.  For R=3 m (1 m cells)
+// that is ≤7³=343 probes; most miss in a sparse field, so real cost is much lower.
+
+Vec3 LocalESDFMap::repulsion_smoothed(
+    const Vec3& pos, const Vec3& vel,
+    double d0, double k, double a_max_mps2) const noexcept {
+
+    const double speed2 = vel.x*vel.x + vel.y*vel.y + vel.z*vel.z;
+    const double R = std::clamp(speed2 / (2.0 * a_max_mps2),
+                                config_.cell_size_m,   // R_min: at least 1 cell
+                                d0);                   // R_max: truncation radius
+    const double sigma  = R * 0.5;
+    const double inv2s2 = 1.0 / (2.0 * sigma * sigma);
+
+    // Integer cell radii per axis (ceil so we don't clip the R boundary).
+    const int iR_xy = static_cast<int>(std::ceil(R / config_.cell_size_m));
+    const int iR_z  = static_cast<int>(std::ceil(R / config_.vertical_cell_size_m));
+
+    const auto cen = key_for_point(pos);
+
+    double ax = 0.0, ay = 0.0, az = 0.0, total_w = 0.0;
+
+    for (int di = -iR_xy; di <= iR_xy; ++di) {
+        for (int dj = -iR_xy; dj <= iR_xy; ++dj) {
+            for (int dk = -iR_z; dk <= iR_z; ++dk) {
+                const auto nk = CellKey{cen.x + di, cen.y + dj, cen.z + dk};
+                const auto it = cells_.find(nk);
+                if (it == cells_.end()) continue;
+                const auto& cell = it->second;
+                // Only free shell cells contribute repulsion.
+                if (cell.d <= 0.0f || static_cast<double>(cell.d) >= d0) continue;
+
+                // World-space squared distance from query point to cell centre.
+                const double ex = cell.centre.x - pos.x;
+                const double ey = cell.centre.y - pos.y;
+                const double ez = cell.centre.z - pos.z;
+                const double w  = std::exp(-(ex*ex + ey*ey + ez*ez) * inv2s2);
+
+                const double d     = static_cast<double>(cell.d);
+                const double scale = k * (1.0/d - 1.0/d0) / (d * d);
+                ax += w * scale * cell.sgrad.x;
+                ay += w * scale * cell.sgrad.y;
+                az += w * scale * cell.sgrad.z;
+                total_w += w;
+            }
+        }
+    }
+
+    if (total_w < 1.0e-12) return Vec3{0.0, 0.0, 0.0};
+    return Vec3{ax / total_w, ay / total_w, az / total_w};
 }
 
 // ─── is_clear ────────────────────────────────────────────────────────────────

@@ -105,6 +105,10 @@ h3 { font-size: 12px; margin: 10px 0 6px; color: #c0c4d0; text-transform: upperc
   padding: 0 3px; font-size: 13px; line-height: 1; opacity: 0.7; }
 .copy-btn:hover { opacity: 1; color: #6090f0; }
 .metric-group-hdr:hover .copy-btn { display: inline; }
+.esdf-r-row { flex-direction: column !important; align-items: stretch !important; gap: 3px !important; }
+.esdf-r-top { display: flex; justify-content: space-between; align-items: center; }
+.esdf-r-slider { width: 100%; accent-color: #4a90e2; margin: 0; cursor: pointer; }
+.esdf-r-labels { display: flex; justify-content: space-between; font-size: 10px; color: #4a5470; }
 #debug-section { margin-top: 8px; display: none; }
 #debug-log { max-height: 240px; overflow-y: auto; font-size: 10px; font-family: monospace;
   background: #090e18; border: 1px solid #1e2a3a; border-radius: 5px; padding: 5px; }
@@ -210,6 +214,20 @@ h3 { font-size: 12px; margin: 10px 0 6px; color: #c0c4d0; text-transform: upperc
           <div class="metric sub-metric"><span>ESDF faces</span><b id="m-esdf-faces">0</b></div>
           <div class="metric sub-metric"><span>d range</span><b id="m-esdf-drange">—</b></div>
           <div class="metric sub-metric"><span>arrows</span><b id="m-esdf-arrows">0</b></div>
+          <div class="metric sub-metric esdf-r-row">
+            <div class="esdf-r-top">
+              <span>smooth R</span>
+              <span style="display:flex;align-items:center;gap:5px;">
+                <b id="m-esdf-r">2.0m</b>
+                <label style="color:#5a6380;font-size:10px;cursor:pointer;display:flex;align-items:center;gap:2px;">
+                  <input type="checkbox" id="esdf-vel-mode" onchange="buildESDFArrows()" style="margin:0;">vel
+                </label>
+              </span>
+            </div>
+            <input type="range" id="esdf-r-slider" class="esdf-r-slider"
+              min="0.5" max="5" step="0.5" value="2" oninput="onEsdfRSlider(this.value)">
+            <div class="esdf-r-labels"><span>0.5m</span><span>d₀</span></div>
+          </div>
         </div>
       </div>
       <div class="metric"><span>L1 trav cells</span><b id="m-trav-cells">0</b></div>
@@ -362,6 +380,8 @@ let   esdfArrowGeom  = [];         // sparse smoothed arrows pre-built by buildE
 let   esdfCellSizeM  = 1.0;        // XY cell size (inherited from L2)
 let   esdfVCellSizeM = 2.0;        // Z  cell size (inherited from L2)
 let   esdfFacesGeom  = [];         // pre-built exterior face geometry for L3
+let   esdfSmoothR    = 2.0;        // Gaussian averaging radius (metres) for arrow visualization
+const ESDF_A_MAX     = 3.0;        // assumed max decel (m/s²) used for velocity-based R
 
 // Traversability (L1)
 const travCellsByKey = new Map();      // cellKey → trav cell (0.5 m raw cells from server)
@@ -1849,13 +1869,24 @@ function scheduleDraw() {
 
 // ── L3 ESDF vector field ──────────────────────────────────────────────────────
 //
-// buildESDFArrows(): uses C++-computed sgrad (cell.sgx/sgy/sgz) directly.
-//   C++ smoothing pass: per-cell gradient averaged with 6-connected neighbours
-//                       and renormalized in compute_esdf() — stored as sgrad.
-//   Sparse filter:      keep only cells that are isolated OR sit at a gradient
-//                       transition (dot-product with any neighbour < DOT_THRESH).
-//                       Interior cells in a uniform region are suppressed,
-//                       keeping the field readable while preserving edges/corners.
+// buildESDFArrows(): Gaussian-kernel smoothed repulsion arrows.
+//
+// Two-pass algorithm:
+//   Pass 1 — Gaussian smooth:  for each cell, accumulate the weighted sgrad
+//             (C++-computed 1-hop smoothed gradient) of all neighbours within R.
+//             R is either set by the "smooth R" slider or computed from the live
+//             drone speed as R = clamp(v²/(2·A_MAX), 0.5, d0).
+//             Weights: w_i = exp(−‖Δx_i‖²/(2σ²)), σ=R/2.
+//             Result: spatially-averaged direction vector, renormalized → gaussian sgrad.
+//
+//   Pass 2 — Sparse filter:  keep only isolated cells or those at a gradient
+//             transition (dot-product of Gaussian sgrad with any immediate 6-neighbour
+//             Gaussian sgrad < DOT_THRESH ≈ cos(23°)).  This suppresses arrows in flat,
+//             uniform regions and keeps them at obstacle edges and corners — exactly
+//             where the field is most informative for trajectory planning.
+//
+// Velocity mode: when the "vel" checkbox is active, R adapts to drone speed so the
+// visualized field matches what the C++ planner sees at the current velocity.
 
 function buildESDFArrows() {
   esdfArrowGeom = [];
@@ -1863,27 +1894,65 @@ function buildESDFArrows() {
   if (!state.showEsdf || esdfCellsByKey.size === 0) return;
 
   const csM = esdfCellSizeM, vcM = esdfVCellSizeM;
-  const DIRS6 = [
-    [ csM,0,0],[-csM,0,0],
-    [0, csM,0],[0,-csM,0],
-    [0,0, vcM],[0,0,-vcM],
-  ];
 
-  // Sparse filter: keep isolated cells and gradient-transition cells.
-  // DOT_THRESH ≈ cos(23°) — suppress arrows where the field is flat and uniform.
-  const DOT_THRESH = 0.92;
+  // Effective R: velocity-derived or slider value.
+  const useVel = el("esdf-vel-mode")?.checked ?? false;
+  const R = useVel
+    ? Math.max(0.5, Math.min(esdfD0M, (lfmEgoSpeedMps * lfmEgoSpeedMps) / (2 * ESDF_A_MAX)))
+    : esdfSmoothR;
+  const sigma  = R * 0.5;
+  const inv2s2 = 1.0 / (2.0 * sigma * sigma);
+  const iR_xy  = Math.ceil(R / csM);
+  const iR_z   = Math.ceil(R / vcM);
+
+  // Update display.
+  if (el("m-esdf-r")) el("m-esdf-r").textContent = R.toFixed(1) + "m" + (useVel ? " 〜v" : "");
+
+  // Pass 1: Gaussian-weighted average of sgrad over R-neighbourhood → gaussDir map.
+  const gaussDir = new Map();  // key → [sgx, sgy, sgz] (unit vector)
   for (const [key, cell] of esdfCellsByKey) {
-    if (cell.d < 0) continue;  // inside obstacle
-    const sgx = cell.sgx ?? cell.gx;  // fall back to raw grad if server is old
-    const sgy = cell.sgy ?? cell.gy;
-    const sgz = cell.sgz ?? cell.gz;
+    if (cell.d < 0) continue;  // inside obstacle — no repulsion direction
+    let ax = cell.sgx ?? cell.gx, ay = cell.sgy ?? cell.gy, az = cell.sgz ?? cell.gz;
+    let tw = 1.0;
+    for (let di = -iR_xy; di <= iR_xy; di++) {
+      for (let dj = -iR_xy; dj <= iR_xy; dj++) {
+        for (let dk = -iR_z; dk <= iR_z; dk++) {
+          if (di === 0 && dj === 0 && dk === 0) continue;
+          const nb = esdfCellsByKey.get(esdfQuantKey(cell.x+di*csM, cell.y+dj*csM, cell.z+dk*vcM));
+          if (!nb || nb.d < 0) continue;
+          const ex = di*csM, ey = dj*csM, ez = dk*vcM;
+          const w = Math.exp(-(ex*ex + ey*ey + ez*ez) * inv2s2);
+          ax += w * (nb.sgx ?? nb.gx);
+          ay += w * (nb.sgy ?? nb.gy);
+          az += w * (nb.sgz ?? nb.gz);
+          tw += w;
+        }
+      }
+    }
+    // Weighted average → renormalize to unit length.
+    ax /= tw; ay /= tw; az /= tw;
+    const len = Math.hypot(ax, ay, az);
+    if (len > 1e-6) { ax /= len; ay /= len; az /= len; }
+    gaussDir.set(key, [ax, ay, az]);
+  }
+
+  // Pass 2: sparse filter — keep transitions and isolated cells.
+  // DOT_THRESH ≈ cos(23°): suppress arrows in flat, uniform regions.
+  const DOT_THRESH = 0.92;
+  const DIRS6 = [
+    [csM,0,0],[-csM,0,0],[0,csM,0],[0,-csM,0],[0,0,vcM],[0,0,-vcM],
+  ];
+  for (const [key, cell] of esdfCellsByKey) {
+    if (cell.d < 0) continue;
+    const sg = gaussDir.get(key);
+    if (!sg) continue;
+    const [sgx, sgy, sgz] = sg;
     let hasNeighbour = false, atTransition = false;
     for (const [dx, dy, dz] of DIRS6) {
-      const nb = esdfCellsByKey.get(esdfQuantKey(cell.x+dx, cell.y+dy, cell.z+dz));
-      if (!nb) continue;
+      const ng = gaussDir.get(esdfQuantKey(cell.x+dx, cell.y+dy, cell.z+dz));
+      if (!ng) continue;
       hasNeighbour = true;
-      const nsgx = nb.sgx ?? nb.gx, nsgy = nb.sgy ?? nb.gy, nsgz = nb.sgz ?? nb.gz;
-      if (sgx*nsgx + sgy*nsgy + sgz*nsgz < DOT_THRESH) { atTransition = true; break; }
+      if (sgx*ng[0] + sgy*ng[1] + sgz*ng[2] < DOT_THRESH) { atTransition = true; break; }
     }
     if (!hasNeighbour || atTransition) {
       esdfArrowGeom.push({x:cell.x, y:cell.y, z:cell.z, d:cell.d, sgx, sgy, sgz});
@@ -2482,6 +2551,9 @@ function startLiveStream() {
       esdfD0M        = esdf.d0_m         || 5.0;
       esdfCellSizeM  = esdf.cell_size_m  || 1.0;
       esdfVCellSizeM = esdf.vcell_size_m || 2.0;
+      // Keep slider max in sync with d0 so R can span the full truncation range.
+      const rSlider = el("esdf-r-slider");
+      if (rSlider) { rSlider.max = esdfD0M; rSlider.step = (esdfCellSizeM || 1.0); }
       if (esdf.net_rep) esdfNetRepulsion=esdf.net_rep;
       const inCells = Array.isArray(esdf.cells) ? esdf.cells : [];
       for (const c of inCells) {
@@ -2550,8 +2622,16 @@ function copyL3Metrics(e) {
     `L3 ESDF faces: ${el("m-esdf-faces").textContent}`,
     `L3 d range:    ${el("m-esdf-drange").textContent}`,
     `L3 arrows:     ${el("m-esdf-arrows").textContent}`,
+    `L3 smooth R:   ${el("m-esdf-r").textContent}`,
   ];
   navigator.clipboard?.writeText(lines.join("\n")).catch(()=>{});
+}
+
+// Called when the R slider moves.  Updates the global radius and rebuilds arrows.
+function onEsdfRSlider(val) {
+  esdfSmoothR = parseFloat(val);
+  el("m-esdf-r").textContent = esdfSmoothR.toFixed(1) + "m";
+  buildESDFArrows();
 }
 
 // ── view controls + interaction ────────────────────────────────────────────────

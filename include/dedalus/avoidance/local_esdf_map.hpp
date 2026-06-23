@@ -72,7 +72,33 @@ public:
 
     // APF repulsion force at pos, active when 0 < d(pos) < d0.
     // F = k * (1/d − 1/d0) / d² · ∇d,  zero otherwise.
+    // Uses cell.sgrad (1-hop smoothed gradient) for direction.
+    // Suitable for quasi-static safety queries and hover mode.
     [[nodiscard]] Vec3 repulsion(const Vec3& pos, double d0, double k) const noexcept;
+
+    // Velocity-aware APF repulsion.  Identical APF formula to repulsion(), but the
+    // gradient direction is a Gaussian-weighted spatial average over a neighbourhood
+    // of radius R(v) = clamp(|v|²/(2·a_max), R_min, d0).
+    //
+    // Rationale: at speed v the drone's stopping distance is v²/(2·a_max).  The
+    // planner cannot react to field features smaller than that distance, so averaging
+    // over that radius prevents chattering and gives smooth, globally-coherent
+    // deflections around obstacle surfaces.  The stored distance d remains exact
+    // (from EDT); only the repulsion direction is spatially smoothed.
+    //
+    //   vel        — current velocity in world frame (m/s).
+    //   d0         — truncation radius (m); cells beyond this contribute nothing.
+    //   k          — APF gain.
+    //   a_max_mps2 — assumed maximum deceleration (m/s²); typical drone: 3.0.
+    //
+    // At |v|≈0 the kernel collapses to a single cell (= repulsion() with sgrad).
+    // At high speed the kernel widens up to d0, trading local sharpness for global
+    // smoothness — ideal for fast-transit trajectory optimisation.
+    [[nodiscard]] Vec3 repulsion_smoothed(const Vec3& pos,
+                                          const Vec3& vel,
+                                          double d0,
+                                          double k,
+                                          double a_max_mps2) const noexcept;
 
     // True if the sphere of radius r centred at pos is entirely in free space
     // (d(pos) ≥ r).

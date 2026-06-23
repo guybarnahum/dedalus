@@ -768,7 +768,108 @@ A detected/tracked object class instance can drive follow, circle, approach, or 
 
 ---
 
-## 13. Summary
+## 13. L3 ESDF and Velocity-Aware Trajectory Planning
+
+### 13.1 The Attractor–Repulsor Model
+
+Dedalus trajectory planning uses an Artificial Potential Field (APF) decomposition:
+
+```
+F_total(p, v) = F_attract(p, traj) + F_repulse(p, v)
+```
+
+The **attractor** is the desired trajectory: a sequence of waypoints or a spline that the drone tries to track by minimising position error. Without obstacle awareness, velocity commands come entirely from this term.
+
+The **repulsor** is the L3 ESDF field. It pushes the drone away from detected obstacles in proportion to proximity, bending trajectories smoothly around surfaces rather than requiring hard replanning.
+
+This separation is important: the attractor provides the mission intent and global path; the repulsor provides local, reactive deformation. The two are additive and independently tunable.
+
+### 13.2 The L3 ESDF
+
+L3 (`LocalESDFMap`) is a sparse Euclidean Signed Distance Field derived from L2 (`MissionLocalPlanningMap`, the cross-mission persistent obstacle map). Only "shell" cells — those within the truncation radius `d0` of an obstacle surface — are stored. Interior occupied cells are clamped; exterior free space beyond `d0` is omitted entirely. This keeps the working set small (typically a few thousand cells for a 80×80×20 m window) and the map fast to query.
+
+The EDT (Euclidean Distance Transform) runs using the Felzenszwalb–Huttenlocher 3-phase separable algorithm, O(N) in the number of voxels. Each shell cell stores:
+
+- `d` — exact signed distance from the obstacle surface (negative inside, positive outside)
+- `grad` — unit gradient from central finite differences on the squared-distance grid; points away from the nearest obstacle surface
+- `sgrad` — 1-hop smoothed gradient: average of `grad` with the cell's 6 face-adjacent shell neighbours, renormalized. More surface-normal-like than `grad`; reduces APF discontinuities at edges and corners
+
+The stored geometry is static between L2 updates. Velocity-dependence is handled entirely at query time.
+
+### 13.3 The APF Repulsion Formula
+
+For a cell at signed distance `d` with gradient direction `dir`:
+
+```
+F = k · (1/d − 1/d₀) / d² · dir
+```
+
+This is the standard Khatib APF repulsion. Key properties:
+- Zero at `d = d₀` (no force outside truncation radius)
+- Grows without bound as `d → 0` (strong repulsion near surfaces)
+- Direction is `dir`, which should point away from the nearest obstacle surface
+
+`repulsion()` uses `sgrad` for `dir` and queries the single cell at the drone position. This is suitable for quasi-static safety checks and hover mode.
+
+### 13.4 Velocity-Aware Repulsion: Why and How
+
+At drone speed `v`, the stopping distance is:
+
+```
+d_stop = v² / (2 · a_max)
+```
+
+This is the minimum spatial scale the drone can react to. Field features — gradient discontinuities at obstacle corners, thin walls, concave regions — smaller than `d_stop` cannot be safely tracked. The drone will have flown past them before the velocity command can take effect.
+
+The solution is to average the repulsion field over a spatial kernel of radius `R(v)`:
+
+```
+R(v) = clamp(v² / (2 · a_max),  R_min = cell_size,  R_max = d₀)
+```
+
+At low speed `R → R_min` (one cell), which is identical to `repulsion()`. At high speed `R → d₀`, averaging over the full truncation radius — the drone sees a wide, smooth repulsion field without sharp local features.
+
+The Gaussian kernel weights each neighbouring cell by:
+
+```
+w_i = exp(−‖Δx_i‖² / (2σ²)),  σ = R/2
+```
+
+The weighted force contributions are summed and divided by the total weight, giving the spatially-averaged APF force at the query position. The distance `d` remains exact (from EDT); only the force direction and magnitude are spatially blended.
+
+`repulsion_smoothed(pos, vel, d0, k, a_max)` implements this. It replaces `repulsion()` in the trajectory planner. `repulsion()` is retained for safety queries (is_clear, collision checking) where exact local geometry is needed.
+
+**Complexity:** For `R = 3 m` at `cell_size = 1 m`, the kernel is at most `7³ = 343` hash-map probes per call. Most probes miss in a sparse field (shell cells are only near obstacle surfaces). Real cost is typically O(tens of probes) per query, well under 1 µs.
+
+### 13.5 Why Not Store the Smoothed Field?
+
+The smoothed repulsion direction depends on `v`. Baking a single `R` into the stored map would make it correct for one speed and wrong for all others. Keeping `R` at query time means:
+
+- The stored L3 geometry is speed-agnostic, persistent, and shareable across sessions.
+- The planner applies its own `R` based on its current velocity estimate.
+- The viewer can explore any `R` interactively via slider without recomputing the ESDF.
+
+### 13.6 Viewer: Live Exploration of R
+
+The mission viewer exposes a **smooth R** slider in the L3 metrics panel (range: `cell_size` to `d₀`). Changing R instantly rebuilds the arrow visualization using the same Gaussian kernel as the C++ planner:
+
+- **R = 0.5 m** (minimum): arrows show the raw C++ `sgrad`, maximum local detail, noisy near corners.
+- **R = 2–3 m**: arrows show surface normals clearly; edges show directional transitions. Typical mid-speed tuning point.
+- **R = d₀**: highly blended field; arrows are nearly uniform near large flat surfaces, strongest curvature variation at corners.
+
+When the **vel** checkbox is active, R is computed from the last reported drone speed (`lfmEgoSpeedMps`) with `a_max = 3 m/s²`, so the viewer shows exactly what the planner experiences at the current flight speed.
+
+Arrow colours encode signed distance: **red** `d < 1 m` (near-surface, high-force zone), **yellow** `1 ≤ d < 3 m` (approach zone), **green** `d ≥ 3 m` (outer shell). Arrow length encodes force magnitude: `scale = (d₀ − |d|) / d₀ × 4 m`. Only transition cells and isolated cells are drawn (DOT_THRESH = cos 23°), keeping the field readable at any R.
+
+### 13.7 Ground Plane Detection
+
+The ground/floor does not appear in L3 by default because L2 is seeded only by detected obstacles, and ground hits are typically absent from the forward-facing depth camera FOV. The floor is **not** injected artificially — Dedalus is a real-flight simulator, and the avoidance system must rely on what sensors detect.
+
+Ground repulsion is currently handled as a hard altitude floor constraint in the flight controller, decoupled from the APF. If a downward-facing sensor is added, floor cells will appear in L2 and propagate into L3 naturally, requiring no architecture change.
+
+---
+
+## 14. Summary
 
 Dedalus has crossed from frame/world-model infrastructure into a working live mission loop. The next step is object-conditioned autonomy: the drone should fly because it saw and selected a target, not because it was handed a static trajectory.
 
