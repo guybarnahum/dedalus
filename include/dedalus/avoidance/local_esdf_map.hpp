@@ -30,9 +30,13 @@ class MissionLocalPlanningMap;
 // inherited from the L2 configuration.
 
 struct LocalESDFConfig {
-    double cell_size_m{1.0};           // XY voxel size (copied from L2)
-    double vertical_cell_size_m{2.0};  // Z voxel size  (copied from L2)
+    double cell_size_m{1.0};           // XY voxel size (EDT fine resolution)
+    double vertical_cell_size_m{2.0};  // Z voxel size
     double d0_m{5.0};                  // truncation radius
+    // Coarse output spacing.  The EDT runs at cell_size_m resolution; output
+    // cells are stored every sample_spacing_m metres.  Larger = fewer stored
+    // cells, less IO and memory, coarser interpolation.  Must be >= cell_size_m.
+    double sample_spacing_m{2.0};
 };
 
 struct LocalESDFCell {
@@ -148,7 +152,8 @@ public:
                                      const Vec3& centre_world,
                                      double horiz_half_m,
                                      double vert_half_m,
-                                     double d0_m);
+                                     double d0_m,
+                                     double sample_spacing_m);
 
 private:
     struct CellKey {
@@ -182,6 +187,7 @@ private:
                                          const Vec3& centre_world,
                                          double horiz_half_m,
                                          double vert_half_m,
-                                         double d0_m);
+                                         double d0_m,
+                                         double sample_spacing_m = 2.0);
 
 }  // namespace dedalus

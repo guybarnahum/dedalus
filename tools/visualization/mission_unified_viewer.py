@@ -1871,23 +1871,20 @@ function scheduleDraw() {
 
 // ── L3 ESDF vector field ──────────────────────────────────────────────────────
 //
-// buildESDFArrows(): APF-sum arrows with similarity pruning.
+// buildESDFArrows(): sparse pre-averaged APF arrows with similarity pruning.
 //
-// Pass 1 — APF-weighted sum over R-neighbourhood (grid cells only):
-//   For each XY grid cell (step = ceil(R/csM)), accumulate contributions from
-//   all L3 shell neighbours within R:
-//     contribution_i = w_spatial_i × apf_i × sgrad_i
-//     w_spatial_i    = exp(-‖Δx_i‖²/(2σ²))   locality weight
-//     apf_i          = (1/d_i − 1/d0) / d_i   APF repulsion magnitude
-//   SUM not average: multiple nearby obstacles accumulate correctly.
-//   A cell 1 m from one wall AND 2 m from another feels both repulsions.
+// L3 cells are now stored at sample_spacing_m (default 2 m) with APF direction
+// pre-computed by Gaussian averaging in compute_esdf().  No per-cell Gaussian
+// needed here — just read the stored sgx/sgy/sgz directly.
 //
-// Pass 2 — Similarity pruning:
-//   Drop an arrow if ALL its step-adjacent XY grid neighbours exist AND
-//   their directions are within SIMILAR_THRESH (cos ~14°).
-//   Result: uniform interior regions become sparse; edges/corners stay dense.
+// Pass 1: sub-sample by step = ceil(R / csM).  When R = csM (default), step=1
+//         and every L3 cell becomes one arrow.  When R > csM, every step-th
+//         XY cell is kept, reducing density further for high-speed visualisation.
 //
-// Velocity mode: R = clamp(v²/(2·A_MAX), 0.5, d0), matching the C++ planner.
+// Pass 2: similarity trim — drop arrows whose direction is within SIMILAR_THRESH
+//         of all four XY-step-adjacent neighbours.  Keeps edges; prunes interiors.
+//
+// Trim angle is velocity-dependent when "vel" checkbox is active.
 
 function buildESDFArrows() {
   esdfArrowGeom = [];
@@ -1896,69 +1893,33 @@ function buildESDFArrows() {
 
   const csM = esdfCellSizeM, vcM = esdfVCellSizeM;
 
-  // Effective R.
   const useVel = el("esdf-vel-mode")?.checked ?? false;
   const R = useVel
     ? Math.max(0.5, Math.min(esdfD0M, (lfmEgoSpeedMps * lfmEgoSpeedMps) / (2 * ESDF_A_MAX)))
     : esdfSmoothR;
-  const sigma  = R * 0.5;
-  const inv2s2 = 1.0 / (2.0 * sigma * sigma);
-  const iR_xy  = Math.ceil(R / csM);
-  const iR_z   = Math.ceil(R / vcM);
-  const step   = Math.max(1, iR_xy);  // XY subsampling stride in cell units
+  const step = Math.max(1, Math.ceil(R / csM));
 
   if (el("m-esdf-r")) el("m-esdf-r").textContent = R.toFixed(1) + "m" + (useVel ? " 〜v" : "");
 
-  // Pass 1: APF-sum over R-neighbourhood for each grid cell → arrowMap.
-  const arrowMap = new Map(); // "${ix}_${iy}_${iz}" → {x,y,z,d,sgx,sgy,sgz}
+  // Pass 1: sub-sample on R×R XY grid; use pre-computed APF direction.
+  const arrowMap = new Map();
   for (const [, cell] of esdfCellsByKey) {
     if (cell.d <= 0 || cell.d >= esdfD0M) continue;
-
-    // Only cells on the R×R subsampling grid.
     const ix = Math.round(cell.x / csM);
     const iy = Math.round(cell.y / csM);
     if ((ix % step) !== 0 || (iy % step) !== 0) continue;
-
-    // Self APF contribution.
-    const selfApf = (1.0 / cell.d - 1.0 / esdfD0M) / cell.d;
-    let ax = selfApf * (cell.sgx ?? cell.gx);
-    let ay = selfApf * (cell.sgy ?? cell.gy);
-    let az = selfApf * (cell.sgz ?? cell.gz);
-
-    // Neighbour APF contributions — summed, not averaged.
-    for (let di = -iR_xy; di <= iR_xy; di++) {
-      for (let dj = -iR_xy; dj <= iR_xy; dj++) {
-        for (let dk = -iR_z; dk <= iR_z; dk++) {
-          if (di === 0 && dj === 0 && dk === 0) continue;
-          const nb = esdfCellsByKey.get(
-            esdfQuantKey(cell.x + di*csM, cell.y + dj*csM, cell.z + dk*vcM));
-          if (!nb || nb.d <= 0 || nb.d >= esdfD0M) continue;
-          const ex = di*csM, ey = dj*csM, ez = dk*vcM;
-          const w   = Math.exp(-(ex*ex + ey*ey + ez*ez) * inv2s2);
-          const apf = (1.0 / nb.d - 1.0 / esdfD0M) / nb.d;
-          ax += w * apf * (nb.sgx ?? nb.gx);
-          ay += w * apf * (nb.sgy ?? nb.gy);
-          az += w * apf * (nb.sgz ?? nb.gz);
-        }
-      }
-    }
-    const len = Math.hypot(ax, ay, az);
-    if (len < 1e-6) continue;
     const iz = Math.round(cell.z / vcM);
+    const sgx = cell.sgx ?? cell.gx ?? 0;
+    const sgy = cell.sgy ?? cell.gy ?? 0;
+    const sgz = cell.sgz ?? cell.gz ?? 0;
+    const len = Math.hypot(sgx, sgy, sgz);
+    if (len < 1e-6) continue;
     arrowMap.set(`${ix}_${iy}_${iz}`,
       {x: cell.x, y: cell.y, z: cell.z, d: cell.d,
-       sgx: ax/len, sgy: ay/len, sgz: az/len});
+       sgx: sgx/len, sgy: sgy/len, sgz: sgz/len});
   }
 
-  // Pass 2: similarity pruning — drop if ALL step-adjacent XY neighbours exist
-  // and are within SIMILAR_THRESH; keep if isolated or at a transition.
-  //
-  // The threshold angle is velocity-dependent (when vel mode is active):
-  //   angle_deg = max(5°, 20° − v × 1.5)
-  // At v=0 m/s  → 20° (permissive — show fine local detail when hovering)
-  // At v=5 m/s  → 12.5°
-  // At v=10 m/s → 5°  (aggressive — only show gross field changes at speed)
-  // In slider mode a fixed 14° is used (cos ≈ 0.97).
+  // Pass 2: similarity trim.
   const trimAngleDeg = useVel
     ? Math.max(5.0, 20.0 - lfmEgoSpeedMps * 1.5)
     : 14.0;

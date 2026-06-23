@@ -27,24 +27,37 @@ void close_fd(int fd) {
     }
 }
 
-bool send_all_nonblocking(int fd, const std::string& payload) {
+// Send as much of payload as the socket will accept without blocking.
+// Returns true if the entire payload was sent.
+// On false: *bytes_sent_out contains the number of bytes actually written
+// before EAGAIN or error.  The caller must store only the unsent tail
+// (payload.substr(*bytes_sent_out)) in the pending queue — re-enqueueing
+// the full payload would double-write the already-sent prefix and corrupt
+// the SSE stream (root cause of the JSON parse errors on large ESDF events).
+bool send_all_nonblocking(int fd, const std::string& payload,
+                          std::size_t* bytes_sent_out = nullptr) {
     const char* data = payload.data();
     std::size_t remaining = payload.size();
+    std::size_t sent_total = 0U;
     while (remaining > 0U) {
         const auto sent = ::send(fd, data, remaining, MSG_NOSIGNAL | MSG_DONTWAIT);
         if (sent > 0) {
-            data += sent;
-            remaining -= static_cast<std::size_t>(sent);
+            data       += sent;
+            remaining  -= static_cast<std::size_t>(sent);
+            sent_total += static_cast<std::size_t>(sent);
             continue;
         }
         if (sent < 0 && (errno == EAGAIN || errno == EWOULDBLOCK)) {
+            if (bytes_sent_out) *bytes_sent_out = sent_total;
             return false;
         }
         if (sent < 0 && errno == EINTR) {
             continue;
         }
+        if (bytes_sent_out) *bytes_sent_out = sent_total;
         return false;
     }
+    if (bytes_sent_out) *bytes_sent_out = sent_total;
     return true;
 }
 
@@ -143,15 +156,23 @@ void RuntimeEventStreamServer::publish_json_line(const std::string& line) {
             auto& pending = pending_by_fd[fd];
             bool caught_up = true;
             while (!pending.empty()) {
-                if (send_all_nonblocking(fd, pending.front())) {
+                std::size_t n_sent = 0U;
+                if (send_all_nonblocking(fd, pending.front(), &n_sent)) {
                     pending.pop_front();
                 } else {
+                    // Trim the already-sent prefix so the retry starts from
+                    // the right byte, not from byte 0.  Re-sending from byte 0
+                    // would corrupt the SSE stream for large (multi-MB) events.
+                    if (n_sent > 0U) {
+                        pending.front().erase(0U, n_sent);
+                    }
                     caught_up = false;
                     break;
                 }
             }
 
             if (!caught_up) {
+                // Socket buffer still full — enqueue the whole new payload.
                 pending.push_back(payload);
                 if (pending.size() > config_.max_client_pending_depth) {
                     dead_clients.push_back(fd);
@@ -159,10 +180,15 @@ void RuntimeEventStreamServer::publish_json_line(const std::string& line) {
                 continue;
             }
 
-            if (!send_all_nonblocking(fd, payload)) {
-                pending.push_back(payload);
-                if (pending.size() > config_.max_client_pending_depth) {
-                    dead_clients.push_back(fd);
+            {
+                std::size_t n_sent = 0U;
+                if (!send_all_nonblocking(fd, payload, &n_sent)) {
+                    // Enqueue only the unsent tail.
+                    pending.push_back(
+                        n_sent > 0U ? payload.substr(n_sent) : payload);
+                    if (pending.size() > config_.max_client_pending_depth) {
+                        dead_clients.push_back(fd);
+                    }
                 }
             }
         }

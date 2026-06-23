@@ -20,6 +20,9 @@ using SteadyClock = std::chrono::steady_clock;
 // L3 truncation radius: only cells within d0 of an obstacle surface are stored.
 // No fixed XY/Z window — L3 covers the full extent of whatever L2 has in memory.
 static constexpr double kESDFD0M = 5.0;
+// L3 coarse output spacing: EDT runs at fine (1 m) resolution; output cells are
+// stored every kESDFSampleSpacingM metres, giving ~4× fewer cells than dense L3.
+static constexpr double kESDFSampleSpacingM = 2.0;
 
 // Derive the ESDF computation window from the actual in-memory L2 extent.
 // Returns false (and leaves *out unchanged) when L2 is empty.
@@ -330,7 +333,8 @@ bool CoreStackRunner::run_once() {
             ESDFWindow w;
             if (esdf_window_from_l2(mission_local_planning_map_, kESDFD0M, &w)) {
                 esdf_map_ = compute_esdf(mission_local_planning_map_,
-                                         w.centre, w.horiz_half, w.vert_half, kESDFD0M);
+                                         w.centre, w.horiz_half, w.vert_half,
+                                         kESDFD0M, kESDFSampleSpacingM);
                 esdf_last_l2_seq_          = mission_local_planning_map_.current_seq();
                 esdf_needs_full_recompute_ = false;
             }
@@ -443,7 +447,7 @@ bool CoreStackRunner::run_once() {
                         if (esdf_window_from_l2(mission_local_planning_map_, kESDFD0M, &w)) {
                             esdf_map_ = compute_esdf(mission_local_planning_map_,
                                                      w.centre, w.horiz_half, w.vert_half,
-                                                     kESDFD0M);
+                                                     kESDFD0M, kESDFSampleSpacingM);
                         }
                         esdf_last_l2_seq_          = cur_l2_seq;
                         esdf_needs_full_recompute_ = false;

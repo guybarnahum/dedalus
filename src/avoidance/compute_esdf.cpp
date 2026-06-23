@@ -83,7 +83,8 @@ LocalESDFMap compute_esdf(const MissionLocalPlanningMap& l2,
                            const Vec3& centre_world,
                            double horiz_half_m,
                            double vert_half_m,
-                           double d0_m) {
+                           double d0_m,
+                           double sample_spacing_m) {
     const auto& l2cfg = l2.config();
     const double sx = l2cfg.cell_size_m;
     const double sy = l2cfg.cell_size_m;
@@ -223,12 +224,9 @@ LocalESDFMap compute_esdf(const MissionLocalPlanningMap& l2,
         }
     }
 
-    // ── Build shell cells ─────────────────────────────────────────────────────
-    // No pre-computed dist[] array: filter on g3 (squared) first, call sqrt
-    // only for the small fraction of cells that are actually shell cells.
-    //
-    // Gradient direction: ∂d/∂x ∝ (g3[i+1]-g3[i-1])/sx (the common 4d factor
-    // cancels during normalisation), so we differentiate g3 directly.
+    // ── Coarse APF sampling ───────────────────────────────────────────────────
+    // The EDT ran at fine L2 resolution (sx,sz); output cells are stored every
+    // sample_spacing_m metres so the map is ~(spacing/cell_size)^2 times sparser.
     const float d0f   = static_cast<float>(d0_m);
     const float d0_sq = d0f * d0f;
     const float sxf   = static_cast<float>(sx);
@@ -242,72 +240,114 @@ LocalESDFMap compute_esdf(const MissionLocalPlanningMap& l2,
         return g3[static_cast<std::size_t>(i * Nyz + j * Nz + k)];
     };
 
-    for (int i = 0; i < Nx; ++i) {
-        for (int j = 0; j < Ny; ++j) {
-            for (int k = 0; k < Nz; ++k) {
-                const std::size_t idx =
-                    static_cast<std::size_t>(i * Nyz + j * Nz + k);
-                const bool is_occ = occ[idx] != 0U;
-                const float g_val = g3[idx];
+    const double spc_xy = std::max(sx, sample_spacing_m);  // >= fine cell size
+    const double spc_z  = sz;                               // keep Z at L2 resolution
 
-                // Skip non-shell free cells with a squared comparison (no sqrt).
-                if (!is_occ && g_val >= d0_sq) continue;
+    // step_x/step_z: coarse stride in fine-grid cell units
+    const int step_x = std::max(1, static_cast<int>(std::round(spc_xy / sx)));
+    const int step_z = std::max(1, static_cast<int>(std::round(spc_z  / sz)));
 
-                // sqrt only for free shell cells (typically a few thousand).
-                const float d = is_occ ? -0.5f : std::sqrt(g_val);
+    // Gaussian sigma = spc_xy / 2 (so the 2-sigma radius matches one coarse step)
+    const double sigma_xy    = spc_xy * 0.5;
+    const double sigma_z     = spc_z  * 0.5;
+    const double inv2sig2_xy = 1.0 / (2.0 * sigma_xy * sigma_xy);
+    const double inv2sig2_z  = 1.0 / (2.0 * sigma_z  * sigma_z);
 
-                // Gradient direction from central differences on g3.
-                // ∂d/∂x = Δg_x / (4d·sx); normalising cancels the 4d factor.
-                const float gx = (g3_at(i + 1, j, k) - g3_at(i - 1, j, k)) / sxf;
-                const float gy = (g3_at(i, j + 1, k) - g3_at(i, j - 1, k)) / syf;
-                const float gz = (g3_at(i, j, k + 1) - g3_at(i, j, k - 1)) / szf;
-                const float glen = std::sqrt(gx * gx + gy * gy + gz * gz);
+    // Gather radius in fine-grid cell units (±1 coarse step)
+    const int rx = step_x;
+    const int rz = step_z;
 
-                Vec3 grad{0.0, 0.0, 0.0};
-                if (glen > 1.0e-6f) {
-                    grad = Vec3{
-                        static_cast<double>(gx / glen),
-                        static_cast<double>(gy / glen),
-                        static_cast<double>(gz / glen),
-                    };
+    // Update output config so key_for_point() uses coarse resolution.
+    esdf.config_.cell_size_m          = spc_xy;
+    esdf.config_.vertical_cell_size_m = spc_z;
+    esdf.config_.sample_spacing_m     = spc_xy;
+
+    // Iterate coarse grid centres (every step_x/step_z fine cells).
+    // For each, gather Gaussian-weighted APF from fine shell cells nearby.
+    for (int ci = step_x / 2; ci < Nx; ci += step_x) {
+        for (int cj = step_x / 2; cj < Ny; cj += step_x) {
+            for (int ck = step_z / 2; ck < Nz; ck += step_z) {
+
+                // World position of this coarse sample centre
+                const Vec3 cc = cell_centre(ci, cj, ck);
+
+                // Accumulate Gaussian-weighted APF from fine shell cells nearby
+                double ax = 0.0, ay = 0.0, az = 0.0;
+                double wapf_sum = 0.0, w_sum = 0.0;
+                float d_min = d0f;
+
+                for (int di = -rx; di <= rx; ++di) {
+                    const int ni = ci + di;
+                    if (ni < 0 || ni >= Nx) continue;
+                    for (int dj = -rx; dj <= rx; ++dj) {
+                        const int nj = cj + dj;
+                        if (nj < 0 || nj >= Ny) continue;
+                        for (int dk = -rz; dk <= rz; ++dk) {
+                            const int nk = ck + dk;
+                            if (nk < 0 || nk >= Nz) continue;
+
+                            const std::size_t idx =
+                                static_cast<std::size_t>(ni * Nyz + nj * Nz + nk);
+                            if (occ[idx]) continue;
+                            const float g_val = g3[idx];
+                            if (g_val >= d0_sq) continue;  // outside shell
+
+                            const float d_i = std::sqrt(g_val);
+
+                            // Gradient from g3 central differences (normalised)
+                            const float gx_r = (g3_at(ni+1,nj,nk) - g3_at(ni-1,nj,nk)) / sxf;
+                            const float gy_r = (g3_at(ni,nj+1,nk) - g3_at(ni,nj-1,nk)) / syf;
+                            const float gz_r = (g3_at(ni,nj,nk+1) - g3_at(ni,nj,nk-1)) / szf;
+                            const float glen =
+                                std::sqrt(gx_r*gx_r + gy_r*gy_r + gz_r*gz_r);
+                            if (glen < 1.0e-6f) continue;
+
+                            // Spatial Gaussian weight
+                            const double ex = di * sx;
+                            const double ey = dj * sy;
+                            const double ez = dk * sz;
+                            const double w  =
+                                std::exp(-(ex*ex + ey*ey) * inv2sig2_xy
+                                         - ez*ez          * inv2sig2_z);
+
+                            // APF magnitude for this fine cell
+                            const double apf_i =
+                                (1.0 / static_cast<double>(d_i) - 1.0 / d0_m)
+                                / static_cast<double>(d_i);
+
+                            ax      += w * apf_i * static_cast<double>(gx_r / glen);
+                            ay      += w * apf_i * static_cast<double>(gy_r / glen);
+                            az      += w * apf_i * static_cast<double>(gz_r / glen);
+                            wapf_sum += w * apf_i;
+                            w_sum    += w;
+                            d_min = std::min(d_min, d_i);
+                        }
+                    }
                 }
 
-                LocalESDFCell cell;
-                cell.centre = cell_centre(i, j, k);
-                cell.d      = d;
-                cell.grad   = grad;
+                if (w_sum < 1.0e-10 || wapf_sum < 1.0e-10) continue;
 
-                // Direct key: cell_centre(i,j,k) always maps to
-                // {xi_origin+i, yi_origin+j, zi_origin+k} by construction.
-                esdf.cells_[LocalESDFMap::CellKey{
-                    xi_origin + i, yi_origin + j, zi_origin + k}] = cell;
+                const double alen = std::sqrt(ax*ax + ay*ay + az*az);
+                if (alen < 1.0e-10) continue;
+
+                const Vec3 dir{ax / alen, ay / alen, az / alen};
+
+                LocalESDFCell cell;
+                cell.centre = cc;
+                cell.d      = d_min;
+                cell.grad   = dir;   // APF-weighted direction (grad == sgrad at coarse scale)
+                cell.sgrad  = dir;
+
+                // Coarse key: use coarse (spc_xy) resolution
+                const int cki = static_cast<int>(
+                    std::floor(cc.x / spc_xy));
+                const int ckj = static_cast<int>(
+                    std::floor(cc.y / spc_xy));
+                const int ckk = static_cast<int>(
+                    std::floor(cc.z / spc_z));
+                esdf.cells_[LocalESDFMap::CellKey{cki, ckj, ckk}] = cell;
             }
         }
-    }
-
-    // ── Smoothing pass ────────────────────────────────────────────────────────
-    // Average each cell's gradient with its 6-connected neighbours that are
-    // also shell cells, then renormalize → sgrad.  This gives a more
-    // surface-normal-like direction than the raw EDT central-difference grad,
-    // reducing APF discontinuities at edges and corners.  Exact distance d is
-    // unchanged — only the repulsion direction is smoothed.
-    static constexpr int kDirs[6][3] = {
-        {1,0,0},{-1,0,0},{0,1,0},{0,-1,0},{0,0,1},{0,0,-1}};
-    for (auto& [key, cell] : esdf.cells_) {
-        double ax = cell.grad.x, ay = cell.grad.y, az = cell.grad.z;
-        for (const auto& dk : kDirs) {
-            const auto nk = LocalESDFMap::CellKey{
-                key.x + dk[0], key.y + dk[1], key.z + dk[2]};
-            const auto it = esdf.cells_.find(nk);
-            if (it == esdf.cells_.end()) continue;
-            ax += it->second.grad.x;
-            ay += it->second.grad.y;
-            az += it->second.grad.z;
-        }
-        const double len = std::sqrt(ax * ax + ay * ay + az * az);
-        cell.sgrad = (len > 1.0e-6)
-            ? Vec3{ax / len, ay / len, az / len}
-            : cell.grad;
     }
 
     return esdf;

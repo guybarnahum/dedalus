@@ -55,7 +55,9 @@ void LocalESDFMap::update_incremental(
     const double vert_half = (mx.z - mn.z) * 0.5 + d0_m + sz;
 
     // Fresh ESDF for this sub-window using current L2 state.
-    auto sub = compute_esdf(l2, centre, horiz_half, vert_half, d0_m);
+    // Pass sample_spacing_m so the sub-ESDF uses the same coarse resolution as *this.
+    auto sub = compute_esdf(l2, centre, horiz_half, vert_half, d0_m,
+                             config_.sample_spacing_m);
 
     // Generous window bounds (include the grid-snap margin).
     const Vec3 win_min{centre.x - horiz_half - sx,
@@ -111,7 +113,8 @@ void LocalESDFMap::update_tube(
         std::max((mx.x - mn.x) * 0.5, (mx.y - mn.y) * 0.5) + exp_xy;
     const double vert_half = (mx.z - mn.z) * 0.5 + exp_z;
 
-    auto sub = compute_esdf(l2, centre, horiz_half, vert_half, d0);
+    auto sub = compute_esdf(l2, centre, horiz_half, vert_half, d0,
+                             config_.sample_spacing_m);
 
     const Vec3 win_min{centre.x - horiz_half - sx,
                        centre.y - horiz_half - sx,
