@@ -71,6 +71,13 @@ struct MissionLocalPlanningCell {
     std::uint32_t source_cell_count{0U}; // cumulative L1 hits
 };
 
+// Axis-aligned bounding box of all in-memory L2 cells.
+// Returned by MissionLocalPlanningMap::extent() — nullopt when the map is empty.
+struct MissionLocalPlanningMapExtent {
+    Vec3 min;  // world-frame minimum corner (cell centres)
+    Vec3 max;  // world-frame maximum corner (cell centres)
+};
+
 struct MissionLocalPlanningMapUpdateStats {
     std::size_t l1_input_cells{0U};     // total L1 cells considered this tick
     std::size_t l1_occupied_merged{0U}; // L1 cells that contributed positive evidence
@@ -119,6 +126,10 @@ public:
 
     // Current map sequence number (monotonically increasing, one per update call).
     std::uint64_t current_seq() const noexcept { return map_seq_; }
+
+    // Bounding box of all currently in-memory cells (cell centres).
+    // Returns nullopt when the map is empty.  O(N).
+    [[nodiscard]] std::optional<MissionLocalPlanningMapExtent> extent() const noexcept;
 
     // Discard all L2 cells.
     void reset();

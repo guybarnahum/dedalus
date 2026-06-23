@@ -272,4 +272,20 @@ bool MissionLocalPlanningMap::load_from_file(const std::filesystem::path& path) 
     return true;
 }
 
+// ─── extent ──────────────────────────────────────────────────────────────────
+
+std::optional<MissionLocalPlanningMapExtent>
+MissionLocalPlanningMap::extent() const noexcept {
+    if (cells_.empty()) return std::nullopt;
+    Vec3 mn = cells_[0].cell.center_map;
+    Vec3 mx = cells_[0].cell.center_map;
+    for (const auto& sc : cells_) {
+        const Vec3& c = sc.cell.center_map;
+        if (c.x < mn.x) mn.x = c.x;  if (c.x > mx.x) mx.x = c.x;
+        if (c.y < mn.y) mn.y = c.y;  if (c.y > mx.y) mx.y = c.y;
+        if (c.z < mn.z) mn.z = c.z;  if (c.z > mx.z) mx.z = c.z;
+    }
+    return MissionLocalPlanningMapExtent{mn, mx};
+}
+
 }  // namespace dedalus

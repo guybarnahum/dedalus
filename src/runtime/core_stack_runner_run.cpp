@@ -17,9 +17,30 @@ namespace {
 
 using SteadyClock = std::chrono::steady_clock;
 
-static constexpr double kESDFHorizHalfM = 40.0;
-static constexpr double kESDFVertHalfM  = 10.0;
-static constexpr double kESDFD0M        = 5.0;
+// L3 truncation radius: only cells within d0 of an obstacle surface are stored.
+// No fixed XY/Z window — L3 covers the full extent of whatever L2 has in memory.
+static constexpr double kESDFD0M = 5.0;
+
+// Derive the ESDF computation window from the actual in-memory L2 extent.
+// Returns false (and leaves *out unchanged) when L2 is empty.
+// Adds a d0 margin on every axis so shell cells at the L2 boundary aren't clipped.
+struct ESDFWindow { Vec3 centre; double horiz_half; double vert_half; };
+static bool esdf_window_from_l2(const MissionLocalPlanningMap& l2,
+                                 double d0_m, ESDFWindow* out) {
+    const auto ext = l2.extent();
+    if (!ext) return false;
+    out->centre = Vec3{
+        (ext->min.x + ext->max.x) * 0.5,
+        (ext->min.y + ext->max.y) * 0.5,
+        (ext->min.z + ext->max.z) * 0.5,
+    };
+    // Use the larger of X/Y extents so the EDT grid is square in the horizontal
+    // plane (avoids asymmetric clipping on non-square L2 footprints).
+    out->horiz_half = std::max(ext->max.x - ext->min.x,
+                               ext->max.y - ext->min.y) * 0.5 + d0_m;
+    out->vert_half  = (ext->max.z - ext->min.z) * 0.5 + d0_m;
+    return true;
+}
 
 std::int64_t duration_us(const SteadyClock::time_point start) {
     return std::chrono::duration_cast<std::chrono::microseconds>(SteadyClock::now() - start).count();
@@ -305,11 +326,14 @@ bool CoreStackRunner::run_once() {
     if (esdf_map_publisher_ && esdf_seq_ == 0U) {
         const Vec3& drone_pos = snapshot_for_annotation.ego.local_T_body.position;
         if (esdf_map_.cell_count() == 0U && mission_local_planning_map_.cell_count() > 0U) {
-            // No cache loaded — derive from current L2 window.
-            esdf_map_ = compute_esdf(mission_local_planning_map_, drone_pos,
-                                     kESDFHorizHalfM, kESDFVertHalfM, kESDFD0M);
-            esdf_last_l2_seq_          = mission_local_planning_map_.current_seq();
-            esdf_needs_full_recompute_ = false;
+            // No cache loaded — compute from the full in-memory L2 extent.
+            ESDFWindow w;
+            if (esdf_window_from_l2(mission_local_planning_map_, kESDFD0M, &w)) {
+                esdf_map_ = compute_esdf(mission_local_planning_map_,
+                                         w.centre, w.horiz_half, w.vert_half, kESDFD0M);
+                esdf_last_l2_seq_          = mission_local_planning_map_.current_seq();
+                esdf_needs_full_recompute_ = false;
+            }
         }
         if (esdf_map_.cell_count() > 0U) {
             LocalESDFMapFrame esdf_frame;
@@ -412,13 +436,16 @@ bool CoreStackRunner::run_once() {
                     bool is_full = false;
 
                     if (esdf_needs_full_recompute_) {
-                        // Path 1: full recompute (startup / slide_window).
-                        esdf_map_ = compute_esdf(mission_local_planning_map_,
-                                                 drone_pos,
-                                                 kESDFHorizHalfM,
-                                                 kESDFVertHalfM,
-                                                 kESDFD0M);
-                        esdf_last_l2_seq_       = cur_l2_seq;
+                        // Path 1: full recompute (startup / slide_window / new cells).
+                        // Window is derived from L2's actual in-memory extent so L3
+                        // always covers exactly what L2 has — no artificial crop.
+                        ESDFWindow w;
+                        if (esdf_window_from_l2(mission_local_planning_map_, kESDFD0M, &w)) {
+                            esdf_map_ = compute_esdf(mission_local_planning_map_,
+                                                     w.centre, w.horiz_half, w.vert_half,
+                                                     kESDFD0M);
+                        }
+                        esdf_last_l2_seq_          = cur_l2_seq;
                         esdf_needs_full_recompute_ = false;
                         is_full = true;
                     } else if (cur_l2_seq != esdf_last_l2_seq_) {
