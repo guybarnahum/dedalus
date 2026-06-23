@@ -185,6 +185,13 @@ private:
     // Non-zero → emit traversability_map_delta with only cells newer than this value.
     // Protected by mutex_.
     std::uint64_t trav_watermark_ns_{0U};
+
+    // Last published L2 and L3 SSE payloads (SSE-formatted: "event: ...\ndata: ...\n\n").
+    // Replayed to new SSE clients on connect so the viewer always has the current
+    // persistent maps even between flights.  Updated by writer_loop() under mutex_.
+    // L2 is always a full snapshot; L3 caches only full (non-delta) snapshots.
+    std::string last_planning_sse_{};
+    std::string last_esdf_sse_{};
 };
 
 using WorldSnapshotStreamServerConfig = RuntimeEventStreamServerConfig;

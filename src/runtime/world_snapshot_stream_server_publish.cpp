@@ -257,16 +257,26 @@ void RuntimeEventStreamServer::writer_loop() {
             line = serialize_planning_snapshot(
                 pending.seq, pending.timestamp_ns, pending.snapshot);
             const auto serialize_us = elapsed_us(t0);
-            std::lock_guard<std::mutex> lock{mutex_};
-            serialize_total_us_ += serialize_us;
+            {
+                std::lock_guard<std::mutex> lock{mutex_};
+                serialize_total_us_ += serialize_us;
+                // Cache for replay to new SSE clients (L2 is always a full snapshot).
+                last_planning_sse_ = sse_message_for_json_line(line);
+            }
         } else {
             auto& pending = std::get<PendingESDFSnapshot>(item);
             const auto t0 = SteadyClock::now();
             line = serialize_esdf_snapshot(
                 pending.seq, pending.timestamp_ns, pending.snapshot);
             const auto serialize_us = elapsed_us(t0);
-            std::lock_guard<std::mutex> lock{mutex_};
-            serialize_total_us_ += serialize_us;
+            {
+                std::lock_guard<std::mutex> lock{mutex_};
+                serialize_total_us_ += serialize_us;
+                // Cache full ESDF snapshots only — deltas are meaningless without the base.
+                if (!pending.snapshot.is_delta) {
+                    last_esdf_sse_ = sse_message_for_json_line(line);
+                }
+            }
         }
         publish_json_line(line);
     }

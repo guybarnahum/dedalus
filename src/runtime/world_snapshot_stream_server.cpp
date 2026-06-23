@@ -359,6 +359,23 @@ void RuntimeEventStreamServer::http_accept_loop() {
                 close_fd(client_fd);
                 continue;
             }
+            // Replay last L2 and L3 snapshots so the viewer always has the
+            // current persistent maps, even between flights.  Send blocking
+            // while the socket is still in blocking mode (before set_nonblocking).
+            {
+                std::string cached_planning, cached_esdf;
+                {
+                    std::lock_guard<std::mutex> lock{mutex_};
+                    cached_planning = last_planning_sse_;
+                    cached_esdf     = last_esdf_sse_;
+                }
+                if (!cached_planning.empty()) {
+                    (void)send_blocking_best_effort(client_fd, cached_planning);
+                }
+                if (!cached_esdf.empty()) {
+                    (void)send_blocking_best_effort(client_fd, cached_esdf);
+                }
+            }
             set_nonblocking(client_fd);
             {
                 std::lock_guard<std::mutex> lock{mutex_};
