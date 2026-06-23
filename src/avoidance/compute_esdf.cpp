@@ -285,6 +285,33 @@ LocalESDFMap compute_esdf(const MissionLocalPlanningMap& l2,
         }
     }
 
+    // ── Smoothing pass ────────────────────────────────────────────────────────
+    // Average each cell's gradient with its 6-connected neighbours that are
+    // also shell cells, then renormalize → sgrad.  This gives a more
+    // surface-normal-like direction than the raw EDT central-difference grad,
+    // reducing APF discontinuities at edges and corners.  Exact distance d is
+    // unchanged — only the repulsion direction is smoothed.
+    static constexpr int kDirs[6][3] = {
+        {1,0,0},{-1,0,0},{0,1,0},{0,-1,0},{0,0,1},{0,0,-1}};
+    for (auto& [key, cell] : esdf.cells_) {
+        double ax = cell.grad.x, ay = cell.grad.y, az = cell.grad.z;
+        int w = 1;
+        for (const auto& dk : kDirs) {
+            const auto nk = LocalESDFMap::CellKey{
+                key.x + dk[0], key.y + dk[1], key.z + dk[2]};
+            const auto it = esdf.cells_.find(nk);
+            if (it == esdf.cells_.end()) continue;
+            ax += it->second.grad.x;
+            ay += it->second.grad.y;
+            az += it->second.grad.z;
+            ++w;
+        }
+        const double len = std::sqrt(ax * ax + ay * ay + az * az);
+        cell.sgrad = (len > 1.0e-6)
+            ? Vec3{ax / len, ay / len, az / len}
+            : cell.grad;
+    }
+
     return esdf;
 }
 

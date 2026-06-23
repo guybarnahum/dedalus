@@ -38,7 +38,10 @@ struct LocalESDFConfig {
 struct LocalESDFCell {
     Vec3  centre;         // world-frame centre
     float d{0.0F};        // signed distance (< 0 inside occupied, clamped at −0.5 m)
-    Vec3  grad;           // unit gradient ∇d (points away from nearest obstacle)
+    Vec3  grad;           // unit gradient ∇d — exact EDT central-difference (points away from nearest obstacle)
+    Vec3  sgrad;          // smoothed gradient — 6-connected neighbour average of grad, renormalized.
+                          // More normal-to-surface than grad; use for APF direction to avoid
+                          // discontinuities at edges and corners.
 };
 
 struct LocalESDFQueryResult {

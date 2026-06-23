@@ -40,9 +40,9 @@ std::string to_compact_stream_json(const LocalESDFMapSnapshot& snap, std::size_t
                           ? snap.cells.size()
                           : max_cells;
 
-    // Pre-size: roughly 80 chars per cell + fixed header (~200 chars).
+    // Pre-size: roughly 110 chars per cell (grad + sgrad) + fixed header (~200 chars).
     std::string out;
-    out.reserve(200U + n * 80U);
+    out.reserve(200U + n * 110U);
 
     char buf[128];
 
@@ -65,10 +65,13 @@ std::string to_compact_stream_json(const LocalESDFMapSnapshot& snap, std::size_t
         const auto& c = snap.cells[i];
         if (i > 0U) out += ',';
         std::snprintf(buf, sizeof(buf),
-            "{\"x\":%.4g,\"y\":%.4g,\"z\":%.4g,\"d\":%.4g,\"gx\":%.4g,\"gy\":%.4g,\"gz\":%.4g}",
+            "{\"x\":%.4g,\"y\":%.4g,\"z\":%.4g,\"d\":%.4g"
+            ",\"gx\":%.4g,\"gy\":%.4g,\"gz\":%.4g"
+            ",\"sgx\":%.4g,\"sgy\":%.4g,\"sgz\":%.4g}",
             c.centre.x, c.centre.y, c.centre.z,
             static_cast<double>(c.d),
-            c.grad.x, c.grad.y, c.grad.z);
+            c.grad.x, c.grad.y, c.grad.z,
+            c.sgrad.x, c.sgrad.y, c.sgrad.z);
         out += buf;
     }
     out += "]}";

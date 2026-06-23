@@ -90,6 +90,21 @@ h3 { font-size: 12px; margin: 10px 0 6px; color: #c0c4d0; text-transform: upperc
 .event-log-entry .ev-time { color: #5a6080; margin-right: 5px; }
 .event-log-entry .ev-name { color: #80b0ff; font-weight: bold; margin-right: 5px; }
 .event-log-entry .ev-detail { color: #9099b0; }
+.metric-group { margin: 2px 0; }
+.metric-group-hdr { display: flex; align-items: center; gap: 5px; padding: 3px 0;
+  border-bottom: 1px solid #1e2330; font-size: 12px; cursor: pointer; user-select: none;
+  position: relative; }
+.metric-group-hdr:hover { background: #151e30; border-radius: 3px; }
+.mg-caret { color: #5a6380; font-size: 10px; width: 10px; flex-shrink: 0; transition: none; }
+.mg-label { color: #9099b0; flex: 1; }
+.metric-group-hdr b { color: #e8e8e8; }
+.metric-group-body { display: none; padding-left: 14px; }
+.metric-group-body.open { display: block; }
+.sub-metric { border-bottom-color: #181e28 !important; }
+.copy-btn { display: none; background: none; border: none; color: #4070c8; cursor: pointer;
+  padding: 0 3px; font-size: 13px; line-height: 1; opacity: 0.7; }
+.copy-btn:hover { opacity: 1; color: #6090f0; }
+.metric-group-hdr:hover .copy-btn { display: inline; }
 #debug-section { margin-top: 8px; display: none; }
 #debug-log { max-height: 240px; overflow-y: auto; font-size: 10px; font-family: monospace;
   background: #090e18; border: 1px solid #1e2a3a; border-radius: 5px; padding: 5px; }
@@ -183,10 +198,20 @@ h3 { font-size: 12px; margin: 10px 0 6px; color: #c0c4d0; text-transform: upperc
       <div class="metric"><span>Seq</span><b id="m-seq">0</b></div>
       <div class="metric"><span>L0 ego cells</span><b id="m-l0-cells">0</b></div>
       <div class="metric"><span>L2 planning cells</span><b id="m-plan-cells">0</b></div>
-      <div class="metric"><span>L3 ESDF cells</span><b id="m-esdf-cells">0</b></div>
-      <div class="metric"><span>L3 msgs rcvd</span><b id="m-esdf-msgs">0</b></div>
-      <div class="metric"><span>L3 ESDF faces</span><b id="m-esdf-faces">0</b></div>
-      <div class="metric"><span>L3 d range</span><b id="m-esdf-drange">—</b></div>
+      <div class="metric-group" id="l3-group">
+        <div class="metric-group-hdr" id="l3-hdr" onclick="toggleL3Metrics()">
+          <span class="mg-caret" id="l3-caret">▶</span>
+          <span class="mg-label">L3 ESDF cells</span>
+          <b id="m-esdf-cells">0</b>
+          <button class="copy-btn" onclick="copyL3Metrics(event)" title="Copy L3 stats">⧉</button>
+        </div>
+        <div class="metric-group-body" id="l3-body">
+          <div class="metric sub-metric"><span>msgs rcvd</span><b id="m-esdf-msgs">0</b></div>
+          <div class="metric sub-metric"><span>ESDF faces</span><b id="m-esdf-faces">0</b></div>
+          <div class="metric sub-metric"><span>d range</span><b id="m-esdf-drange">—</b></div>
+          <div class="metric sub-metric"><span>arrows</span><b id="m-esdf-arrows">0</b></div>
+        </div>
+      </div>
       <div class="metric"><span>L1 trav cells</span><b id="m-trav-cells">0</b></div>
       <div class="metric"><span>Trav ext. faces</span><b id="m-trav-faces">0</b></div>
       <div class="metric"><span>Raw evidence cells</span><b id="m-obs-cells">0</b></div>
@@ -333,6 +358,7 @@ let   esdfD0M        = 5.0;        // truncation radius from last snapshot
 let   esdfMsgCount   = 0;          // total esdf_delta messages received
 let   esdfDMin       = Infinity;   // min d across all stored cells (for stats)
 let   esdfDMax       = -Infinity;  // max d across all stored cells
+let   esdfArrowGeom  = [];         // sparse smoothed arrows pre-built by buildESDFArrows()
 let   esdfCellSizeM  = 1.0;        // XY cell size (inherited from L2)
 let   esdfVCellSizeM = 2.0;        // Z  cell size (inherited from L2)
 let   esdfFacesGeom  = [];         // pre-built exterior face geometry for L3
@@ -1821,29 +1847,74 @@ function scheduleDraw() {
   requestAnimationFrame(()=>{ drawScheduled=false; draw(); });
 }
 
-// L3 ESDF gradient arrows — colored by clearance distance.
+// ── L3 ESDF vector field ──────────────────────────────────────────────────────
+//
+// buildESDFArrows(): uses C++-computed sgrad (cell.sgx/sgy/sgz) directly.
+//   C++ smoothing pass: per-cell gradient averaged with 6-connected neighbours
+//                       and renormalized in compute_esdf() — stored as sgrad.
+//   Sparse filter:      keep only cells that are isolated OR sit at a gradient
+//                       transition (dot-product with any neighbour < DOT_THRESH).
+//                       Interior cells in a uniform region are suppressed,
+//                       keeping the field readable while preserving edges/corners.
+
+function buildESDFArrows() {
+  esdfArrowGeom = [];
+  if (el("m-esdf-arrows")) el("m-esdf-arrows").textContent = "0";
+  if (!state.showEsdf || esdfCellsByKey.size === 0) return;
+
+  const csM = esdfCellSizeM, vcM = esdfVCellSizeM;
+  const DIRS6 = [
+    [ csM,0,0],[-csM,0,0],
+    [0, csM,0],[0,-csM,0],
+    [0,0, vcM],[0,0,-vcM],
+  ];
+
+  // Sparse filter: keep isolated cells and gradient-transition cells.
+  // DOT_THRESH ≈ cos(23°) — suppress arrows where the field is flat and uniform.
+  const DOT_THRESH = 0.92;
+  for (const [key, cell] of esdfCellsByKey) {
+    if (cell.d < 0) continue;  // inside obstacle
+    const sgx = cell.sgx ?? cell.gx;  // fall back to raw grad if server is old
+    const sgy = cell.sgy ?? cell.gy;
+    const sgz = cell.sgz ?? cell.gz;
+    let hasNeighbour = false, atTransition = false;
+    for (const [dx, dy, dz] of DIRS6) {
+      const nb = esdfCellsByKey.get(esdfQuantKey(cell.x+dx, cell.y+dy, cell.z+dz));
+      if (!nb) continue;
+      hasNeighbour = true;
+      const nsgx = nb.sgx ?? nb.gx, nsgy = nb.sgy ?? nb.gy, nsgz = nb.sgz ?? nb.gz;
+      if (sgx*nsgx + sgy*nsgy + sgz*nsgz < DOT_THRESH) { atTransition = true; break; }
+    }
+    if (!hasNeighbour || atTransition) {
+      esdfArrowGeom.push({x:cell.x, y:cell.y, z:cell.z, d:cell.d, sgx, sgy, sgz});
+    }
+  }
+  if (el("m-esdf-arrows")) el("m-esdf-arrows").textContent = String(esdfArrowGeom.length);
+}
+
+// Render prebuilt sparse smoothed arrows.
 function drawESDFArrows() {
-  if (!state.showEsdf || esdfCellsByKey.size===0) return;
-  for (const cell of esdfCellsByKey.values()) {
-    const d=cell.d;
-    const [r,g,b]=d<1?[228,42,30]:d<3?[228,200,30]:[42,200,65];
-    const scale=(esdfD0M-Math.abs(d))/esdfD0M*4.0;
-    if (scale<=0) continue;
-    const tip={x:cell.x+cell.gx*scale,y:cell.y+cell.gy*scale,z:cell.z+cell.gz*scale};
-    const pa=project({x:cell.x,y:cell.y,z:cell.z});
-    const pb=project(tip);
-    ctx.beginPath(); ctx.moveTo(pa.x,pa.y); ctx.lineTo(pb.x,pb.y);
-    ctx.strokeStyle=`rgba(${r},${g},${b},0.75)`;
-    ctx.lineWidth=1.5*devicePixelRatio;
+  if (!state.showEsdf || esdfArrowGeom.length === 0) return;
+  for (const a of esdfArrowGeom) {
+    const d = a.d;
+    const [r,g,b] = d < 1 ? [228,42,30] : d < 3 ? [228,200,30] : [42,200,65];
+    const scale = (esdfD0M - Math.abs(d)) / esdfD0M * 4.0;
+    if (scale <= 0) continue;
+    const tip = {x: a.x + a.sgx*scale, y: a.y + a.sgy*scale, z: a.z + a.sgz*scale};
+    const pa = project({x:a.x, y:a.y, z:a.z});
+    const pb = project(tip);
+    ctx.beginPath(); ctx.moveTo(pa.x, pa.y); ctx.lineTo(pb.x, pb.y);
+    ctx.strokeStyle = `rgba(${r},${g},${b},0.75)`;
+    ctx.lineWidth = 1.5 * devicePixelRatio;
     ctx.stroke();
-    const dx=pb.x-pa.x,dy=pb.y-pa.y,len=Math.hypot(dx,dy);
-    if (len>3) {
-      const ux=dx/len,uy=dy/len,hw=3*devicePixelRatio,hl=6*devicePixelRatio;
-      ctx.beginPath(); ctx.moveTo(pb.x,pb.y);
-      ctx.lineTo(pb.x-ux*hl+uy*hw,pb.y-uy*hl-ux*hw);
-      ctx.lineTo(pb.x-ux*hl-uy*hw,pb.y-uy*hl+ux*hw);
+    const ddx = pb.x-pa.x, ddy = pb.y-pa.y, len = Math.hypot(ddx, ddy);
+    if (len > 3) {
+      const ux=ddx/len, uy=ddy/len, hw=3*devicePixelRatio, hl=6*devicePixelRatio;
+      ctx.beginPath(); ctx.moveTo(pb.x, pb.y);
+      ctx.lineTo(pb.x - ux*hl + uy*hw, pb.y - uy*hl - ux*hw);
+      ctx.lineTo(pb.x - ux*hl - uy*hw, pb.y - uy*hl + ux*hw);
       ctx.closePath();
-      ctx.fillStyle=`rgba(${r},${g},${b},0.75)`;
+      ctx.fillStyle = `rgba(${r},${g},${b},0.75)`;
       ctx.fill();
     }
   }
@@ -2419,6 +2490,7 @@ function startLiveStream() {
         if (c.d > esdfDMax) esdfDMax = c.d;
       }
       buildESDFFaces();
+      buildESDFArrows();
       const repStr = esdf.net_rep
         ? `rep=(${esdf.net_rep.x?.toFixed(2)},${esdf.net_rep.y?.toFixed(2)},${esdf.net_rep.z?.toFixed(2)})`
         : "rep=null";
@@ -2459,6 +2531,27 @@ function startLiveStream() {
     setTimeout(pollViewerStatus, 3000);
   }
   setTimeout(pollViewerStatus, 1000);
+}
+
+// ── L3 metric group helpers ────────────────────────────────────────────────────
+
+function toggleL3Metrics() {
+  const body  = el("l3-body");
+  const caret = el("l3-caret");
+  const open  = body.classList.toggle("open");
+  caret.textContent = open ? "▼" : "▶";
+}
+
+function copyL3Metrics(e) {
+  e.stopPropagation();  // don't trigger toggleL3Metrics
+  const lines = [
+    `L3 ESDF cells: ${el("m-esdf-cells").textContent}`,
+    `L3 msgs rcvd:  ${el("m-esdf-msgs").textContent}`,
+    `L3 ESDF faces: ${el("m-esdf-faces").textContent}`,
+    `L3 d range:    ${el("m-esdf-drange").textContent}`,
+    `L3 arrows:     ${el("m-esdf-arrows").textContent}`,
+  ];
+  navigator.clipboard?.writeText(lines.join("\n")).catch(()=>{});
 }
 
 // ── view controls + interaction ────────────────────────────────────────────────
@@ -2531,7 +2624,7 @@ function installViewControls() {
       state[stateKey] = !state[stateKey];
       btn.classList.toggle("active", state[stateKey]);
       if (stateKey==="showPlanning") buildPlanningFaces();
-      if (stateKey==="showEsdf")    buildESDFFaces();
+      if (stateKey==="showEsdf")    { buildESDFFaces(); buildESDFArrows(); }
       scheduleDraw();
     });
   }
