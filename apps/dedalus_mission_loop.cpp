@@ -475,6 +475,7 @@ int main(int argc, char** argv) {
         auto mission_obstacle_map_delta_publisher = std::make_shared<dedalus::MissionObstacleMapDeltaPublisher>();
         auto traversability_map_publisher = std::make_shared<dedalus::MissionLocalTraversabilityMapPublisher>();
         auto planning_map_publisher = std::make_shared<dedalus::MissionLocalPlanningMapPublisher>();
+        auto esdf_map_publisher = std::make_shared<dedalus::LocalESDFMapPublisher>();
         auto latest_snapshot_subscriber = std::make_shared<dedalus::LatestWorldSnapshotSubscriber>(latest_snapshot);
         auto artifact_snapshot_writer = std::make_shared<dedalus::ArtifactSnapshotWriter>(
             dedalus::ArtifactSnapshotWriterConfig{.output_dir = args.output_dir});
@@ -495,6 +496,7 @@ int main(int argc, char** argv) {
             mission_obstacle_map_delta_publisher->subscribe(runtime_event_stream_server);
             traversability_map_publisher->subscribe(runtime_event_stream_server);
             planning_map_publisher->subscribe(runtime_event_stream_server);
+            esdf_map_publisher->subscribe(runtime_event_stream_server);
             std::cerr << "dedalus_mission_loop: runtime event stream listening on "
                       << args.world_snapshot_stream_host << ":" << runtime_event_stream_server->port() << "\n";
             if (runtime_event_stream_server->http_port() > 0) {
@@ -509,6 +511,7 @@ int main(int argc, char** argv) {
         app_config.runner.mission_obstacle_map_delta_publisher = mission_obstacle_map_delta_publisher;
         app_config.runner.traversability_map_publisher = traversability_map_publisher;
         app_config.runner.planning_map_publisher = planning_map_publisher;
+        app_config.runner.esdf_map_publisher = esdf_map_publisher;
         app_config.runner.snapshot_subscribers = {latest_snapshot_subscriber, artifact_snapshot_writer};
 
         dedalus::CoreStackRunner runner{
