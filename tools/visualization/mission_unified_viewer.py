@@ -90,6 +90,18 @@ h3 { font-size: 12px; margin: 10px 0 6px; color: #c0c4d0; text-transform: upperc
 .event-log-entry .ev-time { color: #5a6080; margin-right: 5px; }
 .event-log-entry .ev-name { color: #80b0ff; font-weight: bold; margin-right: 5px; }
 .event-log-entry .ev-detail { color: #9099b0; }
+#debug-section { margin-top: 8px; display: none; }
+#debug-log { max-height: 240px; overflow-y: auto; font-size: 10px; font-family: monospace;
+  background: #090e18; border: 1px solid #1e2a3a; border-radius: 5px; padding: 5px; }
+.dbg-entry { padding: 1px 0; border-bottom: 1px solid #111828; line-height: 1.35; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.dbg-t  { color: #3a5070; margin-right: 4px; }
+.dbg-type { font-weight: bold; margin-right: 4px; }
+.dbg-type.t-esdf  { color: #40c080; }
+.dbg-type.t-plan  { color: #6090e0; }
+.dbg-type.t-trav  { color: #d0a040; }
+.dbg-type.t-snap  { color: #9070d0; }
+.dbg-type.t-other { color: #607080; }
+.dbg-detail { color: #5a7090; }
 .height-ramp { height: 10px; border: 1px solid #3a4358; border-radius: 4px;
   background: linear-gradient(to right, #2641a8, #00a8d8, #3fbf6a, #e5d84c, #f08c2e, #d83b7d); margin: 4px 0; }
 #hover-card { position: fixed; display: none; pointer-events: auto; cursor: pointer; z-index: 10;
@@ -172,6 +184,9 @@ h3 { font-size: 12px; margin: 10px 0 6px; color: #c0c4d0; text-transform: upperc
       <div class="metric"><span>L0 ego cells</span><b id="m-l0-cells">0</b></div>
       <div class="metric"><span>L2 planning cells</span><b id="m-plan-cells">0</b></div>
       <div class="metric"><span>L3 ESDF cells</span><b id="m-esdf-cells">0</b></div>
+      <div class="metric"><span>L3 msgs rcvd</span><b id="m-esdf-msgs">0</b></div>
+      <div class="metric"><span>L3 ESDF faces</span><b id="m-esdf-faces">0</b></div>
+      <div class="metric"><span>L3 d range</span><b id="m-esdf-drange">—</b></div>
       <div class="metric"><span>L1 trav cells</span><b id="m-trav-cells">0</b></div>
       <div class="metric"><span>Trav ext. faces</span><b id="m-trav-faces">0</b></div>
       <div class="metric"><span>Raw evidence cells</span><b id="m-obs-cells">0</b></div>
@@ -198,6 +213,11 @@ h3 { font-size: 12px; margin: 10px 0 6px; color: #c0c4d0; text-transform: upperc
       <div id="event-log-section">
         <h3>Mission Events</h3>
         <div id="event-log"><span style="color:#4a5070;font-size:11px">Waiting for mission events…</span></div>
+      </div>
+
+      <div id="debug-section">
+        <h3>SSE Debug Log</h3>
+        <div id="debug-log"><span style="color:#3a5070;font-size:10px">Waiting for events…</span></div>
       </div>
     </div>
   </aside>
@@ -283,10 +303,36 @@ let lfmSphNumAz      = 36;
 let lfmSphNumEl      = 9;
 let lfmSensorObs     = [];        // [{az,el,r,vr,ttc,src}] raw sensor observations
 
+// ── Debug mode (?debug in URL) ────────────────────────────────────────────────
+const DEBUG = new URLSearchParams(window.location.search).has("debug");
+const MAX_DEBUG_LOG = 60;
+const debugEntries = [];   // [{ts, type, detail}]
+function dbgLog(type, detail) {
+  if (!DEBUG) return;
+  const ts = new Date().toISOString().substr(11, 12);
+  debugEntries.push({ts, type, detail});
+  if (debugEntries.length > MAX_DEBUG_LOG) debugEntries.shift();
+  const logEl = el("debug-log");
+  const cls = type.includes("esdf")  ? "t-esdf"
+             : type.includes("plan") ? "t-plan"
+             : type.includes("trav") ? "t-trav"
+             : type.includes("snap") ? "t-snap"
+             : "t-other";
+  const div = document.createElement("div");
+  div.className = "dbg-entry";
+  div.innerHTML = `<span class="dbg-t">${ts}</span><span class="dbg-type ${cls}">${escHtml(type)}</span><span class="dbg-detail">${escHtml(detail)}</span>`;
+  if (logEl.firstChild?.tagName === undefined) logEl.innerHTML = "";  // clear placeholder
+  logEl.appendChild(div);
+  logEl.scrollTop = logEl.scrollHeight;
+}
+
 // L3 ESDF (Stage 6): shell cells from C++ compute_esdf, emitted as esdf_delta SSE events.
 const esdfCellsByKey = new Map();   // quantKey → {x,y,z,d,gx,gy,gz}
 let   esdfNetRepulsion = null;      // {x,y,z} world-frame APF repulsion at drone position
 let   esdfD0M        = 5.0;        // truncation radius from last snapshot
+let   esdfMsgCount   = 0;          // total esdf_delta messages received
+let   esdfDMin       = Infinity;   // min d across all stored cells (for stats)
+let   esdfDMax       = -Infinity;  // max d across all stored cells
 let   esdfCellSizeM  = 1.0;        // XY cell size (inherited from L2)
 let   esdfVCellSizeM = 2.0;        // Z  cell size (inherited from L2)
 let   esdfFacesGeom  = [];         // pre-built exterior face geometry for L3
@@ -1212,6 +1258,7 @@ function drawPlanningFaces() {
 
 function buildESDFFaces() {
   esdfFacesGeom = [];
+  if (el("m-esdf-faces")) el("m-esdf-faces").textContent = "0";
   if (!state.showEsdf || esdfCellsByKey.size === 0) return;
 
   const csM  = esdfCellSizeM;
@@ -1859,6 +1906,11 @@ function updateMetrics() {
   el("m-l0-cells").textContent   = String(localFlightMapCells.length);
   el("m-plan-cells").textContent  = String(planningCellsByKey.size);
   el("m-esdf-cells").textContent  = String(esdfCellsByKey.size);
+  el("m-esdf-msgs").textContent   = String(esdfMsgCount);
+  el("m-esdf-faces").textContent  = String(esdfFacesGeom.length);
+  el("m-esdf-drange").textContent = esdfCellsByKey.size > 0 && Number.isFinite(esdfDMin)
+    ? `${esdfDMin.toFixed(1)} → ${esdfDMax.toFixed(1)}`
+    : "—";
   el("m-obs-cells").textContent  = String(obsCellsByKey.size);
   el("m-trav-cells").textContent = String(travCellsByKey.size);
   // m-trav-faces updated in drawTravFaces()
@@ -2301,6 +2353,7 @@ function startLiveStream() {
       const payload=JSON.parse(ev.data);
       const trav=payload.traversability_map_snapshot;
       if (!trav||!Array.isArray(trav.cells)) return;
+      dbgLog("trav_snapshot", `seq=${payload.seq??"-"} cells=${trav.cells.length}`);
       live.pendingTravSnapshot=trav;
       live.pendingTravIsDelta=false;  // full snapshot — client clears + rebuilds
       scheduleLiveProcessing();
@@ -2312,6 +2365,7 @@ function startLiveStream() {
       const payload=JSON.parse(ev.data);
       const plan=payload.planning_map_snapshot;
       if (!plan||!Array.isArray(plan.cells)) return;
+      dbgLog("plan_snapshot", `seq=${payload.map_seq??"-"} cells=${plan.cells.length}`);
       live.pendingPlanningSnapshot=plan;
       live.pendingPlanningIsDelta=false;  // full snapshot — clear + rebuild
       scheduleLiveProcessing();
@@ -2323,6 +2377,7 @@ function startLiveStream() {
       const payload=JSON.parse(ev.data);
       const plan=payload.planning_map_delta;
       if (!plan||!Array.isArray(plan.cells)) return;
+      dbgLog("plan_delta", `seq=${payload.map_seq??"-"} cells=${plan.cells.length}`);
       live.pendingPlanningSnapshot=plan;
       live.pendingPlanningIsDelta=true;   // incremental — merge only
       scheduleLiveProcessing();
@@ -2350,19 +2405,28 @@ function startLiveStream() {
       const payload=JSON.parse(ev.data);
       const esdf=payload.esdf_delta;
       if (!esdf) return;
-      if (!esdf.is_delta) esdfCellsByKey.clear();
+      esdfMsgCount++;
+      const wasFull = !esdf.is_delta;
+      if (wasFull) { esdfCellsByKey.clear(); esdfDMin=Infinity; esdfDMax=-Infinity; }
       esdfD0M        = esdf.d0_m         || 5.0;
       esdfCellSizeM  = esdf.cell_size_m  || 1.0;
       esdfVCellSizeM = esdf.vcell_size_m || 2.0;
       if (esdf.net_rep) esdfNetRepulsion=esdf.net_rep;
-      if (Array.isArray(esdf.cells)) {
-        for (const c of esdf.cells) {
-          esdfCellsByKey.set(esdfQuantKey(c.x, c.y, c.z), c);
-        }
+      const inCells = Array.isArray(esdf.cells) ? esdf.cells : [];
+      for (const c of inCells) {
+        esdfCellsByKey.set(esdfQuantKey(c.x, c.y, c.z), c);
+        if (c.d < esdfDMin) esdfDMin = c.d;
+        if (c.d > esdfDMax) esdfDMax = c.d;
       }
       buildESDFFaces();
+      const repStr = esdf.net_rep
+        ? `rep=(${esdf.net_rep.x?.toFixed(2)},${esdf.net_rep.y?.toFixed(2)},${esdf.net_rep.z?.toFixed(2)})`
+        : "rep=null";
+      dbgLog("esdf_delta",
+        `seq=${payload.map_seq??"-"} ${wasFull?"FULL":"delta"} cells=${inCells.length} total=${esdfCellsByKey.size} d0=${esdfD0M} cs=${esdfCellSizeM} ${repStr}`);
+      if (DEBUG) console.log("[esdf_delta]", {seq:payload.map_seq, full:wasFull, cells:inCells.length, total:esdfCellsByKey.size, faces:esdfFacesGeom.length, dMin:esdfDMin.toFixed(2), dMax:esdfDMax.toFixed(2)});
       scheduleDraw();
-    } catch(e) {}
+    } catch(e) { dbgLog("esdf_delta", `PARSE ERROR: ${e.message}`); }
   });
 
   source.addEventListener("ghost_detections", ev => {
@@ -2660,6 +2724,10 @@ window.addEventListener("resize", resize);
 // ── init ───────────────────────────────────────────────────────────────────────
 
 installViewControls();
+if (DEBUG) {
+  el("debug-section").style.display = "block";
+  console.log("Debug mode active — SSE events will be logged here and to console.");
+}
 updateMetrics();
 resize();
 startLiveStream();
