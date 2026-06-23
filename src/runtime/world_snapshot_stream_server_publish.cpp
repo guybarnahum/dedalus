@@ -233,6 +233,7 @@ void RuntimeEventStreamServer::writer_loop() {
         // serialize here on the writer thread so that the expensive
         // to_json() / to_compact_stream_json() never runs on the hot path.
         // All other message types are pre-serialized strings.
+        bool already_published = false;
         std::string line;
         if (std::holds_alternative<std::string>(item)) {
             line = std::move(std::get<std::string>(item));
@@ -265,20 +266,84 @@ void RuntimeEventStreamServer::writer_loop() {
             }
         } else {
             auto& pending = std::get<PendingESDFSnapshot>(item);
-            const auto t0 = SteadyClock::now();
-            line = serialize_esdf_snapshot(
-                pending.seq, pending.timestamp_ns, pending.snapshot);
-            const auto serialize_us = elapsed_us(t0);
-            {
-                std::lock_guard<std::mutex> lock{mutex_};
-                serialize_total_us_ += serialize_us;
-                // Cache full ESDF snapshots only — deltas are meaningless without the base.
-                if (!pending.snapshot.is_delta) {
-                    last_esdf_sse_ = sse_message_for_json_line(line);
+            static constexpr std::size_t kChunkCells = 500U;
+            const std::size_t total = pending.snapshot.cells.size();
+
+            if (total <= kChunkCells) {
+                // Small enough to publish as a single SSE event.
+                const auto t0 = SteadyClock::now();
+                line = serialize_esdf_snapshot(
+                    pending.seq, pending.timestamp_ns, pending.snapshot);
+                const auto serialize_us = elapsed_us(t0);
+                {
+                    std::lock_guard<std::mutex> lock{mutex_};
+                    serialize_total_us_ += serialize_us;
+                    if (!pending.snapshot.is_delta) {
+                        last_esdf_sse_ = sse_message_for_json_line(line);
+                    }
                 }
+                // fall through to the publish_json_line(line) call below
+            } else {
+                // Large snapshot: split into kChunkCells-cell SSE events so no
+                // single event exceeds ~55 KB.  This eliminates the partial-send
+                // path for large ESDF maps (900 KB+) where the trailing \n\n event
+                // terminator gets stranded in the pending queue; the next event's
+                // "event: ..." header is then received by the client inside the
+                // data field of the previous event, corrupting the JSON.
+                //
+                // First chunk carries the original is_delta flag (false = client
+                // clears ESDF and starts fresh).  All subsequent chunks are deltas
+                // (merge into the just-cleared map).
+                //
+                // For full snapshots, last_esdf_sse_ is set to the concatenation
+                // of all chunk SSE messages so new-client replay sends the full map.
+                const bool build_cache = !pending.snapshot.is_delta;
+                std::string cache_buf;
+                if (build_cache) {
+                    cache_buf.reserve(total * 116U);
+                }
+                std::uint64_t total_serialize_us = 0U;
+
+                for (std::size_t start = 0U; start < total; start += kChunkCells) {
+                    LocalESDFMapSnapshot chunk;
+                    chunk.config        = pending.snapshot.config;
+                    chunk.net_repulsion = pending.snapshot.net_repulsion;
+                    chunk.seq           = pending.snapshot.seq;
+                    chunk.is_delta      = (start == 0U)
+                                          ? pending.snapshot.is_delta
+                                          : true;
+                    const std::size_t end = std::min(start + kChunkCells, total);
+                    chunk.cells.assign(
+                        pending.snapshot.cells.cbegin() +
+                            static_cast<std::ptrdiff_t>(start),
+                        pending.snapshot.cells.cbegin() +
+                            static_cast<std::ptrdiff_t>(end));
+                    chunk.cell_count = chunk.cells.size();
+
+                    const auto t0 = SteadyClock::now();
+                    const auto chunk_line = serialize_esdf_snapshot(
+                        pending.seq, pending.timestamp_ns, chunk);
+                    total_serialize_us += elapsed_us(t0);
+
+                    if (build_cache) {
+                        cache_buf += sse_message_for_json_line(chunk_line);
+                    }
+                    publish_json_line(chunk_line);
+                }
+
+                {
+                    std::lock_guard<std::mutex> lock{mutex_};
+                    serialize_total_us_ += total_serialize_us;
+                    if (build_cache && !cache_buf.empty()) {
+                        last_esdf_sse_ = std::move(cache_buf);
+                    }
+                }
+                already_published = true;
             }
         }
-        publish_json_line(line);
+        if (!already_published) {
+            publish_json_line(line);
+        }
     }
 }
 
