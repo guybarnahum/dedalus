@@ -295,7 +295,6 @@ LocalESDFMap compute_esdf(const MissionLocalPlanningMap& l2,
         {1,0,0},{-1,0,0},{0,1,0},{0,-1,0},{0,0,1},{0,0,-1}};
     for (auto& [key, cell] : esdf.cells_) {
         double ax = cell.grad.x, ay = cell.grad.y, az = cell.grad.z;
-        int w = 1;
         for (const auto& dk : kDirs) {
             const auto nk = LocalESDFMap::CellKey{
                 key.x + dk[0], key.y + dk[1], key.z + dk[2]};
@@ -304,7 +303,6 @@ LocalESDFMap compute_esdf(const MissionLocalPlanningMap& l2,
             ax += it->second.grad.x;
             ay += it->second.grad.y;
             az += it->second.grad.z;
-            ++w;
         }
         const double len = std::sqrt(ax * ax + ay * ay + az * az);
         cell.sgrad = (len > 1.0e-6)
