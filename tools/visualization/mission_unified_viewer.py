@@ -1871,24 +1871,23 @@ function scheduleDraw() {
 
 // ── L3 ESDF vector field ──────────────────────────────────────────────────────
 //
-// buildESDFArrows(): Gaussian-kernel smoothed repulsion arrows.
+// buildESDFArrows(): APF-sum arrows with similarity pruning.
 //
-// Two-pass algorithm:
-//   Pass 1 — Gaussian smooth:  for each cell, accumulate the weighted sgrad
-//             (C++-computed 1-hop smoothed gradient) of all neighbours within R.
-//             R is either set by the "smooth R" slider or computed from the live
-//             drone speed as R = clamp(v²/(2·A_MAX), 0.5, d0).
-//             Weights: w_i = exp(−‖Δx_i‖²/(2σ²)), σ=R/2.
-//             Result: spatially-averaged direction vector, renormalized → gaussian sgrad.
+// Pass 1 — APF-weighted sum over R-neighbourhood (grid cells only):
+//   For each XY grid cell (step = ceil(R/csM)), accumulate contributions from
+//   all L3 shell neighbours within R:
+//     contribution_i = w_spatial_i × apf_i × sgrad_i
+//     w_spatial_i    = exp(-‖Δx_i‖²/(2σ²))   locality weight
+//     apf_i          = (1/d_i − 1/d0) / d_i   APF repulsion magnitude
+//   SUM not average: multiple nearby obstacles accumulate correctly.
+//   A cell 1 m from one wall AND 2 m from another feels both repulsions.
 //
-//   Pass 2 — Sparse filter:  keep only isolated cells or those at a gradient
-//             transition (dot-product of Gaussian sgrad with any immediate 6-neighbour
-//             Gaussian sgrad < DOT_THRESH ≈ cos(23°)).  This suppresses arrows in flat,
-//             uniform regions and keeps them at obstacle edges and corners — exactly
-//             where the field is most informative for trajectory planning.
+// Pass 2 — Similarity pruning:
+//   Drop an arrow if ALL its step-adjacent XY grid neighbours exist AND
+//   their directions are within SIMILAR_THRESH (cos ~14°).
+//   Result: uniform interior regions become sparse; edges/corners stay dense.
 //
-// Velocity mode: when the "vel" checkbox is active, R adapts to drone speed so the
-// visualized field matches what the C++ planner sees at the current velocity.
+// Velocity mode: R = clamp(v²/(2·A_MAX), 0.5, d0), matching the C++ planner.
 
 function buildESDFArrows() {
   esdfArrowGeom = [];
@@ -1897,7 +1896,7 @@ function buildESDFArrows() {
 
   const csM = esdfCellSizeM, vcM = esdfVCellSizeM;
 
-  // Effective R: velocity-derived or slider value.
+  // Effective R.
   const useVel = el("esdf-vel-mode")?.checked ?? false;
   const R = useVel
     ? Math.max(0.5, Math.min(esdfD0M, (lfmEgoSpeedMps * lfmEgoSpeedMps) / (2 * ESDF_A_MAX)))
@@ -1906,81 +1905,80 @@ function buildESDFArrows() {
   const inv2s2 = 1.0 / (2.0 * sigma * sigma);
   const iR_xy  = Math.ceil(R / csM);
   const iR_z   = Math.ceil(R / vcM);
+  const step   = Math.max(1, iR_xy);  // XY subsampling stride in cell units
 
-  // Update display.
   if (el("m-esdf-r")) el("m-esdf-r").textContent = R.toFixed(1) + "m" + (useVel ? " 〜v" : "");
 
-  // Pass 1: Gaussian-weighted average of sgrad over R-neighbourhood → gaussDir map.
-  const gaussDir = new Map();  // key → [sgx, sgy, sgz] (unit vector)
-  for (const [key, cell] of esdfCellsByKey) {
-    if (cell.d < 0) continue;  // inside obstacle — no repulsion direction
-    let ax = cell.sgx ?? cell.gx, ay = cell.sgy ?? cell.gy, az = cell.sgz ?? cell.gz;
-    let tw = 1.0;
+  // Pass 1: APF-sum over R-neighbourhood for each grid cell → arrowMap.
+  const arrowMap = new Map(); // "${ix}_${iy}_${iz}" → {x,y,z,d,sgx,sgy,sgz}
+  for (const [, cell] of esdfCellsByKey) {
+    if (cell.d <= 0 || cell.d >= esdfD0M) continue;
+
+    // Only cells on the R×R subsampling grid.
+    const ix = Math.round(cell.x / csM);
+    const iy = Math.round(cell.y / csM);
+    if ((ix % step) !== 0 || (iy % step) !== 0) continue;
+
+    // Self APF contribution.
+    const selfApf = (1.0 / cell.d - 1.0 / esdfD0M) / cell.d;
+    let ax = selfApf * (cell.sgx ?? cell.gx);
+    let ay = selfApf * (cell.sgy ?? cell.gy);
+    let az = selfApf * (cell.sgz ?? cell.gz);
+
+    // Neighbour APF contributions — summed, not averaged.
     for (let di = -iR_xy; di <= iR_xy; di++) {
       for (let dj = -iR_xy; dj <= iR_xy; dj++) {
         for (let dk = -iR_z; dk <= iR_z; dk++) {
           if (di === 0 && dj === 0 && dk === 0) continue;
-          const nb = esdfCellsByKey.get(esdfQuantKey(cell.x+di*csM, cell.y+dj*csM, cell.z+dk*vcM));
-          if (!nb || nb.d < 0) continue;
+          const nb = esdfCellsByKey.get(
+            esdfQuantKey(cell.x + di*csM, cell.y + dj*csM, cell.z + dk*vcM));
+          if (!nb || nb.d <= 0 || nb.d >= esdfD0M) continue;
           const ex = di*csM, ey = dj*csM, ez = dk*vcM;
-          const w = Math.exp(-(ex*ex + ey*ey + ez*ez) * inv2s2);
-          ax += w * (nb.sgx ?? nb.gx);
-          ay += w * (nb.sgy ?? nb.gy);
-          az += w * (nb.sgz ?? nb.gz);
-          tw += w;
+          const w   = Math.exp(-(ex*ex + ey*ey + ez*ez) * inv2s2);
+          const apf = (1.0 / nb.d - 1.0 / esdfD0M) / nb.d;
+          ax += w * apf * (nb.sgx ?? nb.gx);
+          ay += w * apf * (nb.sgy ?? nb.gy);
+          az += w * apf * (nb.sgz ?? nb.gz);
         }
       }
     }
-    // Weighted average → renormalize to unit length.
-    ax /= tw; ay /= tw; az /= tw;
     const len = Math.hypot(ax, ay, az);
-    if (len > 1e-6) { ax /= len; ay /= len; az /= len; }
-    gaussDir.set(key, [ax, ay, az]);
+    if (len < 1e-6) continue;
+    const iz = Math.round(cell.z / vcM);
+    arrowMap.set(`${ix}_${iy}_${iz}`,
+      {x: cell.x, y: cell.y, z: cell.z, d: cell.d,
+       sgx: ax/len, sgy: ay/len, sgz: az/len});
   }
 
-  // Pass 2: R-density subsampling + transition filter.
+  // Pass 2: similarity pruning — drop if ALL step-adjacent XY neighbours exist
+  // and are within SIMILAR_THRESH; keep if isolated or at a transition.
   //
-  // Arrow density scales with R: we place one arrow per R×R XY grid cell by
-  // keeping only cells whose quantized index is divisible by iR_xy in both X
-  // and Y.  This gives ~1 arrow per (R m)² regardless of obstacle geometry.
-  //
-  // Additionally, cells at gradient transitions (DOT_THRESH ≈ cos 23°) are
-  // always kept even if they fall off the subsampling grid — these mark
-  // obstacle edges and corners where the field is most informative.
-  //
-  // Combined effect: uniform sparse grid in open space, denser at edges.
-  const DOT_THRESH = 0.92;
-  const step = Math.max(1, iR_xy);   // subsample every `step` cells in XY
-  const DIRS6 = [
-    [csM,0,0],[-csM,0,0],[0,csM,0],[0,-csM,0],[0,0,vcM],[0,0,-vcM],
-  ];
-  for (const [key, cell] of esdfCellsByKey) {
-    if (cell.d < 0) continue;
-    const sg = gaussDir.get(key);
-    if (!sg) continue;
-    const [sgx, sgy, sgz] = sg;
-
-    // Grid membership: integer cell index divisible by step in XY (Z unconstrained).
-    const ix = Math.round(cell.x / csM);
-    const iy = Math.round(cell.y / csM);
-    const onGrid = (ix % step === 0) && (iy % step === 0);
-
-    // Transition check: any immediate 6-neighbour with meaningfully different direction.
-    let atTransition = false;
-    if (!onGrid) {
-      let hasNeighbour = false;
-      for (const [dx, dy, dz] of DIRS6) {
-        const ng = gaussDir.get(esdfQuantKey(cell.x+dx, cell.y+dy, cell.z+dz));
-        if (!ng) continue;
-        hasNeighbour = true;
-        if (sgx*ng[0] + sgy*ng[1] + sgz*ng[2] < DOT_THRESH) { atTransition = true; break; }
+  // The threshold angle is velocity-dependent (when vel mode is active):
+  //   angle_deg = max(5°, 20° − v × 1.5)
+  // At v=0 m/s  → 20° (permissive — show fine local detail when hovering)
+  // At v=5 m/s  → 12.5°
+  // At v=10 m/s → 5°  (aggressive — only show gross field changes at speed)
+  // In slider mode a fixed 14° is used (cos ≈ 0.97).
+  const trimAngleDeg = useVel
+    ? Math.max(5.0, 20.0 - lfmEgoSpeedMps * 1.5)
+    : 14.0;
+  const SIMILAR_THRESH = Math.cos(trimAngleDeg * Math.PI / 180.0);
+  for (const [, a] of arrowMap) {
+    const ix = Math.round(a.x / csM);
+    const iy = Math.round(a.y / csM);
+    const iz = Math.round(a.z / vcM);
+    let hasNeighbour = false, allSimilar = true;
+    for (const [dxi, dyi] of [[step,0],[-step,0],[0,step],[0,-step]]) {
+      const nb = arrowMap.get(`${ix+dxi}_${iy+dyi}_${iz}`);
+      if (!nb) continue;
+      hasNeighbour = true;
+      if (a.sgx*nb.sgx + a.sgy*nb.sgy + a.sgz*nb.sgz < SIMILAR_THRESH) {
+        allSimilar = false; break;
       }
-      // Isolated cells (no neighbours) are always kept — they mark lone obstacles.
-      if (!hasNeighbour) atTransition = true;
     }
-
-    if (onGrid || atTransition) {
-      esdfArrowGeom.push({x:cell.x, y:cell.y, z:cell.z, d:cell.d, sgx, sgy, sgz});
+    if (!hasNeighbour || !allSimilar) {
+      esdfArrowGeom.push({x: a.x, y: a.y, z: a.z, d: a.d,
+                          sgx: a.sgx, sgy: a.sgy, sgz: a.sgz});
     }
   }
   if (el("m-esdf-arrows")) el("m-esdf-arrows").textContent = String(esdfArrowGeom.length);
