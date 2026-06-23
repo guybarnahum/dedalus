@@ -167,6 +167,22 @@ h3 { font-size: 12px; margin: 10px 0 6px; color: #c0c4d0; text-transform: upperc
         <button class="layer-btn active" id="toggle-trav"><span>L1 traversability</span><span class="ltog"></span></button>
         <button class="layer-btn active" id="toggle-planning"><span>L2 planning map</span><span class="ltog"></span></button>
         <button class="layer-btn active" id="toggle-esdf"><span>L3 ESDF</span><span class="ltog"></span></button>
+        <div id="esdf-r-control" style="padding:2px 8px 5px;border-bottom:1px solid #1a2030;">
+          <div style="display:flex;justify-content:space-between;align-items:center;font-size:11px;color:#9099b0;margin-bottom:2px;">
+            <span>smooth R</span>
+            <span style="display:flex;align-items:center;gap:5px;">
+              <b id="m-esdf-r" style="color:#e8e8e8;">2.0m</b>
+              <label style="color:#5a6380;font-size:10px;cursor:pointer;display:flex;align-items:center;gap:2px;">
+                <input type="checkbox" id="esdf-vel-mode" onchange="buildESDFArrows()" style="margin:0;">vel
+              </label>
+            </span>
+          </div>
+          <input type="range" id="esdf-r-slider" class="esdf-r-slider"
+            min="0.5" max="5" step="0.5" value="2" oninput="onEsdfRSlider(this.value)">
+          <div style="display:flex;justify-content:space-between;font-size:9px;color:#4a5470;margin-top:1px;">
+            <span>0.5m</span><span>d₀</span>
+          </div>
+        </div>
         <button class="layer-btn" id="toggle-obstacles"><span>Raw evidence</span><span class="ltog"></span></button>
         <button class="layer-btn" id="toggle-ghosts"><span>Ghost detections</span><span class="ltog"></span></button>
         <button class="layer-btn active" id="toggle-sensing"><span>Sensing volumes</span><span class="ltog"></span></button>
@@ -214,20 +230,6 @@ h3 { font-size: 12px; margin: 10px 0 6px; color: #c0c4d0; text-transform: upperc
           <div class="metric sub-metric"><span>ESDF faces</span><b id="m-esdf-faces">0</b></div>
           <div class="metric sub-metric"><span>d range</span><b id="m-esdf-drange">—</b></div>
           <div class="metric sub-metric"><span>arrows</span><b id="m-esdf-arrows">0</b></div>
-          <div class="metric sub-metric esdf-r-row">
-            <div class="esdf-r-top">
-              <span>smooth R</span>
-              <span style="display:flex;align-items:center;gap:5px;">
-                <b id="m-esdf-r">2.0m</b>
-                <label style="color:#5a6380;font-size:10px;cursor:pointer;display:flex;align-items:center;gap:2px;">
-                  <input type="checkbox" id="esdf-vel-mode" onchange="buildESDFArrows()" style="margin:0;">vel
-                </label>
-              </span>
-            </div>
-            <input type="range" id="esdf-r-slider" class="esdf-r-slider"
-              min="0.5" max="5" step="0.5" value="2" oninput="onEsdfRSlider(this.value)">
-            <div class="esdf-r-labels"><span>0.5m</span><span>d₀</span></div>
-          </div>
         </div>
       </div>
       <div class="metric"><span>L1 trav cells</span><b id="m-trav-cells">0</b></div>
@@ -1936,9 +1938,19 @@ function buildESDFArrows() {
     gaussDir.set(key, [ax, ay, az]);
   }
 
-  // Pass 2: sparse filter — keep transitions and isolated cells.
-  // DOT_THRESH ≈ cos(23°): suppress arrows in flat, uniform regions.
+  // Pass 2: R-density subsampling + transition filter.
+  //
+  // Arrow density scales with R: we place one arrow per R×R XY grid cell by
+  // keeping only cells whose quantized index is divisible by iR_xy in both X
+  // and Y.  This gives ~1 arrow per (R m)² regardless of obstacle geometry.
+  //
+  // Additionally, cells at gradient transitions (DOT_THRESH ≈ cos 23°) are
+  // always kept even if they fall off the subsampling grid — these mark
+  // obstacle edges and corners where the field is most informative.
+  //
+  // Combined effect: uniform sparse grid in open space, denser at edges.
   const DOT_THRESH = 0.92;
+  const step = Math.max(1, iR_xy);   // subsample every `step` cells in XY
   const DIRS6 = [
     [csM,0,0],[-csM,0,0],[0,csM,0],[0,-csM,0],[0,0,vcM],[0,0,-vcM],
   ];
@@ -1947,14 +1959,27 @@ function buildESDFArrows() {
     const sg = gaussDir.get(key);
     if (!sg) continue;
     const [sgx, sgy, sgz] = sg;
-    let hasNeighbour = false, atTransition = false;
-    for (const [dx, dy, dz] of DIRS6) {
-      const ng = gaussDir.get(esdfQuantKey(cell.x+dx, cell.y+dy, cell.z+dz));
-      if (!ng) continue;
-      hasNeighbour = true;
-      if (sgx*ng[0] + sgy*ng[1] + sgz*ng[2] < DOT_THRESH) { atTransition = true; break; }
+
+    // Grid membership: integer cell index divisible by step in XY (Z unconstrained).
+    const ix = Math.round(cell.x / csM);
+    const iy = Math.round(cell.y / csM);
+    const onGrid = (ix % step === 0) && (iy % step === 0);
+
+    // Transition check: any immediate 6-neighbour with meaningfully different direction.
+    let atTransition = false;
+    if (!onGrid) {
+      let hasNeighbour = false;
+      for (const [dx, dy, dz] of DIRS6) {
+        const ng = gaussDir.get(esdfQuantKey(cell.x+dx, cell.y+dy, cell.z+dz));
+        if (!ng) continue;
+        hasNeighbour = true;
+        if (sgx*ng[0] + sgy*ng[1] + sgz*ng[2] < DOT_THRESH) { atTransition = true; break; }
+      }
+      // Isolated cells (no neighbours) are always kept — they mark lone obstacles.
+      if (!hasNeighbour) atTransition = true;
     }
-    if (!hasNeighbour || atTransition) {
+
+    if (onGrid || atTransition) {
       esdfArrowGeom.push({x:cell.x, y:cell.y, z:cell.z, d:cell.d, sgx, sgy, sgz});
     }
   }
@@ -2704,7 +2729,11 @@ function installViewControls() {
       state[stateKey] = !state[stateKey];
       btn.classList.toggle("active", state[stateKey]);
       if (stateKey==="showPlanning") buildPlanningFaces();
-      if (stateKey==="showEsdf")    { buildESDFFaces(); buildESDFArrows(); }
+      if (stateKey==="showEsdf")    {
+        const rc = el("esdf-r-control");
+        if (rc) rc.style.display = state[stateKey] ? "" : "none";
+        buildESDFFaces(); buildESDFArrows();
+      }
       scheduleDraw();
     });
   }
