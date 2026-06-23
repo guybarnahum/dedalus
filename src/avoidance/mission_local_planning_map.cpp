@@ -281,9 +281,9 @@ MissionLocalPlanningMap::extent() const noexcept {
     Vec3 mx = cells_[0].cell.center_map;
     for (const auto& sc : cells_) {
         const Vec3& c = sc.cell.center_map;
-        if (c.x < mn.x) mn.x = c.x;  if (c.x > mx.x) mx.x = c.x;
-        if (c.y < mn.y) mn.y = c.y;  if (c.y > mx.y) mx.y = c.y;
-        if (c.z < mn.z) mn.z = c.z;  if (c.z > mx.z) mx.z = c.z;
+        if (c.x < mn.x) { mn.x = c.x; } else if (c.x > mx.x) { mx.x = c.x; }
+        if (c.y < mn.y) { mn.y = c.y; } else if (c.y > mx.y) { mx.y = c.y; }
+        if (c.z < mn.z) { mn.z = c.z; } else if (c.z > mx.z) { mx.z = c.z; }
     }
     return MissionLocalPlanningMapExtent{mn, mx};
 }
