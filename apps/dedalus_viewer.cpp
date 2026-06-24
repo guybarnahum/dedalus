@@ -618,6 +618,63 @@ public:
 
         lines_.push_back(line);  // raw JSONL for queue injection
         burst_.push_back(make_sse_frame(line));
+
+        // ── ESDF shell cells ─────────────────────────────────────────────────
+        // Read d0_m from params (written by flush_esdf_to_db).
+        double d0_m = 5.0;
+        {
+            const char* qd = "SELECT value FROM params WHERE key='esdf_d0_m';";
+            sqlite3_stmt* ds = nullptr;
+            if (sqlite3_prepare_v2(db, qd, -1, &ds, nullptr) == SQLITE_OK) {
+                if (sqlite3_step(ds) == SQLITE_ROW)
+                    d0_m = sqlite3_column_double(ds, 0);
+                sqlite3_finalize(ds);
+            }
+        }
+
+        const char* qe =
+            "SELECT cx,cy,cz,dist_m,gx,gy,gz,sgx,sgy,sgz FROM esdf_cells;";
+        sqlite3_stmt* es = nullptr;
+        if (sqlite3_prepare_v2(db, qe, -1, &es, nullptr) == SQLITE_OK) {
+            std::ostringstream ep;
+            ep.precision(5);
+            ep << "{\"type\":\"esdf_delta\",\"seq\":0,\"map_seq\":0,\"timestamp_ns\":0"
+               << ",\"esdf_delta\":{\"cell_size_m\":" << cell_m
+               << ",\"vcell_size_m\":" << vcell_m
+               << ",\"d0_m\":" << d0_m
+               << ",\"is_delta\":false"
+               << ",\"net_rep\":{\"x\":0,\"y\":0,\"z\":0}"
+               << ",\"cells\":[";
+            bool first = true;
+            std::size_t esdf_n = 0;
+            while (sqlite3_step(es) == SQLITE_ROW) {
+                if (!first) ep << ',';
+                first = false;
+                ep << "{\"x\":"   << sqlite3_column_double(es, 0)
+                   << ",\"y\":"   << sqlite3_column_double(es, 1)
+                   << ",\"z\":"   << sqlite3_column_double(es, 2)
+                   << ",\"d\":"   << sqlite3_column_double(es, 3)
+                   << ",\"gx\":"  << sqlite3_column_double(es, 4)
+                   << ",\"gy\":"  << sqlite3_column_double(es, 5)
+                   << ",\"gz\":"  << sqlite3_column_double(es, 6)
+                   << ",\"sgx\":" << sqlite3_column_double(es, 7)
+                   << ",\"sgy\":" << sqlite3_column_double(es, 8)
+                   << ",\"sgz\":" << sqlite3_column_double(es, 9)
+                   << '}';
+                ++esdf_n;
+            }
+            sqlite3_finalize(es);
+            ep << "]}}\n";
+            if (esdf_n > 0) {
+                std::fprintf(stderr,
+                    "[dedalus_viewer] L2 DB '%s': %zu ESDF cells loaded\n",
+                    db_path.c_str(), esdf_n);
+                std::string eline = ep.str();
+                lines_.push_back(eline);
+                burst_.push_back(make_sse_frame(eline));
+            }
+        }
+
         return true;
     }
 

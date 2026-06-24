@@ -66,6 +66,22 @@ CREATE TABLE IF NOT EXISTS params (
     key   TEXT PRIMARY KEY,
     value REAL NOT NULL
 );
+
+-- L3 ESDF shell cells: derived from L2, full-replaced after each L2 flush.
+-- Viewer uses these to render the repulsion vector field when no runtime
+-- is connected.  Cells outside d0_m (stored in params) are not kept.
+CREATE TABLE IF NOT EXISTS esdf_cells (
+    cx     REAL NOT NULL,
+    cy     REAL NOT NULL,
+    cz     REAL NOT NULL,
+    dist_m REAL NOT NULL,
+    gx     REAL NOT NULL,
+    gy     REAL NOT NULL,
+    gz     REAL NOT NULL,
+    sgx    REAL NOT NULL,
+    sgy    REAL NOT NULL,
+    sgz    REAL NOT NULL
+);
 )";
 
 const char* kUpsert =
@@ -242,6 +258,62 @@ bool MissionLocalPlanningMap::close_db() {
     sqlite3_close(as_db(db_));
     db_ = nullptr;
     return ok;
+}
+
+// ─── flush_esdf_to_db ─────────────────────────────────────────────────────────
+//
+// Full replace of the esdf_cells table: DELETE all existing rows then INSERT
+// the current ESDF shell-cell snapshot in one transaction.  Also upserts
+// esdf_d0_m into the params table so the viewer knows the truncation radius.
+
+bool MissionLocalPlanningMap::flush_esdf_to_db(
+    const std::vector<ESDFCellRecord>& cells, double d0_m)
+{
+    if (!db_) return true;
+    sqlite3* db = as_db(db_);
+
+    // Persist d0_m for the viewer.
+    {
+        const char* kUpsertParam =
+            "INSERT INTO params(key,value) VALUES(?,?)"
+            " ON CONFLICT(key) DO UPDATE SET value=excluded.value;";
+        sqlite3_stmt* ps = nullptr;
+        if (sqlite3_prepare_v2(db, kUpsertParam, -1, &ps, nullptr) == SQLITE_OK) {
+            sqlite3_bind_text(ps, 1, "esdf_d0_m", -1, SQLITE_STATIC);
+            sqlite3_bind_double(ps, 2, d0_m);
+            sqlite3_step(ps);
+            sqlite3_finalize(ps);
+        }
+    }
+
+    exec(db, "BEGIN;");
+    exec(db, "DELETE FROM esdf_cells;");
+
+    if (!cells.empty()) {
+        const char* kInsert =
+            "INSERT INTO esdf_cells(cx,cy,cz,dist_m,gx,gy,gz,sgx,sgy,sgz)"
+            " VALUES(?,?,?,?,?,?,?,?,?,?);";
+        sqlite3_stmt* ins = nullptr;
+        sqlite3_prepare_v2(db, kInsert, -1, &ins, nullptr);
+        for (const auto& c : cells) {
+            sqlite3_bind_double(ins,  1, c.cx);
+            sqlite3_bind_double(ins,  2, c.cy);
+            sqlite3_bind_double(ins,  3, c.cz);
+            sqlite3_bind_double(ins,  4, c.dist_m);
+            sqlite3_bind_double(ins,  5, c.gx);
+            sqlite3_bind_double(ins,  6, c.gy);
+            sqlite3_bind_double(ins,  7, c.gz);
+            sqlite3_bind_double(ins,  8, c.sgx);
+            sqlite3_bind_double(ins,  9, c.sgy);
+            sqlite3_bind_double(ins, 10, c.sgz);
+            sqlite3_step(ins);
+            sqlite3_reset(ins);
+        }
+        sqlite3_finalize(ins);
+    }
+
+    exec(db, "COMMIT;");
+    return true;
 }
 
 }  // namespace dedalus

@@ -155,6 +155,20 @@ public:
     //   No-op and returns true if no DB is open.
     bool flush_dirty_to_db();
 
+    // POD record for one ESDF shell cell, passed from CoreStackRunner to the
+    // flush thread without introducing a dependency on local_esdf_map.hpp here.
+    struct ESDFCellRecord {
+        double cx, cy, cz;     // world-frame centre
+        double dist_m;         // signed distance (negative inside obstacles)
+        double gx, gy, gz;    // unit gradient (∇d, points away from obstacle)
+        double sgx, sgy, sgz; // smoothed gradient (6-neighbour average of grad)
+    };
+
+    // flush_esdf_to_db(): full replace of the esdf_cells table (DELETE + INSERT).
+    //   d0_m is stored in the params table for the viewer.
+    //   Safe to call from the flush thread; best-effort (returns false on error).
+    bool flush_esdf_to_db(const std::vector<ESDFCellRecord>& cells, double d0_m);
+
     // close_db(): final flush_dirty_to_db() then sqlite3_close().
     //   Called at finalize / destructor.  Returns true on success.
     bool close_db();

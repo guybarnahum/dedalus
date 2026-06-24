@@ -52,6 +52,22 @@ CoreStackRunner::CoreStackRunner(CoreStackProviders providers, CoreStackRunnerCo
                 std::this_thread::sleep_for(std::chrono::seconds(10));
                 if (!planning_map_flush_stop_.load(std::memory_order_acquire)) {
                     mission_local_planning_map_.flush_dirty_to_db();
+
+                    // Drain staged ESDF snapshot into the same DB.
+                    std::vector<MissionLocalPlanningMap::ESDFCellRecord> esdf_cells;
+                    double d0_m = 5.0;
+                    {
+                        std::lock_guard<std::mutex> lk(esdf_flush_mutex_);
+                        if (esdf_flush_pending_) {
+                            esdf_cells          = std::move(esdf_flush_cells_);
+                            esdf_flush_cells_   = {};
+                            d0_m                = esdf_flush_d0_m_;
+                            esdf_flush_pending_ = false;
+                        }
+                    }
+                    if (!esdf_cells.empty()) {
+                        mission_local_planning_map_.flush_esdf_to_db(esdf_cells, d0_m);
+                    }
                 }
             }
         });

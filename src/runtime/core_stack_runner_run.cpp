@@ -448,7 +448,8 @@ bool CoreStackRunner::run_once() {
                         snapshot_for_annotation.ego.local_T_body.position;
                     const std::uint64_t cur_l2_seq =
                         mission_local_planning_map_.current_seq();
-                    bool is_full = false;
+                    bool is_full    = false;
+                    bool esdf_changed = false;
 
                     if (esdf_needs_full_recompute_) {
                         // Path 1: full recompute (startup / slide_window / new cells).
@@ -462,7 +463,8 @@ bool CoreStackRunner::run_once() {
                         }
                         esdf_last_l2_seq_          = cur_l2_seq;
                         esdf_needs_full_recompute_ = false;
-                        is_full = true;
+                        is_full      = true;
+                        esdf_changed = true;
                     } else if (cur_l2_seq != esdf_last_l2_seq_) {
                         // Path 2: incremental — update only cells near dirty L2 voxels.
                         auto delta = mission_local_planning_map_.snapshot(esdf_last_l2_seq_);
@@ -477,8 +479,30 @@ bool CoreStackRunner::run_once() {
                                 mission_local_planning_map_, dirty, kESDFD0M);
                         }
                         // is_full stays false → viewer merges delta cells
+                        esdf_changed = true;
                     }
                     // Path 3 (L2 unchanged): fall through — just re-snapshot below.
+
+                    // Stage ESDF for DB flush (paths 1 + 2 only).
+                    if (esdf_changed && !planning_map_persistence_path_.empty() &&
+                        esdf_map_.cell_count() > 0U) {
+                        const auto snap_cells =
+                            esdf_map_.snapshot(Vec3{0.0, 0.0, 0.0}, 0.0).cells;
+                        std::vector<MissionLocalPlanningMap::ESDFCellRecord> records;
+                        records.reserve(snap_cells.size());
+                        for (const auto& c : snap_cells) {
+                            records.push_back({
+                                c.centre.x, c.centre.y, c.centre.z,
+                                static_cast<double>(c.d),
+                                c.grad.x,  c.grad.y,  c.grad.z,
+                                c.sgrad.x, c.sgrad.y, c.sgrad.z,
+                            });
+                        }
+                        std::lock_guard<std::mutex> lk(esdf_flush_mutex_);
+                        esdf_flush_cells_   = std::move(records);
+                        esdf_flush_d0_m_    = kESDFD0M;
+                        esdf_flush_pending_ = true;
+                    }
 
                     LocalESDFMapFrame esdf_frame;
                     esdf_frame.timestamp_ns          = trav_frame.timestamp_ns;
