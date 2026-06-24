@@ -121,6 +121,11 @@ h3 { font-size: 12px; margin: 10px 0 6px; color: #c0c4d0; text-transform: upperc
 .dbg-type.t-snap  { color: #9070d0; }
 .dbg-type.t-other { color: #607080; }
 .dbg-detail { color: #5a7090; }
+.dbg-warn .dbg-detail { color: #d09040; }
+.dbg-err  .dbg-detail { color: #d04040; }
+.dbg-warn .dbg-label, .dbg-err .dbg-label { font-weight: bold; margin-right: 4px; }
+.dbg-warn .dbg-label { color: #e0a030; }
+.dbg-err  .dbg-label { color: #e03030; }
 .height-ramp { height: 10px; border: 1px solid #3a4358; border-radius: 4px;
   background: linear-gradient(to right, #2641a8, #00a8d8, #3fbf6a, #e5d84c, #f08c2e, #d83b7d); margin: 4px 0; }
 #hover-card { position: fixed; display: none; pointer-events: auto; cursor: pointer; z-index: 10;
@@ -352,22 +357,49 @@ let lfmSensorObs     = [];        // [{az,el,r,vr,ttc,src}] raw sensor observati
 const DEBUG = new URLSearchParams(window.location.search).has("debug");
 const MAX_DEBUG_LOG = 60;
 const debugEntries = [];   // [{ts, type, detail}]
-function dbgLog(type, detail) {
+// dbgLog(type, detail, level)
+// level: "info" (default) — collapses with the previous INFO entry if it is
+//        the last item in the log (i.e., consecutive INFOs overwrite in place).
+//        "warn" / "error" — always appended and never collapsed.
+// Order is preserved: a WARN/ERROR locks the preceding INFO in place.
+let _dbgLastInfoDiv = null;  // tracks the most-recently-appended INFO div
+function dbgLog(type, detail, level = "info") {
   if (!DEBUG) return;
   const ts = new Date().toISOString().substr(11, 12);
-  debugEntries.push({ts, type, detail});
+  debugEntries.push({ts, type, detail, level});
   if (debugEntries.length > MAX_DEBUG_LOG) debugEntries.shift();
+
   const logEl = el("debug-log");
+  if (logEl.firstChild?.tagName === undefined) logEl.innerHTML = "";  // clear placeholder
+
   const cls = type.includes("esdf")  ? "t-esdf"
              : type.includes("plan") ? "t-plan"
              : type.includes("trav") ? "t-trav"
              : type.includes("snap") ? "t-snap"
              : "t-other";
-  const div = document.createElement("div");
-  div.className = "dbg-entry";
-  div.innerHTML = `<span class="dbg-t">${ts}</span><span class="dbg-type ${cls}">${escHtml(type)}</span><span class="dbg-detail">${escHtml(detail)}</span>`;
-  if (logEl.firstChild?.tagName === undefined) logEl.innerHTML = "";  // clear placeholder
-  logEl.appendChild(div);
+
+  if (level === "info") {
+    // Reuse the last INFO div if it is still the last child (no WARN/ERROR since).
+    if (_dbgLastInfoDiv && _dbgLastInfoDiv === logEl.lastChild) {
+      _dbgLastInfoDiv.innerHTML = `<span class="dbg-t">${ts}</span><span class="dbg-type ${cls}">${escHtml(type)}</span><span class="dbg-detail">${escHtml(detail)}</span>`;
+    } else {
+      const div = document.createElement("div");
+      div.className = "dbg-entry";
+      div.innerHTML = `<span class="dbg-t">${ts}</span><span class="dbg-type ${cls}">${escHtml(type)}</span><span class="dbg-detail">${escHtml(detail)}</span>`;
+      logEl.appendChild(div);
+      _dbgLastInfoDiv = div;
+      while (logEl.children.length > MAX_DEBUG_LOG) logEl.removeChild(logEl.firstChild);
+    }
+  } else {
+    // WARN / ERROR: always a new entry; locks any preceding INFO in place.
+    _dbgLastInfoDiv = null;
+    const isErr = level === "error";
+    const div = document.createElement("div");
+    div.className = `dbg-entry ${isErr ? "dbg-err" : "dbg-warn"}`;
+    div.innerHTML = `<span class="dbg-t">${ts}</span><span class="dbg-label">${isErr ? "ERROR" : "WARN"}</span><span class="dbg-type ${cls}">${escHtml(type)}</span><span class="dbg-detail"> ${escHtml(detail)}</span>`;
+    logEl.appendChild(div);
+    while (logEl.children.length > MAX_DEBUG_LOG) logEl.removeChild(logEl.firstChild);
+  }
   logEl.scrollTop = logEl.scrollHeight;
 }
 
@@ -2564,12 +2596,12 @@ function startLiveStream() {
       const ctxSnip = errPos >= 0
         ? `| ctx: "...${ev.data.substring(Math.max(0, errPos - 25), errPos + 25)}..."`
         : "";
-      dbgLog("esdf_delta", `PARSE ERROR (${esdfConsecErrors}): ${e.message} ${ctxSnip}`);
+      dbgLog("esdf_delta", `PARSE ERROR (${esdfConsecErrors}): ${e.message} ${ctxSnip}`, "error");
       // Any SSE parse failure means the stream is misaligned — reconnect immediately.
       // The server replays the full L2/L3 snapshot to new clients so we recover fast.
       {
         esdfConsecErrors = 0;
-        dbgLog("esdf_delta", "stream corrupt — reconnecting SSE");
+        dbgLog("esdf_delta", "stream corrupt — reconnecting SSE", "warn");
         source.close();
         setTimeout(startLiveStream, 500);
       }

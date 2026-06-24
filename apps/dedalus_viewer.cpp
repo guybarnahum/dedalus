@@ -39,6 +39,7 @@
 #include <iostream>
 #include <mutex>
 #include <optional>
+#include <unordered_map>
 #include <sstream>
 #include <stdexcept>
 #include <string>
@@ -531,6 +532,7 @@ public:
             std::lock_guard<std::mutex> lock{clients_mutex_};
             for (const int fd : sse_clients_) ::close(fd);
             sse_clients_.clear();
+            sse_pending_.clear();
         }
         if (writer_thread_.joinable()) writer_thread_.join();
     }
@@ -631,7 +633,27 @@ private:
         sse_clients_.push_back(client);
     }
 
+    // Send as many bytes as the kernel will accept without blocking.
+    // Returns the number of bytes actually sent (0..size), or -1 on hard error.
+    // EAGAIN/EWOULDBLOCK is NOT a hard error — caller gets 0 progress.
+    static ssize_t try_send(int fd, const char* data, std::size_t size) {
+        const auto n = ::send(fd, data, size, MSG_NOSIGNAL | MSG_DONTWAIT);
+        if (n < 0 && (errno == EAGAIN || errno == EWOULDBLOCK)) return 0;
+        return n;  // positive (partial or full) or -1 (hard error)
+    }
+
     void writer_loop() {
+        // Per-client pending: bytes of the previous SSE frame that could not be
+        // sent in one call.  They MUST be flushed before the next frame is sent;
+        // otherwise the SSE framing is corrupted (the next frame's "event: TYPE"
+        // header gets spliced into the previous frame's data field).
+        //
+        // Without this, ::send() returning a partial count (0 < n < frame.size())
+        // would silently discard the unsent tail — including the \r\n\r\n
+        // event terminator — causing the corruption seen as
+        // "Exponent part is missing a number" in JSON.parse().
+        static constexpr std::size_t kMaxPending = 256U * 1024U;  // drop at 256 KB
+
         while (running_) {
             auto line = queue_.pop(running_);
             if (!line) continue;
@@ -639,17 +661,43 @@ private:
             const auto frame = make_sse_frame(*line);
             std::lock_guard<std::mutex> lock{clients_mutex_};
             std::vector<int> dead;
+
             for (const int fd : sse_clients_) {
-                // Non-blocking send: skip (not drop) if the client is temporarily busy.
-                // Drop the client on a hard error (connection closed / broken pipe).
-                const auto sent = ::send(fd, frame.data(), frame.size(),
-                                         MSG_NOSIGNAL | MSG_DONTWAIT);
-                if (sent < 0 && errno != EAGAIN && errno != EWOULDBLOCK) {
-                    dead.push_back(fd);
+                auto& pending = sse_pending_[fd];
+
+                // ── drain previously unsent tail ──────────────────────────
+                if (!pending.empty()) {
+                    const auto n = try_send(fd, pending.data(), pending.size());
+                    if (n < 0) {
+                        dead.push_back(fd); continue;  // hard error
+                    }
+                    if (static_cast<std::size_t>(n) < pending.size()) {
+                        pending.erase(0, static_cast<std::size_t>(n));
+                        // Can't send the new frame yet; skip it this cycle.
+                        // The frame is lost for this client but the stream stays
+                        // structurally valid (no corruption).
+                        if (pending.size() > kMaxPending) dead.push_back(fd);
+                        continue;
+                    }
+                    pending.clear();
                 }
+
+                // ── send new frame ────────────────────────────────────────
+                const auto n = try_send(fd, frame.data(), frame.size());
+                if (n < 0) {
+                    dead.push_back(fd);  // hard error
+                } else if (static_cast<std::size_t>(n) < frame.size()) {
+                    // Partial send: store the unsent tail so it is sent before
+                    // the next frame, preserving SSE event boundaries.
+                    pending = frame.substr(static_cast<std::size_t>(n));
+                    if (pending.size() > kMaxPending) dead.push_back(fd);
+                }
+                // n == frame.size(): fully sent, nothing to do.
             }
+
             for (const int fd : dead) {
                 ::close(fd);
+                sse_pending_.erase(fd);
                 sse_clients_.erase(
                     std::remove(sse_clients_.begin(), sse_clients_.end(), fd),
                     sse_clients_.end());
@@ -747,6 +795,7 @@ private:
 
     mutable std::mutex clients_mutex_;
     std::vector<int> sse_clients_;
+    std::unordered_map<int, std::string> sse_pending_;  // per-client unsent SSE tail
 };
 
 // ── CLI ───────────────────────────────────────────────────────────────────────
