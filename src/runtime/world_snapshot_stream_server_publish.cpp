@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <cerrno>
 #include <chrono>
+#include <cstdio>
 #include <string>
 #include <utility>
 
@@ -61,6 +62,56 @@ bool send_all_nonblocking(int fd, const std::string& payload,
     return true;
 }
 
+
+// Validate that a JSON line is structurally sound before sending to clients.
+// Catches: embedded control chars or newlines (would break SSE framing),
+// NaN/Inf literals (invalid JSON), and missing outer braces.
+// Returns empty string if valid; otherwise a short description of the fault.
+std::string json_line_fault(const std::string& line) {
+    // Strip exactly one trailing newline for the check (lines end with \n).
+    const std::size_t trimlen = (!line.empty() && line.back() == '\n')
+                                ? line.size() - 1U
+                                : line.size();
+    if (trimlen == 0U || line.front() != '{') {
+        return "does not start with '{'";
+    }
+    if (line[trimlen - 1U] != '}') {
+        return "does not end with '}'";
+    }
+    // Look for mid-string control characters (< 0x20, excluding none — all are bad inside JSON).
+    for (std::size_t i = 0U; i < trimlen; ++i) {
+        const unsigned char c = static_cast<unsigned char>(line[i]);
+        if (c < 0x20U) {
+            char msg[64];
+            std::snprintf(msg, sizeof(msg), "control char 0x%02X at byte %zu", c, i);
+            return std::string{msg};
+        }
+    }
+    // Look for the literal token "nan" or "inf" which snprintf emits for NaN/Inf.
+    // These are not valid JSON values.
+    for (const char* token : {"\":nan", "\":inf", "\":-inf", "\":nan,", "\":inf,"}) {
+        if (line.find(token) != std::string::npos) {
+            return std::string{"contains non-JSON float literal: "} + token;
+        }
+    }
+    return {};  // valid
+}
+
+// Log and drop a corrupt JSON line to stderr, showing context around the fault.
+void dump_corrupt_json_line(const std::string& line, const std::string& fault) {
+    const std::size_t ctx = 60U;
+    const std::size_t head = line.size() > ctx ? ctx : line.size();
+    const std::size_t tail_start = line.size() > ctx ? line.size() - ctx : 0U;
+    std::fprintf(stderr,
+        "[dedalus] CORRUPT JSON LINE DROPPED (%zu bytes): %s\n"
+        "  head: %.60s\n"
+        "  tail: %s\n",
+        line.size(), fault.c_str(),
+        line.c_str(),
+        line.c_str() + tail_start);
+    std::fflush(stderr);
+    (void)head;
+}
 
 std::string event_name_from_json_line(const std::string& line) {
     const std::string needle = "\"type\":\"";
@@ -142,6 +193,13 @@ void RuntimeEventStreamServer::enqueue_esdf_snapshot(
 }
 
 void RuntimeEventStreamServer::publish_json_line(const std::string& line) {
+    // Validate before sending — a corrupt line would break all connected SSE clients.
+    const auto fault = json_line_fault(line);
+    if (!fault.empty()) {
+        dump_corrupt_json_line(line, fault);
+        return;  // drop it; do not corrupt the stream
+    }
+
     const auto start = SteadyClock::now();
 
     auto publish_to_clients = [this](

@@ -2558,11 +2558,16 @@ function startLiveStream() {
       scheduleDraw();
     } catch(e) {
       esdfConsecErrors++;
-      dbgLog("esdf_delta", `PARSE ERROR (${esdfConsecErrors}): ${e.message}`);
-      // After 3 consecutive failures the SSE stream is likely misaligned.
-      // Close this connection and reconnect — the server replays the last
-      // full L2/L3 snapshot to new clients, so we recover immediately.
-      if (esdfConsecErrors >= 3) {
+      // Log context bytes around the parse position to diagnose the root cause.
+      const posMatch = e.message.match(/at position (\d+)/);
+      const errPos = posMatch ? parseInt(posMatch[1]) : -1;
+      const ctxSnip = errPos >= 0
+        ? `| ctx: "...${ev.data.substring(Math.max(0, errPos - 25), errPos + 25)}..."`
+        : "";
+      dbgLog("esdf_delta", `PARSE ERROR (${esdfConsecErrors}): ${e.message} ${ctxSnip}`);
+      // Any SSE parse failure means the stream is misaligned — reconnect immediately.
+      // The server replays the full L2/L3 snapshot to new clients so we recover fast.
+      {
         esdfConsecErrors = 0;
         dbgLog("esdf_delta", "stream corrupt — reconnecting SSE");
         source.close();
