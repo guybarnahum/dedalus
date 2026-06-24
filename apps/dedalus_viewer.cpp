@@ -52,6 +52,7 @@
 #include <signal.h>
 #include <sys/select.h>
 #include <sys/socket.h>
+#include <sys/stat.h>
 #include <unistd.h>
 
 #include <sqlite3.h>
@@ -592,14 +593,17 @@ public:
         line += pay.str();
         line += "}\n";
 
+        lines_.push_back(line);  // raw JSONL for queue injection
         burst_.push_back(make_sse_frame(line));
         return true;
     }
 
     const std::vector<std::string>& burst() const { return burst_; }
+    const std::vector<std::string>& lines() const { return lines_; }
     bool empty() const { return burst_.empty(); }
 
 private:
+    std::vector<std::string> lines_;  // raw JSONL for pushing to queue_
     std::vector<std::string> burst_;  // SSE frames to push on each new connect
 };
 
@@ -645,14 +649,18 @@ public:
     void start() {
         setup_listen_socket();
         running_ = true;
-        accept_thread_ = std::thread([this] { accept_loop(); });
-        writer_thread_ = std::thread([this] { writer_loop(); });
+        accept_thread_  = std::thread([this] { accept_loop(); });
+        writer_thread_  = std::thread([this] { writer_loop(); });
+        if (!l2_db_.empty()) {
+            watcher_thread_ = std::thread([this] { watcher_loop(); });
+        }
     }
 
     void stop() {
         running_ = false;
         close_listen_socket();
-        if (accept_thread_.joinable()) accept_thread_.join();
+        if (accept_thread_.joinable())  accept_thread_.join();
+        if (watcher_thread_.joinable()) watcher_thread_.join();
         {
             std::lock_guard<std::mutex> lock{clients_mutex_};
             for (const int fd : sse_clients_) ::close(fd);
@@ -845,6 +853,39 @@ private:
         }
     }
 
+    // Polls l2_db_ mtime every 5 s.  On change (including first appearance)
+    // loads a fresh L2StaticCache and injects the JSONL lines into queue_ so
+    // the writer_loop broadcasts them to all connected SSE clients.
+    void watcher_loop() {
+        time_t last_mtime = 0;
+        while (running_) {
+            // Sleep in 100 ms increments so stop() is seen quickly.
+            for (int i = 0; i < 50 && running_; ++i) {
+                std::this_thread::sleep_for(std::chrono::milliseconds{100});
+            }
+            if (!running_ || l2_db_.empty()) continue;
+
+            struct ::stat st{};
+            if (::stat(l2_db_.c_str(), &st) != 0) {
+                // File absent — reset so we detect creation next poll.
+                last_mtime = 0;
+                continue;
+            }
+            if (st.st_mtime == last_mtime) continue;
+            last_mtime = st.st_mtime;
+
+            std::fprintf(stderr,
+                "[dedalus_viewer] L2 DB changed, reloading '%s'\n",
+                l2_db_.c_str());
+            L2StaticCache cache;
+            if (cache.load(l2_db_, l2_cell_m_, l2_vcell_m_, l2_min_score_)) {
+                for (const auto& line : cache.lines()) {
+                    queue_.push(line);
+                }
+            }
+        }
+    }
+
     void respond_json(int fd, const std::string& body) {
         std::string resp =
             "HTTP/1.1 200 OK\r\n"
@@ -936,6 +977,7 @@ private:
     std::atomic<bool> running_{false};
     std::thread accept_thread_;
     std::thread writer_thread_;
+    std::thread watcher_thread_;
 
     mutable std::mutex clients_mutex_;
     std::vector<int> sse_clients_;

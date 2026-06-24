@@ -1040,6 +1040,9 @@ if [[ "$MERGE_OBSTACLE_MAP" -eq 1 ]]; then
     tmux new-window -t "$SESSION_NAME" -n post-mission "bash -lc $(printf '%q' "$(tmux_shell_with_failure_hold "$POST_MISSION_RUN_SHELL")")"
 fi
 MISSION_ENV_VARS=()
+if [[ -n "${DEDALUS_SITE_ID:-}" ]]; then
+    MISSION_ENV_VARS+=("DEDALUS_SITE_ID=$DEDALUS_SITE_ID")
+fi
 if [[ "$WITH_SCENE_INVENTORY" -eq 1 ]]; then
     MISSION_ENV_VARS+=("DEDALUS_AIRSIM_SCENE_INVENTORY=$SCENE_INVENTORY_PATH")
 fi
