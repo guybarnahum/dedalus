@@ -2009,7 +2009,6 @@ function drawESDFArrows() {
 function draw() {
   ctx.clearRect(0, 0, canvas.width, canvas.height);
   drawPlanningFaces();   // L2 persistent planning map (exterior faces, back-most layer)
-  drawESDFFaces();       // L3 ESDF shell cells colored by clearance distance
   drawTravFaces();       // L1 traversability exterior surface
   drawObstacleCells();   // raw evidence cells (demoted, off by default)
   drawLiveAgingOverlay(); // live delta events with age decay
