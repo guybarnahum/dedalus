@@ -183,7 +183,7 @@ h3 { font-size: 12px; margin: 10px 0 6px; color: #c0c4d0; text-transform: upperc
             </span>
           </div>
           <input type="range" id="esdf-r-slider" class="esdf-r-slider"
-            min="0.5" max="5" step="0.5" value="2" oninput="onEsdfRSlider(this.value)">
+            min="1" max="20" step="0.5" value="5" oninput="onEsdfRSlider(this.value)">
           <div style="display:flex;justify-content:space-between;font-size:9px;color:#4a5470;margin-top:1px;">
             <span>0.5m</span><span>d₀</span>
           </div>
@@ -424,7 +424,7 @@ let   esdfArrowGeom  = [];         // sparse smoothed arrows pre-built by buildE
 let   esdfCellSizeM  = 1.0;        // XY cell size (inherited from L2)
 let   esdfVCellSizeM = 2.0;        // Z  cell size (inherited from L2)
 let   esdfFacesGeom  = [];         // pre-built exterior face geometry for L3
-let   esdfSmoothR    = 2.0;        // Gaussian averaging radius (metres) for arrow visualization
+let   esdfSmoothR    = 5.0;        // Gaussian averaging radius (metres) for arrow visualization
 const ESDF_A_MAX     = 3.0;        // assumed max decel (m/s²) used for velocity-based R
 
 // Traversability (L1)
@@ -2647,7 +2647,7 @@ function startLiveStream() {
       esdfVCellSizeM = esdf.vcell_size_m || 2.0;
       // Keep slider max in sync with d0 so R can span the full truncation range.
       const rSlider = el("esdf-r-slider");
-      if (rSlider) { rSlider.max = esdfD0M; rSlider.step = (esdfCellSizeM || 1.0); }
+      // Slider range is fixed 1–20 m; do not override with d0M.
       if (esdf.net_rep) esdfNetRepulsion=esdf.net_rep;
       const inCells = Array.isArray(esdf.cells) ? esdf.cells : [];
       for (const c of inCells) {
