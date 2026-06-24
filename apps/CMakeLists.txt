@@ -61,6 +61,10 @@ add_executable(dedalus_viewer
     dedalus_viewer.cpp
 )
 
+# SQLite3 is the only external dep — intentionally no dedalus_core link so the
+# viewer binary remains deployable on any host without the full drone stack.
+target_link_libraries(dedalus_viewer PRIVATE SQLite3::SQLite3)
+
 target_compile_features(dedalus_viewer PRIVATE cxx_std_20)
 
 target_compile_options(dedalus_viewer PRIVATE -Wall -Wextra -Wpedantic)

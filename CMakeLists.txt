@@ -9,6 +9,8 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 option(DEDALUS_BUILD_APPS "Build Dedalus runtime/debug apps" ON)
 option(DEDALUS_BUILD_TESTS "Build Dedalus unit tests" ON)
 
+find_package(SQLite3 REQUIRED)
+
 add_subdirectory(src)
 
 if(DEDALUS_BUILD_APPS)

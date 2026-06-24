@@ -88,6 +88,23 @@ The Virtual Proving Ground (`simulation/` directory) provides a complete high-fi
    ```bash
    python test-flight.py --control px4 --trajectory trajectories/circle_figure8.json
    ```
+4. **Mission with obstacle memory** (provide config + region, everything else auto-derives):
+   ```bash
+   # Set once per site — geo-anchor for the persistent L2 obstacle map.
+   export DEDALUS_SITE_ID=airsim_47.641N_122.140W
+
+   # Launch mission (output-dir, mission-id, L2 DB path all auto-derived).
+   DEDALUS_AIRSIM_ENABLE_DEPTH_OBSTACLES=1 \
+   simulation/airsim/run_mission.sh \
+     --config config/core_stack_object_behavior_airsim_existing_object_circle.yml
+
+   # Open viewer in another terminal (same DEDALUS_SITE_ID picks up L2 map).
+   DEDALUS_SITE_ID=airsim_47.641N_122.140W \
+   ./build-staging/apps/dedalus_viewer \
+     --host 127.0.0.1 --port 47770 \
+     --http-port 8090 --static-root build-staging
+   ```
+   Output lands in `out/<slug>/<timestamp>/`. L2 obstacle map accumulates in `maps/$DEDALUS_SITE_ID/l2_map.db`.
 
 ### Trajectory-Based Flight Testing
 

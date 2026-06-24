@@ -54,6 +54,8 @@
 #include <sys/socket.h>
 #include <unistd.h>
 
+#include <sqlite3.h>
+
 // MSG_NOSIGNAL / MSG_DONTWAIT are Linux extensions; define as 0 on platforms
 // that don't have them (SIGPIPE is ignored at startup anyway).
 #ifndef MSG_NOSIGNAL
@@ -486,6 +488,118 @@ std::string make_sse_frame(const std::string& jsonl_line) {
     return frame;
 }
 
+// ── L2 static cache ───────────────────────────────────────────────────────────
+//
+// Reads the L2 planning map from a SQLite DB at startup and builds a single
+// planning_map_snapshot SSE frame that is pushed to every new SSE client
+// immediately on connect — before the live stream starts flowing.
+//
+// This means the viewer always shows the saved obstacle map even when the
+// mission_loop is not running.  When the live runtime connects it will send
+// incremental planning_map_delta updates that merge on top of this baseline.
+
+class L2StaticCache {
+public:
+    // Returns true on success (including when db_path is empty — no-op).
+    bool load(const std::string& db_path,
+              double cell_m, double vcell_m, double min_score) {
+        if (db_path.empty()) return true;
+
+        sqlite3* db = nullptr;
+        if (sqlite3_open_v2(db_path.c_str(), &db,
+                            SQLITE_OPEN_READONLY, nullptr) != SQLITE_OK) {
+            std::fprintf(stderr,
+                "[dedalus_viewer] cannot open L2 DB '%s': %s\n",
+                db_path.c_str(), sqlite3_errmsg(db));
+            sqlite3_close(db);
+            return false;
+        }
+
+        const char* sql =
+            "SELECT xi, yi, zi, score, confidence, count, updated_ns"
+            "  FROM cells WHERE score >= ?"
+            "  ORDER BY xi, yi, zi;";
+        sqlite3_stmt* stmt = nullptr;
+        if (sqlite3_prepare_v2(db, sql, -1, &stmt, nullptr) != SQLITE_OK) {
+            sqlite3_close(db);
+            return false;
+        }
+        sqlite3_bind_double(stmt, 1, min_score);
+
+        struct RawCell {
+            int xi, yi, zi;
+            float score, conf;
+            std::uint32_t count;
+            std::int64_t  ts;
+        };
+        std::vector<RawCell> cells;
+        while (sqlite3_step(stmt) == SQLITE_ROW) {
+            cells.push_back({
+                sqlite3_column_int(stmt, 0),
+                sqlite3_column_int(stmt, 1),
+                sqlite3_column_int(stmt, 2),
+                static_cast<float>(sqlite3_column_double(stmt, 3)),
+                static_cast<float>(sqlite3_column_double(stmt, 4)),
+                static_cast<std::uint32_t>(sqlite3_column_int(stmt, 5)),
+                sqlite3_column_int64(stmt, 6),
+            });
+        }
+        sqlite3_finalize(stmt);
+        sqlite3_close(db);
+
+        std::fprintf(stderr,
+            "[dedalus_viewer] L2 DB '%s': %zu cells loaded\n",
+            db_path.c_str(), cells.size());
+
+        if (cells.empty()) return true;
+
+        // Serialize into a single planning_map_snapshot JSONL line — same
+        // schema as to_compact_stream_json() / on_planning_map_snapshot().
+        std::ostringstream pay;
+        pay.precision(6);
+        pay << "{\"schema\":\"dedalus.mission_local_planning_map.v1\"";
+        pay << ",\"cell_size_m\":"          << cell_m;
+        pay << ",\"vertical_cell_size_m\":" << vcell_m;
+        pay << ",\"cell_count\":"           << cells.size();
+        pay << ",\"total_cells\":"          << cells.size();
+        pay << ",\"exported_cells\":"       << cells.size();
+        pay << ",\"cells\":[";
+        for (std::size_t i = 0; i < cells.size(); ++i) {
+            const auto& c = cells[i];
+            if (i > 0) pay << ',';
+            const double cx = (static_cast<double>(c.xi) + 0.5) * cell_m;
+            const double cy = (static_cast<double>(c.yi) + 0.5) * cell_m;
+            const double cz = (static_cast<double>(c.zi) + 0.5) * vcell_m;
+            pay << "{\"center_map\":[" << cx << ',' << cy << ',' << cz << ']';
+            pay << ",\"occupied_score\":"    << c.score;
+            pay << ",\"confidence\":"        << c.conf;
+            pay << ",\"source_cell_count\":" << c.count;
+            if (c.ts > 0) {
+                pay << ",\"t\":" << (c.ts / 1'000'000'000LL);
+            }
+            pay << '}';
+        }
+        pay << "]}";
+
+        std::string line;
+        line.reserve(pay.str().size() + 128U);
+        line += "{\"type\":\"planning_map_snapshot\""
+                ",\"seq\":0,\"map_seq\":0,\"timestamp_ns\":0"
+                ",\"planning_map_snapshot\":";
+        line += pay.str();
+        line += "}\n";
+
+        burst_.push_back(make_sse_frame(line));
+        return true;
+    }
+
+    const std::vector<std::string>& burst() const { return burst_; }
+    bool empty() const { return burst_.empty(); }
+
+private:
+    std::vector<std::string> burst_;  // SSE frames to push on each new connect
+};
+
 // Best-effort blocking send.  Returns false if the connection appears broken.
 bool send_all(int fd, const char* data, std::size_t size) {
     while (size > 0) {
@@ -509,13 +623,15 @@ public:
     SseRelay(std::string bind_host, std::uint16_t http_port,
              SharedQueue& queue, const SourceMonitor& monitor,
              std::string static_root = {},
-             std::string static_default_file = "viewer.html")
+             std::string static_default_file = "viewer.html",
+             const L2StaticCache* l2_cache = nullptr)
         : bind_host_(std::move(bind_host)),
           http_port_(http_port),
           queue_(queue),
           monitor_(monitor),
           static_root_(std::move(static_root)),
-          static_default_file_(std::move(static_default_file)) {}
+          static_default_file_(std::move(static_default_file)),
+          l2_cache_(l2_cache) {}
 
     void start() {
         setup_listen_socket();
@@ -624,6 +740,17 @@ private:
         if (!send_all(client, headers)) {
             ::close(client);
             return;
+        }
+        // Push the L2 static cache while the socket is still blocking — this
+        // gives the browser the saved obstacle map immediately, before any live
+        // events arrive from the runtime.
+        if (l2_cache_ && !l2_cache_->empty()) {
+            for (const auto& frame : l2_cache_->burst()) {
+                if (!send_all(client, frame)) {
+                    ::close(client);
+                    return;
+                }
+            }
         }
         // Switch to non-blocking so slow clients don't stall the writer.
         const int flags = ::fcntl(client, F_GETFL, 0);
@@ -783,10 +910,11 @@ private:
     std::string bind_host_;
     std::uint16_t http_port_{0};
     std::uint16_t bound_port_{0};
-    SharedQueue&        queue_;
+    SharedQueue&         queue_;
     const SourceMonitor& monitor_;
     std::string static_root_;
     std::string static_default_file_;
+    const L2StaticCache* l2_cache_{nullptr};
 
     int listen_fd_{-1};
     std::atomic<bool> running_{false};
@@ -809,6 +937,11 @@ struct CliOptions {
     double replay_speed{1.0};
     std::string static_root;
     std::string static_default_file{"viewer.html"};
+    // L2 planning map DB — served to every new SSE client immediately.
+    std::string l2_db;
+    double l2_cell_m{1.0};
+    double l2_vcell_m{2.0};
+    double l2_min_score{0.5};
 };
 
 CliOptions parse_args(int argc, char** argv) {
@@ -828,6 +961,10 @@ CliOptions parse_args(int argc, char** argv) {
         else if (arg == "--replay-speed")        { opts.replay_speed        = std::stod(next_arg("--replay-speed")); }
         else if (arg == "--static-root")         { opts.static_root         = next_arg("--static-root"); }
         else if (arg == "--static-default-file") { opts.static_default_file = next_arg("--static-default-file"); }
+        else if (arg == "--l2-db")               { opts.l2_db               = next_arg("--l2-db"); }
+        else if (arg == "--l2-cell-m")           { opts.l2_cell_m           = std::stod(next_arg("--l2-cell-m")); }
+        else if (arg == "--l2-vcell-m")          { opts.l2_vcell_m          = std::stod(next_arg("--l2-vcell-m")); }
+        else if (arg == "--l2-min-score")        { opts.l2_min_score        = std::stod(next_arg("--l2-min-score")); }
         else if (arg == "-h" || arg == "--help") {
             std::cout <<
                 "usage: dedalus_viewer [options]\n"
@@ -840,6 +977,11 @@ CliOptions parse_args(int argc, char** argv) {
                 "  --replay-speed F         Replay speed multiplier (default: 1.0)\n"
                 "  --static-root DIR        Serve static files from DIR (default: disabled)\n"
                 "  --static-default-file F  Default file for GET / (default: viewer.html)\n"
+                "  --l2-db PATH             L2 SQLite DB to push on every new SSE connect\n"
+                "                           (default: maps/$DEDALUS_SITE_ID/l2_map.db if env set)\n"
+                "  --l2-cell-m F            L2 XY cell size in metres (default: 1.0)\n"
+                "  --l2-vcell-m F           L2 Z  cell size in metres (default: 2.0)\n"
+                "  --l2-min-score F         Minimum occupied_score to include (default: 0.5)\n"
                 "  -h / --help              Show this help\n"
                 "\n"
                 "Browser endpoints:\n"
@@ -851,6 +993,12 @@ CliOptions parse_args(int argc, char** argv) {
             std::exit(0);
         } else {
             throw std::invalid_argument("unknown argument: " + arg);
+        }
+    }
+    // Derive L2 DB path from DEDALUS_SITE_ID if --l2-db was not passed explicitly.
+    if (opts.l2_db.empty()) {
+        if (const char* site_id = std::getenv("DEDALUS_SITE_ID")) {
+            opts.l2_db = std::string{"maps/"} + site_id + "/l2_map.db";
         }
     }
     return opts;
@@ -876,6 +1024,18 @@ int main(int argc, char** argv) {
 
         SharedQueue queue{512};
 
+        // Load L2 planning map from SQLite if --l2-db was provided.
+        // Done before starting threads so the cache is immutable after this.
+        L2StaticCache l2_cache;
+        if (!opts.l2_db.empty()) {
+            if (!l2_cache.load(opts.l2_db,
+                               opts.l2_cell_m, opts.l2_vcell_m,
+                               opts.l2_min_score)) {
+                std::cerr << "dedalus_viewer: warning: could not load L2 DB '"
+                          << opts.l2_db << "' — continuing without it\n";
+            }
+        }
+
         SourceMonitor monitor{
             opts.live_host, opts.live_port,
             opts.replay_dir, opts.replay_speed,
@@ -883,7 +1043,8 @@ int main(int argc, char** argv) {
 
         // Bind to all interfaces so browsers on other machines can connect.
         SseRelay relay{"0.0.0.0", opts.http_port, queue, monitor,
-                       opts.static_root, opts.static_default_file};
+                       opts.static_root, opts.static_default_file,
+                       l2_cache.empty() ? nullptr : &l2_cache};
 
         relay.start();
         monitor.start();
@@ -897,6 +1058,9 @@ int main(int argc, char** argv) {
             << "  health check:  http://0.0.0.0:" << http_port << "/healthz\n";
         if (!opts.replay_dir.empty()) {
             std::cout << "  replay dir  :  " << opts.replay_dir << "\n";
+        }
+        if (!opts.l2_db.empty()) {
+            std::cout << "  L2 DB       :  " << opts.l2_db << "\n";
         }
         if (!opts.static_root.empty()) {
             std::cout << "  static root :  " << opts.static_root << "\n"

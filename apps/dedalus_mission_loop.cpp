@@ -73,6 +73,8 @@ struct Args {
     double behavior_min_height_override_m{-1.0};
     double behavior_duration_override_s{-1.0};
     bool safe_height_override_explicit{false};
+    // L2 persistent map path — derived from DEDALUS_SITE_ID if not empty.
+    std::string planning_map_persistence_path;
 };
 
 class ProgressReporter {
@@ -311,6 +313,12 @@ Args parse_args(int argc, char** argv) {
             }
         }
     }
+    // Derive L2 persistence path from DEDALUS_SITE_ID if not set by any other means.
+    if (args.planning_map_persistence_path.empty()) {
+        if (const char* site_id = std::getenv("DEDALUS_SITE_ID")) {
+            args.planning_map_persistence_path = std::string{"maps/"} + site_id + "/l2_map.db";
+        }
+    }
     return args;
 }
 
@@ -513,6 +521,11 @@ int main(int argc, char** argv) {
         app_config.runner.planning_map_publisher = planning_map_publisher;
         app_config.runner.esdf_map_publisher = esdf_map_publisher;
         app_config.runner.snapshot_subscribers = {latest_snapshot_subscriber, artifact_snapshot_writer};
+        if (!args.planning_map_persistence_path.empty()) {
+            std::filesystem::create_directories(
+                std::filesystem::path{args.planning_map_persistence_path}.parent_path());
+            app_config.runner.planning_map_persistence_path = args.planning_map_persistence_path;
+        }
 
         dedalus::CoreStackRunner runner{
             registry.create(config),

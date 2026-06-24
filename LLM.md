@@ -140,18 +140,16 @@ Runtime:
 Post-mission:
   mission_obstacle_map_deltas.jsonl
     -> mission_obstacle_map_deltas.sqlite
-    -> maps/<site_id>/site_obstacle_map.sqlite
+    -> maps/<site_id>/l2_map.db      (was: site_obstacle_map.sqlite)
     -> out/<run>/obstacle_memory_manifest.json
 ```
 
 Key commands:
 ```bash
+# Minimal invocation — config + site ID, all else auto-derived.
+DEDALUS_SITE_ID=airsim_47.641N_122.140W \
 simulation/airsim/run_mission.sh \
-  --output-dir out/<run> \
-  --merge-obstacle-map \
-  --obstacle-map-site-id <site_id> \
-  --obstacle-map-site-frame-id airsim_world \
-  --obstacle-map-mission-id <mission_id>
+  --config config/core_stack_object_behavior_airsim_existing_object_circle.yml
 
 python3 tools/avoidance/validate_obstacle_memory_manifest.py \
   out/<run>/obstacle_memory_manifest.json \
@@ -272,7 +270,67 @@ Stage 7 depends on both Stage 2.5 (ray_cast/bbox queries) and Stage 4 (update_tu
 
 ---
 
-## 5. Architecture Boundaries
+## 5. Geo-Region L2 Map — Storage, Naming, and Anchor Rules
+
+### Directory layout
+
+```
+maps/
+  airsim_32.457N_117.123W/
+    l2_map.db       # MissionLocalPlanningMap SQLite — cross-mission persistent L2
+    site.yaml       # anchor definition (see below)
+  rw_32.457N_117.123W/
+    l2_map.db
+    site.yaml
+```
+
+Source prefixes: `airsim_` (AirSim SITL), `rw_` (real-world GPS), `px4sitl_` (PX4 SITL with custom origin).
+Coordinates: lat then lon, 3 decimal places (~111 m resolution), cardinal suffix (N/S, E/W). No minus signs.
+`maps/` is gitignored — it is a runtime artifact, not a repo asset.
+
+### site.yaml — anchor definition
+
+```yaml
+# Created once on first mission for this site. Never overwritten.
+src: airsim                    # airsim | rw | px4sitl
+anchor_lat:  32.457
+anchor_lon: -117.123
+anchor_alt_m: 0.0
+created_at: 2026-06-24T00:00:00Z
+frame: NED                     # all L2 cell coordinates are NED relative to this anchor
+```
+
+The anchor is the NED origin for every cell in `l2_map.db`. For AirSim this is `OriginGeopoint` from `settings.json`. For real-world it is a pre-configured site reference point (launch pad, geo-fence center) set before the first flight.
+
+### ⚠ WARNING — Anchor conflict / overlapping maps
+
+**Two missions with different anchors but overlapping flight areas will produce two conflicting DBs.** Cells for the same physical obstacle will appear at different local coordinates in each DB. The viewer will show duplicate or offset obstacles. There is no automatic detection or merge at runtime.
+
+Rules to prevent this:
+
+1. **Anchor is a site config, not a mission property.** Before starting any mission in a new area, check whether a `maps/<src>_<lat>_<lon>/site.yaml` already exists for that geographic region. If yes, adopt its anchor as the NED origin for the new mission. If no, create the site directory and `site.yaml` first.
+
+2. **Detection: check for anchor overlap before creating a new site.** When registering a new anchor, search existing `maps/` directories and compute the distance to all existing anchors. If any anchor is within `2 × horizon_m` (default 300 m), warn and refuse to create a second site — extend the existing one instead.
+
+3. **Merge / repair tool (escape hatch).** If two DBs with different anchors already contain overlapping data, use the offline repair tool (to be written: `tools/mission/merge_l2_maps.py`) to transform all cells from one anchor frame into the other using a flat-earth rigid-body offset, then insert into the canonical DB. Valid for anchor separations < 50 km.
+
+4. **Do not store cells in WGS84.** The avoidance stack operates in local NED. Converting on every cell read/write adds floating-point noise and couples storage to geodetic math. The anchor transform is a one-time startup step, not a per-cell cost.
+
+### L2 viewer — dual-source model
+
+`dedalus_viewer --l2-db maps/<site-id>/l2_map.db` provides L2 to the browser without the mission_loop running:
+
+- **On connect**: viewer reads the full DB and pushes a `planning_map_snapshot` SSE burst to the new client.
+- **During active flight**: live `planning_map_delta` SSE events from the runtime stream merge new cells on top. The flush thread writes dirty cells to the DB every 10 s, so the DB and the SSE stream stay consistent — SSE is just ~10 s ahead of the DB.
+- **Without active flight**: only the DB snapshot is available (no L0/L1, no L3 ESDF — those are not persisted).
+
+Do not replace the SSE live path with DB polling. The DB lags flush_interval (10 s) behind the live observations; SSE is ~100 ms. Both serve different roles: DB = durable cross-session baseline, SSE = real-time in-flight updates.
+
+**Prerequisite**: `planning_map_persistence_path_` in `CoreStackRunnerConfig` must be set to `maps/<site-id>/l2_map.db` in the mission binary for the flush thread to write to the site DB during flight. Currently this is not wired in `dedalus_mission_loop.cpp` — it is infrastructure only.
+
+---
+
+## 6. Architecture Boundaries
 
 ```
 WorldSnapshot           autonomy state

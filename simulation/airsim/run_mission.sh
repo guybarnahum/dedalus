@@ -20,7 +20,8 @@ mkdir -p "$LOG_DIR_ABS"
 BUILD_DIR="$REPO_ROOT_ABS/build-staging"
 MISSION_BIN="$BUILD_DIR/apps/dedalus_mission_loop"
 CONFIG_PATH="$REPO_ROOT_ABS/config/core_stack_object_behavior_airsim_existing_object_circle.yml"
-OUTPUT_DIR="$REPO_ROOT_ABS/out/object_behavior_airsim_existing_object_circle"
+OUTPUT_DIR=""          # derived from MISSION_SLUG+TIMESTAMP after arg parse if not explicit
+OUTPUT_DIR_EXPLICIT=0
 STREAM_HOST="127.0.0.1"
 STREAM_PORT="47770"
 RUNTIME_EVENT_HTTP_HOST="127.0.0.1"
@@ -50,7 +51,8 @@ OBSTACLE_MEMORY_MANIFEST_WAIT_SECONDS="${DEDALUS_OBSTACLE_MEMORY_MANIFEST_WAIT_S
 MISSION_OBSTACLE_MAP_DELTAS_WRITE_EVERY_UPDATES="${MISSION_OBSTACLE_MAP_DELTAS_WRITE_EVERY_UPDATES:-10}"
 OBSTACLE_MAP_SITE_ID="airsim_neighborhood"
 OBSTACLE_MAP_SITE_FRAME_ID="airsim_world"
-OBSTACLE_MAP_MISSION_ID="object_behavior_airsim_existing_object_circle"
+OBSTACLE_MAP_MISSION_ID=""     # derived from MISSION_SLUG+TIMESTAMP after arg parse if not explicit
+OBSTACLE_MAP_MISSION_ID_EXPLICIT=0
 OBSTACLE_MAP_WRITE_EVERY_UPDATES="10"
 MERGE_OBSTACLE_MAP=0
 SITE_OBSTACLE_MAP_PATH=""
@@ -347,7 +349,7 @@ while [[ $# -gt 0 ]]; do
         --build-dir) BUILD_DIR="$(abs_path "$2")"; shift 2 ;;
         --config) CONFIG_PATH="$(abs_path "$2")"; shift 2 ;;
         --sim-config) SIM_CONFIG_PATH="$(abs_path "$2")"; shift 2 ;;
-        --output-dir) OUTPUT_DIR="$(creatable_abs_path "$2")"; shift 2 ;;
+        --output-dir) OUTPUT_DIR="$(creatable_abs_path "$2")"; OUTPUT_DIR_EXPLICIT=1; shift 2 ;;
         --stream-host) STREAM_HOST="$2"; shift 2 ;;
         --stream-port) STREAM_PORT="$2"; shift 2 ;;
         --runtime-event-http-host) RUNTIME_EVENT_HTTP_HOST="$2"; shift 2 ;;
@@ -371,7 +373,7 @@ while [[ $# -gt 0 ]]; do
         --obstacle-map-artifact) OBSTACLE_MAP_ARTIFACT_PATH="$(creatable_abs_path "$2")"; WRITE_FULL_OBSTACLE_MAP_ARTIFACT=1; OBSTACLE_MAP_ARTIFACT=1; shift 2 ;;
         --obstacle-map-site-id) OBSTACLE_MAP_SITE_ID="$2"; shift 2 ;;
         --obstacle-map-site-frame-id) OBSTACLE_MAP_SITE_FRAME_ID="$2"; shift 2 ;;
-        --obstacle-map-mission-id) OBSTACLE_MAP_MISSION_ID="$2"; shift 2 ;;
+        --obstacle-map-mission-id) OBSTACLE_MAP_MISSION_ID="$2"; OBSTACLE_MAP_MISSION_ID_EXPLICIT=1; shift 2 ;;
         --obstacle-map-write-every-updates) OBSTACLE_MAP_WRITE_EVERY_UPDATES="$2"; shift 2 ;;
         --merge-obstacle-map) MERGE_OBSTACLE_MAP=1; OBSTACLE_MAP_ARTIFACT=1; shift ;;
         --site-map-format) SITE_OBSTACLE_MAP_FORMAT="$2"; shift 2 ;;
@@ -417,6 +419,35 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
+# ── Derive slug + paths from DEDALUS_SITE_ID / CONFIG_PATH ──────────────────
+# Mission slug: config filename stem minus "core_stack_" prefix.
+MISSION_SLUG="$(basename "$CONFIG_PATH")"
+MISSION_SLUG="${MISSION_SLUG#core_stack_}"
+MISSION_SLUG="${MISSION_SLUG%.yaml}"
+MISSION_SLUG="${MISSION_SLUG%.yml}"
+
+# DEDALUS_SITE_ID: single source of truth for the geo-region L2 map.
+# Explicit --obstacle-map-site-id / --obstacle-map-site-frame-id override these.
+if [[ -n "${DEDALUS_SITE_ID:-}" ]]; then
+    OBSTACLE_MAP_SITE_ID="$DEDALUS_SITE_ID"
+    # Derive frame from site ID prefix if not already overridden by CLI.
+    case "$DEDALUS_SITE_ID" in
+        airsim_*) OBSTACLE_MAP_SITE_FRAME_ID="airsim_world" ;;
+        *)        OBSTACLE_MAP_SITE_FRAME_ID="ned_world" ;;
+    esac
+    MERGE_OBSTACLE_MAP=1
+fi
+
+# Output dir: out/<slug>/<timestamp>/ (nested so all runs of one mission group together).
+if [[ "$OUTPUT_DIR_EXPLICIT" -eq 0 ]]; then
+    OUTPUT_DIR="$REPO_ROOT_ABS/out/$MISSION_SLUG/$TIMESTAMP"
+fi
+
+# Mission ID: <slug>_<timestamp> — unique per run, traceable to config + time.
+if [[ "$OBSTACLE_MAP_MISSION_ID_EXPLICIT" -eq 0 ]]; then
+    OBSTACLE_MAP_MISSION_ID="${MISSION_SLUG}_${TIMESTAMP}"
+fi
+
 MISSION_BIN="$BUILD_DIR/apps/dedalus_mission_loop"
 MISSION_LOG="$LOG_DIR_ABS/mission_${TIMESTAMP}.log"
 CAMERA_LOG="$LOG_DIR_ABS/camera_pointing_${TIMESTAMP}.log"
@@ -456,7 +487,7 @@ if [[ -z "$SITE_OBSTACLE_MAP_PATH" ]]; then
     SITE_OBSTACLE_MAP_PATH="$REPO_ROOT_ABS/maps/$OBSTACLE_MAP_SITE_ID/site_obstacle_map.json"
 fi
 if [[ -z "$SITE_OBSTACLE_MAP_SQLITE_PATH" ]]; then
-    SITE_OBSTACLE_MAP_SQLITE_PATH="$REPO_ROOT_ABS/maps/$OBSTACLE_MAP_SITE_ID/site_obstacle_map.sqlite"
+    SITE_OBSTACLE_MAP_SQLITE_PATH="$REPO_ROOT_ABS/maps/$OBSTACLE_MAP_SITE_ID/l2_map.db"
 fi
 if [[ -z "$SCENE_INVENTORY_PATH" ]]; then
     SCENE_INVENTORY_PATH="$REPO_ROOT_ABS/out/airsim_scene_inventory/${SCENE_ID}.objects.json"

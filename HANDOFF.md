@@ -166,33 +166,32 @@ python3 tools/validation/validate-mission-unified-viewer.py build/viewer.html
 
 Start dedalus_viewer sidecar (live mode):
 ```bash
+DEDALUS_SITE_ID=airsim_47.641N_122.140W \
 ./build-staging/apps/dedalus_viewer \
   --host 127.0.0.1 --port 47770 \
   --http-port 8090 --static-root build-staging
+# L2 DB auto-derived: maps/$DEDALUS_SITE_ID/l2_map.db
 ```
 
 Start dedalus_viewer sidecar (replay mode):
 ```bash
 ./build-staging/apps/dedalus_viewer \
-  --replay-dir out/<run> --http-port 8090 --static-root build-staging
+  --replay-dir out/<slug>/<timestamp> --http-port 8090 --static-root build-staging
 ```
 
-Start AirSim mission with full obstacle pipeline:
+Start AirSim mission — provide config and site ID, everything else auto-derives:
 ```bash
+DEDALUS_SITE_ID=airsim_47.641N_122.140W \
 DEDALUS_AIRSIM_ENABLE_DEPTH_OBSTACLES=1 \
-DEDALUS_AIRSIM_DEPTH_OBSTACLE_MAX_POINTS=4096 \
-DEDALUS_AIRSIM_DEPTH_OBSTACLE_STRIDE=8 \
-DEDALUS_AIRSIM_DEPTH_OBSTACLE_MAX_RANGE_M=30 \
-DEDALUS_AIRSIM_DEPTH_OBSTACLE_MIN_RANGE_M=0.5 \
-DEDALUS_AIRSIM_DEPTH_OBSTACLE_CONFIDENCE=0.8 \
 simulation/airsim/run_mission.sh \
-  --output-dir out/<run> \
-  --merge-obstacle-map \
-  --obstacle-map-site-id <site_id> \
-  --obstacle-map-site-frame-id airsim_world \
-  --obstacle-map-mission-id <mission_id> \
+  --config config/core_stack_object_behavior_airsim_existing_object_circle.yml \
   --runtime-event-http-port 8080 \
-  --runtime-event-static-root out/<run>
+  --runtime-event-static-root build-staging
+# Auto-derives: output-dir=out/<slug>/<YYYYMMDD_HHMMSS>
+#               mission-id=<slug>_<YYYYMMDD_HHMMSS>
+#               site-frame=airsim_world (from airsim_ prefix)
+#               L2 DB flush → maps/$DEDALUS_SITE_ID/l2_map.db (every 10s)
+#               L2 merge → maps/$DEDALUS_SITE_ID/l2_map.db (post-mission)
 ```
 
 SSH browser access:
