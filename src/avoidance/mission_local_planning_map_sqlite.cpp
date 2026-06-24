@@ -59,6 +59,13 @@ CREATE TABLE IF NOT EXISTS cells (
     updated_ns INTEGER NOT NULL DEFAULT 0,
     PRIMARY KEY (xi, yi, zi)
 );
+
+-- Config params written by the C++ runtime so viewers can reconstruct
+-- cell centres correctly without needing CLI flags.
+CREATE TABLE IF NOT EXISTS params (
+    key   TEXT PRIMARY KEY,
+    value REAL NOT NULL
+);
 )";
 
 const char* kUpsert =
@@ -95,6 +102,25 @@ bool MissionLocalPlanningMap::open_db(const std::filesystem::path& path) {
     db_ = db;
 
     exec(db, kSchema);
+
+    // Persist config so the viewer can reconstruct cell centres without CLI flags.
+    {
+        const char* kUpsertParam =
+            "INSERT INTO params(key,value) VALUES(?,?)"
+            " ON CONFLICT(key) DO UPDATE SET value=excluded.value;";
+        sqlite3_stmt* ps = nullptr;
+        if (sqlite3_prepare_v2(db, kUpsertParam, -1, &ps, nullptr) == SQLITE_OK) {
+            auto bind_kv = [&](const char* k, double v) {
+                sqlite3_bind_text(ps, 1, k, -1, SQLITE_STATIC);
+                sqlite3_bind_double(ps, 2, v);
+                sqlite3_step(ps);
+                sqlite3_reset(ps);
+            };
+            bind_kv("cell_size_m",          config_.cell_size_m);
+            bind_kv("vertical_cell_size_m", config_.vertical_cell_size_m);
+            sqlite3_finalize(ps);
+        }
+    }
 
     // Load all cells with score >= min_occupied_score into memory.
     reset();
@@ -162,9 +188,12 @@ bool MissionLocalPlanningMap::flush_dirty_to_db() {
 
     // ── SQLite I/O outside the lock ──────────────────────────────────────────
 
+    // system_clock so updated_ns is a Unix wall-clock timestamp that viewers
+    // can compare against Date.now().  steady_clock would give nanoseconds
+    // since boot — not comparable to a Unix epoch.
     const auto now_ns = static_cast<sqlite3_int64>(
         std::chrono::duration_cast<std::chrono::nanoseconds>(
-            std::chrono::steady_clock::now().time_since_epoch())
+            std::chrono::system_clock::now().time_since_epoch())
             .count());
 
     exec(db, "BEGIN;");

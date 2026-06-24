@@ -1293,14 +1293,12 @@ function drawPlanningFaces() {
   ctx.lineWidth = 0.5 * devicePixelRatio;
 
   const byType = state.travColorByType;
-  // L2 cells age from full color (just observed) toward a dim grey-blue over
-  // AGE_MAX_S seconds (10 min).  Cells with updated_at==0 (loaded from DB but
-  // never reinforced this session) render at maximum age (dimmest).
-  const AGE_MAX_S  = 600;
-  const now_s      = Date.now() / 1000;
-  const GREY_BASE  = [55, 75, 110];  // grey-blue endpoint for aged cells
-  const L2_ALPHA_FRESH = 0.44;
-  const L2_ALPHA_STALE = 0.12;
+  // L2 is a persistent accumulator — all cells render at full alpha.
+  // Age-decay was removed: the DB timestamp was a steady_clock value (not
+  // comparable to Date.now()), and dimming persistent obstacle history
+  // is not operationally useful.
+  const L2_ALPHA  = 0.44;
+  const L2_STROKE = 0.52;
 
   const groups = new Map();
 
@@ -1308,18 +1306,13 @@ function drawPlanningFaces() {
     const ps = face.corners.map(c => project(c));
     if (ps.some(p => !Number.isFinite(p.x) || !Number.isFinite(p.y))) continue;
 
-    // ageFrac: 0 = fresh (just updated), 1 = at or beyond AGE_MAX_S old
-    const age_s   = face.updated_at > 0 ? Math.min(AGE_MAX_S, now_s - face.updated_at) : AGE_MAX_S;
-    const ageFrac = age_s / AGE_MAX_S;
-
     const liveBase = byType ? [60, 100, 200] : rgbForH(Math.max(0, -face.centroid.z));
     const s = face.shading;
-    // Lerp between live color and grey-blue as ageFrac goes 0→1, apply shading
-    const fr = Math.round((liveBase[0] + (GREY_BASE[0] - liveBase[0]) * ageFrac) * s);
-    const fg = Math.round((liveBase[1] + (GREY_BASE[1] - liveBase[1]) * ageFrac) * s);
-    const fb = Math.round((liveBase[2] + (GREY_BASE[2] - liveBase[2]) * ageFrac) * s);
-    const fa = L2_ALPHA_FRESH + (L2_ALPHA_STALE - L2_ALPHA_FRESH) * ageFrac;
-    const sa = Math.min(1, fa + 0.08);
+    const fr = Math.round(liveBase[0] * s);
+    const fg = Math.round(liveBase[1] * s);
+    const fb = Math.round(liveBase[2] * s);
+    const fa = L2_ALPHA;
+    const sa = L2_STROKE;
     const key = `${fr},${fg},${fb}`;
 
     let g = groups.get(key);

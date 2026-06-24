@@ -516,6 +516,29 @@ public:
             return false;
         }
 
+        // Read cell dimensions from the params table written by the C++ runtime.
+        // Fall back to caller-supplied values for old DBs that lack the table.
+        {
+            const char* qp = "SELECT key, value FROM params;";
+            sqlite3_stmt* ps = nullptr;
+            if (sqlite3_prepare_v2(db, qp, -1, &ps, nullptr) == SQLITE_OK) {
+                while (sqlite3_step(ps) == SQLITE_ROW) {
+                    const char* k = reinterpret_cast<const char*>(
+                        sqlite3_column_text(ps, 0));
+                    const double v = sqlite3_column_double(ps, 1);
+                    if (!k) continue;
+                    if (std::strcmp(k, "cell_size_m") == 0)
+                        cell_m  = v;
+                    else if (std::strcmp(k, "vertical_cell_size_m") == 0)
+                        vcell_m = v;
+                }
+                sqlite3_finalize(ps);
+                std::fprintf(stderr,
+                    "[dedalus_viewer] L2 DB '%s': cell_size_m=%.3f vcell_size_m=%.3f\n",
+                    db_path.c_str(), cell_m, vcell_m);
+            }
+        }
+
         const char* sql =
             "SELECT xi, yi, zi, score, confidence, count, updated_ns"
             "  FROM cells WHERE score >= ?"
