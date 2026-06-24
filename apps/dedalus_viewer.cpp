@@ -624,14 +624,20 @@ public:
              SharedQueue& queue, const SourceMonitor& monitor,
              std::string static_root = {},
              std::string static_default_file = "viewer.html",
-             const L2StaticCache* l2_cache = nullptr)
+             std::string l2_db = {},
+             double l2_cell_m = 1.0,
+             double l2_vcell_m = 2.0,
+             double l2_min_score = 0.5)
         : bind_host_(std::move(bind_host)),
           http_port_(http_port),
           queue_(queue),
           monitor_(monitor),
           static_root_(std::move(static_root)),
           static_default_file_(std::move(static_default_file)),
-          l2_cache_(l2_cache) {}
+          l2_db_(std::move(l2_db)),
+          l2_cell_m_(l2_cell_m),
+          l2_vcell_m_(l2_vcell_m),
+          l2_min_score_(l2_min_score) {}
 
     void start() {
         setup_listen_socket();
@@ -741,14 +747,16 @@ private:
             ::close(client);
             return;
         }
-        // Push the L2 static cache while the socket is still blocking — this
-        // gives the browser the saved obstacle map immediately, before any live
-        // events arrive from the runtime.
-        if (l2_cache_ && !l2_cache_->empty()) {
-            for (const auto& frame : l2_cache_->burst()) {
-                if (!send_all(client, frame)) {
-                    ::close(client);
-                    return;
+        // Load the L2 DB fresh on every new connection so the browser always
+        // gets the current state — including data written after viewer startup.
+        if (!l2_db_.empty()) {
+            L2StaticCache cache;
+            if (cache.load(l2_db_, l2_cell_m_, l2_vcell_m_, l2_min_score_)) {
+                for (const auto& frame : cache.burst()) {
+                    if (!send_all(client, frame)) {
+                        ::close(client);
+                        return;
+                    }
                 }
             }
         }
@@ -914,7 +922,10 @@ private:
     const SourceMonitor& monitor_;
     std::string static_root_;
     std::string static_default_file_;
-    const L2StaticCache* l2_cache_{nullptr};
+    std::string l2_db_;
+    double l2_cell_m_{1.0};
+    double l2_vcell_m_{2.0};
+    double l2_min_score_{0.5};
 
     int listen_fd_{-1};
     std::atomic<bool> running_{false};
@@ -1024,27 +1035,18 @@ int main(int argc, char** argv) {
 
         SharedQueue queue{512};
 
-        // Load L2 planning map from SQLite if --l2-db was provided.
-        // Done before starting threads so the cache is immutable after this.
-        L2StaticCache l2_cache;
-        if (!opts.l2_db.empty()) {
-            if (!l2_cache.load(opts.l2_db,
-                               opts.l2_cell_m, opts.l2_vcell_m,
-                               opts.l2_min_score)) {
-                std::cerr << "dedalus_viewer: warning: could not load L2 DB '"
-                          << opts.l2_db << "' — continuing without it\n";
-            }
-        }
-
         SourceMonitor monitor{
             opts.live_host, opts.live_port,
             opts.replay_dir, opts.replay_speed,
             opts.reconnect_s, queue};
 
         // Bind to all interfaces so browsers on other machines can connect.
+        // L2 DB is loaded fresh on every new SSE connection so the viewer
+        // always reflects the current DB state (including post-mission flushes).
         SseRelay relay{"0.0.0.0", opts.http_port, queue, monitor,
                        opts.static_root, opts.static_default_file,
-                       l2_cache.empty() ? nullptr : &l2_cache};
+                       opts.l2_db, opts.l2_cell_m, opts.l2_vcell_m,
+                       opts.l2_min_score};
 
         relay.start();
         monitor.start();
