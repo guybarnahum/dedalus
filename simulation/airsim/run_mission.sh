@@ -487,7 +487,7 @@ if [[ -z "$SITE_OBSTACLE_MAP_PATH" ]]; then
     SITE_OBSTACLE_MAP_PATH="$REPO_ROOT_ABS/maps/$OBSTACLE_MAP_SITE_ID/site_obstacle_map.json"
 fi
 if [[ -z "$SITE_OBSTACLE_MAP_SQLITE_PATH" ]]; then
-    SITE_OBSTACLE_MAP_SQLITE_PATH="$REPO_ROOT_ABS/maps/$OBSTACLE_MAP_SITE_ID/l2_map.db"
+    SITE_OBSTACLE_MAP_SQLITE_PATH="$REPO_ROOT_ABS/maps/$OBSTACLE_MAP_SITE_ID/site_obstacle_map.sqlite"
 fi
 if [[ -z "$SCENE_INVENTORY_PATH" ]]; then
     SCENE_INVENTORY_PATH="$REPO_ROOT_ABS/out/airsim_scene_inventory/${SCENE_ID}.objects.json"
