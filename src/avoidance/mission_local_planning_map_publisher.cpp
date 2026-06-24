@@ -64,6 +64,10 @@ std::string to_compact_stream_json(
         out << ",\"occupied_score\":"    << cell.occupied_score;
         out << ",\"confidence\":"        << cell.confidence;
         out << ",\"source_cell_count\":" << cell.source_cell_count;
+        if (cell.last_updated_ns > 0) {
+            // Emit seconds since epoch so the viewer can compute cell age.
+            out << ",\"t\":" << (cell.last_updated_ns / 1'000'000'000LL);
+        }
         out << "}";
     }
     out << "]}";

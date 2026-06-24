@@ -77,12 +77,18 @@ std::string to_compact_stream_json(const LocalESDFMapSnapshot& snap, std::size_t
         std::snprintf(buf, sizeof(buf),
             "{\"x\":%.4g,\"y\":%.4g,\"z\":%.4g,\"d\":%.4g"
             ",\"gx\":%.4g,\"gy\":%.4g,\"gz\":%.4g"
-            ",\"sgx\":%.4g,\"sgy\":%.4g,\"sgz\":%.4g}",
+            ",\"sgx\":%.4g,\"sgy\":%.4g,\"sgz\":%.4g",
             jf(c.centre.x), jf(c.centre.y), jf(c.centre.z),
             jf(static_cast<double>(c.d)),
             jf(c.grad.x), jf(c.grad.y), jf(c.grad.z),
             jf(c.sgrad.x), jf(c.sgrad.y), jf(c.sgrad.z));
         out += buf;
+        if (c.last_updated_ns > 0) {
+            std::snprintf(buf, sizeof(buf), ",\"t\":%lld",
+                static_cast<long long>(c.last_updated_ns / 1'000'000'000LL));
+            out += buf;
+        }
+        out += '}';
     }
     out += "]}";
     return out;

@@ -74,7 +74,7 @@ const char* kDelete =
     "DELETE FROM cells WHERE xi=? AND yi=? AND zi=?;";
 
 const char* kSelectAll =
-    "SELECT xi,yi,zi,score,confidence,count"
+    "SELECT xi,yi,zi,score,confidence,count,updated_ns"
     "  FROM cells"
     "  WHERE score>=?;";
 
@@ -119,6 +119,7 @@ bool MissionLocalPlanningMap::open_db(const std::filesystem::path& path) {
         cell.occupied_score    = static_cast<float>(sqlite3_column_double(sel, 3));
         cell.confidence        = static_cast<float>(sqlite3_column_double(sel, 4));
         cell.source_cell_count = static_cast<std::uint32_t>(sqlite3_column_int(sel, 5));
+        cell.last_updated_ns   = sqlite3_column_int64(sel, 6);  // 0 if never flushed
         cells_.push_back(StoredCell{key, cell});
         cell_index_.emplace(key, cells_.size() - 1U);
     }

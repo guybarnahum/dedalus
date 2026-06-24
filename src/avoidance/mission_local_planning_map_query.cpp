@@ -135,4 +135,25 @@ std::vector<Vec3> MissionLocalPlanningMap::query_occupied_in_box(
     return result;
 }
 
+// ─── query_occupied_ts_in_box ─────────────────────────────────────────────────
+
+std::vector<std::pair<Vec3, std::int64_t>>
+MissionLocalPlanningMap::query_occupied_ts_in_box(const Bounds3& bbox) const {
+
+    const float min_score = static_cast<float>(config_.min_occupied_score);
+
+    std::vector<std::pair<Vec3, std::int64_t>> result;
+    for (const auto& [key, idx] : cell_index_) {
+        const auto& entry = cells_[idx];
+        if (entry.cell.occupied_score < min_score) continue;
+        const Vec3& p = entry.cell.center_map;
+        if (p.x >= bbox.min.x && p.x <= bbox.max.x &&
+            p.y >= bbox.min.y && p.y <= bbox.max.y &&
+            p.z >= bbox.min.z && p.z <= bbox.max.z) {
+            result.emplace_back(p, entry.cell.last_updated_ns);
+        }
+    }
+    return result;
+}
+
 }  // namespace dedalus

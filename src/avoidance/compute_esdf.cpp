@@ -138,7 +138,9 @@ LocalESDFMap compute_esdf(const MissionLocalPlanningMap& l2,
     const int N   = Nx * Nyz;
 
     // ── Binary occupancy grid (uint8_t — avoid vector<bool> bit-packing) ──────
-    std::vector<std::uint8_t> occ(static_cast<std::size_t>(N), 0U);
+    // ts_grid: last_updated_ns of the L2 cell occupying each voxel (0 = free).
+    std::vector<std::uint8_t>  occ(static_cast<std::size_t>(N), 0U);
+    std::vector<std::int64_t>  ts_grid(static_cast<std::size_t>(N), 0);
 
     {
         const Bounds3 bbox{
@@ -147,10 +149,12 @@ LocalESDFMap compute_esdf(const MissionLocalPlanningMap& l2,
                  origin.y + static_cast<double>(Ny) * sy,
                  origin.z + static_cast<double>(Nz) * sz},
         };
-        for (const auto& c : l2.query_occupied_in_box(bbox)) {
+        for (const auto& [c, ts] : l2.query_occupied_ts_in_box(bbox)) {
             int gi, gj, gk;
             if (world_to_idx(c, &gi, &gj, &gk)) {
-                occ[static_cast<std::size_t>(gi * Nyz + gj * Nz + gk)] = 1U;
+                const auto idx = static_cast<std::size_t>(gi * Nyz + gj * Nz + gk);
+                occ[idx]     = 1U;
+                ts_grid[idx] = ts;
             }
         }
     }
@@ -271,10 +275,12 @@ LocalESDFMap compute_esdf(const MissionLocalPlanningMap& l2,
                 // World position of this coarse sample centre
                 const Vec3 cc = cell_centre(ci, cj, ck);
 
-                // Accumulate Gaussian-weighted APF from fine shell cells nearby
+                // Accumulate Gaussian-weighted APF from fine shell cells nearby.
+                // Also gather max timestamp of nearby occupied cells (L2 age).
                 double ax = 0.0, ay = 0.0, az = 0.0;
                 double wapf_sum = 0.0, w_sum = 0.0;
                 float d_min = d0f;
+                std::int64_t max_ts = 0;
 
                 for (int di = -rx; di <= rx; ++di) {
                     const int ni = ci + di;
@@ -288,7 +294,11 @@ LocalESDFMap compute_esdf(const MissionLocalPlanningMap& l2,
 
                             const std::size_t idx =
                                 static_cast<std::size_t>(ni * Nyz + nj * Nz + nk);
-                            if (occ[idx]) continue;
+                            // Harvest timestamp from occupied neighbours.
+                            if (occ[idx]) {
+                                if (ts_grid[idx] > max_ts) max_ts = ts_grid[idx];
+                                continue;
+                            }
                             const float g_val = g3[idx];
                             if (g_val >= d0_sq) continue;  // outside shell
 
@@ -333,10 +343,11 @@ LocalESDFMap compute_esdf(const MissionLocalPlanningMap& l2,
                 const Vec3 dir{ax / alen, ay / alen, az / alen};
 
                 LocalESDFCell cell;
-                cell.centre = cc;
-                cell.d      = d_min;
-                cell.grad   = dir;   // APF-weighted direction (grad == sgrad at coarse scale)
-                cell.sgrad  = dir;
+                cell.centre          = cc;
+                cell.d               = d_min;
+                cell.grad            = dir;   // APF-weighted direction (grad == sgrad at coarse scale)
+                cell.sgrad           = dir;
+                cell.last_updated_ns = max_ts;  // inherited from nearest L2 obstacle
 
                 // Coarse key: use coarse (spc_xy) resolution
                 const int cki = static_cast<int>(

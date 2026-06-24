@@ -1,6 +1,7 @@
 #include "dedalus/avoidance/mission_local_planning_map.hpp"
 
 #include <algorithm>
+#include <chrono>
 #include <cmath>
 #include <fstream>
 #include <functional>
@@ -58,6 +59,10 @@ void MissionLocalPlanningMap::update_from_traversability(
     last_update_stats_ = MissionLocalPlanningMapUpdateStats{};
     last_update_stats_.l1_input_cells = source.cells.size();
 
+    const auto now_ns = static_cast<std::int64_t>(
+        std::chrono::duration_cast<std::chrono::nanoseconds>(
+            std::chrono::system_clock::now().time_since_epoch()).count());
+
     bool any_evicted = false;
 
     // Collect dirty cells (key + value at mark-time) and evicted keys locally
@@ -92,6 +97,7 @@ void MissionLocalPlanningMap::update_from_traversability(
                     sc.cell.confidence,
                     static_cast<float>(l1_cell.confidence));
                 ++sc.cell.source_cell_count;
+                sc.cell.last_updated_ns = now_ns;
                 sc.write_seq = map_seq_;  // Stage 5
             } else {
                 // Create new L2 cell.
@@ -100,6 +106,7 @@ void MissionLocalPlanningMap::update_from_traversability(
                 cell.occupied_score = static_cast<float>(l1_cell.occupied_score);
                 cell.confidence = static_cast<float>(l1_cell.confidence);
                 cell.source_cell_count = 1U;
+                cell.last_updated_ns = now_ns;
                 cells_.push_back(StoredCell{key, cell, map_seq_});  // Stage 5
                 cell_index_.emplace(key, cells_.size() - 1U);
             }

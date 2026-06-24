@@ -69,6 +69,11 @@ struct MissionLocalPlanningCell {
     float occupied_score{0.0F};         // accumulated occupied evidence (max-merged from L1)
     float confidence{0.0F};             // max confidence across contributing L1 cells
     std::uint32_t source_cell_count{0U}; // cumulative L1 hits
+    // Wall-clock timestamp (nanoseconds since Unix epoch) of the last live L1
+    // update that reinforced this cell.  0 for cells loaded from the DB that
+    // have not yet been observed this session.
+    // Viewer uses age = (now - last_updated_ns/1e9) to dim stale cells.
+    std::int64_t last_updated_ns{0};
 };
 
 // Axis-aligned bounding box of all in-memory L2 cells.
@@ -180,6 +185,12 @@ public:
     //   bbox.max].  Result order is unspecified.
     [[nodiscard]] std::vector<Vec3> query_occupied_in_box(
         const Bounds3& bbox) const;
+
+    // query_occupied_ts_in_box(): same as query_occupied_in_box but also
+    //   returns the last_updated_ns timestamp for each cell.
+    //   Used by compute_esdf to propagate L2 age into L3 arrows.
+    [[nodiscard]] std::vector<std::pair<Vec3, std::int64_t>>
+        query_occupied_ts_in_box(const Bounds3& bbox) const;
 
 private:
     struct CellKey {

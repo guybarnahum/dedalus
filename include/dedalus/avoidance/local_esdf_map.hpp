@@ -46,6 +46,9 @@ struct LocalESDFCell {
     Vec3  sgrad;          // smoothed gradient — 6-connected neighbour average of grad, renormalized.
                           // More normal-to-surface than grad; use for APF direction to avoid
                           // discontinuities at edges and corners.
+    // Max last_updated_ns of occupied L2 cells in the Gaussian kernel window.
+    // Inherited from L2 — viewer uses age = (now - t/1e9) to dim stale arrows.
+    std::int64_t last_updated_ns{0};
 };
 
 struct LocalESDFQueryResult {

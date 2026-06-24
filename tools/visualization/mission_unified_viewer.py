@@ -187,6 +187,10 @@ h3 { font-size: 12px; margin: 10px 0 6px; color: #c0c4d0; text-transform: upperc
           <div style="display:flex;justify-content:space-between;font-size:9px;color:#4a5470;margin-top:1px;">
             <span>0.5m</span><span>d₀</span>
           </div>
+          <label style="color:#5a6380;font-size:10px;cursor:pointer;display:flex;align-items:center;gap:4px;margin-top:4px;">
+            <input type="checkbox" id="esdf-show-cells" onchange="onEsdfShowCells(this.checked)" style="margin:0;">
+            show cells
+          </label>
         </div>
         <button class="layer-btn" id="toggle-obstacles"><span>Raw evidence</span><span class="ltog"></span></button>
         <button class="layer-btn" id="toggle-ghosts"><span>Ghost detections</span><span class="ltog"></span></button>
@@ -325,11 +329,16 @@ const state = {
   showTrajectory:  true,
   showL0:          true,    // L0 ego radar inset (top-right corner)
   showEsdf:        true,    // L3 ESDF (on by default — peer of L2)
+  showEsdfCells:   false,   // L3 cell faces (off by default — arrows only)
   travColorByType: false,   // false = height-based (default), true = occupied/partial type colors
 };
 
 // L2 planning cells (persistent, slate-blue base layer)
 const planningCellsByKey = new Map();  // quantKey → planning cell
+// True once the server sends a live planning_map_delta (cells updated this session).
+// Until then, all L2 cells are from the prior-session DB load and render muted.
+// L3 arrows also render muted until this becomes true (ESDF is derived from L2).
+let l2HasLiveData = false;
 
 // Obstacle cells (raw evidence)
 const obsCellsByKey = new Map();       // cellKey → normalized cell
@@ -1196,6 +1205,7 @@ function applyPlanningSnapshot(plan, {deferRender=false}={}) {
         occupied_score:    fin(raw.occupied_score, 0),
         confidence:        fin(raw.confidence, 0),
         source_cell_count: fin(raw.source_cell_count, 0),
+        updated_at: fin(raw.t, 0),  // Unix seconds of last live L1 update; 0 = DB-only
       }
     );
   }
@@ -1225,7 +1235,7 @@ function buildPlanningFaces() {
   ];
 
   for (const cell of planningCellsByKey.values()) {
-    const {center, occupied_score, confidence} = cell;
+    const {center, occupied_score, confidence, updated_at} = cell;
     if (!center) continue;
 
     const cx = center.x, cy = center.y, cz = center.z;
@@ -1267,6 +1277,7 @@ function buildPlanningFaces() {
         shading,
         occupied_score,
         confidence,
+        updated_at,  // Unix seconds of last live update; 0 = DB-only / unknown age
         cx, cy, cz,
       });
     }
@@ -1282,11 +1293,14 @@ function drawPlanningFaces() {
   ctx.lineWidth = 0.5 * devicePixelRatio;
 
   const byType = state.travColorByType;
-  // L2 uses same color mode as L1, but lower alpha (~0.40 fill vs ~0.78 for L1).
-  // "Type" for L2: all cells are occupied (L2 evicts sub-threshold), so use
-  // a distinct muted blue-grey base in type mode to separate from L1's red.
-  const L2_TYPE_BASE = [60, 100, 200];   // muted slate-blue for type mode
-  const L2_FILL_SCALE = 0.42;           // L1 uses 0.78/0.60 — L2 is dimmer
+  // L2 cells age from full color (just observed) toward a dim grey-blue over
+  // AGE_MAX_S seconds (10 min).  Cells with updated_at==0 (loaded from DB but
+  // never reinforced this session) render at maximum age (dimmest).
+  const AGE_MAX_S  = 600;
+  const now_s      = Date.now() / 1000;
+  const GREY_BASE  = [55, 75, 110];  // grey-blue endpoint for aged cells
+  const L2_ALPHA_FRESH = 0.44;
+  const L2_ALPHA_STALE = 0.12;
 
   const groups = new Map();
 
@@ -1294,15 +1308,18 @@ function drawPlanningFaces() {
     const ps = face.corners.map(c => project(c));
     if (ps.some(p => !Number.isFinite(p.x) || !Number.isFinite(p.y))) continue;
 
-    const base = byType
-      ? L2_TYPE_BASE
-      : rgbForH(Math.max(0, -face.centroid.z));
-    const s  = face.shading;
-    const fr = Math.round(base[0] * s);
-    const fg = Math.round(base[1] * s);
-    const fb = Math.round(base[2] * s);
-    const fa = L2_FILL_SCALE;
-    const sa = Math.min(1, fa + 0.12);
+    // ageFrac: 0 = fresh (just updated), 1 = at or beyond AGE_MAX_S old
+    const age_s   = face.updated_at > 0 ? Math.min(AGE_MAX_S, now_s - face.updated_at) : AGE_MAX_S;
+    const ageFrac = age_s / AGE_MAX_S;
+
+    const liveBase = byType ? [60, 100, 200] : rgbForH(Math.max(0, -face.centroid.z));
+    const s = face.shading;
+    // Lerp between live color and grey-blue as ageFrac goes 0→1, apply shading
+    const fr = Math.round((liveBase[0] + (GREY_BASE[0] - liveBase[0]) * ageFrac) * s);
+    const fg = Math.round((liveBase[1] + (GREY_BASE[1] - liveBase[1]) * ageFrac) * s);
+    const fb = Math.round((liveBase[2] + (GREY_BASE[2] - liveBase[2]) * ageFrac) * s);
+    const fa = L2_ALPHA_FRESH + (L2_ALPHA_STALE - L2_ALPHA_FRESH) * ageFrac;
+    const sa = Math.min(1, fa + 0.08);
     const key = `${fr},${fg},${fb}`;
 
     let g = groups.get(key);
@@ -1904,93 +1921,146 @@ function scheduleDraw() {
 
 // ── L3 ESDF vector field ──────────────────────────────────────────────────────
 //
-// buildESDFArrows(): sparse pre-averaged APF arrows with similarity pruning.
+// buildESDFArrows(): continuous Gaussian-averaged APF vector field.
 //
-// L3 cells are now stored at sample_spacing_m (default 2 m) with APF direction
-// pre-computed by Gaussian averaging in compute_esdf().  No per-cell Gaussian
-// needed here — just read the stored sgx/sgy/sgz directly.
+// Algorithm:
+//   1. Bucket all shell ESDF cells into an R×R XY spatial grid.
+//   2. Place output sample points on an R-spaced regular grid, aligned to the
+//      cell data extent. One arrow per R×R×Z-slice grid cell.
+//   3. At each sample point, gather all ESDF cells within radius R from the
+//      3×3 neighboring XY buckets (same Z slice). Accumulate APF-weighted
+//      Gaussian sum: w = apf(d) · exp(−dist²/2σ²), σ = R/2.
+//   4. Emit a normalised arrow if any weight accumulated.
 //
-// Pass 1: sub-sample by step = ceil(R / csM).  When R = csM (default), step=1
-//         and every L3 cell becomes one arrow.  When R > csM, every step-th
-//         XY cell is kept, reducing density further for high-speed visualisation.
-//
-// Pass 2: similarity trim — drop arrows whose direction is within SIMILAR_THRESH
-//         of all four XY-step-adjacent neighbours.  Keeps edges; prunes interiors.
-//
-// Trim angle is velocity-dependent when "vel" checkbox is active.
+// No similarity threshold. Sliding R changes both sample density and averaging
+// radius continuously — sparse at large R, dense at small R.
+// Velocity mode sets R = braking distance (v²/2a).
 
 function buildESDFArrows() {
   esdfArrowGeom = [];
   if (el("m-esdf-arrows")) el("m-esdf-arrows").textContent = "0";
   if (!state.showEsdf || esdfCellsByKey.size === 0) return;
 
-  const csM = esdfCellSizeM, vcM = esdfVCellSizeM;
-
   const useVel = el("esdf-vel-mode")?.checked ?? false;
   const R = useVel
     ? Math.max(0.5, Math.min(esdfD0M, (lfmEgoSpeedMps * lfmEgoSpeedMps) / (2 * ESDF_A_MAX)))
     : esdfSmoothR;
-  const step = Math.max(1, Math.ceil(R / csM));
-
   if (el("m-esdf-r")) el("m-esdf-r").textContent = R.toFixed(1) + "m" + (useVel ? " 〜v" : "");
 
-  // Pass 1: sub-sample on R×R XY grid; use pre-computed APF direction.
-  const arrowMap = new Map();
+  const d0     = esdfD0M;
+  // σ = R/2.35 satisfies the partition-of-unity condition: adjacent Gaussians
+  // sum to 1.0 at every midpoint between sample points (exp(−R²/8σ²) = 0.5).
+  // Gather radius = 3σ ≈ 1.28R, rounded to 1.3R for the bucket lookup.
+  // We use ±2 XY bucket offsets so cells up to 2R away are considered;
+  // the Gaussian weight at 1.3R is exp(−9/2) ≈ 0.011, negligible beyond.
+  const sigma  = R / 2.35;
+  const rho    = 1.3 * R;          // 3σ gather radius
+  const R2     = rho * rho;
+  const inv2s2 = 1.0 / (2.0 * sigma * sigma);
+  const vcM    = esdfVCellSizeM;
+
+  // ── Step 1: bucket shell cells by R-grid square, per Z slice ────────────────
+  // Key: "bx,by,iz" where bx = floor(x/R), by = floor(y/R), iz = round(z/vcM)
+  const buckets = new Map();
+  let xMin = Infinity, xMax = -Infinity;
+  let yMin = Infinity, yMax = -Infinity;
+  const zSlices = new Set();
+
   for (const [, cell] of esdfCellsByKey) {
-    if (cell.d <= 0 || cell.d >= esdfD0M) continue;
-    const ix = Math.round(cell.x / csM);
-    const iy = Math.round(cell.y / csM);
-    if ((ix % step) !== 0 || (iy % step) !== 0) continue;
+    if (cell.d <= 0 || cell.d >= d0) continue;
+    const bx = Math.floor(cell.x / R);
+    const by = Math.floor(cell.y / R);
     const iz = Math.round(cell.z / vcM);
-    const sgx = cell.sgx ?? cell.gx ?? 0;
-    const sgy = cell.sgy ?? cell.gy ?? 0;
-    const sgz = cell.sgz ?? cell.gz ?? 0;
-    const len = Math.hypot(sgx, sgy, sgz);
-    if (len < 1e-6) continue;
-    arrowMap.set(`${ix}_${iy}_${iz}`,
-      {x: cell.x, y: cell.y, z: cell.z, d: cell.d,
-       sgx: sgx/len, sgy: sgy/len, sgz: sgz/len});
+    const key = `${bx},${by},${iz}`;
+    let b = buckets.get(key);
+    if (!b) { b = []; buckets.set(key, b); }
+    b.push(cell);
+    if (cell.x < xMin) xMin = cell.x;
+    if (cell.x > xMax) xMax = cell.x;
+    if (cell.y < yMin) yMin = cell.y;
+    if (cell.y > yMax) yMax = cell.y;
+    zSlices.add(iz);
   }
 
-  // Pass 2: similarity trim.
-  const trimAngleDeg = useVel
-    ? Math.max(5.0, 20.0 - lfmEgoSpeedMps * 1.5)
-    : 14.0;
-  const SIMILAR_THRESH = Math.cos(trimAngleDeg * Math.PI / 180.0);
-  for (const [, a] of arrowMap) {
-    const ix = Math.round(a.x / csM);
-    const iy = Math.round(a.y / csM);
-    const iz = Math.round(a.z / vcM);
-    let hasNeighbour = false, allSimilar = true;
-    for (const [dxi, dyi] of [[step,0],[-step,0],[0,step],[0,-step]]) {
-      const nb = arrowMap.get(`${ix+dxi}_${iy+dyi}_${iz}`);
-      if (!nb) continue;
-      hasNeighbour = true;
-      if (a.sgx*nb.sgx + a.sgy*nb.sgy + a.sgz*nb.sgz < SIMILAR_THRESH) {
-        allSimilar = false; break;
+  if (zSlices.size === 0) return;
+
+  // ── Step 2: sample on R-spaced grid, gather from 3×3 neighbouring buckets ──
+  const gxStart = Math.floor(xMin / R) * R;
+  const gyStart = Math.floor(yMin / R) * R;
+
+  for (const iz of zSlices) {
+    const gz = (iz + 0.5) * vcM;
+
+    for (let gx = gxStart; gx <= xMax + R; gx += R) {
+      const gbx = Math.floor(gx / R);
+
+      for (let gy = gyStart; gy <= yMax + R; gy += R) {
+        const gby = Math.floor(gy / R);
+
+        let ax = 0, ay = 0, az = 0, wSum = 0, dMin = d0, maxTs = 0;
+
+        for (let dx = -2; dx <= 2; dx++) {
+          for (let dy = -2; dy <= 2; dy++) {
+            const b = buckets.get(`${gbx+dx},${gby+dy},${iz}`);
+            if (!b) continue;
+            for (const cell of b) {
+              const ex = cell.x - gx, ey = cell.y - gy;
+              const dist2 = ex*ex + ey*ey;
+              if (dist2 > R2) continue;
+              // APF weight: (1/d − 1/d0) / d, then Gaussian by distance
+              const apf = (1.0 / cell.d - 1.0 / d0) / cell.d;
+              const w   = apf * Math.exp(-dist2 * inv2s2);
+              const sgx = cell.sgx ?? cell.gx ?? 0;
+              const sgy = cell.sgy ?? cell.gy ?? 0;
+              const sgz = cell.sgz ?? cell.gz ?? 0;
+              ax += w * sgx; ay += w * sgy; az += w * sgz;
+              wSum += w;
+              if (cell.d < dMin) dMin = cell.d;
+              const ts = cell.updated_at || 0;
+              if (ts > maxTs) maxTs = ts;
+            }
+          }
+        }
+
+        if (wSum < 1e-10) continue;
+        const len = Math.hypot(ax, ay, az);
+        if (len < 1e-10) continue;
+
+        esdfArrowGeom.push({
+          x: gx, y: gy, z: gz, d: dMin,
+          sgx: ax/len, sgy: ay/len, sgz: az/len,
+          updated_at: maxTs,
+        });
       }
     }
-    if (!hasNeighbour || !allSimilar) {
-      esdfArrowGeom.push({x: a.x, y: a.y, z: a.z, d: a.d,
-                          sgx: a.sgx, sgy: a.sgy, sgz: a.sgz});
-    }
   }
+
   if (el("m-esdf-arrows")) el("m-esdf-arrows").textContent = String(esdfArrowGeom.length);
 }
 
 // Render prebuilt sparse smoothed arrows.
+// Arrow opacity ages from 0.80 (fresh) to 0.15 (≥10 min old) based on the
+// last_updated_ns of the nearest L2 obstacle that generated it.
 function drawESDFArrows() {
   if (!state.showEsdf || esdfArrowGeom.length === 0) return;
+  const AGE_MAX_S   = 600;
+  const now_s       = Date.now() / 1000;
   for (const a of esdfArrowGeom) {
     const d = a.d;
     const [r,g,b] = d < 1 ? [228,42,30] : d < 3 ? [228,200,30] : [42,200,65];
     const scale = (esdfD0M - Math.abs(d)) / esdfD0M * 4.0;
     if (scale <= 0) continue;
+
+    // Age-derived opacity: fresh = 0.80, stale (10 min) = 0.15
+    const age_s    = a.updated_at > 0 ? Math.min(AGE_MAX_S, now_s - a.updated_at) : AGE_MAX_S;
+    const ageFrac  = age_s / AGE_MAX_S;
+    const alpha    = 0.80 - ageFrac * 0.65;
+
     const tip = {x: a.x + a.sgx*scale, y: a.y + a.sgy*scale, z: a.z + a.sgz*scale};
     const pa = project({x:a.x, y:a.y, z:a.z});
     const pb = project(tip);
     ctx.beginPath(); ctx.moveTo(pa.x, pa.y); ctx.lineTo(pb.x, pb.y);
-    ctx.strokeStyle = `rgba(${r},${g},${b},0.75)`;
+    ctx.strokeStyle = `rgba(${r},${g},${b},${alpha.toFixed(2)})`;
     ctx.lineWidth = 1.5 * devicePixelRatio;
     ctx.stroke();
     const ddx = pb.x-pa.x, ddy = pb.y-pa.y, len = Math.hypot(ddx, ddy);
@@ -2000,7 +2070,7 @@ function drawESDFArrows() {
       ctx.lineTo(pb.x - ux*hl + uy*hw, pb.y - uy*hl - ux*hw);
       ctx.lineTo(pb.x - ux*hl - uy*hw, pb.y - uy*hl + ux*hw);
       ctx.closePath();
-      ctx.fillStyle = `rgba(${r},${g},${b},0.75)`;
+      ctx.fillStyle = `rgba(${r},${g},${b},${alpha.toFixed(2)})`;
       ctx.fill();
     }
   }
@@ -2009,6 +2079,7 @@ function drawESDFArrows() {
 function draw() {
   ctx.clearRect(0, 0, canvas.width, canvas.height);
   drawPlanningFaces();   // L2 persistent planning map (exterior faces, back-most layer)
+  if (state.showEsdfCells) drawESDFFaces();  // L3 cell faces (off by default)
   drawTravFaces();       // L1 traversability exterior surface
   drawObstacleCells();   // raw evidence cells (demoted, off by default)
   drawLiveAgingOverlay(); // live delta events with age decay
@@ -2340,8 +2411,14 @@ function applyPlanningDelta(plan, {deferRender=false}={}) {
       { center,
         occupied_score:    fin(raw.occupied_score, 0),
         confidence:        fin(raw.confidence, 0),
-        source_cell_count: fin(raw.source_cell_count, 0) }
+        source_cell_count: fin(raw.source_cell_count, 0),
+        updated_at: fin(raw.t, 0) }
     );
+  }
+  // Any delta means live L1→L2 data arrived this session; L3 arrows go live too.
+  if (!l2HasLiveData) {
+    l2HasLiveData = true;
+    buildESDFArrows();
   }
   buildPlanningFaces();
   if (!deferRender) { updateMetrics(); scheduleDraw(); }
@@ -2574,7 +2651,8 @@ function startLiveStream() {
       if (esdf.net_rep) esdfNetRepulsion=esdf.net_rep;
       const inCells = Array.isArray(esdf.cells) ? esdf.cells : [];
       for (const c of inCells) {
-        esdfCellsByKey.set(esdfQuantKey(c.x, c.y, c.z), c);
+        esdfCellsByKey.set(esdfQuantKey(c.x, c.y, c.z),
+          {...c, updated_at: fin(c.t, 0)});
         if (c.d < esdfDMin) esdfDMin = c.d;
         if (c.d > esdfDMax) esdfDMax = c.d;
       }
@@ -2666,6 +2744,11 @@ function onEsdfRSlider(val) {
   esdfSmoothR = parseFloat(val);
   el("m-esdf-r").textContent = esdfSmoothR.toFixed(1) + "m";
   buildESDFArrows();
+}
+
+function onEsdfShowCells(checked) {
+  state.showEsdfCells = checked;
+  scheduleDraw();
 }
 
 // ── view controls + interaction ────────────────────────────────────────────────
