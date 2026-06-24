@@ -521,6 +521,9 @@ public:
             "  ORDER BY xi, yi, zi;";
         sqlite3_stmt* stmt = nullptr;
         if (sqlite3_prepare_v2(db, sql, -1, &stmt, nullptr) != SQLITE_OK) {
+            std::fprintf(stderr,
+                "[dedalus_viewer] L2 DB '%s': prepare failed: %s\n",
+                db_path.c_str(), sqlite3_errmsg(db));
             sqlite3_close(db);
             return false;
         }
@@ -737,6 +740,8 @@ private:
     }
 
     void handle_sse_upgrade(int client) {
+        std::fprintf(stderr, "[dedalus_viewer] new SSE client (l2_db='%s')\n",
+                     l2_db_.c_str());
         const std::string headers =
             "HTTP/1.1 200 OK\r\n"
             "Content-Type: text/event-stream\r\n"
