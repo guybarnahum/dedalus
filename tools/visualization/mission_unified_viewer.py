@@ -22,6 +22,7 @@ Options:
 from __future__ import annotations
 
 import argparse
+import subprocess
 import sys
 from pathlib import Path
 
@@ -31,7 +32,7 @@ HTML = r"""<!doctype html>
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<title>Dedalus Unified Viewer</title>
+<title>Dedalus</title>
 <style>
 * { box-sizing: border-box; }
 body { margin: 0; background: #0f1117; color: #e8e8e8; font: 13px system-ui, sans-serif; overflow: hidden; }
@@ -151,7 +152,8 @@ h3 { font-size: 12px; margin: 10px 0 6px; color: #c0c4d0; text-transform: upperc
       <code id="status-seq" style="margin-left:auto;color:#4a5070"></code>
     </div>
     <div id="side-scroll">
-      <h2>Dedalus Unified Viewer</h2>
+      <h2>Dedalus <span id="m-build-rev" style="font-size:10px;font-weight:400;color:#4a5470;margin-left:4px;">__BUILD_REV__</span></h2>
+      <div id="m-region-id" style="font-size:11px;color:#7080a0;margin:-4px 0 4px;line-height:1.3;min-height:1em;"></div>
       <p class="hint">Drag to rotate · Wheel to zoom · Hover for cell detail</p>
 
       <div class="view-controls">
@@ -2003,11 +2005,13 @@ function buildESDFArrows() {
   // Odd  layer (layerIdx % 2 == 1): XY grid origin at (gxBase+R/2, gyBase+R/2)
   //
   // For each Z layer, cells within ±ceil(R/(2*vcM)) Z-cell steps are gathered.
-  // This makes Z sample density match XY density regardless of vcM.
+  // This is a non-overlapping partition: each ESDF cell belongs to exactly one Z layer
+  // (the nearest one). Odd layers produce arrows only when ESDF data reaches within R/2
+  // of their center — no phantom arrows floating above the actual obstacle geometry.
   const gxBase = Math.floor(xMin / R) * R;
   const gyBase = Math.floor(yMin / R) * R;
   const gzBase = Math.floor(zMin / R) * R;
-  const izR    = Math.ceil(rho / vcM);       // Z gather radius matches XY gather rho (1.3R)
+  const izR    = Math.ceil(R / (2 * vcM));   // Z partition radius: half the layer spacing
 
   let layerIdx = 0;
   for (let gz = gzBase; gz <= zMax + R; gz += R, layerIdx++) {
@@ -2344,6 +2348,17 @@ function applyWorldSnapshot(snap, seq, {deferRender=false}={}) {
     lfmPolarSectors     = [];
     lfmSphericalBins    = [];
     lfmSensorObs        = [];
+  }
+
+  // Region ID — first uncertain_region from the world model.
+  const regions = snap.uncertain_regions;
+  if (Array.isArray(regions) && regions.length > 0) {
+    const rid = String(regions[0].region_id || "");
+    if (rid) {
+      const friendly = rid.replace(/_/g, " ").replace(/\b\w/g, c => c.toUpperCase());
+      const regionEl = el("m-region-id");
+      if (regionEl) regionEl.textContent = friendly + (regions.length > 1 ? ` +${regions.length-1}` : "");
+    }
   }
 
   live.seq=seq??live.seq;
@@ -2876,11 +2891,7 @@ function installViewControls() {
       state[stateKey] = !state[stateKey];
       btn.classList.toggle("active", state[stateKey]);
       if (stateKey==="showPlanning") buildPlanningFaces();
-      if (stateKey==="showEsdf")    {
-        const rc = el("esdf-r-control");
-        if (rc) rc.style.display = state[stateKey] ? "" : "none";
-        buildESDFFaces(); buildESDFArrows();
-      }
+      if (stateKey==="showEsdf")    { buildESDFFaces(); buildESDFArrows(); }
       scheduleDraw();
     });
   }
@@ -3096,11 +3107,23 @@ def main() -> int:
     )
     args = parser.parse_args()
 
+    try:
+        git_rev = subprocess.check_output(
+            ["git", "rev-parse", "--short", "HEAD"],
+            cwd=Path(__file__).parent,
+            stderr=subprocess.DEVNULL,
+            text=True,
+        ).strip()
+    except Exception:
+        git_rev = "unknown"
+
+    html = HTML.replace("__BUILD_REV__", git_rev)
+
     output = Path(args.output)
     output.parent.mkdir(parents=True, exist_ok=True)
-    output.write_text(HTML, encoding="utf-8")
-    print(f"OK: wrote {output}")
-    print(f"OK: {len(HTML):,} bytes")
+    output.write_text(html, encoding="utf-8")
+    print(f"OK: wrote {output} (rev {git_rev})")
+    print(f"OK: {len(html):,} bytes")
     return 0
 
 
