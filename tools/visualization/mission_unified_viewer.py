@@ -1188,6 +1188,8 @@ let planVCellSizeM = 2.0;
 let planFacesGeom  = [];   // pre-built exterior face geometry for L2
 // Bounding box of L2 cells — updated on snapshot/delta; included in sceneRadius.
 let planBounds = null;  // null | {min_x,max_x,min_y,max_y,min_z,max_z}
+// Max updated_at across all L2 cells (Unix seconds); drives age-decay animation scheduling.
+let planNewestTs = 0;
 
 function applyPlanningSnapshot(plan, {deferRender=false}={}) {
   if (!plan || !Array.isArray(plan.cells)) return false;
@@ -1198,9 +1200,11 @@ function applyPlanningSnapshot(plan, {deferRender=false}={}) {
   planningCellsByKey.clear();
 
   let mnx=Infinity,mxx=-Infinity,mny=Infinity,mxy=-Infinity,mnz=Infinity,mxz=-Infinity;
+  let maxTs = 0;
   for (const raw of plan.cells) {
     const center = asVec3(raw.center_map);
     if (!center) continue;
+    const updated_at = fin(raw.t, 0);
     planningCellsByKey.set(
       planningQuantKey(center.x, center.y, center.z, planCellSizeM, planVCellSizeM),
       {
@@ -1208,15 +1212,17 @@ function applyPlanningSnapshot(plan, {deferRender=false}={}) {
         occupied_score:    fin(raw.occupied_score, 0),
         confidence:        fin(raw.confidence, 0),
         source_cell_count: fin(raw.source_cell_count, 0),
-        updated_at: fin(raw.t, 0),  // Unix seconds of last live L1 update; 0 = DB-only
+        updated_at,  // Unix seconds of last live L1 update; 0 = DB-only
       }
     );
     if (center.x < mnx) mnx=center.x; if (center.x > mxx) mxx=center.x;
     if (center.y < mny) mny=center.y; if (center.y > mxy) mxy=center.y;
     if (center.z < mnz) mnz=center.z; if (center.z > mxz) mxz=center.z;
+    if (updated_at > maxTs) maxTs = updated_at;
   }
   if (planningCellsByKey.size > 0) {
     planBounds = {min_x:mnx,max_x:mxx,min_y:mny,max_y:mxy,min_z:mnz,max_z:mxz};
+    planNewestTs = maxTs;
   }
 
   buildPlanningFaces();
@@ -1302,10 +1308,8 @@ function drawPlanningFaces() {
   ctx.lineWidth = 0.5 * devicePixelRatio;
 
   const byType = state.travColorByType;
-  // L2 is a persistent accumulator — all cells render at full alpha.
-  // Age-decay was removed: the DB timestamp was a steady_clock value (not
-  // comparable to Date.now()), and dimming persistent obstacle history
-  // is not operationally useful.
+  // L2 age-decay: 0–2 s full brightness, 2–10 s linear cool to 80%, stable after.
+  // updated_at=0 (unknown) renders at the dimmed final value.
   const L2_ALPHA  = 0.44;
   const L2_STROKE = 0.52;
 
@@ -1320,9 +1324,12 @@ function drawPlanningFaces() {
     const fr = Math.round(liveBase[0] * s);
     const fg = Math.round(liveBase[1] * s);
     const fb = Math.round(liveBase[2] * s);
-    const fa = L2_ALPHA;
-    const sa = L2_STROKE;
-    const key = `${fr},${fg},${fb}`;
+    // ageFactor: 1.0 (fresh) → 0.8 (≥10 s old). liveDecay takes ms timestamp.
+    const ageFactor = (liveDecay(face.updated_at * 1000, 0.8) ?? 0.8);
+    const af10 = Math.round(ageFactor * 10);   // 8, 9, or 10 — batch key bucket
+    const fa = L2_ALPHA  * ageFactor;
+    const sa = L2_STROKE * ageFactor;
+    const key = `${fr},${fg},${fb},${af10}`;
 
     let g = groups.get(key);
     if (!g) {
@@ -1966,12 +1973,12 @@ function buildESDFArrows() {
   const inv2s2 = 1.0 / (2.0 * sigma * sigma);
   const vcM    = esdfVCellSizeM;
 
-  // ── Step 1: bucket shell cells by R-grid square, per Z slice ────────────────
-  // Key: "bx,by,iz" where bx = floor(x/R), by = floor(y/R), iz = round(z/vcM)
+  // ── Step 1: bucket shell cells by R-grid XY square and Z cell ───────────────
+  // Key: "bx,by,iz"  (bx=floor(x/R), by=floor(y/R), iz=round(z/vcM))
   const buckets = new Map();
   let xMin = Infinity, xMax = -Infinity;
   let yMin = Infinity, yMax = -Infinity;
-  const zSlices = new Set();
+  let zMin = Infinity, zMax = -Infinity;
 
   for (const [, cell] of esdfCellsByKey) {
     if (cell.d <= 0 || cell.d >= d0) continue;
@@ -1982,21 +1989,33 @@ function buildESDFArrows() {
     let b = buckets.get(key);
     if (!b) { b = []; buckets.set(key, b); }
     b.push(cell);
-    if (cell.x < xMin) xMin = cell.x;
-    if (cell.x > xMax) xMax = cell.x;
-    if (cell.y < yMin) yMin = cell.y;
-    if (cell.y > yMax) yMax = cell.y;
-    zSlices.add(iz);
+    if (cell.x < xMin) xMin = cell.x; if (cell.x > xMax) xMax = cell.x;
+    if (cell.y < yMin) yMin = cell.y; if (cell.y > yMax) yMax = cell.y;
+    if (cell.z < zMin) zMin = cell.z; if (cell.z > zMax) zMax = cell.z;
   }
 
-  if (zSlices.size === 0) return;
+  if (zMin > zMax) return;
 
-  // ── Step 2: sample on R-spaced grid, gather from 3×3 neighbouring buckets ──
-  const gxStart = Math.floor(xMin / R) * R;
-  const gyStart = Math.floor(yMin / R) * R;
+  // ── Step 2: R-spaced Z layers with alternating XY offset (lattice sampling) ─
+  //
+  // Even layer (layerIdx % 2 == 0): XY grid origin at (gxBase, gyBase)
+  // Odd  layer (layerIdx % 2 == 1): XY grid origin at (gxBase+R/2, gyBase+R/2)
+  //
+  // For each Z layer, cells within ±ceil(R/(2*vcM)) Z-cell steps are gathered.
+  // This makes Z sample density match XY density regardless of vcM.
+  const gxBase = Math.floor(xMin / R) * R;
+  const gyBase = Math.floor(yMin / R) * R;
+  const gzBase = Math.floor(zMin / R) * R;
+  const izR    = Math.ceil(R / (2 * vcM));   // Z gather radius in ESDF cell steps
 
-  for (const iz of zSlices) {
-    const gz = (iz + 0.5) * vcM;
+  let layerIdx = 0;
+  for (let gz = gzBase; gz <= zMax + R; gz += R, layerIdx++) {
+    const isOdd  = (layerIdx & 1) === 1;
+    const xOff   = isOdd ? R * 0.5 : 0;
+    const yOff   = isOdd ? R * 0.5 : 0;
+    const gxStart = gxBase + xOff;
+    const gyStart = gyBase + yOff;
+    const izCenter = Math.round(gz / vcM);
 
     for (let gx = gxStart; gx <= xMax + R; gx += R) {
       const gbx = Math.floor(gx / R);
@@ -2008,23 +2027,25 @@ function buildESDFArrows() {
 
         for (let dx = -2; dx <= 2; dx++) {
           for (let dy = -2; dy <= 2; dy++) {
-            const b = buckets.get(`${gbx+dx},${gby+dy},${iz}`);
-            if (!b) continue;
-            for (const cell of b) {
-              const ex = cell.x - gx, ey = cell.y - gy;
-              const dist2 = ex*ex + ey*ey;
-              if (dist2 > R2) continue;
-              // APF weight: (1/d − 1/d0) / d, then Gaussian by distance
-              const apf = (1.0 / cell.d - 1.0 / d0) / cell.d;
-              const w   = apf * Math.exp(-dist2 * inv2s2);
-              const sgx = cell.sgx ?? cell.gx ?? 0;
-              const sgy = cell.sgy ?? cell.gy ?? 0;
-              const sgz = cell.sgz ?? cell.gz ?? 0;
-              ax += w * sgx; ay += w * sgy; az += w * sgz;
-              wSum += w;
-              if (cell.d < dMin) dMin = cell.d;
-              const ts = cell.updated_at || 0;
-              if (ts > maxTs) maxTs = ts;
+            for (let diz = -izR; diz <= izR; diz++) {
+              const b = buckets.get(`${gbx+dx},${gby+dy},${izCenter+diz}`);
+              if (!b) continue;
+              for (const cell of b) {
+                const ex = cell.x - gx, ey = cell.y - gy;
+                const dist2 = ex*ex + ey*ey;
+                if (dist2 > R2) continue;
+                // APF weight: (1/d − 1/d0) / d, then Gaussian by XY distance
+                const apf = (1.0 / cell.d - 1.0 / d0) / cell.d;
+                const w   = apf * Math.exp(-dist2 * inv2s2);
+                const sgx = cell.sgx ?? cell.gx ?? 0;
+                const sgy = cell.sgy ?? cell.gy ?? 0;
+                const sgz = cell.sgz ?? cell.gz ?? 0;
+                ax += w * sgx; ay += w * sgy; az += w * sgz;
+                wSum += w;
+                if (cell.d < dMin) dMin = cell.d;
+                const ts = cell.updated_at || 0;
+                if (ts > maxTs) maxTs = ts;
+              }
             }
           }
         }
@@ -2046,22 +2067,17 @@ function buildESDFArrows() {
 }
 
 // Render prebuilt sparse smoothed arrows.
-// Arrow opacity ages from 0.80 (fresh) to 0.15 (≥10 min old) based on the
-// last_updated_ns of the nearest L2 obstacle that generated it.
+// Arrow opacity: 0–2 s full (0.80), 2–10 s linear cool to 80% (→0.64), stable after.
 function drawESDFArrows() {
   if (!state.showEsdf || esdfArrowGeom.length === 0) return;
-  const AGE_MAX_S   = 600;
-  const now_s       = Date.now() / 1000;
   for (const a of esdfArrowGeom) {
     const d = a.d;
     const [r,g,b] = d < 1 ? [228,42,30] : d < 3 ? [228,200,30] : [42,200,65];
     const scale = (esdfD0M - Math.abs(d)) / esdfD0M * 4.0;
     if (scale <= 0) continue;
 
-    // Age-derived opacity: fresh = 0.80, stale (10 min) = 0.15
-    const age_s    = a.updated_at > 0 ? Math.min(AGE_MAX_S, now_s - a.updated_at) : AGE_MAX_S;
-    const ageFrac  = age_s / AGE_MAX_S;
-    const alpha    = 0.80 - ageFrac * 0.65;
+    // Same 2/10 s age profile as L2 cells; updated_at is Unix seconds.
+    const alpha = 0.80 * (liveDecay(a.updated_at * 1000, 0.8) ?? 0.8);
 
     const tip = {x: a.x + a.sgx*scale, y: a.y + a.sgy*scale, z: a.z + a.sgz*scale};
     const pa = project({x:a.x, y:a.y, z:a.z});
@@ -2101,12 +2117,12 @@ function draw() {
   drawL0PolarInset();     // fixed top-right: TTC radar
   drawL0ConeScope();      // below radar: sensor az×el scope
 
-  // Schedule next frame if live aging is active
-  if (live.connected) {
-    const now=Date.now();
-    const hasRecent=liveObsEvents.some(e=>e.live_seen_ms&&now-Number(e.live_seen_ms)<LIVE_FADE_END_MS);
-    if (hasRecent) requestAnimationFrame(draw);
-  }
+  // Schedule next frame if any aging is still in the 0–10 s decay window.
+  const now=Date.now();
+  const hasRecentObs = live.connected &&
+    liveObsEvents.some(e=>e.live_seen_ms&&now-Number(e.live_seen_ms)<LIVE_FADE_END_MS);
+  const hasDecayingL2 = planNewestTs > 0 && now - planNewestTs*1000 < LIVE_FADE_END_MS;
+  if (hasRecentObs || hasDecayingL2) requestAnimationFrame(draw);
 }
 
 // ── metrics + UI ───────────────────────────────────────────────────────────────
@@ -2413,14 +2429,16 @@ function applyPlanningDelta(plan, {deferRender=false}={}) {
   for (const raw of plan.cells) {
     const center = asVec3(raw.center_map);
     if (!center) continue;
+    const updated_at = fin(raw.t, 0);
     planningCellsByKey.set(
       planningQuantKey(center.x, center.y, center.z, csM, vcM),
       { center,
         occupied_score:    fin(raw.occupied_score, 0),
         confidence:        fin(raw.confidence, 0),
         source_cell_count: fin(raw.source_cell_count, 0),
-        updated_at: fin(raw.t, 0) }
+        updated_at }
     );
+    if (updated_at > planNewestTs) planNewestTs = updated_at;
     // Expand planBounds for scene radius (never shrinks on delta).
     if (!planBounds) {
       planBounds={min_x:center.x,max_x:center.x,min_y:center.y,max_y:center.y,min_z:center.z,max_z:center.z};
