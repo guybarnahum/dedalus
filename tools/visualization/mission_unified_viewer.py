@@ -178,7 +178,7 @@ h3 { font-size: 12px; margin: 10px 0 6px; color: #c0c4d0; text-transform: upperc
             <span style="display:flex;align-items:center;gap:5px;">
               <b id="m-esdf-r" style="color:#e8e8e8;">2.0m</b>
               <label style="color:#5a6380;font-size:10px;cursor:pointer;display:flex;align-items:center;gap:2px;">
-                <input type="checkbox" id="esdf-vel-mode" onchange="buildESDFArrows()" style="margin:0;">vel
+                <input type="checkbox" id="esdf-vel-mode" onchange="buildESDFArrows();scheduleDraw()" style="margin:0;">vel
               </label>
             </span>
           </div>
@@ -413,7 +413,8 @@ function dbgLog(type, detail, level = "info") {
 }
 
 // L3 ESDF (Stage 6): shell cells from C++ compute_esdf, emitted as esdf_delta SSE events.
-const esdfCellsByKey = new Map();   // quantKey → {x,y,z,d,gx,gy,gz}
+const esdfCellsByKey   = new Map(); // quantKey → {x,y,z,d,gx,gy,gz} — merged DB+live view
+const esdfDbCellsByKey = new Map(); // DB-loaded baseline (map_seq=0 burst); never cleared by live snapshots
 let   esdfNetRepulsion = null;      // {x,y,z} world-frame APF repulsion at drone position
 let   esdfD0M        = 5.0;        // truncation radius from last snapshot
 let   esdfMsgCount   = 0;          // total esdf_delta messages received
@@ -2006,7 +2007,7 @@ function buildESDFArrows() {
   const gxBase = Math.floor(xMin / R) * R;
   const gyBase = Math.floor(yMin / R) * R;
   const gzBase = Math.floor(zMin / R) * R;
-  const izR    = Math.ceil(R / (2 * vcM));   // Z gather radius in ESDF cell steps
+  const izR    = Math.ceil(rho / vcM);       // Z gather radius matches XY gather rho (1.3R)
 
   let layerIdx = 0;
   for (let gz = gzBase; gz <= zMax + R; gz += R, layerIdx++) {
@@ -2677,7 +2678,22 @@ function startLiveStream() {
       esdfConsecErrors = 0;   // reset on any successful parse
       esdfMsgCount++;
       const wasFull = !esdf.is_delta;
-      if (wasFull) { esdfCellsByKey.clear(); esdfDMin=Infinity; esdfDMax=-Infinity; }
+      const mapSeq  = payload.map_seq ?? -1;
+      // Separate DB baseline (map_seq=0 static-cache burst) from live snapshots.
+      // Live full snapshots (is_delta=false, map_seq>0) must not erase DB-loaded cells.
+      if (wasFull && mapSeq === 0) {
+        // DB burst: save as permanent baseline; reset live view from scratch.
+        esdfDbCellsByKey.clear();
+        esdfCellsByKey.clear(); esdfDMin=Infinity; esdfDMax=-Infinity;
+      } else if (wasFull) {
+        // Live full snapshot: clear live cells, restore DB baseline first.
+        esdfCellsByKey.clear(); esdfDMin=Infinity; esdfDMax=-Infinity;
+        for (const [k,v] of esdfDbCellsByKey) {
+          esdfCellsByKey.set(k, v);
+          if (v.d < esdfDMin) esdfDMin = v.d;
+          if (v.d > esdfDMax) esdfDMax = v.d;
+        }
+      }
       esdfD0M        = esdf.d0_m         || 5.0;
       esdfCellSizeM  = esdf.cell_size_m  || 1.0;
       esdfVCellSizeM = esdf.vcell_size_m || 2.0;
@@ -2687,8 +2703,10 @@ function startLiveStream() {
       if (esdf.net_rep) esdfNetRepulsion=esdf.net_rep;
       const inCells = Array.isArray(esdf.cells) ? esdf.cells : [];
       for (const c of inCells) {
-        esdfCellsByKey.set(esdfQuantKey(c.x, c.y, c.z),
-          {...c, updated_at: fin(c.t, 0)});
+        const key  = esdfQuantKey(c.x, c.y, c.z);
+        const cell = {...c, updated_at: fin(c.t, 0)};
+        esdfCellsByKey.set(key, cell);
+        if (wasFull && mapSeq === 0) esdfDbCellsByKey.set(key, cell);
         if (c.d < esdfDMin) esdfDMin = c.d;
         if (c.d > esdfDMax) esdfDMax = c.d;
       }
@@ -2780,6 +2798,7 @@ function onEsdfRSlider(val) {
   esdfSmoothR = parseFloat(val);
   el("m-esdf-r").textContent = esdfSmoothR.toFixed(1) + "m";
   buildESDFArrows();
+  scheduleDraw();
 }
 
 function onEsdfShowCells(checked) {
