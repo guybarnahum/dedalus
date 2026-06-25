@@ -1186,6 +1186,8 @@ function esdfQuantKey(x, y, z) {
 let planCellSizeM  = 1.0;
 let planVCellSizeM = 2.0;
 let planFacesGeom  = [];   // pre-built exterior face geometry for L2
+// Bounding box of L2 cells — updated on snapshot/delta; included in sceneRadius.
+let planBounds = null;  // null | {min_x,max_x,min_y,max_y,min_z,max_z}
 
 function applyPlanningSnapshot(plan, {deferRender=false}={}) {
   if (!plan || !Array.isArray(plan.cells)) return false;
@@ -1195,6 +1197,7 @@ function applyPlanningSnapshot(plan, {deferRender=false}={}) {
 
   planningCellsByKey.clear();
 
+  let mnx=Infinity,mxx=-Infinity,mny=Infinity,mxy=-Infinity,mnz=Infinity,mxz=-Infinity;
   for (const raw of plan.cells) {
     const center = asVec3(raw.center_map);
     if (!center) continue;
@@ -1208,6 +1211,12 @@ function applyPlanningSnapshot(plan, {deferRender=false}={}) {
         updated_at: fin(raw.t, 0),  // Unix seconds of last live L1 update; 0 = DB-only
       }
     );
+    if (center.x < mnx) mnx=center.x; if (center.x > mxx) mxx=center.x;
+    if (center.y < mny) mny=center.y; if (center.y > mxy) mxy=center.y;
+    if (center.z < mnz) mnz=center.z; if (center.z > mxz) mxz=center.z;
+  }
+  if (planningCellsByKey.size > 0) {
+    planBounds = {min_x:mnx,max_x:mxx,min_y:mny,max_y:mxy,min_z:mnz,max_z:mxz};
   }
 
   buildPlanningFaces();
@@ -1885,6 +1894,11 @@ function drawTrajectory() {
 function recomputeBounds() {
   const pts=[];
   for (const cell of obsCellsByKey.values()) { if (cell.center) pts.push(cell.center); }
+  // Include L2 bounding box corners so DB-only mode sizes the scene correctly.
+  if (planBounds) {
+    pts.push({x:planBounds.min_x,y:planBounds.min_y,z:planBounds.min_z});
+    pts.push({x:planBounds.max_x,y:planBounds.max_y,z:planBounds.max_z});
+  }
   for (const p of state.trajectory) { if (p) pts.push(p); }
   if (state.ego) pts.push(state.ego);
   for (const ov of state.sensingOverlays) {
@@ -2407,6 +2421,17 @@ function applyPlanningDelta(plan, {deferRender=false}={}) {
         source_cell_count: fin(raw.source_cell_count, 0),
         updated_at: fin(raw.t, 0) }
     );
+    // Expand planBounds for scene radius (never shrinks on delta).
+    if (!planBounds) {
+      planBounds={min_x:center.x,max_x:center.x,min_y:center.y,max_y:center.y,min_z:center.z,max_z:center.z};
+    } else {
+      if (center.x<planBounds.min_x) planBounds.min_x=center.x;
+      if (center.x>planBounds.max_x) planBounds.max_x=center.x;
+      if (center.y<planBounds.min_y) planBounds.min_y=center.y;
+      if (center.y>planBounds.max_y) planBounds.max_y=center.y;
+      if (center.z<planBounds.min_z) planBounds.min_z=center.z;
+      if (center.z>planBounds.max_z) planBounds.max_z=center.z;
+    }
   }
   // Any delta means live L1→L2 data arrived this session; L3 arrows go live too.
   if (!l2HasLiveData) {

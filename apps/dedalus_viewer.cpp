@@ -572,13 +572,15 @@ public:
             });
         }
         sqlite3_finalize(stmt);
-        sqlite3_close(db);
 
         std::fprintf(stderr,
             "[dedalus_viewer] L2 DB '%s': %zu cells loaded\n",
             db_path.c_str(), cells.size());
 
-        if (cells.empty()) return true;
+        if (cells.empty()) {
+            sqlite3_close(db);
+            return true;
+        }
 
         // Serialize into a single planning_map_snapshot JSONL line — same
         // schema as to_compact_stream_json() / on_planning_map_snapshot().
@@ -675,6 +677,7 @@ public:
             }
         }
 
+        sqlite3_close(db);
         return true;
     }
 
