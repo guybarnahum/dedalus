@@ -2831,7 +2831,7 @@ function installViewControls() {
     const atPitch     = Math.abs(pitch - targetPitchRad) < SNAP_TOL;
     const atCanonical = nearestDist < SNAP_TOL;
     // If already on this preset, step to next canonical; otherwise snap to nearest.
-    const targetIdx = (atPitch && atCanonical) ? (nearestIdx + 1) % 4 : nearestIdx;
+    const targetIdx = (atPitch && atCanonical) ? (nearestIdx + 1) % SNAP_YAWS_RAD.length : nearestIdx;
     window.animateViewPreset(SNAP_YAWS_RAD[targetIdx], targetPitchRad, zoom, "preset");
   }
 
