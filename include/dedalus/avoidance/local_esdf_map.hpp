@@ -140,15 +140,8 @@ public:
                      const std::vector<Vec3>& waypoints,
                      double tube_radius_m);
 
-    // ── Persistence ────────────────────────────────────────────────────────────
-    //
-    // save(): write all shell cells to a binary file (magic 'ESDF', version 1).
-    //         Returns false on I/O error; does not throw.
-    // load(): restore cells from a previously saved file.  Replaces all current
-    //         cells.  Returns false if the file is missing, corrupt, or versioned
-    //         differently.  On failure the map is left empty.
-    [[nodiscard]] bool save(const std::filesystem::path& path) const;
-    [[nodiscard]] bool load(const std::filesystem::path& path);
+    // L3 is never saved to disk.  It is always recomputed from L2 (~6 ms).
+    // To inspect L3 offline, call compute_esdf() against an l2_map.db snapshot.
 
     // compute_esdf populates cells_ directly.
     friend LocalESDFMap compute_esdf(const MissionLocalPlanningMap& l2,

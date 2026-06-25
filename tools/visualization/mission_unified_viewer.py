@@ -2815,10 +2815,10 @@ function installViewControls() {
     window.animateViewPreset(yaw, pitch, zoom, "center", cloneP(sceneCenter()));
   });
   // ── Unified snap-to-preset logic ──────────────────────────────────────────────
-  // Canonical yaws: 45°, 135°, 225°, 315° (body-diagonals — balanced perspective).
+  // Canonical yaws: 45°, 90°, 135°, 270°, 225°, 315°, 360° (body-diagonals — balanced perspective).
   // First press: snap pitch to target + nearest canonical yaw. Zoom preserved.
-  // Already on preset: advance +90° through the canonical cycle.
-  const SNAP_YAWS_RAD = [45, 135, 225, 315].map(d => d * Math.PI / 180);
+  // Already on preset: advance +45° through the canonical cycle.
+  const SNAP_YAWS_RAD = [45, 90, 135, 180, 225, 270, 315, 360].map(d => d * Math.PI / 180);
   const SNAP_TOL = 6 * Math.PI / 180;  // 6° tolerance for "are we already there?"
 
   function snapToPreset(targetPitchRad) {

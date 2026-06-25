@@ -28,8 +28,7 @@ CoreStackRunner::CoreStackRunner(CoreStackProviders providers, CoreStackRunnerCo
       mission_obstacle_map_delta_writer_(MissionObstacleMapDeltaWriter::from_environment()),
       mission_traversability_map_artifact_writer_(
           MissionTraversabilityMapArtifactWriter::from_environment()),
-      planning_map_persistence_path_(std::move(config.planning_map_persistence_path)),
-      esdf_persistence_path_(std::move(config.esdf_persistence_path)) {
+      planning_map_persistence_path_(std::move(config.planning_map_persistence_path)) {
     if (!snapshot_subscriber_handles_.empty()) {
         if (!snapshot_publisher_) {
             snapshot_publisher_ = std::make_shared<WorldSnapshotPublisher>();
@@ -73,16 +72,10 @@ CoreStackRunner::CoreStackRunner(CoreStackProviders providers, CoreStackRunnerCo
         });
     }
 
-    // Load persisted ESDF if available.  A successful load means the shell cells
-    // from the previous session are already in memory; the first tick will skip
-    // the full recompute and instead publish the cached cells immediately.
-    if (!esdf_persistence_path_.empty() &&
-        std::filesystem::exists(esdf_persistence_path_)) {
-        if (esdf_map_.load(esdf_persistence_path_)) {
-            esdf_needs_full_recompute_ = false;
-        }
-    }
 }
+// Note: L3 is always recomputed from L2 (first run_once() call, before blocking on
+// the frame source).  No disk load at startup — recompute from the in-memory L2
+// window is ~6 ms and always consistent with the current L2 state.
 
 CoreStackRunner::~CoreStackRunner() {
     // Stop the flush thread before finalizing (prevents concurrent flush during close_db).
@@ -122,12 +115,7 @@ MissionMapFlushResult CoreStackRunner::finalize_mission_map_after_landing(const 
     if (!planning_map_persistence_path_.empty()) {
         mission_local_planning_map_.close_db();
     }
-
-    // Persist the ESDF so it is ready on the next startup without a recompute.
-    // save() is best-effort at shutdown; ignore the return value intentionally.
-    if (!esdf_persistence_path_.empty() && esdf_map_.cell_count() > 0U) {
-        (void)esdf_map_.save(esdf_persistence_path_);
-    }
+    // L3 is not saved: always recomputed from L2 at next startup.
 
     return result;
 }

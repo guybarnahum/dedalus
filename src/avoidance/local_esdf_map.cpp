@@ -1,13 +1,13 @@
 // local_esdf_map.cpp
 //
-// LocalESDFMap public interface: query(), repulsion(), is_clear(), save(), load().
+// LocalESDFMap public interface: query(), repulsion(), is_clear().
 // The EDT computation lives in compute_esdf.cpp.
+// L3 is never saved to disk — always recomputed from L2 (~6 ms).
 
 #include "dedalus/avoidance/local_esdf_map.hpp"
 
 #include <algorithm>
 #include <cmath>
-#include <cstdio>
 
 namespace dedalus {
 
@@ -136,120 +136,6 @@ LocalESDFMapSnapshot LocalESDFMap::snapshot(const Vec3& query_pos, double repuls
     }
     snap.net_repulsion = repulsion(query_pos, config_.d0_m, repulsion_k);
     return snap;
-}
-
-// ─── save ────────────────────────────────────────────────────────────────────
-//
-// Binary layout (little-endian native):
-//   [0..3]   magic   'E','S','D','F'
-//   [4..7]   version uint32 = 2
-//   [8..15]  n       uint64  (cell count)
-//   [16..23] cell_size_m          double
-//   [24..31] vertical_cell_size_m double
-//   [32..39] d0_m                 double
-//   Repeated n times (76 bytes/cell):
-//     centre.x  double (8)
-//     centre.y  double (8)
-//     centre.z  double (8)
-//     d         float  (4)
-//     grad.x    double (8)
-//     grad.y    double (8)
-//     grad.z    double (8)
-//     sgrad.x   double (8)  ← added in v2
-//     sgrad.y   double (8)
-//     sgrad.z   double (8)
-//
-// Version 1 (52 bytes/cell, no sgrad) can be loaded; sgrad defaults to grad.
-
-bool LocalESDFMap::save(const std::filesystem::path& path) const {
-    std::FILE* fp = std::fopen(path.c_str(), "wb");
-    if (!fp) { return false; }
-
-    const char     magic[4] = {'E', 'S', 'D', 'F'};
-    std::uint32_t  version  = 2U;
-    std::uint64_t  n        = static_cast<std::uint64_t>(cells_.size());
-
-    bool ok = true;
-    ok = ok && std::fwrite(magic,              1, 4, fp) == 4;
-    ok = ok && std::fwrite(&version,           4, 1, fp) == 1;
-    ok = ok && std::fwrite(&n,                 8, 1, fp) == 1;
-    ok = ok && std::fwrite(&config_.cell_size_m,          8, 1, fp) == 1;
-    ok = ok && std::fwrite(&config_.vertical_cell_size_m, 8, 1, fp) == 1;
-    ok = ok && std::fwrite(&config_.d0_m,                 8, 1, fp) == 1;
-
-    for (const auto& [key, cell] : cells_) {
-        ok = ok && std::fwrite(&cell.centre.x,  8, 1, fp) == 1;
-        ok = ok && std::fwrite(&cell.centre.y,  8, 1, fp) == 1;
-        ok = ok && std::fwrite(&cell.centre.z,  8, 1, fp) == 1;
-        ok = ok && std::fwrite(&cell.d,          4, 1, fp) == 1;
-        ok = ok && std::fwrite(&cell.grad.x,    8, 1, fp) == 1;
-        ok = ok && std::fwrite(&cell.grad.y,    8, 1, fp) == 1;
-        ok = ok && std::fwrite(&cell.grad.z,    8, 1, fp) == 1;
-        ok = ok && std::fwrite(&cell.sgrad.x,   8, 1, fp) == 1;
-        ok = ok && std::fwrite(&cell.sgrad.y,   8, 1, fp) == 1;
-        ok = ok && std::fwrite(&cell.sgrad.z,   8, 1, fp) == 1;
-        if (!ok) { break; }
-    }
-
-    std::fclose(fp);
-    return ok;
-}
-
-// ─── load ────────────────────────────────────────────────────────────────────
-
-bool LocalESDFMap::load(const std::filesystem::path& path) {
-    std::FILE* fp = std::fopen(path.c_str(), "rb");
-    if (!fp) { return false; }
-
-    char          magic[4] = {};
-    std::uint32_t version  = 0U;
-    std::uint64_t n        = 0U;
-    double        cell_size_m = 0.0, vertical_cell_size_m = 0.0, d0_m = 0.0;
-
-    bool ok = true;
-    ok = ok && std::fread(magic,                 1, 4, fp) == 4
-            && magic[0]=='E' && magic[1]=='S' && magic[2]=='D' && magic[3]=='F';
-    ok = ok && std::fread(&version,              4, 1, fp) == 1
-            && (version == 1U || version == 2U);
-    ok = ok && std::fread(&n,                    8, 1, fp) == 1;
-    ok = ok && std::fread(&cell_size_m,          8, 1, fp) == 1;
-    ok = ok && std::fread(&vertical_cell_size_m, 8, 1, fp) == 1;
-    ok = ok && std::fread(&d0_m,                 8, 1, fp) == 1;
-
-    if (!ok) { std::fclose(fp); return false; }
-
-    config_.cell_size_m          = cell_size_m;
-    config_.vertical_cell_size_m = vertical_cell_size_m;
-    config_.d0_m                 = d0_m;
-
-    cells_.clear();
-    cells_.reserve(static_cast<std::size_t>(n));
-
-    for (std::uint64_t i = 0U; i < n; ++i) {
-        LocalESDFCell cell{};
-        ok = ok && std::fread(&cell.centre.x,  8, 1, fp) == 1;
-        ok = ok && std::fread(&cell.centre.y,  8, 1, fp) == 1;
-        ok = ok && std::fread(&cell.centre.z,  8, 1, fp) == 1;
-        ok = ok && std::fread(&cell.d,          4, 1, fp) == 1;
-        ok = ok && std::fread(&cell.grad.x,    8, 1, fp) == 1;
-        ok = ok && std::fread(&cell.grad.y,    8, 1, fp) == 1;
-        ok = ok && std::fread(&cell.grad.z,    8, 1, fp) == 1;
-        if (version >= 2U) {
-            ok = ok && std::fread(&cell.sgrad.x, 8, 1, fp) == 1;
-            ok = ok && std::fread(&cell.sgrad.y, 8, 1, fp) == 1;
-            ok = ok && std::fread(&cell.sgrad.z, 8, 1, fp) == 1;
-        } else {
-            // v1 file: no sgrad stored; use grad as a reasonable fallback.
-            // Will be recomputed to a proper smoothed gradient on next full ESDF build.
-            cell.sgrad = cell.grad;
-        }
-        if (!ok) { break; }
-        cells_.emplace(key_for_point(cell.centre), cell);
-    }
-
-    std::fclose(fp);
-    if (!ok) { cells_.clear(); }
-    return ok;
 }
 
 }  // namespace dedalus

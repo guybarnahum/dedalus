@@ -3,8 +3,8 @@
 You are continuing work on the Dedalus repo.
 Repository: `guybarnahum/dedalus`
 
-First read: **LLM.md** (current state + L3 plan)
-Then read: `docs/two-level-obstacle-map.md` and any docs listed below that are relevant to the task.
+First read: **LLM.md** (goals, current state, architecture, next slice)
+Then read: `docs/two-level-obstacle-map.md` for L0–L3 detail.
 Historical context only if needed: `LLM.back.md`
 
 Run `git log --oneline -5` to confirm current commit before starting work.
@@ -13,154 +13,117 @@ Run `git log --oneline -5` to confirm current commit before starting work.
 
 ## Active Development State
 
+### Obstacle map stack — COMPLETE
+
+All stages implemented, committed, tested.
+
 ```
-Viewer (mission_unified_viewer.py → build/viewer.html):
-  COMPLETE and operator-validated:
-  - L0 TTC radar inset (top-right): TTC-radial, escape/flight vectors, HOVER mode.
-  - L0 sensor cone scope (top-left): az×el panel, source-tagged (white/gray/black),
-    TTC halo coloring, zeroed when no data.
-  - Takeoff/home marker: green diamond "H".
-  - Unified snap-to-preset (45°/Top/Side): canonical yaws 45/135/225/315°,
-    zoom preserved, zoom display updated during animation.
-  - Color mode toggle: visibility:hidden (no layout resize).
-  - Viewer contract validator: 0 violations (validate-mission-unified-viewer.py).
+Stage 1  L2 SQLite persistence       DONE — SQLite + WAL + dirty-cell flush (10 s)
+Stage 2  Bounded in-memory L2        DONE — slide_window() ±150 m, wired in run_once()
+Stage 2.5 L2 planning API            DONE — ray_cast + query_occupied_in_box
+Stage 3  L3 EDT compute              DONE — Meijster 3D, sparse shell cells, signed field
+Stage 4  L3 incremental updates      DONE — update_incremental() + update_tube() in tick loop
+Stage 5  Incremental L2 SSE          DONE — write_seq watermark, delta publish wired
+Stage 6  L3 SSE + viewer             DONE — esdf_delta events, arrows, net rep in radar inset
+```
 
-L0 C++ (complete):
-  compute_l0_polar_risk() + collect_l0_sensor_observations() in local_flight_map.cpp.
-  Polar sectors (1-D) + spherical bins (2-D az×el) + sensor observations serialized
-  in world_snapshot SSE stream. JSON bool first_bin bug fixed.
+L3 is always recomputed from L2. It is never saved to disk.
+`esdf_persistence_path` in CoreStackRunnerConfig is intentionally unwired.
 
-L1/L2 (complete):
-  L1 MissionLocalTraversabilityMap: 0.5 m, decay 0.05/s, streamed to viewer.
-  L2 MissionLocalPlanningMap: 1 m×2 m, plain-text save/load, streamed to viewer.
-  All 44/44 ctests pass.
+### Viewer — COMPLETE
 
-Next: Stage 1 — L2 SQLite persistence (see plan below).
+`tools/visualization/mission_unified_viewer.py` → `build/viewer.html`
+
+All layers rendering: L0 TTC radar + cone scope, L1 trav surface, L2 planning cells
+(age-dimmed), L3 ESDF gradient arrows + amber net-repulsion vector in radar inset.
+Age dimming: 0–2 s full brightness, 2–10 s linear decay to 80%.
+L3 lattice: R-spaced Z layers, alternating (R/2, R/2) XY offset on odd layers.
+DB/live ESDF merge: DB baseline preserved through live full snapshots (map_seq=0 gate).
+Contract validator: 0 violations.
+
+### Deferred planning work
+
+```
+Stage 7  Navigation function + trajectory optimizer   DEFERRED — see LLM.md §5
+Stage 8  L0/L3 calibration (sim run)                 DEFERRED — blocked on Stage 7
 ```
 
 ---
 
-## Four-Level Obstacle Map Architecture
+## Next Active Slice: Perception
 
-See `docs/two-level-obstacle-map.md` for full detail.
+See LLM.md §3 for full plan. Summary:
+
+```
+P1  Actor detection baseline
+      ActorObservation type in PerceptionPipelineOutput (separate from ObstacleEvidence).
+      Do NOT feed actors into L2. Backend TBD: AirSim GT oracle → depth clustering → vision model.
+
+P2  Actor tracking
+      ActorTrack: id, class, position, velocity, heading, last_seen_ns, confidence.
+      Kalman / constant-velocity predictor. Lifecycle: init → update → age-out (2 s).
+      actor_tracks SSE event. Viewer: labeled dots + velocity vectors.
+
+P3  Exploration planner
+      FrontierMap from L2. ExplorationPlanner → next waypoint.
+      New mission step type: ExploreStep.
+
+P4  Tag / chase / inspect behavior
+      ApproachActorStep, OrbitActorStep, InspectActorStep.
+      Close loop on ActorTrack position. Plugs into existing BehaviorSpec runtime.
+
+P5  Multi-drone coordination (future, not started)
+```
+
+---
+
+## Four-Level Obstacle Map Architecture (reference)
 
 ```
 L0  LocalFlightMapSnapshot        ego-local, 0.5 m cells, rebuilt every tick
-      Polar risk: compute_l0_polar_risk() → 36 az sectors + 36×9 spherical bins
-      Sensor obs: collect_l0_sensor_observations() → source-tagged evidence
+      Polar risk + sensor obs: compute_l0_polar_risk() + collect_l0_sensor_observations()
       Viewer: TTC radar inset (top-right) + cone scope inset (top-left)
       Role: reflexive avoidance, TTC, escape vector. No planner coupling.
 
 L1  MissionLocalTraversabilityMap  per-flight accumulator, 0.5 m, decay 0.05/s
       Feeds L2 via update_from_traversability() each tick.
-      Streamed to viewer as exterior voxel face surface (LOD).
-      Lifetime: per-flight session.
+      Viewer: exterior voxel face surface (LOD, throttled 2 s).
 
 L2  MissionLocalPlanningMap        persistent site map, 1 m × 1 m × 2 m voxels
-      Current: flat vector + hashmap, plain-text file (planning_map_v1).
-      Evidence-keyed: occupied max-merges in, free-space evicts.
-      No time decay. Saved at finalize_mission_map_after_landing().
-      Loaded at process start from planning_map_persistence_path_.
-      Target: SQLite + WAL + R-tree (Stage 1).
+      SQLite + WAL. slide_window(±150 m). ray_cast + query_occupied_in_box.
+      Delta SSE streaming (write_seq watermark).
+      DB path: maps/$DEDALUS_SITE_ID/l2_map.db (auto-derived in mission loop).
 
-L3  LocalESDFMap                   ESDF computed from local L2 window
-      Not yet implemented. Plan: Stages 3–4.
-      Role: distance field + gradient = planning primitive for trajectory optimizer.
-      Derived from L2, not stored persistently.
+L3  LocalESDFMap                   ESDF computed from in-memory L2 window every tick
+      Meijster 3D EDT. Sparse hash map (shell cells |d| < d0 = 5 m).
+      Signed field; gradient ∇d precomputed per shell cell.
+      update_incremental() on dirty L2 cells; full recompute on slide_window().
+      SSE: esdf_delta (full on startup, delta on incremental change).
+      NOT saved to disk — always recomputed from L2 (recompute ~6 ms).
 ```
 
 Representation boundaries — keep these distinct:
-- `ObstacleEvidence` — raw temporary input to map update, not stored
+- `ObstacleEvidence` — static geometry evidence, feeds L1/L2
+- `ActorObservation` — dynamic agent evidence, feeds tracker ONLY (not L2)
 - `LocalFlightMapSnapshot` (L0) — current-hazard working set, ego-local
 - `MissionLocalTraversabilityMap` (L1) — per-flight filtered accumulator
 - `MissionLocalPlanningMap` (L2) — cross-mission persistent store
-- `LocalESDFMap` (L3) — planning primitive, derived from L2
-- Visualization/debug/replay — not the runtime/control storage format
-
----
-
-## L2 SQLite + L3 ESDF Implementation Plan
-
-Full plan with validation criteria is in LLM.md Section 4. Summary:
-
-```
-Stage 1    L2 SQLite persistence
-             Replace plain-text save/load with SQLite + WAL + R-tree.
-             Add dirty-cell set; background flush thread (10 s, dirty cells only).
-             Startup: spatial query for local window around drone.
-             Validate: roundtrip, partial load, flush < 50 ms, crash recovery, ctests.
-
-Stage 2    Bounded in-memory L2 + spatial eviction
-             Cap in-memory to ±150 m of drone; slide_window() on movement > 37 m.
-             Evict far cells; stream in new cells from SQLite.
-             Validate: memory bounded over 2 km flight; slide < 5 ms.
-
-Stage 2.5  L2 planning API: ray_cast + query_occupied_in_box
-             ray_cast(origin, dir, max_range) → optional<Vec3>: first occupied hit.
-             query_occupied_in_box(bbox) → vector<Vec3>: all occupied cells in box.
-             Pure query, no side effects on L2 state.
-             Validate: hit at correct distance; nullopt through free space; < 1 ms.
-             [L1 OctoMap: insert here before any L2 structural change; defer until needed]
-
-Stage 3    L3 EDT compute (free function, no IPC)
-             compute_esdf(l2, centre, window, d0) → LocalESDFMap.
-             Meijster 3D separable EDT, O(N). Sparse hash map (shell cells only).
-             Signed field (negative inside occupied, clamped −0.5 m).
-             Validate: flat-wall + corner correctness; perf < 5 ms on 80×80×20 m.
-
-Stage 4    L3 incremental updates
-             update_incremental(dirty_voxels): recompute within d0 of dirty cells.
-             update_tube(trajectory, radius): JIT narrow-band for path validation.
-             Validate: incremental ≡ full (< 0.01 m); < 1 ms for 50 dirty cells.
-
-Stage 5    Incremental L2 SSE streaming
-             Distance-sorted chunked initial load (500 cells/msg, 50 ms yield).
-             Delta mode after initial load (sequence watermark).
-             Validate: no spike > 20 ms per message; complete after full stream.
-
-Stage 6    L3 SSE streaming + viewer
-             a) esdf_delta SSE event; drawESDFArrows() — 3D arrows colored by clearance;
-                toggle in layer controls.
-             b) L3 net repulsion vector in L0 radar inset (amber), alongside L0 escape
-                vector (green). Both reflexive and planned guidance in one view.
-             Validate: arrows correct; render < 4 ms; net vector consistent with arrows;
-                       contract validator green.
-
-Stage 7    Navigation function + trajectory optimizer
-             compute_navigation_function(l2, goal) → NavigationMap (Dijkstra on L2,
-               uses ray_cast + query_occupied_in_box from Stage 2.5).
-             optimize_trajectory(nav, l3, start, goal, config) → Trajectory.
-               Minimum-snap + ESDF soft penalty; uses update_tube() (Stage 4).
-             TrajectoryConfig: energy_weight, clearance_weight, time_weight.
-             Validate: topology, collision-free, snap bounded, weight monotonicity.
-
-Stage 8    L0/L3 calibration (no new code)
-             Sim run: L0 trigger rate vs L3 clearance margin.
-             Target: 0 L0 triggers when d_min > 2 m on planned trajectory.
-
-Dependencies:
-  Stage 1 → Stage 2 → Stage 2.5 → Stage 7 → Stage 8
-                     → Stage 5         ↑
-  Stage 3 → Stage 4 → Stage 6    Stage 4 ↗
-  Stages 1 and 3 independent (can be parallelised).
-  Stage 2.5 must follow Stage 2.
-  Stage 7 depends on Stage 2.5 (queries) AND Stage 4 (update_tube).
-  [L1 OctoMap: gate before L2 structural change; defer until needed]
-```
+- `LocalESDFMap` (L3) — planning primitive, derived from L2, not persisted
 
 ---
 
 ## Runtime Commands
 
-Build and test:
+Build and test (on Linux EC2 — Mac sandbox does not have cmake/ctest in PATH):
 ```bash
-cmake --build build-staging -j$(sysctl -n hw.logicalcpu)
+cmake --build build-staging -j$(nproc)
 ctest --test-dir build-staging --output-on-failure
 ```
 
-Generate and validate viewer:
+Generate and validate viewer (Mac or Linux):
 ```bash
-python3 tools/visualization/mission_unified_viewer.py --output build/viewer.html
+python3 tools/visualization/mission_unified_viewer.py
+cp build/viewer.html build-staging/viewer.html
 python3 tools/validation/validate-mission-unified-viewer.py build/viewer.html
 ```
 
@@ -173,13 +136,7 @@ DEDALUS_SITE_ID=airsim_47.641N_122.140W \
 # L2 DB auto-derived: maps/$DEDALUS_SITE_ID/l2_map.db
 ```
 
-Start dedalus_viewer sidecar (replay mode):
-```bash
-./build-staging/apps/dedalus_viewer \
-  --replay-dir out/<slug>/<timestamp> --http-port 8090 --static-root build-staging
-```
-
-Start AirSim mission — provide config and site ID, everything else auto-derives:
+Start AirSim mission:
 ```bash
 DEDALUS_SITE_ID=airsim_47.641N_122.140W \
 DEDALUS_AIRSIM_ENABLE_DEPTH_OBSTACLES=1 \
@@ -187,31 +144,12 @@ simulation/airsim/run_mission.sh \
   --config config/core_stack_object_behavior_airsim_existing_object_circle.yml \
   --runtime-event-http-port 8080 \
   --runtime-event-static-root build-staging
-# Auto-derives: output-dir=out/<slug>/<YYYYMMDD_HHMMSS>
-#               mission-id=<slug>_<YYYYMMDD_HHMMSS>
-#               site-frame=airsim_world (from airsim_ prefix)
-#               L2 DB flush → maps/$DEDALUS_SITE_ID/l2_map.db (every 10s)
-#               L2 merge → maps/$DEDALUS_SITE_ID/l2_map.db (post-mission)
 ```
 
 SSH browser access:
 ```bash
 ssh -L 8090:127.0.0.1:8090 <ec2-host>
-open http://127.0.0.1:8090/   # unified viewer (viewer.html default)
-```
-
-Evidence retention dry-run:
-```bash
-python3 tools/mission/mission-evidence-retention.py \
-  --output-dir out/<run> --maps-dir maps --keep-every-n 100 --json
-```
-
-Obstacle memory manifest validation:
-```bash
-python3 tools/avoidance/validate_obstacle_memory_manifest.py \
-  out/<run>/obstacle_memory_manifest.json \
-  --site-id <site_id> --site-frame-id airsim_world \
-  --mission-id <mission_id> --site-map-format sqlite
+open http://127.0.0.1:8090/
 ```
 
 Git commit (FUSE lock):
@@ -226,15 +164,13 @@ git push
 
 ## Do Not
 
-- Do not use YOLO/DETR/classifier outputs as a prerequisite for obstacle avoidance.
-- Do not derive visual obstacle coverage from vehicle yaw alone.
-- Do not use AirSim object-GT as the obstacle detector.
-- Do not add named-object class filters to obstacle detection.
-- Do not couple obstacle persistence, map-building policy, or sensing coverage to a flight command sink.
-- Do not add avoidance/replanning/control behavior from persistent memory until explicitly scoped and validated.
-- Do not add planner/control coupling at L3 until Stage 8 is explicitly scoped.
-- Do not change L2's in-memory voxel structure without first implementing L1 OctoMap (Stage 2.5 gate).
-- Do not introduce AirSim detector-side coalescing/flags (removed in 4.3A — map-level compaction owned by MissionLocalObstacleMap).
-- Do not merge L0/L1/L2/L3 representations or use one layer's storage format for another's role.
-- Do not name files, validators, scripts, or symbols after planning labels or temporary session shorthand.
-- Do not commit build/viewer.html (built from tools/visualization/mission_unified_viewer.py; build/ is in .gitignore).
+- Feed dynamic actor evidence into L1 or L2 (actors are not static geometry).
+- Use YOLO/DETR as a prerequisite for obstacle *avoidance* (fine for actor identification).
+- Add planner/control coupling at L3 until Stage 7 is explicitly resumed.
+- Save L3 to disk — always recompute from L2.
+- Derive visual obstacle coverage from vehicle yaw alone.
+- Couple obstacle persistence or map-building to a flight command sink.
+- Change L2's in-memory voxel structure without first implementing L1 OctoMap (gate).
+- Merge L0/L1/L2/L3 representations.
+- Commit build/viewer.html (built from tools/visualization/mission_unified_viewer.py).
+- Name files or symbols after planning labels or temporary session shorthand.

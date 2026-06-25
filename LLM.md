@@ -7,27 +7,19 @@ Repository: `guybarnahum/dedalus`
 
 ---
 
-## Current Handoff State
+## System Goals
 
-```
-Viewer (mission_unified_viewer.py / build/viewer.html):
-  - L0 TTC radar (top-right inset): TTC-radial positioning, escape/flight vectors,
-    HOVER mode, 80% size, heading label.
-  - L0 sensor cone scope (top-left inset): az×el rectilinear panel, source-tagged dots
-    (white=GT, gray=Depth, black=Visual), TTC halo coloring.
-  - L0 C++ compute: compute_l0_polar_risk() + collect_l0_sensor_observations() in
-    local_flight_map.cpp, serialized via world_snapshot SSE stream.
-  - Viewer cosmetics: unified snap-to-preset (45°/Top/Side), zoom preserved across
-    preset transitions, zoom display updates during animation.
-  - Takeoff/home marker: green diamond "H" at first recorded ego position.
-  - JSON serialization bug (spherical_risk_bins) fixed: bool first_bin pattern.
-  - All 44/44 ctests pass. Viewer contract validator: 0 violations.
+Dedalus is an autonomous drone that behaves like a curious, social bird:
 
-L0/L1/L2 obstacle map: implemented and operator-validated.
-  See docs/two-level-obstacle-map.md for full architecture.
+1. **Map** — Fly the region autonomously, build a persistent obstacle and route map (L2), fly faster and with more confidence over time, pre-empt what is around the corner (wires, poles, safe corridors).
 
-Next: L2 SQLite persistence (Stage 1 of L2/L3 plan below).
-```
+2. **Perceive actors** — Detect and identify dynamic actors (vehicles, individuals) in real time. Classify by type and track with velocity/heading estimates.
+
+3. **Interact** — Approach, chase, circle, inspect, "go over" a selected actor. Mimic how a curious crow engages with something interesting.
+
+4. **Coordinate** — Communicate with peer drones to partition the map and allocate dynamic actors so a swarm explores and tracks without redundancy.
+
+Goals 1–2 are the active focus. Goals 3–4 are next.
 
 ---
 
@@ -59,25 +51,32 @@ only for diagnostics, offline conversion, or intentionally external workflows.
 
 ## 1. Active Milestones
 
-```
-Milestones 2.20–2.30B: complete (behavior/follow/circle/sequence). See LLM.back.md.
-Milestone 4.1C: AirSim depth obstacle detector, live-validated.
-Milestone 4.3A-D: obstacle diagnostics hardening, complete.
-Milestone 4.3F: viewer polish (view presets, coloring, vectors), operator-validated.
-Milestone 4.3G: viewer HTML contract validator, complete.
+### Obstacle map stack — COMPLETE (Stages 1–6)
 
-Two-level obstacle map (L0+L1+L2): implemented and syntax-validated.
-  L0  LocalFlightMapSnapshot: ego-local, 0.5 m cells, polar risk + sensor cone scope.
-        compute_l0_polar_risk() + collect_l0_sensor_observations() run each tick.
-        Serialized in WorldSnapshot SSE stream. Viewer: TTC radar + cone scope insets.
-  L1  MissionLocalTraversabilityMap: 0.5 m voxels, decay 0.05/s, pruned at 0.1.
-        Streamed to viewer as traversability surface (exterior voxel faces, LOD).
-  L2  MissionLocalPlanningMap: 1 m × 1 m × 2 m voxels, evidence-keyed, no time decay.
-        Flat vector + hashmap. Save/load: versioned plain text (planning_map_v1).
-        Saved at finalize_mission_map_after_landing(); loaded at process start.
-
-Active next slice: L2 SQLite persistence + L3 ESDF (see Section 4).
 ```
+L0  LocalFlightMapSnapshot      ego-local, 0.5 m, rebuilt every tick
+                                → TTC, escape vector, polar + spherical risk grid
+                                → Viewer: TTC radar inset + sensor cone scope inset
+L1  MissionLocalTraversabilityMap  per-flight accumulator, 0.5 m, decay 0.05/s
+                                → feeds L2 each tick
+                                → Viewer: exterior voxel surface (LOD, throttled 2 s)
+L2  MissionLocalPlanningMap     persistent site map, 1 m × 1 m × 2 m voxels
+                                → SQLite + WAL + dirty-cell flush thread (10 s)
+                                → slide_window() bounded in-memory (±150 m)
+                                → ray_cast + query_occupied_in_box planning API
+                                → delta SSE streaming (write_seq watermark)
+                                → Viewer: planning cells + age dimming
+L3  LocalESDFMap                ESDF derived from L2 window (always recomputed, never saved)
+                                → Meijster 3D EDT; sparse shell cells only; signed field
+                                → update_incremental() in tick loop (Path 2)
+                                → SSE: esdf_delta events (full on startup, delta on change)
+                                → Viewer: gradient arrows (colored by clearance) +
+                                          net repulsion in L0 radar inset (amber)
+```
+
+All ctests pass (44+ tests). Viewer contract validator: 0 violations.
+
+### Next active slice: Perception (see Section 3)
 
 ---
 
@@ -95,8 +94,10 @@ AirSim live frame + ego sidecar
   -> MissionMapAssimilator
        -> L1: MissionLocalTraversabilityMap (0.5 m, decay 0.05/s)
               -> traversability_map_publisher -> SSE (throttled 2 s)
-       -> L2: MissionLocalPlanningMap (1 m×2 m, evidence-keyed, disk-backed)
-              -> MissionLocalPlanningMapPublisher -> SSE
+       -> L2: MissionLocalPlanningMap (1 m×2 m, SQLite-backed, slide_window)
+              -> MissionLocalPlanningMapPublisher -> SSE (delta, watermark)
+  -> L3: LocalESDFMap (derived from L2 each tick, never saved to disk)
+              -> LocalESDFMapPublisher -> SSE (esdf_delta)
   -> InMemoryWorldModel -> WorldSnapshotPublisher
        -> LatestWorldSnapshotSubscriber
        -> ArtifactSnapshotWriter
@@ -118,159 +119,130 @@ RuntimeEventStreamServer TCP JSONL (port 7788 / --world-snapshot-stream-port)
        --http-port: browser-facing SSE (default 8090)
        --replay-dir: replay from artifact dir
        --static-root / --static-default-file: static HTML serving
+       L2 DB loaded on connect; static cache burst replayed to new SSE clients.
   -> tools/visualization/mission_unified_viewer.py -> build/viewer.html
        Pure SPA; all state from /events SSE stream.
        Renders: L0 TTC radar + cone scope, L1 trav surface, L2 planning cells,
-                obstacle evidence, ghost detections, trajectory, sensing volumes,
-                mission event log, orientation gizmo, takeoff marker.
+                L3 ESDF arrows + net repulsion, obstacle evidence, ghost detections,
+                trajectory, sensing volumes, mission event log, orientation gizmo,
+                takeoff marker.
   -> tools/validation/validate-mission-unified-viewer.py (0 violations gate)
 ```
 
 ---
 
-## 3. Persistent Obstacle Memory (5Q–5U, complete)
+## 3. Active Next Slice: Perception
 
-Default path: compact-delta-first, SQLite-backed.
+Active focus is perception — identifying and tracking dynamic actors in the scene.
+Planning work (Stages 7–8) is deferred; see Section 5.
 
-```
-Runtime:
-  AirSim depth evidence -> mission_local_obstacle_map_deltas.jsonl (compact delta)
-  --write-full-obstacle-map-artifact adds mission_obstacle_map_full.json (debug only)
+### P1 — Actor detection baseline
 
-Post-mission:
-  mission_obstacle_map_deltas.jsonl
-    -> mission_obstacle_map_deltas.sqlite
-    -> maps/<site_id>/l2_map.db      (was: site_obstacle_map.sqlite)
-    -> out/<run>/obstacle_memory_manifest.json
-```
+Goal: get per-frame bounding box + class label for dynamic actors (people, vehicles)
+from the existing AirSim depth + RGB pipeline, without coupling to avoidance.
 
-Key commands:
-```bash
-# Minimal invocation — config + site ID, all else auto-derived.
-DEDALUS_SITE_ID=airsim_47.641N_122.140W \
-simulation/airsim/run_mission.sh \
-  --config config/core_stack_object_behavior_airsim_existing_object_circle.yml
+Key questions to resolve before implementation:
+- Which detector backend? Options: (a) AirSim GT labels as oracle for simulation
+  development (already partially wired via ghost/GT path); (b) real depth-based
+  clustering from the existing `AirSimDepthObstacleDetector`; (c) vision model (DETR
+  or lightweight YOLOv8n running locally).
+- Detection output goes into `PerceptionPipelineOutput` as a new `ActorObservation`
+  type (separate from `ObstacleEvidence` — obstacles are static geometry; actors are
+  dynamic agents with identity).
+- **Do not reuse `ObstacleEvidence`** for dynamic actors — different semantics, different
+  accumulation policy (actors have velocity, decay fast, are not written to L2).
 
-python3 tools/avoidance/validate_obstacle_memory_manifest.py \
-  out/<run>/obstacle_memory_manifest.json \
-  --site-id <site_id> --site-frame-id airsim_world \
-  --mission-id <mission_id> --site-map-format sqlite
-```
+### P2 — Actor tracking
+
+Goal: maintain a short-memory track of each actor: position, velocity, heading, class.
+Track list is part of `WorldSnapshot` (not `LocalFlightMapSnapshot` — not ego-local).
+
+Primitives needed:
+- `ActorTrack`: id, class, position, velocity, heading, last_seen_ns, confidence.
+- Simple Kalman or constant-velocity predictor per track.
+- Track lifecycle: init on first detection, update on match, age out after 2 s no-match.
+- Publish as `actor_tracks` SSE event; viewer draws labeled dots with velocity vectors.
+
+### P3 — Exploration planner (curiosity flight)
+
+Goal: given the current L2 map, identify the frontier (boundary of mapped vs. unknown
+space) and generate waypoints to extend coverage. Feeds the mission controller.
+
+Primitives needed:
+- `FrontierMap`: derived from L2, marks cells adjacent to unmapped space.
+- `ExplorationPlanner`: ranks frontier cells by information gain + distance cost;
+  returns next waypoint.
+- Plugs into mission controller as a new behavior type: `ExploreStep`.
+
+### P4 — Tag / chase / inspect behavior
+
+Goal: select an actor track and fly approach → orbit → inspection sequence.
+Builds on the existing `BehaviorSpec` sequence runtime.
+
+New behavior steps: `ApproachActorStep`, `OrbitActorStep`, `InspectActorStep`.
+Each step takes a `track_id` and closes the loop on the `ActorTrack` position.
+
+### P5 — Multi-drone coordination (future)
+
+Not started. Requires: peer discovery, map-partition protocol, actor-ownership protocol.
+Likely IPC: shared L2 DB merge (offline `tools/mission/merge_l2_maps.py`) + lightweight
+peer heartbeat stream. Out of scope until P1–P4 are stable.
 
 ---
 
-## 4. L2 SQLite + L3 ESDF Implementation Plan
-
-### Layer stack
+## 4. Architecture Boundaries
 
 ```
-L0  LocalFlightMapSnapshot      ego-local, 0.5 m, rebuilt every tick
-                                → reflexive avoidance, TTC, escape vector
-L1  MissionLocalTraversabilityMap  per-flight accumulator, decay 0.05/s, 0.5 m
-                                → current sensor picture, feeds L2
-L2  MissionLocalPlanningMap     persistent site map, 1 m voxels
-                                → durable obstacle memory across flights
-L3  LocalESDFMap                ESDF derived from local L2 window
-                                → distance field + gradient = planning primitive
+WorldSnapshot           autonomy state
+PerceptionPipelineOutput  evidence + actor observations
+ObstacleEvidence        static geometry evidence → feeds L1/L2
+ActorObservation        dynamic agent evidence → feeds actor tracker, NOT L2
+Ghost detections        enter through same Observation3D path as real detections
+Artifacts               evidence/debug outputs, not IPC
+Overlay                 subscriber/renderer only
+L0                      reflexive avoidance — no planner coupling
+L3                      planning primitive — no flight command coupling until Stage 7 scoped
 ```
 
-### Stage 1 — L2 SQLite persistence
+Do not:
+- Feed dynamic actor evidence into L2 (actors are not static obstacles).
+- Add planner blocking, replanning, or command-sink avoidance unless explicitly scoped.
+- Use YOLO/DETR outputs as prerequisite for *obstacle avoidance* (fine for actor ID).
+- Couple obstacle persistence, map-building, or sensing coverage to a flight command sink.
+- Merge L0/L1/L2/L3 representations.
+- Name files or symbols after planning labels or temporary session shorthand.
 
-Replace plain-text save/load with SQLite + WAL.
-Schema: `cells(xi,yi,zi INTEGER PK, score REAL, confidence REAL, count INTEGER, updated_ns INTEGER)` + R-tree index.
-Add dirty-cell set to `MissionLocalPlanningMap`; flush background thread every 10 s (dirty cells only).
-Startup: spatial query for window around last known drone position.
+---
 
-Validation: roundtrip 10k cells; partial load by bbox; flush latency < 50 ms; crash recovery (WAL); ctests green.
+## 5. Deferred Planning Work (Stages 7–8)
 
-### Stage 2 — Bounded in-memory L2 with spatial eviction
-
-Cap in-memory L2 to `±horizon_m` (default 150 m) of drone position.
-`slide_window(drone_pos)`: evict cells beyond `2×horizon`, stream in newly entered cells from SQLite.
-Called from `CoreStackRunner::run_once()` when drone moves > `horizon/4`.
-
-Validation: memory stays bounded over 2 km flight; continuity on re-entry; slide latency < 5 ms.
-
-### Stage 2.5 — L2 planning API (`ray_cast` + `query_occupied_in_box`)
-
-Add two query primitives directly on `MissionLocalPlanningMap` — these are L2-level, independent of L3:
-- `ray_cast(origin, dir, max_range_m) → optional<Vec3>`: march through L2 voxels along a ray; return first occupied hit. Used by the navigation function (Stage 7) and feasibility checks.
-- `query_occupied_in_box(bbox) → vector<Vec3>`: return centres of all occupied cells within an axis-aligned box. Used by the trajectory optimizer for local collision checking.
-
-These are pure query functions — no side effects on L2 state.
-
-Validation: ray through known wall returns hit at correct distance; ray through free space returns nullopt; bbox query returns exactly the expected cells; both complete in < 1 ms for a 40×40×20 m query volume.
-
-**L1 OctoMap gate:** If L2's in-memory structure ever changes (e.g., to octree or multi-resolution), L1 OctoMap must come first — L2 is built from L1 leaf nodes. The current flat hashmap is fine for Stages 1–7. Explicitly defer L1 OctoMap until L2 structure needs to change; re-evaluate before any L2 structural refactor.
-
-### Stage 3 — L3 EDT compute (free function)
-
-`compute_esdf(l2, centre_world, window_half_m, d0_m) → LocalESDFMap`.
-3D separable EDT (Meijster, O(N)); sparse hash map of shell cells only (`|d| < d0`).
-Signed: negative inside occupied, clamped at −0.5 m. Gradient `∇d` precomputed per shell cell.
-Interface: `query(pos) → (d, grad)`, `repulsion(pos, d0, k) → Vec3`, `is_clear(pos, r) → bool`.
-
-Validation: flat-wall correctness; corner geometry; signed field; perf < 5 ms on 80×80×20 m window; all ctests green.
-
-### Stage 4 — L3 incremental updates
-
-`update_incremental(l2, dirty_voxels, d0)`: recompute ESDF within d0 of each dirty voxel only.
-`update_tube(trajectory_points, tube_radius)`: JIT refinement along a proposed path.
-Wired: `update_incremental()` after each L1→L2 step; `update_tube()` from trajectory planner (Stage 7).
-
-Validation: incremental ≡ full recompute (< 0.01 m error); incremental < 1 ms for 50 dirty cells; tube < 2 ms.
-
-### Stage 5 — Incremental L2 SSE streaming
-
-Replace full-snapshot emission with distance-sorted chunked streaming (500 cells/message, 50 ms yield).
-After initial load: delta mode — only cells touched since client's sequence watermark.
-
-Validation: no single SSE message > 20 ms; complete after full stream; delta sends only changed cells.
-
-### Stage 6 — L3 SSE streaming + viewer
-
-Two viewer additions:
-
-**a) ESDF gradient arrows (new layer):** New SSE event `esdf_delta`: changed shell cells as `{x,y,z,d,gx,gy,gz}`.
-`drawESDFArrows()` — 3D line segments from cell centre in gradient direction,
-colored by clearance (red d<1 m, yellow d<3 m, green d<d0). Toggle in layer controls.
-
-**b) L3 net vector in L0 radar inset:** Compute the net L3 repulsion vector at the drone's position from the ESDF field. Draw it in the existing L0 radar inset alongside the reactive escape vector — same inset, distinct color (amber). Operators see both: immediate threat response (L0 escape, green) and pre-computed planned guidance (L3 net, amber) co-located in one view.
-
-Validation: ESDF arrows point away from known obstacle; render < 4 ms for 2k shell cells; L3 net vector visible in radar inset and directionally consistent with ESDF arrows; contract validator green.
+Deferred pending perception milestone. Do not start until explicitly resumed.
 
 ### Stage 7 — Navigation function + trajectory optimizer
 
-`compute_navigation_function(l2, goal) → NavigationMap`: Dijkstra wavefront on L2 grid using `ray_cast` and `query_occupied_in_box` (Stage 2.5). No local minima by construction.
-`optimize_trajectory(nav_map, l3, start, goal, config) → Trajectory`: minimum-snap polynomial + ESDF soft penalty. Uses `update_tube()` (Stage 4) for JIT L3 refinement along each candidate path.
+`compute_navigation_function(l2, goal) → NavigationMap`: Dijkstra wavefront on L2 grid
+using `ray_cast` and `query_occupied_in_box` (Stage 2.5, already implemented).
+`optimize_trajectory(nav_map, l3, start, goal, config) → Trajectory`: minimum-snap
+polynomial + ESDF soft penalty. Uses `update_tube()` (Stage 4, already implemented).
 `TrajectoryConfig`: `energy_weight`, `clearance_weight`, `time_weight`.
 
-Validation: topology correctness in maze; all waypoints `is_clear(r_vehicle)`; snap bounded; weight monotonicity; obstacle-avoidance routes around wall.
+Validation: topology correctness in maze; all waypoints `is_clear(r_vehicle)`; snap
+bounded; weight monotonicity; obstacle-avoidance routes around wall.
 
-### Stage 8 — L0 / L3 calibration
+### Stage 8 — L0/L3 calibration (no new code)
 
-No new code. Simulation run: L0 trigger rate vs L3 clearance margin.
+Simulation run: L0 trigger rate vs L3 clearance margin on a planned trajectory.
 Target: 0 L0 triggers when trajectory `d_min > 2 m`.
 
-### Dependencies
+### L3 persistence policy
 
-```
-Stage 1 → Stage 2 → Stage 2.5 ─────────────────────────→ Stage 7 → Stage 8
-                       │                                      ↑
-                       └──────────────────→ Stage 5      Stage 4
-                                                             ↑
-Stage 3 ──────────────────────────────────────────→ Stage 4 → Stage 6
-
-[L1 OctoMap: gate before any L2 structural change; defer until needed]
-```
-
-Stages 1–2 and Stage 3 are independent and can proceed in parallel.
-Stage 2.5 must follow Stage 2 (needs the bounded in-memory store).
-Stage 7 depends on both Stage 2.5 (ray_cast/bbox queries) and Stage 4 (update_tube).
+L3 is always recomputed from L2 — it is never saved to disk. The `esdf_persistence_path`
+field in `CoreStackRunnerConfig` is intentionally unwired in `dedalus_mission_loop.cpp`.
+L3 recompute from L2 at startup costs ~6 ms and is always correct.
 
 ---
 
-## 5. Geo-Region L2 Map — Storage, Naming, and Anchor Rules
+## 6. Geo-Region L2 Map — Storage, Naming, and Anchor Rules
 
 ### Directory layout
 
@@ -300,58 +272,15 @@ created_at: 2026-06-24T00:00:00Z
 frame: NED                     # all L2 cell coordinates are NED relative to this anchor
 ```
 
-The anchor is the NED origin for every cell in `l2_map.db`. For AirSim this is `OriginGeopoint` from `settings.json`. For real-world it is a pre-configured site reference point (launch pad, geo-fence center) set before the first flight.
-
 ### ⚠ WARNING — Anchor conflict / overlapping maps
 
-**Two missions with different anchors but overlapping flight areas will produce two conflicting DBs.** Cells for the same physical obstacle will appear at different local coordinates in each DB. The viewer will show duplicate or offset obstacles. There is no automatic detection or merge at runtime.
-
-Rules to prevent this:
-
-1. **Anchor is a site config, not a mission property.** Before starting any mission in a new area, check whether a `maps/<src>_<lat>_<lon>/site.yaml` already exists for that geographic region. If yes, adopt its anchor as the NED origin for the new mission. If no, create the site directory and `site.yaml` first.
-
-2. **Detection: check for anchor overlap before creating a new site.** When registering a new anchor, search existing `maps/` directories and compute the distance to all existing anchors. If any anchor is within `2 × horizon_m` (default 300 m), warn and refuse to create a second site — extend the existing one instead.
-
-3. **Merge / repair tool (escape hatch).** If two DBs with different anchors already contain overlapping data, use the offline repair tool (to be written: `tools/mission/merge_l2_maps.py`) to transform all cells from one anchor frame into the other using a flat-earth rigid-body offset, then insert into the canonical DB. Valid for anchor separations < 50 km.
-
-4. **Do not store cells in WGS84.** The avoidance stack operates in local NED. Converting on every cell read/write adds floating-point noise and couples storage to geodetic math. The anchor transform is a one-time startup step, not a per-cell cost.
-
-### L2 viewer — dual-source model
-
-`dedalus_viewer --l2-db maps/<site-id>/l2_map.db` provides L2 to the browser without the mission_loop running:
-
-- **On connect**: viewer reads the full DB and pushes a `planning_map_snapshot` SSE burst to the new client.
-- **During active flight**: live `planning_map_delta` SSE events from the runtime stream merge new cells on top. The flush thread writes dirty cells to the DB every 10 s, so the DB and the SSE stream stay consistent — SSE is just ~10 s ahead of the DB.
-- **Without active flight**: only the DB snapshot is available (no L0/L1, no L3 ESDF — those are not persisted).
-
-Do not replace the SSE live path with DB polling. The DB lags flush_interval (10 s) behind the live observations; SSE is ~100 ms. Both serve different roles: DB = durable cross-session baseline, SSE = real-time in-flight updates.
-
-**Prerequisite**: `planning_map_persistence_path_` in `CoreStackRunnerConfig` must be set to `maps/<site-id>/l2_map.db` in the mission binary for the flush thread to write to the site DB during flight. Currently this is not wired in `dedalus_mission_loop.cpp` — it is infrastructure only.
+Two missions with different anchors but overlapping flight areas will produce conflicting DBs.
+Rules: anchor is a site config, not a mission property. Check existing `maps/` before creating
+a new site. Offline merge tool: `tools/mission/merge_l2_maps.py` (to be written).
 
 ---
 
-## 6. Architecture Boundaries
-
-```
-WorldSnapshot           autonomy state
-PerceptionPipelineOutput  evidence
-Ghost detections        enter through same Observation3D path as real detections
-Artifacts               evidence/debug outputs, not IPC
-Overlay                 subscriber/renderer only
-L0                      reflexive avoidance — no planner coupling
-L3                      planning primitive — no flight command coupling until Stage 8 scoped
-```
-
-Do not:
-- Add planner blocking, replanning, or command-sink avoidance unless explicitly scoped.
-- Use YOLO/DETR/classifier outputs as prerequisite for obstacle avoidance.
-- Derive visual obstacle coverage from vehicle yaw alone.
-- Couple obstacle persistence, map-building, or sensing coverage to a flight command sink.
-- Name files, validators, scripts, or symbols after planning labels or temporary session shorthand.
-
----
-
-## 6. Patch Output and Safety Policy
+## 7. Patch Output and Safety Policy
 
 ```
 - Patch scripts: concise OK:/ERROR: lines only. No grep/diff dumps after patches.

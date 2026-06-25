@@ -53,13 +53,12 @@ struct CoreStackRunnerConfig {
     // (if it exists) and saved back at finalize_mission_map_after_landing().
     std::filesystem::path planning_map_persistence_path;
 
-    // Optional path for Level 3 ESDF cross-mission persistence.
-    // If set alongside planning_map_persistence_path: the ESDF is loaded from
-    // this file at construction (if it exists) and saved at finalize time.
-    // Derive from planning_map_persistence_path by convention, e.g. same dir
-    // with a ".esdf.bin" extension.  The map is never "empty" when L2 exists.
-    std::filesystem::path esdf_persistence_path;
 };
+// Note: L3 (LocalESDFMap) is always recomputed from L2 — it is never saved to disk.
+// Recompute from the full in-memory L2 window costs ~6 ms and is always correct.
+// No esdf_persistence_path field: saving a stale L3 binary that diverges from L2
+// is worse than recomputing. If you need to inspect L3 off-line, use compute_esdf()
+// directly against the l2_map.db (see include/dedalus/avoidance/local_esdf_map.hpp).
 
 class CoreStackRunner {
 public:
@@ -113,8 +112,6 @@ private:
     std::optional<TimePoint> ghost_scenario_start_;
     // Optional file path for Level 2 planning map cross-mission persistence.
     std::filesystem::path planning_map_persistence_path_;
-    // Optional file path for Level 3 ESDF cross-mission persistence.
-    std::filesystem::path esdf_persistence_path_;
     // Background flush thread: calls flush_dirty_to_db() every 10 s.
     // Only started when planning_map_persistence_path_ is non-empty.
     std::atomic<bool> planning_map_flush_stop_{false};
