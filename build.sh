@@ -24,12 +24,12 @@ git pull --ff-only
 
 # CUDA override: set DEDALUS_CUDA=0 to force off, DEDALUS_CUDA=1 to force on.
 # Without an override, CMakeLists.txt auto-probes via find_package(CUDAToolkit QUIET).
-CUDA_CMAKE_FLAGS=()
+CUDA_CMAKE_FLAG=""
 if [[ "${DEDALUS_CUDA:-}" == "0" ]]; then
-    CUDA_CMAKE_FLAGS+=(-DDEDALUS_CUDA=OFF)
+    CUDA_CMAKE_FLAG="-DDEDALUS_CUDA=OFF"
     echo "[build] CUDA: forced off"
 elif [[ "${DEDALUS_CUDA:-}" == "1" ]]; then
-    CUDA_CMAKE_FLAGS+=(-DDEDALUS_CUDA=ON)
+    CUDA_CMAKE_FLAG="-DDEDALUS_CUDA=ON"
     echo "[build] CUDA: forced on"
 elif command -v nvcc >/dev/null 2>&1; then
     echo "[build] CUDA: detected (nvcc $(nvcc --version 2>/dev/null | grep -oP 'release \K[\d.]+' || echo '?')) — DEDALUS_CUDA will auto-enable"
@@ -37,7 +37,7 @@ else
     echo "[build] CUDA: not detected — CPU-only build"
 fi
 
-cmake -S . -B "$BUILD_DIR" -DCMAKE_BUILD_TYPE=RelWithDebInfo "${CUDA_CMAKE_FLAGS[@]}"
+cmake -S . -B "$BUILD_DIR" -DCMAKE_BUILD_TYPE=RelWithDebInfo ${CUDA_CMAKE_FLAG:+"$CUDA_CMAKE_FLAG"}
 
 cmake --build "$BUILD_DIR" -j"$(dedalus_build_jobs)"
 
