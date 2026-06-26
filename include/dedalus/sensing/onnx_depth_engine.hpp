@@ -23,6 +23,14 @@ struct ONNXDepthEngineConfig {
     float std_b{0.225F};
 
     bool use_coreml{false};        // enable CoreML EP on macOS (MPS acceleration)
+
+    // CUDA EP — requires onnxruntime-gpu package and DEDALUS_CUDA_ENABLED.
+    // On L4 this is the fastest path when TensorRT is not available.
+    bool use_cuda{false};
+    int  cuda_device_id{0};
+    // VRAM arena limit for the CUDA EP allocator.
+    // Default 1 GiB — conservative to coexist with AirSim's ~3 GiB footprint.
+    std::size_t cuda_arena_limit_bytes{1ULL * 1024 * 1024 * 1024};
 };
 
 // ONNXDepthEngine — wraps ONNX Runtime for CPU / CoreML depth inference.

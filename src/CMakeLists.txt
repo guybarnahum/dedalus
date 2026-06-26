@@ -117,6 +117,33 @@ if(DEDALUS_ENABLE_ONNX_DEPTH)
     target_compile_definitions(dedalus_core PUBLIC DEDALUS_ONNX_DEPTH_ENABLED)
 endif()
 
+# CUDA depth kernels
+if(DEDALUS_CUDA)
+    target_sources(dedalus_core PRIVATE sensing/cuda_depth_kernels.cu)
+    set_source_files_properties(sensing/cuda_depth_kernels.cu
+        PROPERTIES CUDA_SEPARABLE_COMPILATION OFF)
+    target_compile_definitions(dedalus_core PUBLIC DEDALUS_CUDA_ENABLED)
+    target_link_libraries(dedalus_core PRIVATE CUDA::cudart)
+    set_source_files_properties(sensing/cuda_depth_kernels.cu
+        PROPERTIES COMPILE_OPTIONS "-O2")
+endif()
+
+# TensorRT inference engine (requires DEDALUS_CUDA)
+if(DEDALUS_TENSORRT)
+    if(NOT DEDALUS_CUDA)
+        message(FATAL_ERROR "DEDALUS_TENSORRT requires DEDALUS_CUDA=ON")
+    endif()
+    target_sources(dedalus_core PRIVATE sensing/tensorrt_depth_engine.cpp)
+    target_compile_definitions(dedalus_core PUBLIC DEDALUS_TENSORRT_ENABLED)
+    set(DEDALUS_TENSORRT_ROOT "" CACHE PATH
+        "TensorRT install root — set if TRT is not on the system include/lib path")
+    if(DEDALUS_TENSORRT_ROOT)
+        target_include_directories(dedalus_core PRIVATE ${DEDALUS_TENSORRT_ROOT}/include)
+        target_link_directories(dedalus_core PRIVATE ${DEDALUS_TENSORRT_ROOT}/lib)
+    endif()
+    target_link_libraries(dedalus_core PRIVATE nvinfer nvinfer_plugin nvonnxparser)
+endif()
+
 # These files are tight numeric kernels; compile at -O2 even in Debug builds
 # so perf tests stay green.
 set_source_files_properties(

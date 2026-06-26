@@ -6,8 +6,21 @@
 #include "dedalus/sensing/depth_projection_kernel.hpp"
 #include "dedalus/sensing/visual_depth_frame.hpp"
 
+#ifdef DEDALUS_CUDA_ENABLED
+#include "dedalus/sensing/cuda_depth_kernels.hpp"
+#endif
+
 namespace dedalus {
 namespace {
+
+#ifdef DEDALUS_CUDA_ENABLED
+// File-static singleton dispatcher — one CudaDepthDispatcher per process.
+// Safe: VisualDepthObstacleDetector is single-threaded (see class comment).
+CudaDepthDispatcher& cuda_dispatch() {
+    static CudaDepthDispatcher s;
+    return s;
+}
+#endif
 
 // Extract VisualDepthFrame from EgoSensingFrame.
 // Copies image bytes — avoids lifetime coupling to the source frame.
@@ -125,14 +138,22 @@ std::vector<ObstacleEvidence> detect_visual_depth_obstacles(
     std::vector<DeviceObstacleEvidence> buf(cfg.max_evidence);
     std::uint32_t count = 0U;
 
+#ifdef DEDALUS_CUDA_ENABLED
+    cuda_dispatch().project(inferred.depth_relative.data(), params, buf.data(), count);
+#else
     project_depth_to_device_evidence(
         inferred.depth_relative.data(), params, buf.data(), count);
+#endif
 
     if (cfg.detect_surface_patches && count > 0U) {
         std::vector<DeviceObstacleEvidence> patches(64U);
         std::uint32_t patch_count = 0U;
+#ifdef DEDALUS_CUDA_ENABLED
+        cuda_dispatch().fit_patches(buf.data(), count, params, patches.data(), patch_count);
+#else
         fit_surface_patches_device(
             buf.data(), count, params, patches.data(), patch_count);
+#endif
         for (std::uint32_t i = 0U; i < patch_count && count < cfg.max_evidence; ++i) {
             buf[count++] = patches[i];
         }
@@ -141,8 +162,13 @@ std::vector<ObstacleEvidence> detect_visual_depth_obstacles(
     if (cfg.detect_thin_structures) {
         std::vector<DeviceObstacleEvidence> thin(64U);
         std::uint32_t thin_count = 0U;
+#ifdef DEDALUS_CUDA_ENABLED
+        cuda_dispatch().detect_thin(
+            inferred.depth_relative.data(), params, thin.data(), thin_count);
+#else
         detect_thin_structures_device(
             inferred.depth_relative.data(), params, thin.data(), thin_count);
+#endif
         for (std::uint32_t i = 0U; i < thin_count && count < cfg.max_evidence; ++i) {
             buf[count++] = thin[i];
         }

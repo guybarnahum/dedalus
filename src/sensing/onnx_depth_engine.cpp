@@ -39,6 +39,24 @@ struct ONNXDepthEngine::Impl {
         }
 #endif
 
+#if defined(DEDALUS_CUDA_ENABLED)
+        if (config.use_cuda) {
+            // CUDA EP — requires onnxruntime-gpu package.
+            // arena_limit caps VRAM to coexist with AirSim (~3 GiB).
+            OrtCUDAProviderOptionsV2* cuda_opts = nullptr;
+            Ort::ThrowOnError(Ort::GetApi().CreateCUDAProviderOptions(&cuda_opts));
+            const std::string dev_id_str = std::to_string(config.cuda_device_id);
+            const std::string arena_str  = std::to_string(config.cuda_arena_limit_bytes);
+            const char* keys[]   = {"device_id", "gpu_mem_limit"};
+            const char* values[] = {dev_id_str.c_str(), arena_str.c_str()};
+            Ort::ThrowOnError(Ort::GetApi().UpdateCUDAProviderOptions(
+                cuda_opts, keys, values, 2));
+            Ort::ThrowOnError(Ort::GetApi().SessionOptionsAppendExecutionProvider_CUDA_V2(
+                session_options, cuda_opts));
+            Ort::GetApi().ReleaseCUDAProviderOptions(cuda_opts);
+        }
+#endif
+
         session = Ort::Session{env, config.model_path.c_str(), session_options};
     }
 
