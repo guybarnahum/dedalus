@@ -23,9 +23,11 @@
 #include "dedalus/avoidance/trajectory_safety_evaluator.hpp"
 
 #include "dedalus/perception/ghost_targets.hpp"
+#include "dedalus/runtime/evaluation_slot.hpp"
 #include "dedalus/runtime/pipeline_profiler.hpp"
 #include "dedalus/runtime/provider_registry.hpp"
 #include "dedalus/sensing/airsim_depth_obstacle_detector.hpp"
+#include "dedalus/sensing/obstacle_evidence_provider.hpp"
 #include "dedalus/sensing/sensing_coverage.hpp"
 #include "dedalus/world_model/world_snapshot.hpp"
 #include "dedalus/world_model/world_snapshot_publisher.hpp"
@@ -45,7 +47,33 @@ struct CoreStackRunnerConfig {
     // Subscribers subscribed to snapshot_publisher at construction time.
     // CoreStackRunner retains these shared_ptrs (the publisher holds weak refs).
     std::vector<std::shared_ptr<WorldSnapshotSubscriber>> snapshot_subscribers;
+    // Legacy config — used as the slot-A fallback when depth_slot_a is null.
+    // Config loaders populate this; callers that inject providers directly can leave it default.
     AirSimDepthObstacleDetectorConfig airsim_depth_obstacle_detector;
+
+    // Two-slot depth provider injection.
+    //
+    // Slot A (primary): evidence feeds L1/L2 map.
+    // Slot B (reference): evidence delta-logged only; not fed to the map.
+    //
+    // If depth_slot_a is null the runner auto-builds AirSimDepthEvidenceProvider
+    // from airsim_depth_obstacle_detector above (backward-compat fallback).
+    // If depth_slot_b is null slot B is inactive.
+    std::unique_ptr<ObstacleEvidenceProvider> depth_slot_a;
+    std::unique_ptr<ObstacleEvidenceProvider> depth_slot_b;
+
+    // Reference slots (slot B) for each perception pipeline stage.
+    // Slot A (primary) for each stage lives in CoreStackProviders.
+    // Null = stage B inactive (zero overhead).  All default to null.
+    //
+    // Contract: slot B receives the same primary-slot inputs as slot A.
+    //           slot B output is never fed downstream — logged only.
+    std::shared_ptr<Detector>         detector_reference;
+    std::shared_ptr<CameraStabilizer> stabilizer_reference;
+    std::shared_ptr<Tracker>          tracker_reference;
+    std::shared_ptr<IdentityResolver> identity_resolver_reference;
+    std::shared_ptr<Projector3D>      projector_reference;
+
     MissionMapAssimilatorConfig mission_map_assimilator;
 
     // Optional path for Level 2 planning map cross-mission persistence.
@@ -90,7 +118,19 @@ private:
     std::shared_ptr<MissionLocalPlanningMapPublisher> planning_map_publisher_;
     std::shared_ptr<LocalESDFMapPublisher> esdf_map_publisher_;
     std::vector<std::shared_ptr<WorldSnapshotSubscriber>> snapshot_subscriber_handles_;
-    AirSimDepthObstacleDetectorConfig airsim_depth_obstacle_detector_config_;
+    // Slot A: primary depth provider (evidence → L1/L2 map).
+    // Slot B: reference depth provider (delta-log only; null = inactive).
+    std::unique_ptr<ObstacleEvidenceProvider> depth_slot_a_;
+    std::unique_ptr<ObstacleEvidenceProvider> depth_slot_b_;
+
+    // Reference slots (slot B) for the five perception pipeline stages.
+    // Slot A for each stage lives in providers_.  Null = inactive.
+    std::shared_ptr<Detector>         detector_reference_;
+    std::shared_ptr<CameraStabilizer> stabilizer_reference_;
+    std::shared_ptr<Tracker>          tracker_reference_;
+    std::shared_ptr<IdentityResolver> identity_resolver_reference_;
+    std::shared_ptr<Projector3D>      projector_reference_;
+
     SensingCoverageProvider sensing_coverage_provider_;
     MissionLocalObstacleMap mission_local_obstacle_map_;
     MissionMapAssimilator mission_map_assimilator_;

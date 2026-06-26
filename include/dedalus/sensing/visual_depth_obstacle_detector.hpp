@@ -38,8 +38,9 @@ struct VisualDepthObstacleDetectorConfig {
 
 // Visual depth obstacle detector.
 //
-// Replaces AirSimDepthObstacleDetector for operational use.
-// AirSim DepthPlanar (GT) is the validation oracle only; disabled permanently at VD4.
+// Replaces AirSimDepthObstacleDetector as the primary slot-A provider.
+// AirSim DepthPlanar (GT) remains available as a plug-in provider for
+// training and calibration via AirSimDepthEvidenceProvider (slot A or B).
 //
 // Pipeline per frame:
 //   VisualDepthFrame → DepthEngineInterface::infer()

@@ -246,6 +246,20 @@ dedalus_add_native_test(
     SOURCES unit/test_visual_depth_projection.cpp
 )
 
+dedalus_add_native_test(
+    NAME depth_provider_slots
+    LAYER unit
+    TAGS sensing visual_depth vd4 validation
+    SOURCES unit/test_depth_provider_slots.cpp
+)
+
+dedalus_add_native_test(
+    NAME evaluation_slot
+    LAYER unit
+    TAGS perception evaluation ep1 validation
+    SOURCES unit/test_evaluation_slot.cpp
+)
+
 
 
 dedalus_add_native_test(

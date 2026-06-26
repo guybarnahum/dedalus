@@ -186,15 +186,21 @@ No OpenCV dependency anywhere in the production path.
 **Milestone:** AirSim scene containing a flat wall + a vertical pole → SurfacePatch evidence
 emitted with upward-ish normal for wall; ThinStructureRisk LineSegment evidence emitted for pole.
 
-#### VD4 — CoreStackRunner integration, GT removal
-Wire `VisualDepthObstacleDetector` into `CoreStackRunner` behind
-`visual_depth_engine != nullptr`. Disable `DEDALUS_AIRSIM_ENABLE_DEPTH_OBSTACLES` GT path.
-`update_metric_scale(MetricScaleEstimate)` public method on `CoreStackRunner` (called by
-future VIO subscriber; for now, set once from AirSim camera config).
-Gimbal-aware: `ProjectionParams` populated from `ObstacleSensingVolume` encoder reading
-at frame timestamp — not commanded gimbal position.
-**Milestone:** Full AirSim mission runs with visual depth only. L1/L2 map builds. Viewer
-shows obstacle cells and L3 ESDF. Mission completes without AirSim GT depth.
+#### VD4 — Two-slot depth provider architecture (IMPLEMENTED)
+`ObstacleEvidenceProvider` interface — all depth providers implement `detect(EgoSensingFrame)`.
+`AirSimDepthEvidenceProvider` — adapter wrapping existing `AirSimDepthObstacleDetector`.
+`AirSimEmulationDepthObstacleDetector` — GT metric depth → `depth_relative` inversion →
+VD projection / surface patch / thin structure kernels. Evaluates thin obstacles and
+landable surfaces. `source_kind = AirSimGroundTruthVisualEmulation`.
+AirSim GT depth path is **NOT disabled** — kept as a plug-in provider for training,
+calibration, and architecture purity validation. Switch via config injection into slot A or B.
+`CoreStackRunner` two-slot: `depth_slot_a_` (primary → L1/L2), `depth_slot_b_` (reference,
+delta-log only). Backward compat: if no slot A injected, auto-builds `AirSimDepthEvidenceProvider`
+from `airsim_depth_obstacle_detector` config.
+Agreement metric: fraction of slot-A voxels with slot-B voxel within ±1 voxel.
+Logged as `depth_slot.agreement_ppt` (parts per thousand) via `timing_writer_`.
+`tools/perception/depth_provider_report.py` — HTML report: time-series, histogram, IoU distribution.
+**Milestone:** Slot A + Slot B running simultaneously. Agreement logged per frame. Report generated.
 
 #### VD5 — PerchCandidateEvaluator
 Non-realtime evaluator (runs outside the 30 Hz tick loop). Queries L1 for `SurfacePatch`
@@ -218,6 +224,29 @@ thin structure) ≤ 20 ms at 30 Hz. No host-device copy of depth buffer.
 #### VD7 — VIO scale coupling (deferred)
 `MetricScaleEstimator`: velocity + feature tracking → `MetricScaleEstimate` at ~50 Hz.
 Altitude fallback when VIO invalid. Deferred until VD1–VD5 stable.
+
+---
+
+### EP series — Evaluation Pipeline (A/B reference slots for all perception stages)
+
+A/B evaluation is a first-level design goal. Every pipeline stage has a reference slot B
+that receives the same inputs as slot A but is never fed downstream. Agreement logged per frame.
+
+#### EP1 — Perception stage evaluation slots (IMPLEMENTED)
+`include/dedalus/runtime/evaluation_slot.hpp`:
+  `EvaluationSlotPair<T>` — typed container for primary + reference provider.
+  Agreement free functions: `detection_agreement()` (IoU > 0.5 fraction),
+  `stabilizer_agreement()` (normalized ΔT ppt), `tracker_agreement()` (class-label match),
+  `identity_agreement()` (label match on same track), `observation_agreement()` (< 1 m fraction).
+`CoreStackRunnerConfig`: five reference slot fields (`detector_reference`, `stabilizer_reference`,
+  `tracker_reference`, `identity_resolver_reference`, `projector_reference`).
+`CoreStackRunner::run_once()`: for each active reference slot, runs provider on primary-slot inputs,
+  computes agreement, logs as `<stage>.slot.agreement_ppt`.
+Zero overhead when all reference slots are null.
+
+#### EP2 — Unified perception slot report (planned)
+Extend `tools/perception/depth_provider_report.py` → `tools/perception/perception_slot_report.py`
+All active slot agreement metrics in one dashboard: time-series per stage, cross-stage correlation.
 
 ---
 
@@ -268,6 +297,34 @@ MetricScaleEstimate        single global scale factor (V0: fixed from AirSim con
 PerchCandidateEvaluator    non-realtime; reads L1 + queries L2; outputs to WorldSnapshot
 ```
 
+### A/B Evaluation — First-Class Design Primitive
+
+Every perception pipeline stage supports an optional **slot B (reference)** provider alongside slot A (primary). This is a first-level design goal, not a debug feature.
+
+```
+Stage            Slot A (primary)              Slot B (reference)           Agreement metric
+───────────────  ────────────────────────────  ──────────────────────────   ────────────────────────────
+Depth provider   ObstacleEvidenceProvider      ObstacleEvidenceProvider     voxel overlap ±1 (already done)
+Detector         Detector                      Detector                     IoU-matched fraction > 0.5
+CameraStabilizer CameraStabilizer              CameraStabilizer             normalized ΔT magnitude (ppt)
+Tracker          Tracker                       Tracker                      class-label agreement on matched tracks
+IdentityResolver IdentityResolver              IdentityResolver             identity label match on same track
+Projector3D      Projector3D                   Projector3D                  fraction within 1 m in local frame
+```
+
+Rules:
+- Slot B always receives the **same primary-slot inputs** as slot A (not slot B's own upstream outputs).
+  This gives clean calibration semantics: "what would the reference model do on the same data?"
+- Slot B output is **never fed downstream** — only logged.
+- Agreement is logged per-frame via `timing_writer_->record_stage("<stage>.slot.agreement_ppt", <0-1000>)`.
+- All reference slots default to `nullptr` — zero overhead when unused.
+- `EvaluationSlotPair<T>` in `include/dedalus/runtime/evaluation_slot.hpp` is the typed container.
+  Agreement free functions live in the same header.
+
+Implemented:
+- `depth_slot_a_` / `depth_slot_b_` in `CoreStackRunner` (VD4) ✓
+- All five perception stages: fields in `CoreStackRunnerConfig` + run loop in `run_once()` (EP1) ✓
+
 Do not:
 - Feed dynamic actor evidence into L2 (actors are not static obstacles).
 - Mark SurfacePatch evidence as "landable" in the detector — that is a behavior tree semantic.
@@ -280,6 +337,7 @@ Do not:
 - Add OpenCV as a production dependency — use CUDA kernels or pure C++ alternatives.
 - Merge L0/L1/L2/L3 representations.
 - Name files or symbols after planning labels or temporary session shorthand.
+- Feed slot B outputs downstream or let slot B write world state.
 
 ---
 

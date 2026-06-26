@@ -58,7 +58,7 @@ dedalus::EgoSensingFrame make_ego_frame(int w, int h) {
     f.ego.map_frame_id         = dedalus::MapFrameId{"map_test"};
 
     f.sensing_volume.timestamp       = f.frame.timestamp;
-    f.sensing_volume.sensor_name     = "front_center";
+    f.sensing_volume.camera_name     = "front_center";
     f.sensing_volume.origin_local    = dedalus::Vec3{0.0, 0.0, 0.0};
     f.sensing_volume.forward_axis_local = dedalus::Vec3{1.0, 0.0, 0.0};
     f.sensing_volume.right_axis_local   = dedalus::Vec3{0.0, 1.0, 0.0};
