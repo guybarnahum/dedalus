@@ -30,8 +30,11 @@ bridge_transport: pipe
 bridge_mode: stream_binary_ego
 bridge_command: python3 simulation/airsim/scripts/airsim-stream-frames-binary.py --include-ego --rate-hz 5 --mavlink-armed-endpoints udpin:127.0.0.1:14540
 
-# AirSim GT visual-emulation requires explicit camera sensing coverage.
-# Do not infer visual obstacle coverage from vehicle yaw or fake a default cone.
+# Depth slot A: AirSim ground-truth depth (DepthPlanar API via bridge stream).
+# Add --include-depth to the bridge_command above to enable depth frame streaming.
+depth: airsim_gt
+
+# Explicit camera sensing coverage required for depth slot volume matching.
 mission_options.obstacle_sensing.cameras.0.name: front_center
 mission_options.obstacle_sensing.cameras.0.role: visual_obstacle_detector
 mission_options.obstacle_sensing.cameras.0.horizontal_fov_deg: 90
