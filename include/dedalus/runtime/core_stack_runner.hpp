@@ -160,6 +160,7 @@ private:
     TrajectorySafetyEvaluator trajectory_safety_evaluator_;
     PerchCandidateEvaluator   perch_candidate_evaluator_;
     std::uint32_t             perch_cadence_tick_{0U};
+    std::vector<PerchCandidate> cached_perch_candidates_;
     std::vector<CameraPointingState> camera_pointing_states_;
     std::optional<TimePoint> ghost_scenario_start_;
     // Optional file path for Level 2 planning map cross-mission persistence.

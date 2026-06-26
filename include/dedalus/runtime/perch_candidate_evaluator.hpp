@@ -3,6 +3,7 @@
 #include <cstddef>
 #include <vector>
 
+#include "dedalus/avoidance/mission_local_planning_map.hpp"
 #include "dedalus/occupancy/occupancy_types.hpp"
 #include "dedalus/world_model/world_snapshot.hpp"
 
@@ -25,6 +26,12 @@ struct PerchCandidateEvaluatorConfig {
 
     // Run evaluation every N ticks.  At 30 Hz tick rate, 10 → ~3 Hz.
     int cadence_ticks{10};
+
+    // Minimum vertical clearance above the surface patch required for a
+    // candidate to be considered landable.  ray_cast() fires upward from
+    // center_local; if an L2 obstacle is hit within this range the candidate
+    // is rejected.  Requires a non-null MissionLocalPlanningMap.
+    double min_clearance_m{2.0};
 };
 
 // Stateless evaluator: filters and ranks surface-patch ObstacleEvidence
@@ -35,8 +42,10 @@ class PerchCandidateEvaluator {
 public:
     explicit PerchCandidateEvaluator(PerchCandidateEvaluatorConfig config = {});
 
+    // l2_map may be nullptr; when null the clearance check is skipped.
     [[nodiscard]] std::vector<PerchCandidate> evaluate(
-        const std::vector<ObstacleEvidence>& evidence) const;
+        const std::vector<ObstacleEvidence>& evidence,
+        const MissionLocalPlanningMap* l2_map = nullptr) const;
 
     int cadence_ticks() const { return config_.cadence_ticks; }
 

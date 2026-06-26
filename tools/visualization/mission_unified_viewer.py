@@ -334,6 +334,7 @@ const state = {
   showEsdf:        true,    // L3 ESDF (on by default — peer of L2)
   showEsdfCells:   false,   // L3 cell faces (off by default — arrows only)
   travColorByType: false,   // false = height-based (default), true = occupied/partial type colors
+  perchCandidates: [],      // PerchCandidate list from latest snapshot
 };
 
 // L2 planning cells (persistent, slate-blue base layer)
@@ -1873,6 +1874,45 @@ function drawTakeoffMarker() {
   ctx.restore();
 }
 
+function drawPerchCandidates() {
+  const candidates = state.perchCandidates;
+  if (!candidates || candidates.length === 0) return;
+  const dpr = devicePixelRatio;
+  ctx.save();
+  for (let i = 0; i < candidates.length; ++i) {
+    const cand = candidates[i];
+    const pos = cand.position_local || cand.position;
+    if (!pos) continue;
+    const c = project(pos);
+    if (!c) continue;
+    // Score in [0,1]: best candidates are brighter green, worse are more muted.
+    const score = Math.max(0, Math.min(1, cand.score || 0));
+    const R = Math.round((6 + score * 6) * dpr);
+    const g = Math.round(160 + score * 95);
+    ctx.strokeStyle = `rgba(0,${g},48,0.95)`;
+    ctx.fillStyle   = `rgba(0,${g},48,0.22)`;
+    ctx.lineWidth   = 2 * dpr;
+    // Circle with crosshair
+    ctx.beginPath();
+    ctx.arc(c.x, c.y, R, 0, 2 * Math.PI);
+    ctx.fill();
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.moveTo(c.x - R, c.y); ctx.lineTo(c.x + R, c.y);
+    ctx.moveTo(c.x, c.y - R); ctx.lineTo(c.x, c.y + R);
+    ctx.stroke();
+    // Rank label for top-3
+    if (i < 3) {
+      ctx.fillStyle = `rgba(0,${g},48,0.95)`;
+      ctx.font = `bold ${Math.round(8 * dpr)}px system-ui`;
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText(String(i + 1), c.x, c.y);
+    }
+  }
+  ctx.restore();
+}
+
 function drawTrajectory() {
   if (!state.showTrajectory||state.trajectory.length<2) return;
   const now=Date.now();
@@ -2117,6 +2157,7 @@ function draw() {
   drawSensingOverlays();
   drawESDFArrows();       // L3 ESDF gradient arrows (above surfaces, below UI overlays)
   drawTakeoffMarker();
+  drawPerchCandidates();
   drawDroneMarker();
   if (state.firstBlocked) drawPoint(state.firstBlocked, "rgba(255,80,255,1.0)", 8);
   drawOrientationGizmo(); // fixed bottom-right
@@ -2363,6 +2404,11 @@ function applyWorldSnapshot(snap, seq, {deferRender=false}={}) {
       const regionEl = el("m-region-id");
       if (regionEl) regionEl.textContent = friendly + (regions.length > 1 ? ` +${regions.length-1}` : "");
     }
+  }
+
+  // Perch candidates — green landing pads from PerchCandidateEvaluator.
+  if (Array.isArray(snap.perch_candidates)) {
+    state.perchCandidates = snap.perch_candidates;
   }
 
   live.seq=seq??live.seq;

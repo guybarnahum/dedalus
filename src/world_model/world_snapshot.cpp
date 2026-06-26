@@ -588,11 +588,27 @@ void write_obstacle_evidence(std::ostringstream& out, const std::vector<Obstacle
         out << "      \"inside_sensing_volume\": " << bool_string(evidence.inside_sensing_volume) << ",\n";
         out << "      \"inside_swept_volume\": " << bool_string(evidence.inside_swept_volume) << ",\n";
         out << "      \"is_static_hint\": " << bool_string(evidence.is_static_hint) << ",\n";
-        out << "      \"is_thin_structure_hint\": " << bool_string(evidence.is_thin_structure_hint) << "\n";
+        out << "      \"is_thin_structure_hint\": " << bool_string(evidence.is_thin_structure_hint) << ",\n";
+        out << "      \"is_surface_hint\": " << bool_string(evidence.is_surface_hint) << "\n";
         out << "    }";
     }
     if (!evidence_list.empty()) out << "\n  ";
     out << "],\n";
+}
+
+void write_perch_candidates(std::ostringstream& out, const std::vector<PerchCandidate>& candidates) {
+    out << "  \"perch_candidates\": [";
+    for (std::size_t i = 0; i < candidates.size(); ++i) {
+        const auto& c = candidates[i];
+        if (i != 0) out << ",";
+        out << "\n    {\n";
+        out << "      \"position_local\": "; write_vec3(out, c.position_local); out << ",\n";
+        out << "      \"normal_local\": "; write_vec3(out, c.normal_local); out << ",\n";
+        out << "      \"score\": " << c.score << "\n";
+        out << "    }";
+    }
+    if (!candidates.empty()) out << "\n  ";
+    out << "]\n";
 }
 
 }  // namespace
@@ -765,7 +781,10 @@ std::string to_json(const WorldSnapshot& snapshot) {
         out << "    }";
     }
     if (!snapshot.map_frames.empty()) out << "\n  ";
-    out << "]\n";
+    out << "],\n";
+
+    write_perch_candidates(out, snapshot.perch_candidates);
+
     out << "}\n";
     return out.str();
 }

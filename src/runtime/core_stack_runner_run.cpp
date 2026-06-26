@@ -702,12 +702,14 @@ bool CoreStackRunner::run_once() {
     if (++perch_cadence_tick_ % static_cast<std::uint32_t>(
             perch_candidate_evaluator_.cadence_ticks()) == 0U) {
         start = SteadyClock::now();
-        snapshot_for_annotation.perch_candidates =
-            perch_candidate_evaluator_.evaluate(snapshot_for_annotation.obstacle_evidence);
+        cached_perch_candidates_ =
+            perch_candidate_evaluator_.evaluate(snapshot_for_annotation.obstacle_evidence,
+                                                &mission_local_planning_map_);
         if (timing_writer_) {
             timing_writer_->record_stage("perch_candidate_evaluator.evaluate", duration_us(start));
         }
     }
+    snapshot_for_annotation.perch_candidates = cached_perch_candidates_;
 
     if (snapshot_publisher_) {
         start = SteadyClock::now();

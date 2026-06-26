@@ -9,7 +9,8 @@ PerchCandidateEvaluator::PerchCandidateEvaluator(PerchCandidateEvaluatorConfig c
     : config_(config) {}
 
 std::vector<PerchCandidate> PerchCandidateEvaluator::evaluate(
-    const std::vector<ObstacleEvidence>& evidence) const {
+    const std::vector<ObstacleEvidence>& evidence,
+    const MissionLocalPlanningMap* l2_map) const {
     std::vector<PerchCandidate> candidates;
 
     for (const auto& e : evidence) {
@@ -25,6 +26,15 @@ std::vector<PerchCandidate> PerchCandidateEvaluator::evaluate(
         // Area from bounding-box XY footprint.
         const auto area_m2 = static_cast<float>(e.size_m.x * e.size_m.y);
         if (area_m2 < config_.min_area_m2) continue;
+
+        // Vertical clearance: ray upward (+Z in ENU / -Z in NED) from the
+        // surface centre.  If an L2 obstacle is hit within min_clearance_m,
+        // the candidate is not landable (e.g. covered rooftop overhang).
+        if (l2_map != nullptr && l2_map->cell_count() > 0U) {
+            const Vec3 up{0.0, 0.0, 1.0};   // ENU world-up; NED negated below if needed
+            const auto hit = l2_map->ray_cast(e.center_local, up, config_.min_clearance_m);
+            if (hit.has_value()) continue;   // obstacle overhead — reject
+        }
 
         // area_score: linear ramp 0→1 over [min_area, 4×min_area].
         const float area_score = std::min(1.0F, area_m2 / (config_.min_area_m2 * 4.0F));
