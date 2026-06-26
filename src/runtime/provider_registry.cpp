@@ -1,5 +1,7 @@
 #include "dedalus/runtime/provider_registry.hpp"
 
+#include "dedalus/runtime/core_stack_runner.hpp"
+
 #include <cstdlib>
 #include <functional>
 #include <memory>
@@ -203,6 +205,62 @@ CoreStackProviders ProviderRegistry::create(const CoreStackProviderConfig& confi
     });
 
     return providers;
+}
+
+// Resolve optional eval (slot B) providers from config string names.
+// Empty name → leave the slot null (inactive).
+// Called by load_core_stack_app_config() after parsing.
+void ProviderRegistry::populate_runner_eval_slots(
+    const CoreStackProviderConfig& config,
+    CoreStackRunnerConfig& runner) const {
+
+    const auto resolve_opt_shared_detector = [&](const std::string& name)
+        -> std::shared_ptr<Detector> {
+        if (name.empty()) return nullptr;
+        return resolve_shared<Detector>("detector_eval", name, {
+            {"scripted",            [&]() { return std::make_shared<ScriptedDetector>(); }},
+            {"airsim_ground_truth", [&]() { return std::make_shared<AirSimGroundTruthDetector>(airsim_config_from(config)); }},
+        });
+    };
+
+    const auto resolve_opt_shared_stabilizer = [&](const std::string& name)
+        -> std::shared_ptr<CameraStabilizer> {
+        if (name.empty()) return nullptr;
+        return resolve_shared<CameraStabilizer>("camera_stabilizer_eval", name, {
+            {"null", [&]() { return std::make_shared<NullCameraStabilizer>(); }},
+        });
+    };
+
+    const auto resolve_opt_shared_tracker = [&](const std::string& name)
+        -> std::shared_ptr<Tracker> {
+        if (name.empty()) return nullptr;
+        return resolve_shared<Tracker>("tracker_eval", name, {
+            {"simple_centroid", [&]() { return std::make_shared<SimpleCentroidTracker>(); }},
+        });
+    };
+
+    const auto resolve_opt_shared_identity = [&](const std::string& name)
+        -> std::shared_ptr<IdentityResolver> {
+        if (name.empty()) return nullptr;
+        return resolve_shared<IdentityResolver>("identity_resolver_eval", name, {
+            {"appearance_only", [&]() { return std::make_shared<AppearanceOnlyIdentityResolver>(); }},
+        });
+    };
+
+    const auto resolve_opt_shared_projector = [&](const std::string& name)
+        -> std::shared_ptr<Projector3D> {
+        if (name.empty()) return nullptr;
+        return resolve_shared<Projector3D>("projector_eval", name, {
+            {"flat_ground",  [&]() { return std::make_shared<FlatGroundProjector>(); }},
+            {"airsim_depth", [&]() { return std::make_shared<AirSimDepthProjector>(airsim_config_from(config)); }},
+        });
+    };
+
+    runner.detector_reference         = resolve_opt_shared_detector(config.detector_eval);
+    runner.stabilizer_reference       = resolve_opt_shared_stabilizer(config.camera_stabilizer_eval);
+    runner.tracker_reference          = resolve_opt_shared_tracker(config.tracker_eval);
+    runner.identity_resolver_reference = resolve_opt_shared_identity(config.identity_resolver_eval);
+    runner.projector_reference        = resolve_opt_shared_projector(config.projector_eval);
 }
 
 std::vector<std::string> ProviderRegistry::frame_sources() const { return {"synthetic", "synthetic_mission", "video_only", "recorded_frames", "airsim"}; }

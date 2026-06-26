@@ -4,6 +4,7 @@
 #include <cctype>
 #include <cmath>
 #include <cstdint>
+#include <cstdlib>
 #include <fstream>
 #include <iostream>
 #include <limits>
@@ -11,6 +12,9 @@
 #include <stdexcept>
 #include <string>
 #include <utility>
+
+#include "dedalus/sensing/airsim_depth_evidence_provider.hpp"
+#include "dedalus/sensing/airsim_emulation_depth_obstacle_detector.hpp"
 
 namespace dedalus {
 namespace {
@@ -57,6 +61,49 @@ std::uint32_t parse_uint32(const std::string& value, const char* context) {
 
 double deg_to_rad(double degrees) {
     return degrees * kPi / 180.0;
+}
+
+// Return env var value if set and non-empty, otherwise return the config value.
+std::string env_str_or(const std::string& config_value, const char* env_var) {
+    const char* env = std::getenv(env_var);
+    if (env != nullptr && *env != '\0') return std::string{env};
+    return config_value;
+}
+
+// Build a depth ObstacleEvidenceProvider by string name.
+// Returns nullptr if name is empty (slot inactive).
+std::unique_ptr<ObstacleEvidenceProvider> make_depth_provider(
+    const std::string& name,
+    const AirSimDepthObstacleDetectorConfig& airsim_gt_config) {
+    if (name.empty()) return nullptr;
+    if (name == "airsim_gt")
+        return std::make_unique<AirSimDepthEvidenceProvider>(airsim_gt_config);
+    if (name == "airsim_emulation")
+        return std::make_unique<AirSimEmulationDepthObstacleDetector>();
+    throw std::invalid_argument("unknown depth provider: " + name);
+}
+
+// Populate depth_slot_a/b in runner from provider string names, applying env
+// var overrides (DEDALUS_DEPTH, DEDALUS_DEPTH_EVAL).
+void build_depth_slots(CoreStackConfig& config) {
+    const std::string depth_name =
+        env_str_or(config.providers.depth, "DEDALUS_DEPTH");
+    const std::string depth_eval_name =
+        env_str_or(config.providers.depth_eval, "DEDALUS_DEPTH_EVAL");
+
+    config.runner.depth_slot_a =
+        make_depth_provider(depth_name, config.runner.airsim_depth_obstacle_detector);
+    config.runner.depth_slot_b =
+        make_depth_provider(depth_eval_name, config.runner.airsim_depth_obstacle_detector);
+}
+
+// Apply env var overrides for eval provider names.
+void apply_eval_env_overrides(CoreStackProviderConfig& config) {
+    config.detector_eval          = env_str_or(config.detector_eval,          "DEDALUS_DETECTOR_EVAL");
+    config.camera_stabilizer_eval = env_str_or(config.camera_stabilizer_eval, "DEDALUS_CAMERA_STABILIZER_EVAL");
+    config.tracker_eval           = env_str_or(config.tracker_eval,           "DEDALUS_TRACKER_EVAL");
+    config.identity_resolver_eval = env_str_or(config.identity_resolver_eval, "DEDALUS_IDENTITY_RESOLVER_EVAL");
+    config.projector_eval         = env_str_or(config.projector_eval,         "DEDALUS_PROJECTOR_EVAL");
 }
 
 Vec3 parse_vec3(const std::string& value) {
@@ -281,11 +328,18 @@ void apply_config_value(CoreStackConfig& config, const std::string& key, const s
     if (parse_airsim_pattern_binding_key(config.providers, key, value)) return;
     if (key == "frame_source") config.providers.frame_source = value;
     else if (key == "ego_provider") config.providers.ego_provider = value;
+    else if (key == "depth") config.providers.depth = value;
+    else if (key == "depth_eval") config.providers.depth_eval = value;
     else if (key == "detector") config.providers.detector = value;
+    else if (key == "detector_eval") config.providers.detector_eval = value;
     else if (key == "camera_stabilizer") config.providers.camera_stabilizer = value;
+    else if (key == "camera_stabilizer_eval") config.providers.camera_stabilizer_eval = value;
     else if (key == "tracker") config.providers.tracker = value;
+    else if (key == "tracker_eval") config.providers.tracker_eval = value;
     else if (key == "identity_resolver") config.providers.identity_resolver = value;
+    else if (key == "identity_resolver_eval") config.providers.identity_resolver_eval = value;
     else if (key == "projector") config.providers.projector = value;
+    else if (key == "projector_eval") config.providers.projector_eval = value;
     else if (key == "ghost_targets_enabled") config.providers.ghost_targets_enabled = parse_bool(value);
     else if (key == "ghost_targets_source") config.providers.ghost_targets_source = value;
     else if (key == "ghost_targets_scenario") config.providers.ghost_targets_scenario = value;
@@ -360,6 +414,12 @@ void validate_obstacle_sensing_cameras(const MissionOptions& options) {
     }
 }
 
+void validate_depth_provider_name(const std::string& name, const char* field) {
+    if (name.empty()) return;
+    if (name != "airsim_gt" && name != "airsim_emulation")
+        throw std::invalid_argument(std::string(field) + ": unknown depth provider: " + name);
+}
+
 void validate_config(const CoreStackProviderConfig& config) {
     if (config.ghost_targets_source != "trajectory_scenario" && config.ghost_targets_source != "airsim_objects") throw std::invalid_argument("unknown ghost_targets_source: " + config.ghost_targets_source);
     if (config.ghost_targets_source != "airsim_objects" && (!config.ghost_targets_airsim_objects.empty() || !config.ghost_targets_airsim_patterns.empty())) throw std::invalid_argument("ghost_targets_airsim bindings require ghost_targets_source=airsim_objects");
@@ -367,6 +427,11 @@ void validate_config(const CoreStackProviderConfig& config) {
     if (config.occupancy_source == "airsim_ground_truth" && config.ghost_targets_source != "airsim_objects") throw std::invalid_argument("occupancy_source=airsim_ground_truth requires ghost_targets_source=airsim_objects");
     validate_airsim_object_bindings(config);
     validate_obstacle_sensing_cameras(config.mission_options);
+
+    // Depth provider names (empty = inactive).
+    validate_depth_provider_name(config.depth,      "depth");
+    validate_depth_provider_name(config.depth_eval,  "depth_eval");
+
 }
 
 }  // namespace
@@ -382,6 +447,11 @@ void validate_provider_names(const CoreStackProviderConfig& config, const Provid
     const auto check = [](const std::string& field, const std::string& value, const std::vector<std::string>& valid) {
         if (std::find(valid.begin(), valid.end(), value) == valid.end()) throw std::invalid_argument("unknown " + field + ": " + value);
     };
+    // Optional eval slot validation: empty = inactive (allowed); non-empty must be a known name.
+    const auto check_opt = [](const std::string& field, const std::string& value, const std::vector<std::string>& valid) {
+        if (value.empty()) return;
+        if (std::find(valid.begin(), valid.end(), value) == valid.end()) throw std::invalid_argument("unknown " + field + ": " + value);
+    };
     check("frame_source",        config.frame_source,        registry.frame_sources());
     check("ego_provider",        config.ego_provider,        registry.ego_providers());
     check("detector",            config.detector,            registry.detectors());
@@ -393,6 +463,12 @@ void validate_provider_names(const CoreStackProviderConfig& config, const Provid
     check("frame_annotator",     config.frame_annotator,     registry.frame_annotators());
     check("mission_controller",  config.mission_controller,  registry.mission_controllers());
     check("flight_command_sink", config.flight_command_sink, registry.flight_command_sinks());
+    // Eval slots (optional).
+    check_opt("detector_eval",          config.detector_eval,          registry.detectors());
+    check_opt("camera_stabilizer_eval", config.camera_stabilizer_eval, registry.camera_stabilizers());
+    check_opt("tracker_eval",           config.tracker_eval,           registry.trackers());
+    check_opt("identity_resolver_eval", config.identity_resolver_eval, registry.identity_resolvers());
+    check_opt("projector_eval",         config.projector_eval,         registry.projectors());
 }
 
 CoreStackConfig load_core_stack_app_config(const std::string& path) {
@@ -415,7 +491,18 @@ CoreStackConfig load_core_stack_app_config(const std::string& path) {
         try { apply_config_value(config, key, value); }
         catch (const std::exception& ex) { throw std::runtime_error("invalid core-stack config line " + std::to_string(line_number) + ": " + ex.what()); }
     }
+    // Apply env var overrides for depth and perception eval provider names
+    // before validation so errors reference the final effective names.
+    config.providers.depth      = env_str_or(config.providers.depth,      "DEDALUS_DEPTH");
+    config.providers.depth_eval = env_str_or(config.providers.depth_eval, "DEDALUS_DEPTH_EVAL");
+    apply_eval_env_overrides(config.providers);
+
     validate_config(config.providers);
+
+    // Resolve string names → concrete provider instances.
+    build_depth_slots(config);
+    ProviderRegistry{}.populate_runner_eval_slots(config.providers, config.runner);
+
     return config;
 }
 

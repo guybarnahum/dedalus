@@ -151,7 +151,7 @@ std::vector<ObstacleEvidence> detect_visual_depth_obstacles(
     return inflate(
         buf.data(),
         count,
-        ego_frame.sensing_volume.sensor_name,
+        ego_frame.sensing_volume.camera_name,
         "visual_depth_obstacle_detector",
         ego_frame.ego.map_frame_id,
         ego_frame.frame.timestamp);

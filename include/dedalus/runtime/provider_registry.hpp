@@ -23,6 +23,25 @@ struct CoreStackProviderConfig {
     std::string tracker{"simple_centroid"};
     std::string identity_resolver{"appearance_only"};
     std::string projector{"flat_ground"};
+
+    // Provider wiring — depth and evaluation (slot B) providers.
+    //
+    // depth: name of the primary depth provider (slot A).  Required when
+    //   obstacle_sensing cameras are configured.  Valid: "airsim_gt",
+    //   "airsim_emulation".  Env: DEDALUS_DEPTH.
+    // depth_eval: slot B depth provider.  "" = inactive.
+    //   Env: DEDALUS_DEPTH_EVAL.
+    //
+    // <stage>_eval: optional slot B reference provider for each perception
+    //   pipeline stage.  "" = inactive.  Valid names match the primary stage.
+    //   Env: DEDALUS_<STAGE>_EVAL (e.g. DEDALUS_DETECTOR_EVAL).
+    std::string depth;
+    std::string depth_eval;
+    std::string detector_eval;
+    std::string camera_stabilizer_eval;
+    std::string tracker_eval;
+    std::string identity_resolver_eval;
+    std::string projector_eval;
     bool ghost_targets_enabled{false};
     std::string ghost_targets_source{"trajectory_scenario"};
     std::string ghost_targets_scenario{"person_pair_crossing"};
@@ -69,9 +88,24 @@ struct CoreStackProviders {
     std::vector<CameraSensingConfig> obstacle_sensing_cameras;
 };
 
+// CoreStackRunnerConfig is defined in core_stack_runner.hpp (which includes this
+// header).  Forward-declare it here so ProviderRegistry can reference it without
+// creating a circular include.
+struct CoreStackRunnerConfig;
+
 class ProviderRegistry {
 public:
     [[nodiscard]] CoreStackProviders create(const CoreStackProviderConfig& config) const;
+
+    // Resolve eval slot string names from config into concrete providers, storing
+    // them in runner.  Caller should invoke this after create() and before
+    // constructing CoreStackRunner.
+    //
+    // Depth slots (runner.depth_slot_a/b) are populated by config_loader; this
+    // method populates only the five perception stage reference slots.
+    void populate_runner_eval_slots(
+        const CoreStackProviderConfig& config,
+        CoreStackRunnerConfig& runner) const;
 
     [[nodiscard]] std::vector<std::string> frame_sources() const;
     [[nodiscard]] std::vector<std::string> ego_providers() const;

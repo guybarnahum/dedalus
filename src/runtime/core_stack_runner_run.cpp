@@ -5,17 +5,62 @@
 #include "dedalus/avoidance/local_flight_map.hpp"
 #include "dedalus/avoidance/mission_local_planning_map_publisher.hpp"
 #include "dedalus/avoidance/mission_local_traversability_map_publisher.hpp"
-#include "dedalus/sensing/airsim_depth_obstacle_detector.hpp"
 
 #include <algorithm>
 #include <chrono>
 #include <cmath>
+#include <cstdint>
+#include <unordered_set>
 #include <vector>
 
 namespace dedalus {
 namespace {
 
 using SteadyClock = std::chrono::steady_clock;
+
+// Compute the fraction of slot-A evidence voxels that have a slot-B voxel
+// within a ±1-voxel neighborhood.  Returns 0 if either set is empty.
+// O(|B|×27 + |A|) time, O(|B|×27) space.
+float compute_depth_agreement(
+    const std::vector<ObstacleEvidence>& a,
+    const std::vector<ObstacleEvidence>& b,
+    float voxel_size_m) {
+    if (a.empty() || b.empty()) return 0.0F;
+
+    const float inv_v = (voxel_size_m > 0.0F) ? (1.0F / voxel_size_m) : 1.0F;
+    static constexpr std::uint64_t kOffset = 1U << 20U;  // bias 21-bit fields
+    auto pack = [](std::uint64_t x, std::uint64_t y, std::uint64_t z) -> std::uint64_t {
+        return (x << 42U) | (y << 21U) | z;
+    };
+
+    std::unordered_set<std::uint64_t> b_set;
+    b_set.reserve(b.size() * 27U);
+    for (const auto& ev : b) {
+        const auto bx = static_cast<std::int64_t>(std::round(static_cast<float>(ev.center_local.x) * inv_v));
+        const auto by = static_cast<std::int64_t>(std::round(static_cast<float>(ev.center_local.y) * inv_v));
+        const auto bz = static_cast<std::int64_t>(std::round(static_cast<float>(ev.center_local.z) * inv_v));
+        for (int dx = -1; dx <= 1; ++dx)
+            for (int dy = -1; dy <= 1; ++dy)
+                for (int dz = -1; dz <= 1; ++dz)
+                    b_set.insert(pack(
+                        static_cast<std::uint64_t>(bx + dx) + kOffset,
+                        static_cast<std::uint64_t>(by + dy) + kOffset,
+                        static_cast<std::uint64_t>(bz + dz) + kOffset));
+    }
+
+    std::uint32_t matched = 0U;
+    for (const auto& ev : a) {
+        const auto ax = static_cast<std::uint64_t>(
+            static_cast<std::int64_t>(std::round(static_cast<float>(ev.center_local.x) * inv_v)) + kOffset);
+        const auto ay = static_cast<std::uint64_t>(
+            static_cast<std::int64_t>(std::round(static_cast<float>(ev.center_local.y) * inv_v)) + kOffset);
+        const auto az = static_cast<std::uint64_t>(
+            static_cast<std::int64_t>(std::round(static_cast<float>(ev.center_local.z) * inv_v)) + kOffset);
+        if (b_set.count(pack(ax, ay, az)) > 0U) ++matched;
+    }
+
+    return static_cast<float>(matched) / static_cast<float>(a.size());
+}
 
 // L3 truncation radius: only cells within d0 of an obstacle surface are stored.
 // No fixed XY/Z window — L3 covers the full extent of whatever L2 has in memory.
@@ -145,10 +190,11 @@ bool CoreStackRunner::run_once() {
         return false;
     }
 
+    SensingCoverageSnapshot coverage;
     std::vector<ObstacleSensingVolume> current_sensing_volumes;
     if (!providers_.obstacle_sensing_cameras.empty()) {
         start = SteadyClock::now();
-        const auto coverage = sensing_coverage_provider_.snapshot({*frame}, *ego_estimate.ego, camera_pointing_states_);
+        coverage = sensing_coverage_provider_.snapshot({*frame}, *ego_estimate.ego, camera_pointing_states_);
         current_sensing_volumes = obstacle_sensing_volumes_from(coverage);
         if (timing_writer_) {
             timing_writer_->record_stage("sensing_coverage.snapshot", duration_us(start));
@@ -172,40 +218,120 @@ bool CoreStackRunner::run_once() {
         timing_writer_->record_stage("perception_pipeline.process", duration_us(start));
     }
 
-    if (frame->depth_frame.has_value() && !current_sensing_volumes.empty()) {
+    // EP1: Perception pipeline reference slot evaluation.
+    //
+    // Each reference provider (slot B) receives the same primary-slot inputs as slot A.
+    // Outputs are never fed downstream — agreement is logged only.
+    // Zero overhead when all reference slots are null.
+    if (timing_writer_) {
+        if (detector_reference_) {
+            start = SteadyClock::now();
+            const auto b_dets = detector_reference_->detect(*frame);
+            timing_writer_->record_stage("detector.slot.detect", duration_us(start));
+            timing_writer_->record_stage("detector.slot.b_count",
+                static_cast<std::int64_t>(b_dets.size()));
+            const float ag = detection_agreement(perception_output.detections, b_dets);
+            timing_writer_->record_stage("detector.slot.agreement_ppt",
+                static_cast<std::int64_t>(ag * 1000.0F));
+        }
+
+        if (stabilizer_reference_) {
+            start = SteadyClock::now();
+            const auto b_stab = stabilizer_reference_->stabilize(
+                *frame, perception_output.detections);
+            timing_writer_->record_stage("stabilizer.slot.stabilize", duration_us(start));
+            const StabilizerOutput a_out{
+                perception_output.stabilized_frame.transform_available,
+                perception_output.stabilized_frame.dx_px,
+                perception_output.stabilized_frame.dy_px};
+            const StabilizerOutput b_out{
+                b_stab.transform_available, b_stab.dx_px, b_stab.dy_px};
+            const float ag = stabilizer_agreement(a_out, b_out);
+            timing_writer_->record_stage("stabilizer.slot.agreement_ppt",
+                static_cast<std::int64_t>(ag * 1000.0F));
+        }
+
+        if (tracker_reference_) {
+            start = SteadyClock::now();
+            const auto b_tracks = tracker_reference_->update(perception_output.detections);
+            timing_writer_->record_stage("tracker.slot.update", duration_us(start));
+            const float ag = tracker_agreement(perception_output.tracks, b_tracks);
+            timing_writer_->record_stage("tracker.slot.agreement_ppt",
+                static_cast<std::int64_t>(ag * 1000.0F));
+        }
+
+        if (identity_resolver_reference_) {
+            start = SteadyClock::now();
+            const auto b_ids = identity_resolver_reference_->resolve(perception_output.tracks);
+            timing_writer_->record_stage("identity_resolver.slot.resolve", duration_us(start));
+            const float ag = identity_agreement(perception_output.identities, b_ids);
+            timing_writer_->record_stage("identity_resolver.slot.agreement_ppt",
+                static_cast<std::int64_t>(ag * 1000.0F));
+        }
+
+        if (projector_reference_) {
+            start = SteadyClock::now();
+            const auto b_obs = projector_reference_->project(
+                perception_output.tracks, *frame, *ego_estimate.ego);
+            timing_writer_->record_stage("projector.slot.project", duration_us(start));
+            const float ag = observation_agreement(perception_output.observations, b_obs);
+            timing_writer_->record_stage("projector.slot.agreement_ppt",
+                static_cast<std::int64_t>(ag * 1000.0F));
+        }
+    }
+
+    // Two-slot depth provider loop.
+    //
+    // Slot A (primary): evidence appended to perception_output.obstacle_evidence → L1/L2 map.
+    // Slot B (reference): evidence collected separately for agreement metric only.
+    // Agreement = fraction of slot-A voxels with a slot-B voxel within ±1 voxel.
+    if (!coverage.camera_volumes.empty() && depth_slot_a_) {
         start = SteadyClock::now();
-        AirSimDepthObstacleDetector depth_detector{airsim_depth_obstacle_detector_config_};
-        if (timing_writer_) {
-            timing_writer_->record_stage("airsim_depth_obstacle_detector.depth_samples", frame->depth_frame->depth_m.size());
-            timing_writer_->record_stage("airsim_depth_obstacle_detector.sensing_volumes", current_sensing_volumes.size());
-        }
-        std::size_t matched_sensing_volumes = 0U;
-        std::size_t produced_depth_evidence = 0U;
-        for (const auto& sensing_volume : current_sensing_volumes) {
-            if (!frame->depth_frame->sensor_name.empty() &&
-                !sensing_volume.sensor_name.empty() &&
-                frame->depth_frame->sensor_name != sensing_volume.sensor_name) {
-                continue;
+
+        std::vector<ObstacleEvidence> slot_a_evidence;
+        std::vector<ObstacleEvidence> slot_b_evidence;
+
+        for (const auto& csv : coverage.camera_volumes) {
+            EgoSensingFrame ego_sf;
+            ego_sf.frame          = *frame;
+            ego_sf.ego            = *ego_estimate.ego;
+            ego_sf.sensing_volume = csv;
+
+            const auto a_ev = depth_slot_a_->detect(ego_sf);
+            slot_a_evidence.insert(slot_a_evidence.end(), a_ev.begin(), a_ev.end());
+
+            if (depth_slot_b_) {
+                const auto b_ev = depth_slot_b_->detect(ego_sf);
+                slot_b_evidence.insert(slot_b_evidence.end(), b_ev.begin(), b_ev.end());
             }
-            ++matched_sensing_volumes;
-            const auto depth_evidence = depth_detector.detect(*frame->depth_frame, sensing_volume);
-            produced_depth_evidence += depth_evidence.size();
-            perception_output.obstacle_evidence.insert(
-                perception_output.obstacle_evidence.end(),
-                depth_evidence.begin(),
-                depth_evidence.end());
         }
+
+        perception_output.obstacle_evidence.insert(
+            perception_output.obstacle_evidence.end(),
+            slot_a_evidence.begin(),
+            slot_a_evidence.end());
+
         if (timing_writer_) {
-            timing_writer_->record_stage("airsim_depth_obstacle_detector.matched_sensing_volumes", matched_sensing_volumes);
-            timing_writer_->record_stage("airsim_depth_obstacle_detector.evidence_count", produced_depth_evidence);
-            timing_writer_->record_stage("airsim_depth_obstacle_detector.detect", duration_us(start));
+            timing_writer_->record_stage("depth_slot_a.sensing_volumes",
+                static_cast<std::int64_t>(coverage.camera_volumes.size()));
+            timing_writer_->record_stage("depth_slot_a.evidence_count",
+                static_cast<std::int64_t>(slot_a_evidence.size()));
+            timing_writer_->record_stage("depth_slot_a.detect", duration_us(start));
+
+            if (depth_slot_b_) {
+                timing_writer_->record_stage("depth_slot_b.evidence_count",
+                    static_cast<std::int64_t>(slot_b_evidence.size()));
+
+                // Agreement logged as parts-per-thousand (0–1000).
+                static constexpr float kVoxelSizeM = 0.5F;
+                const float agreement = compute_depth_agreement(slot_a_evidence, slot_b_evidence, kVoxelSizeM);
+                timing_writer_->record_stage("depth_slot.agreement_ppt",
+                    static_cast<std::int64_t>(agreement * 1000.0F));
+            }
         }
     } else if (timing_writer_) {
-        timing_writer_->record_stage(
-            frame->depth_frame.has_value()
-                ? "airsim_depth_obstacle_detector.skipped_no_sensing_volume"
-                : "airsim_depth_obstacle_detector.skipped_no_depth_frame",
-            current_sensing_volumes.size());
+        timing_writer_->record_stage("depth_slot_a.skipped_no_sensing_volume",
+            static_cast<std::int64_t>(0));
     }
 
     if (providers_.ghost_targets) {

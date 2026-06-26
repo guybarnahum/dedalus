@@ -3,38 +3,29 @@
 #include <string>
 #include <vector>
 
-#include "dedalus/core/types.hpp"
 #include "dedalus/occupancy/occupancy_types.hpp"
-#include "dedalus/perception/perception_pipeline.hpp"
-#include "dedalus/sensors/frame_source.hpp"
+#include "dedalus/sensing/sensing_coverage.hpp"
 
 namespace dedalus {
 
-// EgoSensingFrame is the provider-neutral obstacle-sensing input contract.
+// ObstacleEvidenceProvider: interface for obstacle depth providers.
 //
-// It intentionally reuses existing contracts:
-//   - FramePacket: RGB/depth/intrinsics/extrinsics/ego hint.
-//   - EgoState: current local_T_body/map_frame_id.
-//   - ObstacleSensingVolume: current camera/sensing volume in the active local frame.
+// detect() receives an EgoSensingFrame (frame + ego + CameraSensingVolume)
+// and returns ObstacleEvidence.  Providers that need ObstacleSensingVolume
+// may call to_obstacle_sensing_volume() from sensing_coverage.hpp.
 //
-// Providers must emit ObstacleEvidence only. They must not write world-model
+// EgoSensingFrame is defined in sensing_coverage.hpp — do not redefine it.
+//
+// Providers must emit ObstacleEvidence only.  They must not write world-model
 // state, local flight maps, mission-local maps, or visualization artifacts.
-struct EgoSensingFrame {
-    FramePacket frame;
-    EgoState ego;
-    ObstacleSensingVolume sensing_volume;
-
-    bool has_depth_frame{false};
-    bool has_camera_extrinsics{false};
-};
-
 class ObstacleEvidenceProvider {
 public:
     virtual ~ObstacleEvidenceProvider() = default;
 
-    virtual std::string provider_name() const = 0;
+    [[nodiscard]] virtual std::string provider_name() const = 0;
 
-    virtual std::vector<ObstacleEvidence> detect(const EgoSensingFrame& frame) = 0;
+    [[nodiscard]] virtual std::vector<ObstacleEvidence> detect(
+        const EgoSensingFrame& frame) = 0;
 };
 
 }  // namespace dedalus
