@@ -33,7 +33,7 @@ bridge_command: python3 simulation/airsim/scripts/airsim-stream-frames-binary.py
 # Depth slot A: AirSim ground-truth depth (DepthPlanar API via bridge stream).
 # Activates the two-slot depth provider path in CoreStackRunner.
 # airsim_depth_obstacle_detector.* below tunes the detection parameters.
-depth: airsim_gt
+depth: airsim_gt_detector
 
 # Explicit camera sensing coverage required for depth slot volume matching.
 # Camera pitch is updated from camera_pointing_intent during object behavior.

@@ -47,7 +47,7 @@ std::string occupancy_state_to_string(const OccupancyCellState state) {
 
 std::string occupancy_source_to_string(const OccupancySourceKind source) {
     switch (source) {
-        case OccupancySourceKind::AirSimGroundTruth: return "airsim_gt";
+        case OccupancySourceKind::AirSimGroundTruth: return "airsim_gt_detector";
         case OccupancySourceKind::VisualObstacleDetector: return "visual_det";
         case OccupancySourceKind::DepthProvider: return "depth";
         case OccupancySourceKind::Fused: return "fused";

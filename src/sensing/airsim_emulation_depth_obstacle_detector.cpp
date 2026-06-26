@@ -79,7 +79,7 @@ AirSimEmulationDepthObstacleDetector::AirSimEmulationDepthObstacleDetector(
     : config_(std::move(config)) {}
 
 std::string AirSimEmulationDepthObstacleDetector::provider_name() const {
-    return "airsim_emulation_depth_obstacle_detector";
+    return "airsim_gt_vd";
 }
 
 std::vector<ObstacleEvidence> AirSimEmulationDepthObstacleDetector::detect(

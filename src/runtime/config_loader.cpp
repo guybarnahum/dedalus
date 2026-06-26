@@ -76,9 +76,9 @@ std::unique_ptr<ObstacleEvidenceProvider> make_depth_provider(
     const std::string& name,
     const AirSimDepthObstacleDetectorConfig& airsim_gt_config) {
     if (name.empty()) return nullptr;
-    if (name == "airsim_gt")
+    if (name == "airsim_gt_detector")
         return std::make_unique<AirSimDepthEvidenceProvider>(airsim_gt_config);
-    if (name == "airsim_emulation")
+    if (name == "airsim_gt_vd")
         return std::make_unique<AirSimEmulationDepthObstacleDetector>();
     throw std::invalid_argument("unknown depth provider: " + name);
 }
@@ -416,7 +416,7 @@ void validate_obstacle_sensing_cameras(const MissionOptions& options) {
 
 void validate_depth_provider_name(const std::string& name, const char* field) {
     if (name.empty()) return;
-    if (name != "airsim_gt" && name != "airsim_emulation")
+    if (name != "airsim_gt_detector" && name != "airsim_gt_vd")
         throw std::invalid_argument(std::string(field) + ": unknown depth provider: " + name);
 }
 

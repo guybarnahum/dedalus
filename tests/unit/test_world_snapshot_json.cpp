@@ -70,7 +70,7 @@ int main() {
     sensing_volume.source_frame_id = dedalus::FrameId{"frame_0007"};
     sensing_volume.has_source_frame = true;
     sensing_volume.sensor_name = "front_center";
-    sensing_volume.provider_name = "airsim_gt_visual_emulation";
+    sensing_volume.provider_name = "airsim_gt_vd";
     sensing_volume.map_frame_id = snapshot.active_map_frame_id;
     sensing_volume.origin_local = dedalus::Vec3{1.0, 2.0, -8.0};
     sensing_volume.forward_axis_local = dedalus::Vec3{1.0, 0.0, 0.0};
@@ -92,7 +92,7 @@ int main() {
     evidence.source_frame_id = dedalus::FrameId{"frame_0007"};
     evidence.has_source_frame = true;
     evidence.sensor_name = "front_center";
-    evidence.source_provider = "airsim_gt_visual_emulation";
+    evidence.source_provider = "airsim_gt_vd";
     evidence.source_kind = dedalus::OccupancySourceKind::AirSimGroundTruthVisualEmulation;
     evidence.map_frame_id = snapshot.active_map_frame_id;
     evidence.state = dedalus::ObstacleEvidenceState::ThinStructureRisk;
@@ -279,7 +279,7 @@ int main() {
     const std::string required_obstacle_sensing_tokens[] = {
         "\"obstacle_sensing_volumes\"",
         "\"sensor_name\": \"front_center\"",
-        "\"provider_name\": \"airsim_gt_visual_emulation\"",
+        "\"provider_name\": \"airsim_gt_vd\"",
         "\"source_frame_id\": \"frame_0007\"",
         "\"origin_local\": [1,2,-8]",
         "\"forward_axis_local\": [1,0,0]",
@@ -305,8 +305,8 @@ int main() {
 
     const std::string required_obstacle_evidence_tokens[] = {
         "\"obstacle_evidence\"",
-        "\"source_provider\": \"airsim_gt_visual_emulation\"",
-        "\"source_kind\": \"airsim_gt_visual_emulation\"",
+        "\"source_provider\": \"airsim_gt_vd\"",
+        "\"source_kind\": \"airsim_gt_vd\"",
         "\"state\": \"thin_structure_risk\"",
         "\"shape\": \"capsule\"",
         "\"endpoint_a_local\": [6,1.5,-8]",

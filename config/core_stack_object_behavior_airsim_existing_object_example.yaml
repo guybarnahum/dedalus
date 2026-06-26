@@ -32,7 +32,7 @@ bridge_command: python3 simulation/airsim/scripts/airsim-stream-frames-binary.py
 
 # Depth slot A: AirSim ground-truth depth (DepthPlanar API via bridge stream).
 # Add --include-depth to the bridge_command above to enable depth frame streaming.
-depth: airsim_gt
+depth: airsim_gt_detector
 
 # Explicit camera sensing coverage required for depth slot volume matching.
 mission_options.obstacle_sensing.cameras.0.name: front_center

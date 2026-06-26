@@ -7,7 +7,7 @@ AirSimDepthEvidenceProvider::AirSimDepthEvidenceProvider(
     : detector_(std::move(config)) {}
 
 std::string AirSimDepthEvidenceProvider::provider_name() const {
-    return "airsim_depth_gt";
+    return "airsim_gt_detector";
 }
 
 std::vector<ObstacleEvidence> AirSimDepthEvidenceProvider::detect(

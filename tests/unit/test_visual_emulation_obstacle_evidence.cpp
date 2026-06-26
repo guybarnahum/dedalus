@@ -165,7 +165,7 @@ int main() {
     }
     const auto& evidence = snapshot.obstacle_evidence.front();
     if (evidence.source_kind != dedalus::OccupancySourceKind::AirSimGroundTruthVisualEmulation ||
-        evidence.source_provider != "airsim_gt_visual_emulation") {
+        evidence.source_provider != "airsim_gt_vd") {
         std::cerr << "visual-emulation evidence did not use visual-emulation provenance\n";
         return 1;
     }

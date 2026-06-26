@@ -27,10 +27,12 @@ struct CoreStackProviderConfig {
     // Provider wiring — depth and evaluation (slot B) providers.
     //
     // depth: name of the primary depth provider (slot A).  Required when
-    //   obstacle_sensing cameras are configured.  Valid: "airsim_gt",
-    //   "airsim_emulation".  Env: DEDALUS_DEPTH.
-    // depth_eval: slot B depth provider.  "" = inactive.
-    //   Env: DEDALUS_DEPTH_EVAL.
+    //   obstacle_sensing cameras are configured.
+    //   Valid: "airsim_gt_detector" (AirSim DepthPlanar → legacy detector),
+    //          "airsim_gt_vd"       (AirSim DepthPlanar → VD kernels).
+    //   Env: DEDALUS_DEPTH.
+    // depth_eval: slot B depth provider (reference; agreement metric only).
+    //   "" = inactive.  Same valid values as depth.  Env: DEDALUS_DEPTH_EVAL.
     //
     // <stage>_eval: optional slot B reference provider for each perception
     //   pipeline stage.  "" = inactive.  Valid names match the primary stage.

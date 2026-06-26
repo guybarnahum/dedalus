@@ -236,7 +236,7 @@ ObstacleEvidence evidence_from_observation(
     evidence.source_frame_id = observation.source_frame_id;
     evidence.has_source_frame = observation.has_source_frame;
     evidence.sensor_name = volume.sensor_name;
-    evidence.source_provider = "airsim_gt_visual_emulation";
+    evidence.source_provider = "airsim_gt_vd";
     evidence.source_kind = OccupancySourceKind::AirSimGroundTruthVisualEmulation;
     evidence.map_frame_id = map_frame_id;
     evidence.state = ObstacleEvidenceState::Occupied;

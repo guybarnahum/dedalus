@@ -17,8 +17,8 @@ def write_snapshot(path: Path, *, with_evidence: bool = True, inside_swept: bool
             {
                 "timestamp_ns": 123,
                 "sensor_name": "front_center",
-                "source_provider": "airsim_gt_visual_emulation",
-                "source_kind": "airsim_gt_visual_emulation",
+                "source_provider": "airsim_gt_vd",
+                "source_kind": "airsim_gt_vd",
                 "map_frame_id": "map_local_0001",
                 "state": "occupied",
                 "shape": "voxel",
@@ -127,7 +127,7 @@ def main() -> int:
             "OBSTACLE_SENSING_EVIDENCE snapshot dir:",
             "total volumes:    1",
             "total evidence:   1",
-            "source_kinds:     {'airsim_gt_visual_emulation': 1}",
+            "source_kinds:     {'airsim_gt_vd': 1}",
             "volume providers: {'configured_camera_coverage': 1}",
             "inside swept:     1",
             "PASS",
@@ -153,7 +153,7 @@ def main() -> int:
         seed_snapshot_dir(fake_volume_dir)
         fake_snapshot_path = fake_volume_dir / "snapshot_0001.json"
         fake_snapshot = json.loads(fake_snapshot_path.read_text(encoding="utf-8"))
-        fake_snapshot["obstacle_sensing_volumes"][0]["provider_name"] = "airsim_gt_visual_emulation"
+        fake_snapshot["obstacle_sensing_volumes"][0]["provider_name"] = "airsim_gt_vd"
         fake_snapshot_path.write_text(json.dumps(fake_snapshot, separators=(",", ":")) + "\n", encoding="utf-8")
         fake_volume = run_validator(repo_root, fake_volume_dir)
         if fake_volume.returncode == 0:

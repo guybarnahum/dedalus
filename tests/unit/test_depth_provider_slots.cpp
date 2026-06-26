@@ -142,7 +142,7 @@ void test_provider_names() {
         "adapter provider_name mismatch");
 
     dedalus::AirSimEmulationDepthObstacleDetector emulator;
-    require(emulator.provider_name() == "airsim_emulation_depth_obstacle_detector",
+    require(emulator.provider_name() == "airsim_gt_vd",
         "emulator provider_name mismatch");
     std::puts("PASS test_provider_names");
 }
