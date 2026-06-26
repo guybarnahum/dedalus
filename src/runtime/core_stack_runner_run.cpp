@@ -410,6 +410,7 @@ bool CoreStackRunner::run_once() {
 
     start = SteadyClock::now();
     auto snapshot_for_annotation = providers_.world_model->snapshot();
+    snapshot_for_annotation.depth_source_name = depth_slot_a_name_;
     if (timing_writer_) {
         timing_writer_->record_stage("world_model.snapshot", duration_us(start));
     }
@@ -686,6 +687,16 @@ bool CoreStackRunner::run_once() {
     snapshot_for_annotation.has_trajectory_safety = true;
     if (timing_writer_) {
         timing_writer_->record_stage("trajectory_safety.evaluate", duration_us(start));
+    }
+
+    if (++perch_cadence_tick_ % static_cast<std::uint32_t>(
+            perch_candidate_evaluator_.cadence_ticks()) == 0U) {
+        start = SteadyClock::now();
+        snapshot_for_annotation.perch_candidates =
+            perch_candidate_evaluator_.evaluate(snapshot_for_annotation.obstacle_evidence);
+        if (timing_writer_) {
+            timing_writer_->record_stage("perch_candidate_evaluator.evaluate", duration_us(start));
+        }
     }
 
     if (snapshot_publisher_) {

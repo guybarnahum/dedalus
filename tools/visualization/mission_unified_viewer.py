@@ -226,6 +226,7 @@ h3 { font-size: 12px; margin: 10px 0 6px; color: #c0c4d0; text-transform: upperc
 
       <h3>Metrics</h3>
       <div class="metric"><span>Stream source</span><code id="m-source">—</code></div>
+      <div class="metric"><span>Depth source</span><code id="m-depth-source">—</code></div>
       <div class="metric"><span>Seq</span><b id="m-seq">0</b></div>
       <div class="metric"><span>L0 ego cells</span><b id="m-l0-cells">0</b></div>
       <div class="metric"><span>L2 planning cells</span><b id="m-plan-cells">0</b></div>
@@ -2156,8 +2157,9 @@ function fmt(v) { const n=Number(v); return Number.isFinite(n)?Number.isInteger(
 function updateMetrics() {
   updateStatusBar();
   const b=state.bounds;
-  el("m-source").textContent = live.source;
-  el("m-seq").textContent    = String(live.seq);
+  el("m-source").textContent       = live.source;
+  el("m-depth-source").textContent = state.diagnostics.depth_source_name || "—";
+  el("m-seq").textContent          = String(live.seq);
   el("m-l0-cells").textContent   = String(localFlightMapCells.length);
   el("m-plan-cells").textContent  = String(planningCellsByKey.size);
   el("m-esdf-cells").textContent  = String(esdfCellsByKey.size);
@@ -2268,6 +2270,8 @@ function applyWorldSnapshot(snap, seq, {deferRender=false}={}) {
     const fb=firstVec3(safety,[["first_blocked_position_local"],["first_blocked_position"],["first_blocked_point"]]);
     if (fb) state.firstBlocked=fb;
   }
+
+  if (snap.depth_source_name) state.diagnostics.depth_source_name = snap.depth_source_name;
 
   const mission=snap.mission_local_obstacle_map;
   if (mission&&typeof mission==="object") {

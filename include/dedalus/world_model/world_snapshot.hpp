@@ -188,11 +188,19 @@ struct UncertainRegion {
     std::string reason;
 };
 
+// A ranked landing-zone candidate produced by PerchCandidateEvaluator.
+struct PerchCandidate {
+    Vec3  position_local;       // center_local of the surface patch (map frame)
+    Vec3  normal_local;         // surface normal (should face toward world-up)
+    float score{0.0F};          // composite: flatness × area × confidence, [0, 1]
+};
+
 struct WorldSnapshot {
     TimePoint timestamp;
     EgoState ego;
     FlightControlState flight_control;
     MapFrameId active_map_frame_id{"map_unknown"};
+    std::string depth_source_name;   // provider_name() of active depth slot A; empty = inactive
     AppearanceCondition appearance_condition;
 
     std::vector<AgentState> agents;
@@ -221,6 +229,7 @@ struct WorldSnapshot {
 
     std::vector<ObstacleSensingVolume> obstacle_sensing_volumes;
     std::vector<ObstacleEvidence> obstacle_evidence;
+    std::vector<PerchCandidate> perch_candidates;
 };
 
 std::string to_json(const WorldSnapshot& snapshot);
