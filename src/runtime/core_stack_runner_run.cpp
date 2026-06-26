@@ -322,10 +322,11 @@ bool CoreStackRunner::run_once() {
                 timing_writer_->record_stage("depth_slot_b.evidence_count",
                     static_cast<std::int64_t>(slot_b_evidence.size()));
 
-                // Agreement logged as parts-per-thousand (0–1000).
+                // Fraction of primary-slot voxels confirmed by eval-slot within ±1 voxel.
+                // Logged as parts-per-thousand (0–1000).
                 static constexpr float kVoxelSizeM = 0.5F;
                 const float agreement = compute_depth_agreement(slot_a_evidence, slot_b_evidence, kVoxelSizeM);
-                timing_writer_->record_stage("depth_slot.agreement_ppt",
+                timing_writer_->record_stage("depth.voxel_overlap_ppt",
                     static_cast<std::int64_t>(agreement * 1000.0F));
             }
         }

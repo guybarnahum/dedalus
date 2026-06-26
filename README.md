@@ -94,7 +94,6 @@ The Virtual Proving Ground (`simulation/` directory) provides a complete high-fi
    export DEDALUS_SITE_ID=airsim_47.641N_122.140W
 
    # Launch mission (output-dir, mission-id, L2 DB path all auto-derived).
-   DEDALUS_AIRSIM_ENABLE_DEPTH_OBSTACLES=1 \
    simulation/airsim/run_mission.sh \
      --config config/core_stack_object_behavior_airsim_existing_object_circle.yml
 

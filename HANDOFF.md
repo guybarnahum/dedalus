@@ -53,8 +53,9 @@ Stage 8  L0/L3 calibration (sim run)                 DEFERRED — blocked on Sta
 ## Development Context: AirSim Without Ground Truth
 
 **AirSim GT depth is replaced by visual algorithms.** `DepthPlanar` API is the validation
-oracle only — not the operational source. `DEDALUS_AIRSIM_ENABLE_DEPTH_OBSTACLES` will be
-disabled permanently after VD4.
+oracle only — not the operational source. Use `depth_eval: airsim_gt` (or `DEDALUS_DEPTH_EVAL=airsim_gt`)
+to keep it as the reference slot. `DEDALUS_AIRSIM_ENABLE_DEPTH_OBSTACLES` is a dead env var — never
+checked by the runtime; ignore it.
 
 **Front camera is gimbaled.** Mission controls pointing mode (stare-at-target, angle-from-
 velocity, landing-approach). `ObstacleSensingVolume` carries gimbal-corrected extrinsics
@@ -213,7 +214,6 @@ DEDALUS_SITE_ID=airsim_47.641N_122.140W \
 Start AirSim mission:
 ```bash
 DEDALUS_SITE_ID=airsim_47.641N_122.140W \
-DEDALUS_AIRSIM_ENABLE_DEPTH_OBSTACLES=1 \
 simulation/airsim/run_mission.sh \
   --config config/core_stack_object_behavior_airsim_existing_object_circle.yml \
   --runtime-event-http-port 8080 \

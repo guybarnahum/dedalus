@@ -1,5 +1,8 @@
 # VRAM Allocation Map — L4 EC2 (23 GiB GDDR6)
 
+> **Prerequisite**: `sudo apt install nvidia-cuda-toolkit` (adds nvcc to PATH;
+> `build.sh` auto-detects it and enables `DEDALUS_CUDA`).
+
 GPU: NVIDIA L4, Ada Lovelace (sm_89), 23,034 MiB GDDR6, 242 TFLOPS FP16.
 Memory model: discrete PCIe — no unified memory. All transfers are explicit
 `cudaMemcpyAsync`.

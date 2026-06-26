@@ -31,10 +31,28 @@ if [[ "${DEDALUS_CUDA:-}" == "0" ]]; then
 elif [[ "${DEDALUS_CUDA:-}" == "1" ]]; then
     CUDA_CMAKE_FLAG="-DDEDALUS_CUDA=ON"
     echo "[build] CUDA: forced on"
-elif command -v nvcc >/dev/null 2>&1; then
-    echo "[build] CUDA: detected (nvcc $(nvcc --version 2>/dev/null | grep -oP 'release \K[\d.]+' || echo '?')) — DEDALUS_CUDA will auto-enable"
 else
-    echo "[build] CUDA: not detected — CPU-only build"
+    # nvcc may be installed but not in PATH (common on EC2/Ubuntu).
+    # Check standard CUDA toolkit locations.
+    NVCC_BIN=""
+    for _candidate in \
+        "$(command -v nvcc 2>/dev/null)" \
+        /usr/local/cuda/bin/nvcc \
+        /usr/local/cuda-*/bin/nvcc \
+        /usr/bin/nvcc; do
+        if [[ -x "$_candidate" ]]; then
+            NVCC_BIN="$_candidate"
+            break
+        fi
+    done
+    if [[ -n "$NVCC_BIN" ]]; then
+        echo "[build] CUDA: detected ($NVCC_BIN) — DEDALUS_CUDA will auto-enable"
+        # Ensure nvcc is reachable for CMake's CUDAToolkit probe
+        export PATH="$(dirname "$NVCC_BIN"):$PATH"
+    else
+        echo "[build] CUDA: not detected — CPU-only build"
+        echo "[build]   (install with: sudo apt-get install -y cuda-toolkit)"
+    fi
 fi
 
 cmake -S . -B "$BUILD_DIR" -DCMAKE_BUILD_TYPE=RelWithDebInfo ${CUDA_CMAKE_FLAG:+"$CUDA_CMAKE_FLAG"}
