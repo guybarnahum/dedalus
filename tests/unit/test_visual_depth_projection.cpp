@@ -332,6 +332,159 @@ static bool test_inflate_direct() {
 }
 
 // ---------------------------------------------------------------------------
+// VD3 Test 5: Flat wall → SurfacePatch with is_surface_hint
+// ---------------------------------------------------------------------------
+
+// Build the ProjectionParams used by kernel tests directly.
+static dedalus::ProjectionParams make_params(int W, int H, float scale, float voxel) {
+    dedalus::ProjectionParams p;
+    p.fx = p.fy = 100.0F;
+    p.cx = static_cast<float>(W - 1) / 2.0F;
+    p.cy = static_cast<float>(H - 1) / 2.0F;
+    p.width  = W;  p.height = H;
+    p.stride = 1;
+    p.min_depth_m = 0.5F;  p.max_depth_m = 80.0F;
+    p.scale       = scale;
+    p.voxel_size_m = voxel;
+    p.max_evidence = 512U;
+    // Camera at origin, forward=+X, right=+Y, up=-Z
+    p.origin_x = p.origin_y = p.origin_z = 0.0F;
+    p.forward_x=1.0F; p.forward_y=0.0F; p.forward_z=0.0F;
+    p.right_x=0.0F;   p.right_y=1.0F;   p.right_z=0.0F;
+    p.up_x=0.0F;      p.up_y=0.0F;      p.up_z=-1.0F;
+    return p;
+}
+
+static bool test_surface_patch_wall() {
+    const int W = 9, H = 9;
+    const float SCALE = 1000.0F;
+    const float VOXEL = 0.5F;
+    const float DEPTH = 10.0F;
+
+    // Flat wall at 10 m: all pixels valid
+    const std::size_t N = static_cast<std::size_t>(W * H);
+    std::vector<float> depth_rel(N, SCALE / DEPTH);
+
+    const auto params = make_params(W, H, SCALE, VOXEL);
+
+    // Project voxels
+    std::vector<dedalus::DeviceObstacleEvidence> voxels(512U);
+    std::uint32_t voxel_count = 0U;
+    dedalus::project_depth_to_device_evidence(
+        depth_rel.data(), params, voxels.data(), voxel_count);
+
+    if (voxel_count == 0U) {
+        std::cerr << "FAIL test_surface_patch_wall: no voxels projected\n";
+        return false;
+    }
+
+    // Run RANSAC
+    std::vector<dedalus::DeviceObstacleEvidence> patches(64U);
+    std::uint32_t patch_count = 0U;
+    dedalus::fit_surface_patches_device(
+        voxels.data(), voxel_count, params, patches.data(), patch_count);
+
+    if (patch_count == 0U) {
+        std::cerr << "FAIL test_surface_patch_wall: no patches found ("
+                  << voxel_count << " voxels)\n";
+        return false;
+    }
+
+    const auto& p0 = patches[0];
+    if (p0.is_surface_hint != 1U) {
+        std::cerr << "FAIL test_surface_patch_wall: is_surface_hint not set\n";
+        return false;
+    }
+    if (p0.shape != 3U) {  // SurfacePatch
+        std::cerr << "FAIL test_surface_patch_wall: wrong shape " << +p0.shape << "\n";
+        return false;
+    }
+
+    // Normal should be approximately ±X (forward axis)
+    const float nx_abs = std::abs(p0.normal_x);
+    if (nx_abs < 0.9F) {
+        std::cerr << "FAIL test_surface_patch_wall: normal_x=" << p0.normal_x
+                  << " expected ≈±1\n";
+        return false;
+    }
+
+    return true;
+}
+
+// ---------------------------------------------------------------------------
+// VD3 Test 6: Vertical pole → ThinStructureRisk LineSegment
+// ---------------------------------------------------------------------------
+
+static bool test_thin_structure_pole() {
+    const int W = 21, H = 21;
+    const float SCALE   = 1000.0F;
+    const float POLE_D  = 5.0F;   // pole at 5 m
+    const float BG_D    = 50.0F;  // background at 50 m
+    const int   POLE_COL = 10;
+
+    const std::size_t N = static_cast<std::size_t>(W * H);
+    std::vector<float> depth_rel(N, SCALE / BG_D);
+
+    // Set pole column
+    for (int v = 0; v < H; ++v) {
+        depth_rel[static_cast<std::size_t>(v) * static_cast<std::size_t>(W) +
+                  static_cast<std::size_t>(POLE_COL)] = SCALE / POLE_D;
+    }
+
+    const auto params = make_params(W, H, SCALE, 0.5F);
+
+    std::vector<dedalus::DeviceObstacleEvidence> thin(64U);
+    std::uint32_t thin_count = 0U;
+    dedalus::detect_thin_structures_device(
+        depth_rel.data(), params, thin.data(), thin_count);
+
+    if (thin_count == 0U) {
+        std::cerr << "FAIL test_thin_structure_pole: no thin structures detected\n";
+        return false;
+    }
+
+    const auto& t0 = thin[0];
+    if (t0.is_thin_structure_hint != 1U) {
+        std::cerr << "FAIL test_thin_structure_pole: is_thin_structure_hint not set\n";
+        return false;
+    }
+    if (t0.state != 3U) {  // ThinStructureRisk
+        std::cerr << "FAIL test_thin_structure_pole: wrong state " << +t0.state << "\n";
+        return false;
+    }
+    if (t0.shape != 4U) {  // LineSegment
+        std::cerr << "FAIL test_thin_structure_pole: wrong shape " << +t0.shape << "\n";
+        return false;
+    }
+
+    // The segment must have meaningful length (pole spans full image height)
+    if (t0.range_m < 0.5F) {
+        std::cerr << "FAIL test_thin_structure_pole: segment too short ("
+                  << t0.range_m << " m)\n";
+        return false;
+    }
+
+    // Verify inflate sets endpoints correctly for LineSegment shape
+    const auto inflated = dedalus::inflate(
+        &t0, 1U, "test", "test", dedalus::MapFrameId{"m"}, dedalus::TimePoint{0});
+    if (inflated.size() != 1U) {
+        std::cerr << "FAIL test_thin_structure_pole: inflate returned wrong count\n";
+        return false;
+    }
+    const auto& ie = inflated[0];
+    if (ie.shape != dedalus::ObstacleEvidenceShape::LineSegment) {
+        std::cerr << "FAIL test_thin_structure_pole: inflated shape wrong\n";
+        return false;
+    }
+    if (!ie.is_thin_structure_hint) {
+        std::cerr << "FAIL test_thin_structure_pole: inflated hint not set\n";
+        return false;
+    }
+
+    return true;
+}
+
+// ---------------------------------------------------------------------------
 // main
 // ---------------------------------------------------------------------------
 
@@ -350,6 +503,8 @@ int main() {
     run("test_depth_range_filter",      test_depth_range_filter);
     run("test_voxel_deduplication",     test_voxel_deduplication);
     run("test_inflate_direct",          test_inflate_direct);
+    run("test_surface_patch_wall",      test_surface_patch_wall);
+    run("test_thin_structure_pole",     test_thin_structure_pole);
 
     if (failures == 0) {
         std::cout << "OK: all visual_depth_projection tests passed\n";

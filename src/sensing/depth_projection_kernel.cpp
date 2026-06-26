@@ -3,14 +3,18 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
+#include <queue>
+#include <random>
 #include <unordered_set>
 #include <vector>
 
 namespace dedalus {
 namespace {
 
-// Pack voxel index triple into a single uint64 for deduplication.
-// Supports ±1 048 576 indices in each dimension (±524 km at 0.5 m resolution).
+// ---------------------------------------------------------------------------
+// Shared helpers
+// ---------------------------------------------------------------------------
+
 std::uint64_t pack_voxel(std::int32_t ix, std::int32_t iy, std::int32_t iz) {
     const std::uint64_t ux = static_cast<std::uint64_t>(ix + 1048576) & 0x1FFFFFU;
     const std::uint64_t uy = static_cast<std::uint64_t>(iy + 1048576) & 0x1FFFFFU;
@@ -18,13 +22,164 @@ std::uint64_t pack_voxel(std::int32_t ix, std::int32_t iy, std::int32_t iz) {
     return (ux << 42U) | (uy << 21U) | uz;
 }
 
-// Undistort a normalised image coordinate using Brown-Conrady k1, k2.
-// One Newton step is sufficient for small distortion values.
 void undistort_k1k2(float xn, float yn, float k1, float k2, float& xd, float& yd) {
     const float r2     = xn * xn + yn * yn;
     const float radial = 1.0F + k1 * r2 + k2 * r2 * r2;
     xd = xn / radial;
     yd = yn / radial;
+}
+
+// Unproject a depth pixel to a local-frame 3D point.
+// Returns false if depth is outside [min, max].
+bool unproject(int u, int v, float depth_relative,
+               const ProjectionParams& p,
+               float& lx, float& ly, float& lz) {
+    if (!std::isfinite(depth_relative) || depth_relative <= 0.0F) return false;
+    const float depth_m = p.scale / depth_relative;
+    if (depth_m < p.min_depth_m || depth_m > p.max_depth_m) return false;
+
+    const float inv_fx = 1.0F / p.fx;
+    const float inv_fy = 1.0F / p.fy;
+    float xn = (static_cast<float>(u) - p.cx) * inv_fx;
+    float yn = (static_cast<float>(v) - p.cy) * inv_fy;
+    if (p.k1 != 0.0F || p.k2 != 0.0F) {
+        undistort_k1k2(xn, yn, p.k1, p.k2, xn, yn);
+    }
+    const float xc = xn * depth_m;
+    const float yc = yn * depth_m;
+    const float zc = depth_m;
+
+    lx = p.origin_x + zc * p.forward_x + xc * p.right_x - yc * p.up_x;
+    ly = p.origin_y + zc * p.forward_y + xc * p.right_y - yc * p.up_y;
+    lz = p.origin_z + zc * p.forward_z + xc * p.right_z - yc * p.up_z;
+    return true;
+}
+
+// ---------------------------------------------------------------------------
+// RANSAC plane helpers
+// ---------------------------------------------------------------------------
+
+struct Plane { float nx, ny, nz, d; };
+
+// Fit a plane through three points. Returns false if degenerate.
+bool fit_plane_3pts(const float* a, const float* b, const float* c, Plane& out) {
+    const float abx = b[0]-a[0], aby = b[1]-a[1], abz = b[2]-a[2];
+    const float acx = c[0]-a[0], acy = c[1]-a[1], acz = c[2]-a[2];
+    const float nx = aby*acz - abz*acy;
+    const float ny = abz*acx - abx*acz;
+    const float nz = abx*acy - aby*acx;
+    const float len = std::sqrt(nx*nx + ny*ny + nz*nz);
+    if (len < 1.0e-6F) return false;
+    out.nx = nx/len;  out.ny = ny/len;  out.nz = nz/len;
+    out.d  = -(out.nx*a[0] + out.ny*a[1] + out.nz*a[2]);
+    return true;
+}
+
+float plane_dist(const Plane& p, float x, float y, float z) {
+    return std::abs(p.nx*x + p.ny*y + p.nz*z + p.d);
+}
+
+// Least-squares plane fit over a set of points (Welford centroid + covariance).
+// Returns false if fewer than 3 points.
+bool fit_plane_ls(const std::vector<std::array<float,3>>& pts, Plane& out) {
+    if (pts.size() < 3) return false;
+    // Centroid
+    float cx = 0.0F, cy = 0.0F, cz = 0.0F;
+    for (const auto& p : pts) { cx += p[0]; cy += p[1]; cz += p[2]; }
+    const float n = static_cast<float>(pts.size());
+    cx /= n;  cy /= n;  cz /= n;
+    // Scatter matrix (symmetric 3×3)
+    float sxx=0,sxy=0,sxz=0,syy=0,syz=0,szz=0;
+    for (const auto& p : pts) {
+        const float dx=p[0]-cx, dy=p[1]-cy, dz=p[2]-cz;
+        sxx+=dx*dx; sxy+=dx*dy; sxz+=dx*dz;
+        syy+=dy*dy; syz+=dy*dz; szz+=dz*dz;
+    }
+    // Power-iteration to find smallest eigenvector (normal direction).
+    // Start with the column of the scatter matrix with the smallest diagonal.
+    float nx, ny, nz;
+    if (sxx <= syy && sxx <= szz)      { nx=1.0F; ny=0.0F; nz=0.0F; }
+    else if (syy <= sxx && syy <= szz) { nx=0.0F; ny=1.0F; nz=0.0F; }
+    else                                { nx=0.0F; ny=0.0F; nz=1.0F; }
+    // 16 iterations of inverse power method (approximation)
+    for (int iter = 0; iter < 16; ++iter) {
+        // Multiply by (I - S/trace) or similar: use deflation via cross products.
+        // Simpler: multiply by scatter and find largest; then subtract to get smallest.
+        // Actually: just do 8 steps of multiplying by (diag_max*I - S) to find min eigenvec.
+        const float t  = sxx + syy + szz;
+        const float wx = (t - sxx)*nx - sxy*ny - sxz*nz;
+        const float wy = -sxy*nx + (t - syy)*ny - syz*nz;
+        const float wz = -sxz*nx - syz*ny + (t - szz)*nz;
+        const float wlen = std::sqrt(wx*wx + wy*wy + wz*wz);
+        if (wlen < 1.0e-8F) break;
+        nx = wx/wlen;  ny = wy/wlen;  nz = wz/wlen;
+    }
+    const float len = std::sqrt(nx*nx + ny*ny + nz*nz);
+    if (len < 1.0e-6F) return false;
+    out.nx = nx/len;  out.ny = ny/len;  out.nz = nz/len;
+    out.d  = -(out.nx*cx + out.ny*cy + out.nz*cz);
+    return true;
+}
+
+// ---------------------------------------------------------------------------
+// Thin-structure helpers
+// ---------------------------------------------------------------------------
+
+// Clamp depth_relative to a metric depth, treating invalid pixels as max_depth_m.
+float safe_depth_m(float dr, const ProjectionParams& p) {
+    if (!std::isfinite(dr) || dr <= 0.0F) return p.max_depth_m;
+    const float d = p.scale / dr;
+    return (d >= p.min_depth_m && d <= p.max_depth_m) ? d : p.max_depth_m;
+}
+
+// Local max depth in a 5×5 neighbourhood, excluding the centre pixel.
+float local_max_depth(const float* depth_relative, int W, int H,
+                      int u, int v, const ProjectionParams& p) {
+    float mx = 0.0F;
+    for (int dv = -2; dv <= 2; ++dv) {
+        for (int du = -2; du <= 2; ++du) {
+            if (du == 0 && dv == 0) continue;
+            const int nu = u + du;
+            const int nv = v + dv;
+            if (nu < 0 || nu >= W || nv < 0 || nv >= H) continue;
+            const float d = safe_depth_m(
+                depth_relative[static_cast<std::size_t>(nv)*static_cast<std::size_t>(W) +
+                               static_cast<std::size_t>(nu)], p);
+            if (d > mx) mx = d;
+        }
+    }
+    return mx;
+}
+
+// BFS connected-component labelling on a boolean mask.
+// Returns the list of pixels in this component.
+std::vector<std::pair<int,int>> bfs_component(
+    const std::vector<bool>& mask, std::vector<bool>& visited,
+    int W, int H, int u0, int v0) {
+    std::vector<std::pair<int,int>> comp;
+    std::queue<std::pair<int,int>> q;
+    q.push({u0, v0});
+    visited[static_cast<std::size_t>(v0)*static_cast<std::size_t>(W) +
+            static_cast<std::size_t>(u0)] = true;
+    while (!q.empty()) {
+        auto [u, v] = q.front();  q.pop();
+        comp.push_back({u, v});
+        // 4-connectivity neighbours
+        const int du[4] = {1,-1,0,0};
+        const int dv[4] = {0,0,1,-1};
+        for (int k = 0; k < 4; ++k) {
+            const int nu = u + du[k];
+            const int nv = v + dv[k];
+            if (nu < 0 || nu >= W || nv < 0 || nv >= H) continue;
+            const std::size_t idx =
+                static_cast<std::size_t>(nv)*static_cast<std::size_t>(W) +
+                static_cast<std::size_t>(nu);
+            if (!mask[idx] || visited[idx]) continue;
+            visited[idx] = true;
+            q.push({nu, nv});
+        }
+    }
+    return comp;
 }
 
 }  // namespace
@@ -40,10 +195,7 @@ void project_depth_to_device_evidence(
     std::uint32_t&           count_out) {
 
     count_out = 0;
-
-    if (params.fx <= 0.0F || params.fy <= 0.0F || params.scale <= 0.0F) {
-        return;
-    }
+    if (params.fx <= 0.0F || params.fy <= 0.0F || params.scale <= 0.0F) return;
 
     const float inv_fx = 1.0F / params.fx;
     const float inv_fy = 1.0F / params.fy;
@@ -53,109 +205,284 @@ void project_depth_to_device_evidence(
 
     for (int v = 0; v < params.height; v += params.stride) {
         for (int u = 0; u < params.width; u += params.stride) {
-            if (count_out >= params.max_evidence) { goto done; }
+            if (count_out >= params.max_evidence) goto done;
 
             const float dr = depth_relative[
                 static_cast<std::size_t>(v) * static_cast<std::size_t>(params.width) +
                 static_cast<std::size_t>(u)];
-
-            if (!std::isfinite(dr) || dr <= 0.0F) { continue; }
+            if (!std::isfinite(dr) || dr <= 0.0F) continue;
 
             const float depth_m = params.scale / dr;
-            if (depth_m < params.min_depth_m || depth_m > params.max_depth_m) { continue; }
+            if (depth_m < params.min_depth_m || depth_m > params.max_depth_m) continue;
 
-            // Normalised image coords + radial undistortion
-            const float xn = (static_cast<float>(u) - params.cx) * inv_fx;
-            const float yn = (static_cast<float>(v) - params.cy) * inv_fy;
-            float xd = xn;
-            float yd = yn;
+            float xn = (static_cast<float>(u) - params.cx) * inv_fx;
+            float yn = (static_cast<float>(v) - params.cy) * inv_fy;
             if (params.k1 != 0.0F || params.k2 != 0.0F) {
-                undistort_k1k2(xn, yn, params.k1, params.k2, xd, yd);
+                undistort_k1k2(xn, yn, params.k1, params.k2, xn, yn);
             }
-
-            // Camera-space point (Z forward, X right, Y down)
-            const float xc = xd * depth_m;
-            const float yc = yd * depth_m;
+            const float xc = xn * depth_m;
+            const float yc = yn * depth_m;
             const float zc = depth_m;
 
-            // Transform to local frame via sensing-volume axes:
-            //   local = origin + zc * forward + xc * right - yc * up
-            // (camera Y is down; up_axis_local is the "up" direction in local frame)
-            const float lx = params.origin_x
-                           + zc * params.forward_x
-                           + xc * params.right_x
-                           - yc * params.up_x;
-            const float ly = params.origin_y
-                           + zc * params.forward_y
-                           + xc * params.right_y
-                           - yc * params.up_y;
-            const float lz = params.origin_z
-                           + zc * params.forward_z
-                           + xc * params.right_z
-                           - yc * params.up_z;
+            const float lx = params.origin_x + zc*params.forward_x + xc*params.right_x - yc*params.up_x;
+            const float ly = params.origin_y + zc*params.forward_y + xc*params.right_y - yc*params.up_y;
+            const float lz = params.origin_z + zc*params.forward_z + xc*params.right_z - yc*params.up_z;
 
-            // Snap to voxel grid and deduplicate
             const auto ix = static_cast<std::int32_t>(std::floor(lx / params.voxel_size_m));
             const auto iy = static_cast<std::int32_t>(std::floor(ly / params.voxel_size_m));
             const auto iz = static_cast<std::int32_t>(std::floor(lz / params.voxel_size_m));
 
-            if (!seen.insert(pack_voxel(ix, iy, iz)).second) { continue; }
+            if (!seen.insert(pack_voxel(ix, iy, iz)).second) continue;
 
-            // Voxel centre in local frame
             const float half = 0.5F * params.voxel_size_m;
-            const float cx   = (static_cast<float>(ix) + 0.5F) * params.voxel_size_m;
-            const float cy_v = (static_cast<float>(iy) + 0.5F) * params.voxel_size_m;
-            const float cz   = (static_cast<float>(iz) + 0.5F) * params.voxel_size_m;
-
             DeviceObstacleEvidence& ev = out[count_out++];
-            ev.center_x = cx;
-            ev.center_y = cy_v;
-            ev.center_z = cz;
-            ev.size_x   = half * 2.0F;
-            ev.size_y   = half * 2.0F;
-            ev.size_z   = half * 2.0F;
-            ev.normal_x = 0.0F;
-            ev.normal_y = 0.0F;
-            ev.normal_z = 0.0F;
+            ev.center_x = (static_cast<float>(ix) + 0.5F) * params.voxel_size_m;
+            ev.center_y = (static_cast<float>(iy) + 0.5F) * params.voxel_size_m;
+            ev.center_z = (static_cast<float>(iz) + 0.5F) * params.voxel_size_m;
+            ev.size_x = ev.size_y = ev.size_z = half * 2.0F;
+            ev.normal_x = ev.normal_y = ev.normal_z = 0.0F;
             ev.confidence             = 0.75F;
             ev.range_m                = depth_m;
-            ev.state                  = 2U;  // ObstacleEvidenceState::Occupied
-            ev.shape                  = 0U;  // ObstacleEvidenceShape::Voxel
+            ev.state                  = 2U;  // Occupied
+            ev.shape                  = 0U;  // Voxel
             ev.is_thin_structure_hint = 0U;
             ev.is_surface_hint        = 0U;
         }
     }
-
 done:;
 }
 
 // ---------------------------------------------------------------------------
-// Surface patch detection — CPU stub (real RANSAC implemented at VD3)
+// Surface patch detection — RANSAC plane fitting
 // ---------------------------------------------------------------------------
 
 void fit_surface_patches_device(
-    const DeviceObstacleEvidence* /*evidence*/,
-    std::uint32_t                 /*count*/,
-    const ProjectionParams&       /*params*/,
-    DeviceObstacleEvidence*       /*patches_out*/,
+    const DeviceObstacleEvidence* evidence,
+    std::uint32_t                 count,
+    const ProjectionParams&       params,
+    DeviceObstacleEvidence*       patches_out,
     std::uint32_t&                patches_count_out) {
+
     patches_count_out = 0;
+    if (count < 3U) return;
+
+    const float inlier_threshold = params.voxel_size_m;        // 1 voxel tolerance
+    const auto  min_inliers      = std::max(3U, count / 10U);  // at least 10% of points
+    const int   max_patches      = 3;
+    const int   ransac_iters     = 100;
+
+    std::mt19937 rng{42U};
+
+    // Work on a copy so we can remove inliers for subsequent patches
+    std::vector<std::array<float,3>> pts(count);
+    for (std::uint32_t i = 0; i < count; ++i) {
+        pts[i] = {evidence[i].center_x, evidence[i].center_y, evidence[i].center_z};
+    }
+
+    for (int patch = 0; patch < max_patches && pts.size() >= 3; ++patch) {
+        const auto n = static_cast<std::uint32_t>(pts.size());
+        std::uniform_int_distribution<std::uint32_t> dist(0U, n - 1U);
+
+        Plane best{};
+        std::uint32_t best_count = 0U;
+        bool found = false;
+
+        for (int iter = 0; iter < ransac_iters; ++iter) {
+            const std::uint32_t ia = dist(rng);
+            std::uint32_t ib = dist(rng);
+            std::uint32_t ic = dist(rng);
+            while (ib == ia)           ib = dist(rng);
+            while (ic == ia || ic == ib) ic = dist(rng);
+
+            Plane p{};
+            if (!fit_plane_3pts(pts[ia].data(), pts[ib].data(), pts[ic].data(), p)) continue;
+
+            std::uint32_t cnt = 0U;
+            for (const auto& pt : pts) {
+                if (plane_dist(p, pt[0], pt[1], pt[2]) < inlier_threshold) ++cnt;
+            }
+            if (cnt > best_count) { best = p; best_count = cnt; found = true; }
+        }
+
+        if (!found || best_count < min_inliers) break;
+
+        // Refine with least-squares over inliers
+        std::vector<std::array<float,3>> inliers;
+        inliers.reserve(best_count);
+        for (const auto& pt : pts) {
+            if (plane_dist(best, pt[0], pt[1], pt[2]) < inlier_threshold) {
+                inliers.push_back(pt);
+            }
+        }
+        Plane refined{};
+        if (fit_plane_ls(inliers, refined)) best = refined;
+
+        // Ensure normal points toward origin (toward camera)
+        const float dot = best.nx * (params.origin_x - inliers[0][0])
+                        + best.ny * (params.origin_y - inliers[0][1])
+                        + best.nz * (params.origin_z - inliers[0][2]);
+        if (dot < 0.0F) { best.nx=-best.nx; best.ny=-best.ny; best.nz=-best.nz; }
+
+        // Centroid of inliers
+        float cx=0.0F, cy=0.0F, cz=0.0F;
+        for (const auto& pt : inliers) { cx+=pt[0]; cy+=pt[1]; cz+=pt[2]; }
+        const float fn = static_cast<float>(inliers.size());
+        cx/=fn; cy/=fn; cz/=fn;
+
+        // Emit SurfacePatch evidence (voxel_size_m as size placeholder)
+        DeviceObstacleEvidence& ev = patches_out[patches_count_out++];
+        ev.center_x = cx;  ev.center_y = cy;  ev.center_z = cz;
+        ev.size_x = ev.size_y = ev.size_z = params.voxel_size_m;
+        ev.normal_x = best.nx;  ev.normal_y = best.ny;  ev.normal_z = best.nz;
+        ev.confidence             = static_cast<float>(inliers.size()) / static_cast<float>(n);
+        ev.range_m                = std::abs(best.d);  // plane distance from origin
+        ev.state                  = 2U;  // Occupied
+        ev.shape                  = 3U;  // SurfacePatch
+        ev.is_thin_structure_hint = 0U;
+        ev.is_surface_hint        = 1U;
+
+        // Remove inliers before next patch search
+        pts.erase(std::remove_if(pts.begin(), pts.end(),
+            [&best, inlier_threshold](const std::array<float,3>& pt) {
+                return plane_dist(best, pt[0], pt[1], pt[2]) < inlier_threshold;
+            }), pts.end());
+    }
 }
 
 // ---------------------------------------------------------------------------
-// Thin structure detection — CPU stub (Sobel+NMS+CC implemented at VD3)
+// Thin structure detection — local depth contrast + BFS connected components
 // ---------------------------------------------------------------------------
 
 void detect_thin_structures_device(
-    const float*            /*depth_relative*/,
-    const ProjectionParams& /*params*/,
-    DeviceObstacleEvidence* /*thin_out*/,
+    const float*            depth_relative,
+    const ProjectionParams& params,
+    DeviceObstacleEvidence* thin_out,
     std::uint32_t&          thin_count_out) {
+
     thin_count_out = 0;
+    const int W = params.width;
+    const int H = params.height;
+    if (W < 5 || H < 5) return;
+
+    // Threshold: pixel is a thin-structure candidate if its depth is
+    // significantly closer than its 5×5 neighbourhood background.
+    const float contrast_fraction = 0.7F;  // must be < 70% of local max depth
+    const float min_abs_contrast  = 1.0F;  // and at least 1 m closer
+
+    // Build candidate mask
+    const std::size_t npix = static_cast<std::size_t>(W) * static_cast<std::size_t>(H);
+    std::vector<bool> mask(npix, false);
+
+    for (int v = 2; v < H-2; ++v) {
+        for (int u = 2; u < W-2; ++u) {
+            const std::size_t idx = static_cast<std::size_t>(v)*static_cast<std::size_t>(W) +
+                                    static_cast<std::size_t>(u);
+            const float dr = depth_relative[idx];
+            if (!std::isfinite(dr) || dr <= 0.0F) continue;
+            const float dm = params.scale / dr;
+            if (dm < params.min_depth_m || dm > params.max_depth_m) continue;
+
+            const float lmax = local_max_depth(depth_relative, W, H, u, v, params);
+            if (lmax < dm + min_abs_contrast) continue;  // not significantly closer
+            if (dm >= lmax * contrast_fraction) continue; // not close enough relative to bg
+
+            mask[idx] = true;
+        }
+    }
+
+    // BFS connected components on candidate pixels
+    const int  min_length  = 4;   // minimum number of pixels in component
+    const float min_aspect = 2.5F; // min(width,height) / max(width,height) inverted
+    const int  max_thin    = 8;   // max thin structures to emit per frame
+
+    std::vector<bool> visited(npix, false);
+
+    for (int v = 0; v < H && static_cast<int>(thin_count_out) < max_thin; ++v) {
+        for (int u = 0; u < W && static_cast<int>(thin_count_out) < max_thin; ++u) {
+            const std::size_t idx = static_cast<std::size_t>(v)*static_cast<std::size_t>(W) +
+                                    static_cast<std::size_t>(u);
+            if (!mask[idx] || visited[idx]) continue;
+
+            const auto comp = bfs_component(mask, visited, W, H, u, v);
+            if (static_cast<int>(comp.size()) < min_length) continue;
+
+            // Bounding box
+            int u_min=W, u_max=0, v_min=H, v_max=0;
+            for (const auto& [pu, pv] : comp) {
+                u_min=std::min(u_min,pu); u_max=std::max(u_max,pu);
+                v_min=std::min(v_min,pv); v_max=std::max(v_max,pv);
+            }
+            const int bb_w = u_max - u_min + 1;
+            const int bb_h = v_max - v_min + 1;
+            const float aspect = static_cast<float>(std::max(bb_w, bb_h)) /
+                                 static_cast<float>(std::max(1, std::min(bb_w, bb_h)));
+            if (aspect < min_aspect) continue;
+
+            // Pick the two endpoints along the long axis and back-project them.
+            // Also compute centroid depth from component pixels.
+            int ua, va, ub, vb;
+            if (bb_h >= bb_w) {
+                // Vertical: top and bottom, at horizontal centre
+                ua = (u_min + u_max) / 2;  va = v_min;
+                ub = ua;                    vb = v_max;
+            } else {
+                // Horizontal: left and right, at vertical centre
+                va = (v_min + v_max) / 2;  ua = u_min;
+                vb = va;                    ub = u_max;
+            }
+
+            float ax, ay, az, bx, by, bz;
+            // If a pixel itself is invalid try neighbours for depth
+            auto best_dr = [&](int pu, int pv) -> float {
+                const std::size_t i0 = static_cast<std::size_t>(pv)*static_cast<std::size_t>(W) +
+                                       static_cast<std::size_t>(pu);
+                float dr0 = depth_relative[i0];
+                if (!std::isfinite(dr0) || dr0 <= 0.0F) {
+                    // Try horizontal neighbours
+                    for (int du = -1; du <= 1; ++du) {
+                        const int nu = pu + du;
+                        if (nu < 0 || nu >= W) continue;
+                        const std::size_t ni = static_cast<std::size_t>(pv)*static_cast<std::size_t>(W) +
+                                               static_cast<std::size_t>(nu);
+                        if (mask[ni]) { dr0 = depth_relative[ni]; break; }
+                    }
+                }
+                return dr0;
+            };
+
+            if (!unproject(ua, va, best_dr(ua, va), params, ax, ay, az)) continue;
+            if (!unproject(ub, vb, best_dr(ub, vb), params, bx, by, bz)) continue;
+
+            // Encode: center = midpoint, size = half-displacement (b-a)/2
+            const float mx = (ax + bx) * 0.5F;
+            const float my = (ay + by) * 0.5F;
+            const float mz = (az + bz) * 0.5F;
+            const float hx = (bx - ax) * 0.5F;
+            const float hy = (by - ay) * 0.5F;
+            const float hz = (bz - az) * 0.5F;
+            const float length = 2.0F * std::sqrt(hx*hx + hy*hy + hz*hz);
+            if (length < 0.01F) continue;
+
+            // Unit direction
+            const float inv_len = 1.0F / (length * 0.5F);
+            DeviceObstacleEvidence& ev = thin_out[thin_count_out++];
+            ev.center_x = mx;  ev.center_y = my;  ev.center_z = mz;
+            ev.size_x   = hx;  ev.size_y   = hy;  ev.size_z   = hz;
+            ev.normal_x = hx * inv_len;  // unit direction (for display)
+            ev.normal_y = hy * inv_len;
+            ev.normal_z = hz * inv_len;
+            ev.confidence             = std::min(1.0F, aspect / 10.0F);
+            ev.range_m                = length;
+            ev.state                  = 3U;  // ThinStructureRisk
+            ev.shape                  = 4U;  // LineSegment
+            ev.is_thin_structure_hint = 1U;
+            ev.is_surface_hint        = 0U;
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------
-// inflate: stamp string fields onto DeviceObstacleEvidence[] → ObstacleEvidence[]
+// inflate: DeviceObstacleEvidence[] → ObstacleEvidence[]
 // ---------------------------------------------------------------------------
 
 std::vector<ObstacleEvidence> inflate(
@@ -186,14 +513,32 @@ std::vector<ObstacleEvidence> inflate(
             static_cast<double>(src.center_x),
             static_cast<double>(src.center_y),
             static_cast<double>(src.center_z)};
-        ev.size_m = Vec3{
-            static_cast<double>(src.size_x),
-            static_cast<double>(src.size_y),
-            static_cast<double>(src.size_z)};
 
-        const float nsq = src.normal_x * src.normal_x
-                        + src.normal_y * src.normal_y
-                        + src.normal_z * src.normal_z;
+        if (src.shape == 4U) {
+            // LineSegment: center=midpoint, size=half-displacement
+            // Reconstruct endpoints: a = center - size, b = center + size
+            ev.endpoint_a_local = Vec3{
+                static_cast<double>(src.center_x - src.size_x),
+                static_cast<double>(src.center_y - src.size_y),
+                static_cast<double>(src.center_z - src.size_z)};
+            ev.endpoint_b_local = Vec3{
+                static_cast<double>(src.center_x + src.size_x),
+                static_cast<double>(src.center_y + src.size_y),
+                static_cast<double>(src.center_z + src.size_z)};
+            ev.size_m = Vec3{
+                std::abs(static_cast<double>(src.size_x)) * 2.0,
+                std::abs(static_cast<double>(src.size_y)) * 2.0,
+                std::abs(static_cast<double>(src.size_z)) * 2.0};
+        } else {
+            ev.size_m = Vec3{
+                static_cast<double>(src.size_x),
+                static_cast<double>(src.size_y),
+                static_cast<double>(src.size_z)};
+        }
+
+        const float nsq = src.normal_x*src.normal_x
+                        + src.normal_y*src.normal_y
+                        + src.normal_z*src.normal_z;
         ev.has_surface_normal = nsq > 0.5F;
         if (ev.has_surface_normal) {
             ev.surface_normal_local = Vec3{
@@ -203,12 +548,12 @@ std::vector<ObstacleEvidence> inflate(
             ev.normal_confidence = src.confidence;
         }
 
-        ev.confidence              = static_cast<float>(src.confidence);
-        ev.occupancy_probability   = src.confidence;
-        ev.range_m                 = src.range_m;
-        ev.is_thin_structure_hint  = src.is_thin_structure_hint != 0U;
-        ev.is_surface_hint         = src.is_surface_hint != 0U;
-        ev.inside_sensing_volume   = true;
+        ev.confidence            = src.confidence;
+        ev.occupancy_probability = src.confidence;
+        ev.range_m               = src.range_m;
+        ev.is_thin_structure_hint = src.is_thin_structure_hint != 0U;
+        ev.is_surface_hint        = src.is_surface_hint != 0U;
+        ev.inside_sensing_volume  = true;
 
         result.push_back(std::move(ev));
     }
