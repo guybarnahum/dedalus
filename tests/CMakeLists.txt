@@ -239,6 +239,13 @@ dedalus_add_native_test(
     SOURCES unit/test_airsim_depth_obstacle_detector.cpp
 )
 
+dedalus_add_native_test(
+    NAME visual_depth_projection
+    LAYER unit
+    TAGS sensing visual_depth projection validation
+    SOURCES unit/test_visual_depth_projection.cpp
+)
+
 
 
 dedalus_add_native_test(

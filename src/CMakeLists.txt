@@ -53,6 +53,8 @@ add_library(dedalus_core
     sensing/sensing_coverage.cpp
     sensing/airsim_depth_obstacle_detector.cpp
     sensing/airsim_depth_obstacle_detector_impl.cpp
+    sensing/depth_projection_kernel.cpp
+    sensing/visual_depth_obstacle_detector.cpp
     perception/ghost_targets.cpp
     perception/perception_pipeline.cpp
     runtime/camera_pointing_state_store.cpp
@@ -102,6 +104,15 @@ target_compile_options(dedalus_core
         -Wextra
         -Wpedantic
 )
+
+# Optional: ONNX Runtime depth engine
+# Enable with -DDEDALUS_ENABLE_ONNX_DEPTH=ON when ONNX Runtime is installed.
+if(DEDALUS_ENABLE_ONNX_DEPTH)
+    find_package(onnxruntime REQUIRED)
+    target_sources(dedalus_core PRIVATE sensing/onnx_depth_engine.cpp)
+    target_link_libraries(dedalus_core PRIVATE onnxruntime::onnxruntime)
+    target_compile_definitions(dedalus_core PUBLIC DEDALUS_ONNX_DEPTH_ENABLED)
+endif()
 
 # These files are tight numeric kernels; compile at -O2 even in Debug builds
 # so perf tests stay green.

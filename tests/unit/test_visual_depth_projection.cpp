@@ -1,0 +1,360 @@
+#include <cmath>
+#include <iostream>
+#include <vector>
+
+#include "dedalus/sensing/depth_engine.hpp"
+#include "dedalus/sensing/depth_projection_kernel.hpp"
+#include "dedalus/sensing/metric_scale_estimate.hpp"
+#include "dedalus/sensing/visual_depth_obstacle_detector.hpp"
+#include "dedalus/sensing/visual_depth_frame.hpp"
+
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
+
+namespace {
+
+bool near(double actual, double expected, double eps) {
+    return std::abs(actual - expected) < eps;
+}
+
+// A mock depth engine that returns a known synthetic depth map.
+// Ignores the frame content; outputs a caller-supplied depth_relative buffer.
+class MockDepthEngine final : public dedalus::DepthEngineInterface {
+public:
+    int                out_width{0};
+    int                out_height{0};
+    std::vector<float> depth_relative;
+
+    [[nodiscard]] dedalus::DepthInferenceResult infer(
+        const dedalus::VisualDepthFrame& /*frame*/) override {
+        dedalus::DepthInferenceResult r;
+        r.width          = out_width;
+        r.height         = out_height;
+        r.depth_relative = depth_relative;
+        r.valid          = !depth_relative.empty();
+        return r;
+    }
+
+    [[nodiscard]] std::string engine_name() const override { return "mock"; }
+};
+
+// Build a minimal EgoSensingFrame for tests.
+// Camera at origin, forward = +X, right = +Y, up = -Z (NED).
+// Intrinsics: fx=fy=100, cx=cy=centre of a 9×9 image.
+dedalus::EgoSensingFrame make_ego_frame(int w, int h) {
+    dedalus::EgoSensingFrame f;
+    f.frame.timestamp          = dedalus::TimePoint{1'000'000};
+    f.frame.frame_id           = dedalus::FrameId{"test_frame"};
+    f.frame.image.width        = w;
+    f.frame.image.height       = h;
+    f.frame.image.channels     = 3;
+    f.frame.image.bytes.assign(static_cast<std::size_t>(w * h * 3), 128U);
+    f.frame.intrinsics.fx      = 100.0;
+    f.frame.intrinsics.fy      = 100.0;
+    f.frame.intrinsics.cx      = (w - 1) / 2.0;
+    f.frame.intrinsics.cy      = (h - 1) / 2.0;
+
+    f.ego.map_frame_id         = dedalus::MapFrameId{"map_test"};
+
+    f.sensing_volume.timestamp       = f.frame.timestamp;
+    f.sensing_volume.sensor_name     = "front_center";
+    f.sensing_volume.origin_local    = dedalus::Vec3{0.0, 0.0, 0.0};
+    f.sensing_volume.forward_axis_local = dedalus::Vec3{1.0, 0.0, 0.0};
+    f.sensing_volume.right_axis_local   = dedalus::Vec3{0.0, 1.0, 0.0};
+    f.sensing_volume.up_axis_local      = dedalus::Vec3{0.0, 0.0, -1.0};
+
+    return f;
+}
+
+}  // namespace
+
+// ---------------------------------------------------------------------------
+// Tests
+// ---------------------------------------------------------------------------
+
+// Test 1: Single obstacle at 10 m directly forward.
+//
+// Setup: 9×9 depth map, all infinity except the centre pixel.
+// Centre pixel encodes 10 m forward via disparity convention:
+//   depth_m = scale / depth_relative  →  depth_relative = scale / depth_m
+//
+// Expected: exactly one ObstacleEvidence whose center_x ≈ 10.0 within
+//           one voxel (0.5 m). center_y and center_z ≈ 0 within one voxel.
+static bool test_single_forward_obstacle() {
+    const int W = 9;
+    const int H = 9;
+    const float SCALE = 1000.0F;
+    const float TARGET_DEPTH_M = 10.0F;
+    const float VOXEL = 0.5F;
+
+    // Build depth map: all very large (effectively invalid) except centre
+    std::vector<float> depth_rel(static_cast<std::size_t>(W * H), 1e-6F);
+    const int cx_px = (W - 1) / 2;  // 4
+    const int cy_px = (H - 1) / 2;  // 4
+    depth_rel[static_cast<std::size_t>(cy_px * W + cx_px)] =
+        SCALE / TARGET_DEPTH_M;  // = 100.0
+
+    auto engine = std::make_unique<MockDepthEngine>();
+    engine->out_width      = W;
+    engine->out_height     = H;
+    engine->depth_relative = depth_rel;
+
+    dedalus::MetricScaleEstimate scale;
+    scale.scale      = SCALE;
+    scale.confidence = 1.0F;
+
+    dedalus::VisualDepthObstacleDetectorConfig cfg;
+    cfg.pixel_stride           = 1;
+    cfg.min_depth_m            = 0.5F;
+    cfg.max_depth_m            = 80.0F;
+    cfg.voxel_size_m           = VOXEL;
+    cfg.confidence             = 0.75F;
+    cfg.max_evidence           = 512U;
+    cfg.detect_surface_patches = false;
+    cfg.detect_thin_structures = false;
+
+    dedalus::VisualDepthObstacleDetector detector(
+        std::move(engine), scale, cfg);
+
+    const auto ego = make_ego_frame(W, H);
+    const auto evidence = detector.detect(ego);
+
+    // All non-centre pixels have depth_relative=1e-6 → depth_m=1e9 > max_depth_m → filtered.
+    // Only the centre pixel should produce evidence.
+    if (evidence.size() != 1U) {
+        std::cerr << "FAIL test_single_forward_obstacle: expected 1 evidence, got "
+                  << evidence.size() << "\n";
+        return false;
+    }
+
+    const auto& ev = evidence[0];
+    // Centre pixel (cx=4, cy=4): xn=0, yn=0 → xc=0, yc=0, zc=10
+    // local = origin + 10*forward + 0*right - 0*up = (10, 0, 0)
+    // Snapped to voxel grid: ix=20 → centre = 20.25 → 10.25? No:
+    //   ix = floor(10.0 / 0.5) = 20
+    //   voxel centre = (20 + 0.5) * 0.5 = 10.25
+    // Within 1 voxel of 10.0: |10.25 - 10.0| = 0.25 < 0.5 ✓
+    const double expected_x = TARGET_DEPTH_M;
+    const double tol = VOXEL;
+
+    if (!near(ev.center_local.x, expected_x, tol)) {
+        std::cerr << "FAIL test_single_forward_obstacle: center_x="
+                  << ev.center_local.x << " expected≈" << expected_x
+                  << " tol=" << tol << "\n";
+        return false;
+    }
+    if (!near(ev.center_local.y, 0.0, tol)) {
+        std::cerr << "FAIL test_single_forward_obstacle: center_y="
+                  << ev.center_local.y << " expected≈0 tol=" << tol << "\n";
+        return false;
+    }
+    if (!near(ev.center_local.z, 0.0, tol)) {
+        std::cerr << "FAIL test_single_forward_obstacle: center_z="
+                  << ev.center_local.z << " expected≈0 tol=" << tol << "\n";
+        return false;
+    }
+
+    // State must be Occupied; shape Voxel
+    if (ev.state != dedalus::ObstacleEvidenceState::Occupied) {
+        std::cerr << "FAIL test_single_forward_obstacle: wrong state\n";
+        return false;
+    }
+    if (ev.shape != dedalus::ObstacleEvidenceShape::Voxel) {
+        std::cerr << "FAIL test_single_forward_obstacle: wrong shape\n";
+        return false;
+    }
+
+    // Hint flags must be off
+    if (ev.is_thin_structure_hint || ev.is_surface_hint) {
+        std::cerr << "FAIL test_single_forward_obstacle: unexpected hint flags\n";
+        return false;
+    }
+
+    // source_provider and map_frame_id must be stamped
+    if (ev.source_provider != "visual_depth_obstacle_detector") {
+        std::cerr << "FAIL test_single_forward_obstacle: wrong source_provider\n";
+        return false;
+    }
+    if (ev.map_frame_id.value != "map_test") {
+        std::cerr << "FAIL test_single_forward_obstacle: wrong map_frame_id\n";
+        return false;
+    }
+
+    return true;
+}
+
+// Test 2: Depth range filter — all pixels outside [min, max] produce no evidence.
+static bool test_depth_range_filter() {
+    const int W = 5;
+    const int H = 5;
+    const float SCALE = 1000.0F;
+    const float VOXEL = 0.5F;
+
+    // All pixels at 100 m → beyond max_depth_m=80 → filtered
+    std::vector<float> depth_rel(static_cast<std::size_t>(W * H),
+                                 SCALE / 100.0F);  // depth_relative=10 → depth_m=100
+
+    auto engine = std::make_unique<MockDepthEngine>();
+    engine->out_width      = W;
+    engine->out_height     = H;
+    engine->depth_relative = depth_rel;
+
+    dedalus::MetricScaleEstimate scale;
+    scale.scale = SCALE;
+
+    dedalus::VisualDepthObstacleDetectorConfig cfg;
+    cfg.pixel_stride           = 1;
+    cfg.min_depth_m            = 0.5F;
+    cfg.max_depth_m            = 80.0F;
+    cfg.voxel_size_m           = VOXEL;
+    cfg.detect_surface_patches = false;
+    cfg.detect_thin_structures = false;
+
+    dedalus::VisualDepthObstacleDetector detector(
+        std::move(engine), scale, cfg);
+
+    const auto ego    = make_ego_frame(W, H);
+    const auto evidence = detector.detect(ego);
+
+    if (!evidence.empty()) {
+        std::cerr << "FAIL test_depth_range_filter: expected 0 evidence, got "
+                  << evidence.size() << "\n";
+        return false;
+    }
+    return true;
+}
+
+// Test 3: Voxel deduplication — dense plane all at the same depth should
+// collapse to far fewer voxels than pixels.
+static bool test_voxel_deduplication() {
+    const int W = 21;
+    const int H = 21;
+    const float SCALE  = 1000.0F;
+    const float DEPTH  = 5.0F;    // all pixels at 5 m
+    const float VOXEL  = 0.5F;
+    const std::size_t N = static_cast<std::size_t>(W * H);
+
+    std::vector<float> depth_rel(N, SCALE / DEPTH);
+
+    auto engine = std::make_unique<MockDepthEngine>();
+    engine->out_width      = W;
+    engine->out_height     = H;
+    engine->depth_relative = depth_rel;
+
+    dedalus::MetricScaleEstimate scale;
+    scale.scale = SCALE;
+
+    dedalus::VisualDepthObstacleDetectorConfig cfg;
+    cfg.pixel_stride           = 1;
+    cfg.min_depth_m            = 0.5F;
+    cfg.max_depth_m            = 80.0F;
+    cfg.voxel_size_m           = VOXEL;
+    cfg.detect_surface_patches = false;
+    cfg.detect_thin_structures = false;
+
+    dedalus::VisualDepthObstacleDetector detector(
+        std::move(engine), scale, cfg);
+
+    const auto ego      = make_ego_frame(W, H);
+    const auto evidence = detector.detect(ego);
+
+    // With 21×21=441 pixels all projecting to positions within a few metres
+    // of each other, deduplication must reduce to well under 441 voxels.
+    if (evidence.size() >= N) {
+        std::cerr << "FAIL test_voxel_deduplication: no deduplication occurred ("
+                  << evidence.size() << " == " << N << ")\n";
+        return false;
+    }
+    if (evidence.empty()) {
+        std::cerr << "FAIL test_voxel_deduplication: all evidence filtered\n";
+        return false;
+    }
+    return true;
+}
+
+// Test 4: inflate stamps DeviceObstacleEvidence correctly.
+static bool test_inflate_direct() {
+    dedalus::DeviceObstacleEvidence dev;
+    dev.center_x  = 3.0F;
+    dev.center_y  = 1.0F;
+    dev.center_z  = -2.0F;
+    dev.size_x = dev.size_y = dev.size_z = 0.5F;
+    dev.normal_x  = 0.0F;
+    dev.normal_y  = 0.0F;
+    dev.normal_z  = 1.0F;
+    dev.confidence = 0.9F;
+    dev.range_m    = 3.7F;
+    dev.state      = 2U;   // Occupied
+    dev.shape      = 3U;   // SurfacePatch
+    dev.is_surface_hint = 1U;
+
+    const auto result = dedalus::inflate(
+        &dev, 1U,
+        "test_sensor",
+        "test_provider",
+        dedalus::MapFrameId{"map_inflate"},
+        dedalus::TimePoint{42});
+
+    if (result.size() != 1U) {
+        std::cerr << "FAIL test_inflate_direct: expected 1, got " << result.size() << "\n";
+        return false;
+    }
+
+    const auto& ev = result[0];
+    if (ev.state != dedalus::ObstacleEvidenceState::Occupied) {
+        std::cerr << "FAIL test_inflate_direct: wrong state\n"; return false;
+    }
+    if (ev.shape != dedalus::ObstacleEvidenceShape::SurfacePatch) {
+        std::cerr << "FAIL test_inflate_direct: wrong shape\n"; return false;
+    }
+    if (!ev.is_surface_hint) {
+        std::cerr << "FAIL test_inflate_direct: is_surface_hint not set\n"; return false;
+    }
+    if (ev.sensor_name != "test_sensor") {
+        std::cerr << "FAIL test_inflate_direct: wrong sensor_name\n"; return false;
+    }
+    if (ev.source_provider != "test_provider") {
+        std::cerr << "FAIL test_inflate_direct: wrong source_provider\n"; return false;
+    }
+    if (ev.map_frame_id.value != "map_inflate") {
+        std::cerr << "FAIL test_inflate_direct: wrong map_frame_id\n"; return false;
+    }
+    // Normal is non-zero → has_surface_normal must be set
+    if (!ev.has_surface_normal) {
+        std::cerr << "FAIL test_inflate_direct: has_surface_normal not set\n"; return false;
+    }
+    if (std::abs(ev.center_local.x - 3.0) > 1e-5) {
+        std::cerr << "FAIL test_inflate_direct: center_x wrong\n"; return false;
+    }
+
+    return true;
+}
+
+// ---------------------------------------------------------------------------
+// main
+// ---------------------------------------------------------------------------
+
+int main() {
+    int failures = 0;
+
+    auto run = [&](const char* name, bool (*fn)()) {
+        if (fn()) {
+            std::cout << "PASS " << name << "\n";
+        } else {
+            ++failures;
+        }
+    };
+
+    run("test_single_forward_obstacle", test_single_forward_obstacle);
+    run("test_depth_range_filter",      test_depth_range_filter);
+    run("test_voxel_deduplication",     test_voxel_deduplication);
+    run("test_inflate_direct",          test_inflate_direct);
+
+    if (failures == 0) {
+        std::cout << "OK: all visual_depth_projection tests passed\n";
+        return 0;
+    }
+    std::cerr << failures << " test(s) FAILED\n";
+    return 1;
+}

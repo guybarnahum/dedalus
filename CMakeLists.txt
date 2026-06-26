@@ -8,6 +8,7 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 
 option(DEDALUS_BUILD_APPS "Build Dedalus runtime/debug apps" ON)
 option(DEDALUS_BUILD_TESTS "Build Dedalus unit tests" ON)
+option(DEDALUS_ENABLE_ONNX_DEPTH "Build ONNXDepthEngine (requires ONNX Runtime)" OFF)
 
 find_package(SQLite3 REQUIRED)
 # Older/patched distro CMake packages find SQLite3 but don't create the
