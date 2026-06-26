@@ -105,6 +105,7 @@ struct ObstacleEvidence {
     bool inside_swept_volume{false};
     bool is_static_hint{false};
     bool is_thin_structure_hint{false};
+    bool is_surface_hint{false};
 };
 
 struct OccupancyCellSummary {
