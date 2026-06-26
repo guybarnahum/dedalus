@@ -869,6 +869,345 @@ Ground repulsion is currently handled as a hard altitude floor constraint in the
 
 ---
 
+## 15. Visual Depth Perception Pipeline
+
+### 15.1 Context and Motivation
+
+The obstacle map stack (Stages 1–6, L0–L3, all complete) was developed and validated
+against AirSim's ground-truth `DepthPlanar` API — a perfect depth sensor available only
+in simulation. The next major system capability is replacing that oracle with a real,
+vision-only depth pipeline that runs identically in AirSim (using the RGB camera) and on
+physical hardware (Jetson Orin + fisheye camera). The AirSim environment continues to
+serve as the proving ground; the GT depth API becomes a **validation oracle only**, not
+the operational source.
+
+The fundamental engineering constraint is low-SWaP (Size, Weight, and Power). Active
+emission sensors — LiDAR, structured light, radar — are excluded. All depth must be
+extracted passively from optical streams. This section documents the architectural
+decisions, component interfaces, memory model, and implementation roadmap for the
+production visual depth pipeline.
+
+### 15.2 Gimbaled Camera Architecture
+
+The front camera is mounted on a **mission-controlled gimbal**. The mission runtime
+issues `CameraPointingCommand` each tick based on the active behavior mode:
+
+| Mode | Gimbal direction | Primary use |
+|---|---|---|
+| angle-from-velocity | Tilted forward, angle ∝ speed | Forward obstacle detection |
+| stare-at-target | Aimed at tracked actor | Actor depth + observation |
+| landing-approach | Tilted down toward landing zone | Floor / perch detection |
+| fixed-forward | Body-axis forward | Maximum forward coverage |
+
+The gimbal's **encoder reading at frame capture time** (not the commanded setpoint) is the
+authoritative source for the camera-to-ego extrinsic rotation `R_cam_ego` and translation
+`T_cam_ego`. These are published as `ObstacleSensingVolume` every tick. A 10–40 ms
+actuator lag between commanded and actual gimbal angle, at 10 m/s drone speed, introduces
+up to 40 cm projection error against a 50 cm voxel grid — significant. The camera bridge
+is responsible for timestamp-aligning encoder readings to frame capture times; the
+detector is stateless about this alignment.
+
+The `ObstacleEvidenceShape::FrustumBin` and spherical polar binning already support
+varying frustum orientations. Evidence is always projected to world frame before ingestion
+into L1; L0's spherical bins indexed by `(az, el)` naturally capture the gimbaled
+frustum's actual coverage without any architectural change.
+
+Coverage gaps during stare-at-target mode (where the forward obstacle arc is offset from
+the direction of travel) are handled by L1 map persistence: previously observed geometry
+remains in L1 at its measured confidence, decaying at 0.05/s. The behavior tree must
+respect this by capping forward speed based on L1 cell age when in tracking mode.
+
+### 15.3 Depth Estimation Paradigm Selection
+
+Three paradigms were evaluated for the low-SWaP AUV profile:
+
+**Monocular Depth Estimation (MDE):** Single-frame inference using a Vision Transformer
+or CNN encoder-decoder. Outputs relative depth (scale-ambiguous); requires coupling with
+a `MetricScaleEstimate` to recover metric units. Robust against textureless surfaces via
+learned semantic priors. Selected as the primary paradigm.
+
+**Traditional and Deep Stereo Matching:** Requires rigidly synchronized stereo pair.
+SGM fails on textureless walls and specular surfaces. Deep stereo (RAFT-Stereo) exceeds
+the 33 ms budget on Orin Nano. Excluded for V0; available as a secondary engine behind
+`DepthEngineInterface` for V1 evaluation.
+
+**Structure from Motion (SfM) / Optical Flow:** Multi-frame buffering introduces
+unacceptable latency at high speed. Dynamic obstacles violate the constant-velocity
+assumption. Excluded.
+
+**Selected architecture:** DepthAnythingV2-Small, INT8 TensorRT engine on Jetson Orin,
+ONNX Runtime fallback on Mac/CPU for development.
+
+**Scale source:** For V0 (AirSim development), the AirSim camera config provides a
+fixed, known metric scale applied as a global multiplier. A single global scale factor
+is sufficient because L1 map persistence corrects peripheral geometry errors over
+subsequent frames as the drone moves. VIO-coupled dynamic scale (`MetricScaleEstimator`)
+is deferred to VD7.
+
+**Fisheye handling:** No rectify-then-infer. Dewarping kernels consume memory bandwidth,
+introduce per-frame latency jitter, and crop edge pixels. The network is trained and
+inferred directly on raw distorted frames; the geometric warp is absorbed into the
+spatial layers of the network weights. `LensDistortion` (Brown-Conrady or
+Kannala-Brandt) is stored in `VisualDepthFrame` for the undistort step in the
+unproject kernel only.
+
+### 15.4 Component Interfaces
+
+#### Key types (all in `include/dedalus/sensing/`)
+
+```cpp
+// Camera calibration carried per-frame.
+struct CameraIntrinsics { float fx, fy, cx, cy; int width, height; };
+enum class LensModel { Pinhole, BrownConrady, KannalaBrandt };
+struct LensDistortion { LensModel model; float k[6]; };
+
+// Input to the visual depth pipeline.
+struct VisualDepthFrame {
+    TimePoint timestamp; FrameId source_frame_id;
+    CameraIntrinsics intrinsics; LensDistortion distortion;
+    int width, height;
+    std::vector<uint8_t> rgb;           // H×W×3, row-major
+    std::vector<uint8_t> rgb_right;     // empty = monocular (V0)
+    float stereo_baseline_m{0.0F};
+};
+
+// Single global scale (V0: fixed; V1: VIO-coupled).
+struct MetricScaleEstimate {
+    float scale{1.0F};       // multiply relative → metric depth
+    float confidence{0.0F};  // 0 = invalid; use altitude fallback
+    double age_s{0.0};
+    bool is_valid() const { return confidence > 0.05F && age_s < 0.5; }
+};
+
+// Platform-transparent inference interface.
+struct DepthInferenceResult {
+    const float* depth_device;    // device ptr valid until next infer_device()
+    int width, height;
+    TimePoint frame_timestamp;
+    TimePoint gimbal_timestamp;   // encoder reading used to build ObstacleSensingVolume
+};
+class DepthEngineInterface {
+public:
+    virtual DepthInferenceResult infer_device(const VisualDepthFrame&) = 0;
+    virtual std::string name() const = 0;
+};
+
+// GPU-side POD result — 48 bytes, no heap pointers, never stored permanently.
+struct alignas(16) DeviceObstacleEvidence {
+    float cx, cy, cz;       // center_local
+    float sx, sy, sz;       // size_m
+    float nx, ny, nz;       // surface_normal_local
+    float range_m, bearing_rad, elevation_rad, confidence;
+    uint8_t state, shape, flags, _pad;  // cast from ObstacleEvidenceState/Shape
+};
+static_assert(sizeof(DeviceObstacleEvidence) == 48);
+
+// All kernel inputs — pure POD, passed by value, no host ptrs.
+struct alignas(16) ProjectionParams {
+    float fx, fy, cx, cy;
+    float R[9];    // cam→ego rotation (row-major)
+    float T[3];    // cam→ego translation
+    float metric_scale, min_depth_m, max_depth_m, voxel_size_m;
+    int   width, height, stride, max_evidence;
+};
+```
+
+#### Engine implementations
+
+| Class | Platform | Notes |
+|---|---|---|
+| `ONNXDepthEngine` | Mac / dev | ONNX Runtime CPU/MPS; identical output shape |
+| `TensorRTDepthEngine` | Jetson Orin | Loads `.engine`; INT8 calibrated; DLA optional |
+| `AirSimEmulationDepthEngine` | Sim validation | Wraps AirSim GT with optional noise; oracle mode |
+
+Engine files (`.onnx`, `.engine`) are never committed to the repository. They are
+generated on target hardware via `tools/perception/export_depth_anything.py` and
+`tools/perception/compile_depth_engine.sh`.
+
+### 15.5 Zero-Copy Memory Architecture
+
+The production path guarantees that the full depth buffer (518×518×4 ≈ 1.07 MB) never
+crosses the host-device bus. Only the compact `DeviceObstacleEvidence` array
+(≤ 1024 × 48 = 49 152 bytes) is read by the CPU.
+
+```
+[MIPI CSI / AirSim RGB] ─unified ptr─► [TRT INT8 / ONNX engine]
+                                               │ depth_device ptr (stays on device)
+                         ┌─────────────────────┘
+                         │  project_depth_to_device_evidence()   ─┐
+                         │  detect_thin_structures_device()        │ same CUDA stream
+                         │  fit_surface_patches_device()          ─┘
+                         ▼
+                  DeviceEvidenceBuffer[] + LineSegmentBuffer[]
+                  (cudaMallocManaged — zero-copy on Jetson unified memory)
+                         │
+                  cudaStreamSynchronize()   ← single sync point
+                         │
+                  CPU inflate() ─► ObstacleEvidence[]
+                                          │
+                  mission_local_obstacle_map_.update()
+```
+
+On Jetson Orin: `cudaMallocManaged` allocates from the shared physical memory pool. The
+CPU reads the same DRAM the GPU wrote — no DMA, no coherency stall beyond the stream
+sync. On a discrete dev GPU (Mac via MPS or remote CUDA): only the 49 KB POD array
+is transferred; the depth buffer remains on device.
+
+The `VisualDepthObstacleDetector` owns the device buffers as members, allocated once at
+construction and reused across frames.
+
+### 15.6 Thin Structure Detection
+
+Wires, poles, and guy-wires present a catastrophic failure mode for both MDE and SGM.
+A 10 mm wire at 20 m projects to 0.2 px on a 400 px focal-length lens — below the
+14×14 patch tokenization threshold of any ViT backbone.
+
+A separate parallel kernel path handles thin structures without re-running inference:
+
+1. **Sobel gradient** (CUDA, full-resolution luma channel): computes per-pixel gradient
+   magnitude and orientation.
+2. **Non-maximum suppression** along gradient direction: thins edges to 1-pixel width.
+3. **Connected-component labeling**: groups spatially coherent high-gradient pixels.
+4. **Aspect-ratio filter**: components with length/width > threshold are candidate segments.
+5. **Depth assignment**: segment midpoint depth from the nearest valid MDE depth cell.
+6. **Endpoint unprojection**: produces `endpoint_a_local`, `endpoint_b_local` in world frame.
+
+Output: `ObstacleEvidence{shape=LineSegment, state=ThinStructureRisk,
+is_thin_structure_hint=true, radius_m=0.05}`.
+
+No OpenCV anywhere in the production path. The kernel is ~300 lines of CUDA C++;
+the CPU fallback uses the same algorithm in scalar form.
+
+### 15.7 Surface and Perch Detection
+
+#### Detector output (SurfacePatch evidence)
+
+When the gimbal tilts toward a floor, rooftop, ledge, or other flat surface, the
+projected point cloud contains the geometry. The `fit_surface_patches_device()` kernel
+runs alongside the obstacle projection kernel (same stream, same point cloud, no
+re-inference):
+
+1. **Normal estimation per projected point**: cross-product of depth-gradient neighbors.
+2. **Orientation histogram**: bin normals into coarse (az × el) buckets.
+3. **RANSAC per dominant bin** (32 iterations, ~10 candidates): fit plane, count inliers.
+4. **Emit per fitted plane**: `ObstacleEvidence{shape=SurfacePatch, state=Occupied,
+   has_surface_normal=true, is_surface_hint=true, size_m=inlier_bbox}`.
+
+`state=Occupied` is deliberate: the floor IS an obstacle during normal flight. The
+repulsion field correctly pushes the drone away from it. The `is_surface_hint` flag is
+neutral — it says "this is a classifiable flat region," not "land here."
+
+**Landability semantics belong in the behavior tree**, not in the detector. The behavior
+tree, in landing mode, queries for SurfacePatch evidence where `is_surface_hint=true`
+and `surface_normal_local` is within angular tolerance of world-up. APF gain suppression
+for the below-horizon sector (allowing descent) is a behavior tree concern triggered by
+`AgentLifecycle == Landing`.
+
+#### PerchCandidateEvaluator (non-realtime)
+
+Runs outside the 30 Hz tick loop. Queries L1 for recent SurfacePatch evidence, applies
+a multi-factor scoring pipeline, and outputs a ranked `PerchCandidate` list into
+`WorldSnapshot`:
+
+| Factor | Source | Threshold |
+|---|---|---|
+| Normal deviation from world-up | `surface_normal_local` vs IMU attitude | < 15° |
+| Minimum area | RANSAC inlier bounding box | > drone footprint + margin |
+| Surface roughness | depth variance within inlier set | < σ_max |
+| Clearance above | L2 `ray_cast` upward from surface | > rotor gap + margin |
+| Depth stability | multi-frame normal consistency (future) | — |
+
+Clearance querying via L2 `ray_cast` is the reason the evaluator is non-realtime: it
+requires L2 read access that is too expensive to take every tick. The evaluator runs
+opportunistically, triggered when the mission runtime is in a perch-seeking state.
+
+"Perch" rather than "land" is the intentional framing — the drone may settle on rooftops,
+ledges, fence posts, or any stable flat projection, not only flat ground.
+
+### 15.8 CoreStackRunner Integration
+
+Minimal additions to the existing runner:
+
+```cpp
+// In CoreStackRunnerConfig:
+std::shared_ptr<DepthEngineInterface>    visual_depth_engine;   // null = disabled
+VisualDepthObstacleDetectorConfig        visual_depth_detector;
+
+// In CoreStackRunner private:
+std::optional<VisualDepthObstacleDetector> visual_depth_detector_;
+MetricScaleEstimate                        current_scale_estimate_;
+
+// New public method (called by VIO subscriber or fixed at construction):
+void update_metric_scale(MetricScaleEstimate);
+```
+
+In `run_once()`, both detectors can coexist during validation (VD2–VD3):
+
+```cpp
+// GT oracle path (validation only, disabled at VD4):
+if (airsim_gt_enabled_ && airsim_frame_available) {
+    auto ev = airsim_detector_.detect(gt_frame, sensing_vol);
+    mission_local_obstacle_map_.update(ev);  // tagged AirSimGroundTruth
+}
+// Visual path:
+if (visual_depth_detector_ && visual_frame_available) {
+    auto ev = visual_depth_detector_->detect(vframe, sensing_vol, current_scale_estimate_);
+    mission_local_obstacle_map_.update(ev);  // tagged VisualObstacleDetector
+}
+```
+
+Evidence from both detectors flows into the same `mission_local_obstacle_map_.update()`
+call and is distinguished by `source_kind`. The viewer can display both simultaneously
+for delta analysis.
+
+### 15.9 Stage Definitions and Validation Milestones
+
+```
+VD1  Types and headers
+       New: visual_depth_frame.hpp, metric_scale_estimate.hpp,
+            depth_engine.hpp, depth_projection_kernel.hpp
+       Changed: occupancy_types.hpp (+is_surface_hint to ObstacleEvidence)
+       Milestone: all headers compile; 44+ ctests unchanged.
+
+VD2  ONNXDepthEngine + CPU projection
+       New: onnx_depth_engine.cpp, depth_projection_kernel.cpp,
+            visual_depth_obstacle_detector.cpp
+       New: tools/perception/export_depth_anything.py
+       Scale: fixed AirSim camera config value.
+       Validation: run both GT and visual detectors; log delta per frame.
+       Milestone: ±1 voxel match on major obstacles (walls, buildings)
+                  for 90%+ of frames on a standard AirSim scene.
+
+VD3  Surface patch + thin structure (CPU)
+       New: fit_surface_patches_device() and detect_thin_structures_device() in
+            depth_projection_kernel.cpp. No OpenCV.
+       Milestone: AirSim scene with wall + pole → SurfacePatch (wall),
+                  ThinStructureRisk LineSegment (pole). Verified in viewer.
+
+VD4  CoreStackRunner integration, GT removal
+       Wire visual detector into CoreStackRunner. Disable GT path.
+       update_metric_scale() method. Gimbal-aware ProjectionParams.
+       Milestone: full AirSim mission completes, visual depth only.
+                  L1/L2 maps build; L3 ESDF renders; viewer shows all layers.
+
+VD5  PerchCandidateEvaluator
+       Non-realtime evaluator. L1 SurfacePatch + L2 clearance.
+       PerchCandidate list in WorldSnapshot. Viewer: green landing pads.
+       Milestone: AirSim rooftop identified, ranked, clearance passes.
+
+VD6  CUDA kernel path (Jetson, when hardware available)
+       depth_projection_kernel.cu + thin structure .cu + surface patch .cu.
+       TensorRTDepthEngine. cudaMallocManaged (zero-copy on Jetson).
+       tools/perception/compile_depth_engine.sh (trtexec INT8).
+       Milestone: ≥30 Hz on Orin Nano; total latency ≤20 ms.
+
+VD7  VIO scale coupling (deferred — after VD1-VD5 stable)
+       MetricScaleEstimator: velocity + feature tracking → MetricScaleEstimate.
+       Altitude fallback for invalid VIO state.
+```
+
+---
+
 ## 14. Summary
 
 Dedalus has crossed from frame/world-model infrastructure into a working live mission loop. The next step is object-conditioned autonomy: the drone should fly because it saw and selected a target, not because it was handed a static trajectory.

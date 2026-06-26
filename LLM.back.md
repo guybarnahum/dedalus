@@ -152,3 +152,111 @@ For full validation records see:
 - `docs/airsim_depth_obstacle_detector_validation.md`
 
 All sequence behavior milestones (2.24–2.30B) are complete. The behavioral runtime, target selector, ghost provider, follow/circle/approach/sequence controllers, camera/gimbal pointing, and AirSim existing-object binding are validated and stable. Do not modify flight/runtime behavior semantics unless explicitly scoped.
+
+---
+
+## H19. Visual Depth Perception Pipeline — Locked Design Decisions
+
+Locked during design session (2026-06-24). These decisions close the architecture for VD1–VD5; do not relitigate without explicit scope.
+
+### H19.1 AirSim-Without-GT Development Context
+
+`DEDALUS_AIRSIM_ENABLE_DEPTH_OBSTACLES` is disabled in operational configuration. The AirSim `DepthPlanar` ground-truth API is the **validation oracle only** — not the operational depth source. It remains runnable in parallel with `VisualDepthObstacleDetector` during VD2–VD3 for delta-logging. GT is permanently disabled after VD4 passes the 90%-within-±1-voxel threshold.
+
+### H19.2 Gimbaled Camera Architecture
+
+The front camera is gimbaled — mission controls pointing mode per-flight:
+
+| Mode | Gimbal state | Coverage role |
+|---|---|---|
+| Stare-at-target | Locked on track | Actor follow/circle |
+| Angle-from-velocity | Yaw-aligned ± tilt | Forward obstacle sensing |
+| Landing-approach | Tilted down | Floor / landing zone |
+| Fixed-forward | Boresight | Default |
+
+**Critical constraint:** `ObstacleSensingVolume` carries **encoder reading at frame timestamp**, not commanded gimbal position. Actuator lag is 10–40 ms, causing up to 40 cm projection error into a 50 cm voxel grid. `ProjectionParams` must be populated from the encoder-stamped extrinsics — never from commanded position.
+
+### H19.3 Depth Estimation Paradigm
+
+Monocular depth estimation (MDE) selected for V0. Stereo and SfM are deferred.
+
+Rationale:
+- Single gimbaled front camera — no stereo baseline without hardware change.
+- SfM requires sufficient parallax; hovering or slow approach provides little.
+- MDE (DepthAnythingV2-Small) runs at >30 fps on Jetson Orin Nano INT8 and on Mac dev via ONNX Runtime.
+
+**Model:** DepthAnythingV2-Small (25M params, ViT-S backbone).
+**Export:** `tools/perception/export_depth_anything.py` — exports `.onnx` from HuggingFace weights.
+**Compilation:** `tools/perception/compile_depth_engine.sh` — runs `trtexec` INT8 calibration on target hardware.
+**Constraint:** `.onnx`, `.engine`, `.plan` files are **never committed**. Generated on target.
+
+### H19.4 Scale Alignment
+
+Single global scale factor, fixed from AirSim camera config, is acceptable for V0. Rationale: L1 map persistence covers peripheral geometry from prior frames. Single scale avoids per-region complexity without measurable mission impact at this stage.
+
+`MetricScaleEstimate { float scale; float confidence; float age_s; }` — populated once at startup from config. VIO-coupled scale is deferred to VD7.
+
+### H19.5 Zero-Copy Memory Architecture
+
+Depth buffer (`depth_relative[]`) lives in device memory only. Host never reads it.
+
+Two-stage pipeline:
+1. `DeviceObstacleEvidence` — 48-byte POD struct, GPU-side intermediate. No `std::string`, no dynamic allocation. All CUDA kernels emit this type.
+2. `inflate()` — host-side function. Stamps `std::string` fields (sensor_name, source_provider, map_frame_id) from compile-time constants. Outputs `ObstacleEvidence[]`.
+
+`ProjectionParams` — all-POD struct. Populated fresh each frame from `ObstacleSensingVolume`. Passed to kernels by value.
+
+On Jetson: `cudaMallocManaged` provides unified memory — zero physical copy on device→host transition.
+On discrete GPU (dev): only the compact POD result array crosses the bus (≤49 KB for 1024 evidence points). Depth buffer (1.07 MB) stays on device.
+
+### H19.6 No OpenCV in Production Path
+
+All image processing uses CUDA kernels or plain C++. No `cv::Mat` allocations on the hot path.
+
+Thin structure detection replaces `cv::createLineSegmentDetector` with a custom CUDA kernel (~300 lines):
+1. Sobel gradient (Gx, Gy) per pixel.
+2. Non-maximum suppression along gradient direction.
+3. Hysteresis thresholding (strong / weak edges).
+4. Connected components → `LineSegment` candidates.
+5. Filter by aspect ratio (length >> width).
+
+Emits: `ObstacleEvidenceShape::LineSegment`, `ObstacleEvidenceState::ThinStructureRisk`, `is_thin_structure_hint=true`.
+
+### H19.7 Surface and Perch Detection
+
+`fit_surface_patches_device()` runs RANSAC plane fitting on the projected point cloud in the same CUDA stream as the projection kernel (no re-inference). Emits `ObstacleEvidenceShape::SurfacePatch`, `is_surface_hint=true`.
+
+**`is_surface_hint` not `is_landable_hint`** — landability is a behavior tree semantic, not a detector output.
+**Repulsion override during landing** — APF gain suppression for below-horizon sector is a BT gain decision, not detector logic. Do not suppress repulsion from within any detector.
+
+### H19.8 PerchCandidateEvaluator
+
+Non-realtime evaluator. Reads L1 `SurfacePatch` accumulation + L2 `ray_cast` for clearance above each candidate. Scores: flatness, area, roughness, clearance. Outputs ranked `PerchCandidate` list to `WorldSnapshot`.
+
+Does not run in the tick loop. Triggered on behavior tree request or on a configurable interval.
+
+### H19.9 No Rectify-Then-Infer
+
+Training and inference operate on raw fisheye frames. Distortion is absorbed into network weights. `LensDistortion` struct is used only in the unproject step of `project_depth_to_device_evidence()` — not as a preprocessing step before inference.
+
+### H19.10 `ObstacleEvidence` Extensions
+
+`is_surface_hint bool` added alongside the existing `is_thin_structure_hint bool`. No other fields added at VD1. `is_landable_hint` is explicitly rejected — use `is_surface_hint` and let the BT evaluate landability from `PerchCandidate` scoring.
+
+### H19.11 VD Stage Definitions
+
+| Stage | Deliverable | Milestone gate |
+|---|---|---|
+| VD1 | Types and headers (no impl) | All 44+ ctests pass unchanged |
+| VD2 | ONNXDepthEngine + CPU projection | Static frame → evidence within ±1 voxel of GT baseline |
+| VD3 | Surface patch + thin structure (CPU) | Wall → SurfacePatch; pole → ThinStructureRisk LineSegment |
+| VD4 | CoreStackRunner integration; GT disabled | Full AirSim mission, visual depth only, L1/L2/L3 build |
+| VD5 | PerchCandidateEvaluator | AirSim rooftop identified and ranked in viewer |
+| VD6 | CUDA kernels + TensorRT (Jetson) | ≥30 Hz on Orin Nano; total latency ≤20 ms |
+| VD7 | VIO scale coupling | Deferred — after VD1–VD5 stable |
+
+### H19.12 Validation Strategy
+
+VD2–VD3: `VisualDepthObstacleDetector` and `AirSimDepthObstacleDetector` run in parallel. Delta between their `ObstacleEvidence` outputs is logged. Gate: major obstacles match within ±1 voxel on ≥90% of frames before GT is disabled at VD4.
+
+VD4+: `DEDALUS_AIRSIM_ENABLE_DEPTH_OBSTACLES` is permanently off in `CoreStackRunner`.

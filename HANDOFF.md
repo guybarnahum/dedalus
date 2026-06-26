@@ -50,30 +50,104 @@ Stage 8  L0/L3 calibration (sim run)                 DEFERRED — blocked on Sta
 
 ---
 
-## Next Active Slice: Perception
+## Development Context: AirSim Without Ground Truth
 
-See LLM.md §3 for full plan. Summary:
+**AirSim GT depth is replaced by visual algorithms.** `DepthPlanar` API is the validation
+oracle only — not the operational source. `DEDALUS_AIRSIM_ENABLE_DEPTH_OBSTACLES` will be
+disabled permanently after VD4.
+
+**Front camera is gimbaled.** Mission controls pointing mode (stare-at-target, angle-from-
+velocity, landing-approach). `ObstacleSensingVolume` carries gimbal-corrected extrinsics
+from encoder reading at frame timestamp — not commanded position.
+
+**Validation strategy during VD2–VD3:** run both VisualDepthObstacleDetector and the GT
+AirSim detector in parallel. Log delta between their ObstacleEvidence outputs. Threshold:
+major obstacles match within ±1 voxel on 90%+ of frames before GT is disabled.
+
+---
+
+## Next Active Slice: Visual Depth + Perception
+
+See LLM.md §3 for full plans. Summary:
 
 ```
-P1  Actor detection baseline
-      ActorObservation type in PerceptionPipelineOutput (separate from ObstacleEvidence).
-      Do NOT feed actors into L2. Backend TBD: AirSim GT oracle → depth clustering → vision model.
+VD1  Types and headers
+       VisualDepthFrame, MetricScaleEstimate, DepthEngineInterface,
+       ProjectionParams, DeviceObstacleEvidence (POD).
+       is_surface_hint added to ObstacleEvidence.
+       Milestone: headers compile; all 44+ ctests unchanged.
 
-P2  Actor tracking
-      ActorTrack: id, class, position, velocity, heading, last_seen_ns, confidence.
-      Kalman / constant-velocity predictor. Lifecycle: init → update → age-out (2 s).
-      actor_tracks SSE event. Viewer: labeled dots + velocity vectors.
+VD2  ONNXDepthEngine + CPU projection
+       ONNXDepthEngine (ONNX Runtime, Mac CPU/MPS).
+       project_depth_to_device_evidence() CPU fallback.
+       VisualDepthObstacleDetector + free function.
+       tools/perception/export_depth_anything.py (no engine files committed).
+       Fixed scale from AirSim camera config.
+       Milestone: static RGB frame → ObstacleEvidence within ±1 voxel of GT baseline.
 
-P3  Exploration planner
-      FrontierMap from L2. ExplorationPlanner → next waypoint.
-      New mission step type: ExploreStep.
+VD3  Surface patch + thin structure (CPU)
+       fit_surface_patches_device() — RANSAC plane fitting. No OpenCV.
+       detect_thin_structures_device() — Sobel + NMS + CC. No OpenCV.
+       Milestone: wall → SurfacePatch; pole → ThinStructureRisk LineSegment.
 
-P4  Tag / chase / inspect behavior
-      ApproachActorStep, OrbitActorStep, InspectActorStep.
-      Close loop on ActorTrack position. Plugs into existing BehaviorSpec runtime.
+VD4  CoreStackRunner integration, GT removal
+       Wire VisualDepthObstacleDetector into CoreStackRunner.
+       Disable AirSim GT depth path permanently.
+       Gimbal-aware ProjectionParams from ObstacleSensingVolume.
+       Milestone: full AirSim mission, visual depth only, L1/L2/L3 build, viewer renders.
 
-P5  Multi-drone coordination (future, not started)
+VD5  PerchCandidateEvaluator
+       Non-realtime. L1 SurfacePatch + L2 clearance + stability scoring.
+       PerchCandidate list in WorldSnapshot. Viewer: green landing pads.
+       Milestone: AirSim rooftop identified and ranked.
+
+VD6  CUDA kernel path (Jetson, deferred until hardware available)
+       depth_projection_kernel.cu, thin structure .cu, surface patch .cu.
+       TensorRTDepthEngine. cudaMallocManaged (zero-copy on Jetson).
+       Milestone: ≥30 Hz on Orin Nano; total latency ≤20 ms.
+
+VD7  VIO scale coupling (deferred — after VD1-VD5 stable)
+
+P1   Actor detection baseline      (after VD2 provides depth foundation)
+P2   Actor tracking                Kalman. actor_tracks SSE. Viewer dots + velocity.
+P3   Exploration planner           FrontierMap + ExploreStep behavior.
+P4   Tag / chase / inspect         ApproachActorStep, OrbitActorStep, InspectActorStep.
+P5   Multi-drone coordination      Future. Not started.
 ```
+
+---
+
+## Visual Depth Component Map (reference)
+
+```
+include/dedalus/sensing/
+  visual_depth_frame.hpp       VisualDepthFrame, CameraIntrinsics, LensDistortion
+  metric_scale_estimate.hpp    MetricScaleEstimate (scale, confidence, age_s)
+  depth_engine.hpp             DepthEngineInterface, DepthInferenceResult
+  depth_projection_kernel.hpp  ProjectionParams (POD), DeviceObstacleEvidence (POD)
+  visual_depth_obstacle_detector.hpp  VisualDepthObstacleDetectorConfig, VisualDepthObstacleDetector
+
+src/sensing/
+  onnx_depth_engine.cpp        ONNXDepthEngine (ONNX Runtime, CPU/MPS)
+  depth_projection_kernel.cpp  project_depth_to_device_evidence() CPU fallback
+                               fit_surface_patches_device() CPU path
+                               detect_thin_structures_device() CPU path
+  visual_depth_obstacle_detector.cpp
+  depth_projection_kernel.cu   CUDA kernel (VD6, Jetson only)
+  thin_structure_kernel.cu     CUDA kernel (VD6, Jetson only)
+  surface_patch_kernel.cu      CUDA kernel (VD6, Jetson only)
+  tensorrt_depth_engine.cpp    TensorRTDepthEngine (VD6, Jetson only)
+
+tools/perception/
+  export_depth_anything.py     Export DepthAnythingV2-Small .onnx from HuggingFace
+  compile_depth_engine.sh      trtexec INT8 calibration pipeline (run on Jetson)
+```
+
+Key type constraints:
+- `DeviceObstacleEvidence` — 48-byte POD, GPU-side only; inflated to `ObstacleEvidence` host-side
+- `ProjectionParams` — all POD, populated fresh each frame from `ObstacleSensingVolume`
+- Depth buffer (`depth_relative[]`) — device ptr only; CPU never reads it
+- Model files — never committed; generated on target hardware via `export_depth_anything.py` + `compile_depth_engine.sh`
 
 ---
 
@@ -168,7 +242,12 @@ git push
 - Use YOLO/DETR as a prerequisite for obstacle *avoidance* (fine for actor identification).
 - Add planner/control coupling at L3 until Stage 7 is explicitly resumed.
 - Save L3 to disk — always recompute from L2.
-- Derive visual obstacle coverage from vehicle yaw alone.
+- Derive visual obstacle coverage from vehicle yaw alone — use ObstacleSensingVolume (gimbal-aware).
+- Use commanded gimbal position for ProjectionParams — use encoder reading at frame timestamp.
+- Mark SurfacePatch evidence as "landable" in the detector — landability is a behavior tree semantic.
+- Suppress APF repulsion from within the detector — repulsion override during landing is a BT gain decision.
+- Add OpenCV as a production dependency — use CUDA kernels or pure C++ for image processing.
+- Commit `.onnx`, `.engine`, or `.plan` model files — generate on target hardware.
 - Couple obstacle persistence or map-building to a flight command sink.
 - Change L2's in-memory voxel structure without first implementing L1 OctoMap (gate).
 - Merge L0/L1/L2/L3 representations.

@@ -82,14 +82,31 @@ All ctests pass (44+ tests). Viewer contract validator: 0 violations.
 
 ## 2. Current Runtime Architecture
 
+**Development context:** Running in AirSim/PX4 SITL. The AirSim ground-truth depth API
+(`DepthPlanar`) is being replaced by a real visual depth pipeline. GT depth remains available
+as a validation oracle only — it is not the operational source. The front camera is
+**gimbaled** (mission-controlled): pointing mode is set per-mission (stare-at-target,
+angle-from-velocity, landing-approach). Gimbal state flows into `ObstacleSensingVolume`
+every tick via encoder reading at frame timestamp (not commanded position).
+
 ```
-AirSim live frame + ego sidecar
-  -> AirSimFrameSource
+AirSim live RGB frame + ego sidecar
+  -> AirSimFrameSource (RGB; DepthPlanar disabled in production)
   -> FrameHintEgoProvider
   -> CoreStackRunner
        -> GhostTargetProvider -> GhostDetectionsPublisher
-       -> SensingCoverageProvider -> obstacle_sensing_volumes
-       -> AirSimDepthObstacleDetector -> PerceptionPipelineOutput.obstacle_evidence
+       -> SensingCoverageProvider (gimbal-aware) -> ObstacleSensingVolume (per tick)
+       -> VisualDepthObstacleDetector            [replaces AirSimDepthObstacleDetector]
+            -> DepthEngineInterface (ONNXDepthEngine / TensorRTDepthEngine)
+                 infer_device() -> depth_relative[] (device ptr, never host-copied)
+            -> project_depth_to_device_evidence() (CUDA kernel / CPU fallback)
+                 ProjectionParams from ObstacleSensingVolume (gimbal-corrected R, T)
+                 MetricScaleEstimate (fixed AirSim scale V0; VIO-coupled V1)
+                 -> DeviceObstacleEvidence[] (POD, unified/pinned memory)
+            -> fit_surface_patches_device()   -> SurfacePatch evidence (is_surface_hint)
+            -> detect_thin_structures_device() -> LineSegment evidence (is_thin_structure_hint)
+            -> inflate() -> ObstacleEvidence[]  (host-side string fields stamped in)
+       -> PerceptionPipelineOutput.obstacle_evidence
   -> MissionLocalObstacleMap (raw evidence, per-tick)
   -> MissionMapAssimilator
        -> L1: MissionLocalTraversabilityMap (0.5 m, decay 0.05/s)
@@ -98,6 +115,8 @@ AirSim live frame + ego sidecar
               -> MissionLocalPlanningMapPublisher -> SSE (delta, watermark)
   -> L3: LocalESDFMap (derived from L2 each tick, never saved to disk)
               -> LocalESDFMapPublisher -> SSE (esdf_delta)
+  -> PerchCandidateEvaluator (non-realtime, reads L1 SurfacePatch + L2 clearance)
+       -> ranked PerchCandidate list -> WorldSnapshot
   -> InMemoryWorldModel -> WorldSnapshotPublisher
        -> LatestWorldSnapshotSubscriber
        -> ArtifactSnapshotWriter
@@ -131,84 +150,134 @@ RuntimeEventStreamServer TCP JSONL (port 7788 / --world-snapshot-stream-port)
 
 ---
 
-## 3. Active Next Slice: Perception
+## 3. Active Next Slice: Visual Depth + Perception
 
-Active focus is perception — identifying and tracking dynamic actors in the scene.
-Planning work (Stages 7–8) is deferred; see Section 5.
+Two parallel tracks: **VD** (visual depth pipeline, replacing AirSim GT) and **P** (actor
+perception, builds on VD). Planning work (Stages 7–8) is deferred; see Section 5.
 
-### P1 — Actor detection baseline
+### VD series — Visual Depth Pipeline (AirSim without GT)
 
-Goal: get per-frame bounding box + class label for dynamic actors (people, vehicles)
-from the existing AirSim depth + RGB pipeline, without coupling to avoidance.
+Replace `AirSimDepthObstacleDetector` (ground-truth DepthPlanar API) with a real
+vision-based depth pipeline. Development in AirSim using RGB camera only. AirSim GT
+depth is available as a **validation oracle only** — run both detectors in parallel
+during VD2–VD3 to measure delta, then disable GT permanently at VD4.
 
-Key questions to resolve before implementation:
-- Which detector backend? Options: (a) AirSim GT labels as oracle for simulation
-  development (already partially wired via ghost/GT path); (b) real depth-based
-  clustering from the existing `AirSimDepthObstacleDetector`; (c) vision model (DETR
-  or lightweight YOLOv8n running locally).
-- Detection output goes into `PerceptionPipelineOutput` as a new `ActorObservation`
-  type (separate from `ObstacleEvidence` — obstacles are static geometry; actors are
-  dynamic agents with identity).
-- **Do not reuse `ObstacleEvidence`** for dynamic actors — different semantics, different
-  accumulation policy (actors have velocity, decay fast, are not written to L2).
+#### VD1 — Types and headers
+New files: `visual_depth_frame.hpp`, `metric_scale_estimate.hpp`, `depth_engine.hpp`,
+`depth_projection_kernel.hpp` (ProjectionParams, DeviceObstacleEvidence POD).
+Add `is_surface_hint` flag to `ObstacleEvidence` in `occupancy_types.hpp`.
+No engine, no inference yet.
+**Milestone:** all headers compile clean; existing 44+ ctests pass unchanged.
 
-### P2 — Actor tracking
+#### VD2 — ONNXDepthEngine + CPU projection
+`ONNXDepthEngine` (ONNX Runtime, CPU/MPS, Mac-compatible).
+`project_depth_to_device_evidence()` CPU fallback path.
+`VisualDepthObstacleDetector` class + `detect_visual_depth_obstacles()` free function.
+`tools/perception/export_depth_anything.py` — exports DepthAnythingV2-Small `.onnx`
+from HuggingFace checkpoint. Engine files never committed to repo.
+Fixed scale from AirSim camera config (V0 scale source).
+**Milestone:** static AirSim RGB frame → ObstacleEvidence grid matches AirSim GT baseline
+within ±1 voxel for major obstacles (wall, building faces). Delta logged and within threshold.
 
-Goal: maintain a short-memory track of each actor: position, velocity, heading, class.
-Track list is part of `WorldSnapshot` (not `LocalFlightMapSnapshot` — not ego-local).
+#### VD3 — Surface patch + thin structure (CPU path)
+`fit_surface_patches_device()` CPU path — RANSAC plane fitting on projected point cloud.
+`detect_thin_structures_device()` CPU path — Sobel gradient + NMS + connected components.
+No OpenCV dependency anywhere in the production path.
+**Milestone:** AirSim scene containing a flat wall + a vertical pole → SurfacePatch evidence
+emitted with upward-ish normal for wall; ThinStructureRisk LineSegment evidence emitted for pole.
 
-Primitives needed:
-- `ActorTrack`: id, class, position, velocity, heading, last_seen_ns, confidence.
-- Simple Kalman or constant-velocity predictor per track.
-- Track lifecycle: init on first detection, update on match, age out after 2 s no-match.
-- Publish as `actor_tracks` SSE event; viewer draws labeled dots with velocity vectors.
+#### VD4 — CoreStackRunner integration, GT removal
+Wire `VisualDepthObstacleDetector` into `CoreStackRunner` behind
+`visual_depth_engine != nullptr`. Disable `DEDALUS_AIRSIM_ENABLE_DEPTH_OBSTACLES` GT path.
+`update_metric_scale(MetricScaleEstimate)` public method on `CoreStackRunner` (called by
+future VIO subscriber; for now, set once from AirSim camera config).
+Gimbal-aware: `ProjectionParams` populated from `ObstacleSensingVolume` encoder reading
+at frame timestamp — not commanded gimbal position.
+**Milestone:** Full AirSim mission runs with visual depth only. L1/L2 map builds. Viewer
+shows obstacle cells and L3 ESDF. Mission completes without AirSim GT depth.
 
-### P3 — Exploration planner (curiosity flight)
+#### VD5 — PerchCandidateEvaluator
+Non-realtime evaluator (runs outside the 30 Hz tick loop). Queries L1 for `SurfacePatch`
+evidence with `is_surface_hint=true` and normal within threshold of world-up. Applies
+flatness, minimum area (drone footprint + margin), clearance (L2 `ray_cast` upward), and
+depth stability scoring. Outputs ranked `PerchCandidate` list into `WorldSnapshot`.
+Viewer: perch candidates rendered as green landing-zone pads in the 3D scene.
+**Milestone:** AirSim scene with a rooftop → evaluator identifies and ranks it correctly.
+Clearance check via L2 ray_cast passes. Viewer shows it.
 
-Goal: given the current L2 map, identify the frontier (boundary of mapped vs. unknown
-space) and generate waypoints to extend coverage. Feeds the mission controller.
+#### VD6 — CUDA kernel path (Jetson, when hardware is available)
+`depth_projection_kernel.cu` — full CUDA projection + voxelization kernel.
+`detect_thin_structures_device.cu` — Sobel + NMS + CC CUDA kernel.
+`fit_surface_patches_device.cu` — RANSAC CUDA kernel.
+`TensorRTDepthEngine` — loads `.engine` file; DLA offload optional.
+`tools/perception/compile_depth_engine.sh` — `trtexec` INT8 calibration pipeline.
+cudaMallocManaged buffers: zero-copy on Jetson unified memory by construction.
+**Milestone:** ≥ 30 Hz end-to-end on Orin Nano. Total latency (infer + project + surface +
+thin structure) ≤ 20 ms at 30 Hz. No host-device copy of depth buffer.
 
-Primitives needed:
-- `FrontierMap`: derived from L2, marks cells adjacent to unmapped space.
-- `ExplorationPlanner`: ranks frontier cells by information gain + distance cost;
-  returns next waypoint.
-- Plugs into mission controller as a new behavior type: `ExploreStep`.
+#### VD7 — VIO scale coupling (deferred)
+`MetricScaleEstimator`: velocity + feature tracking → `MetricScaleEstimate` at ~50 Hz.
+Altitude fallback when VIO invalid. Deferred until VD1–VD5 stable.
 
-### P4 — Tag / chase / inspect behavior
+---
 
-Goal: select an actor track and fly approach → orbit → inspection sequence.
-Builds on the existing `BehaviorSpec` sequence runtime.
+### P series — Actor Perception (after VD2 provides the depth foundation)
 
-New behavior steps: `ApproachActorStep`, `OrbitActorStep`, `InspectActorStep`.
-Each step takes a `track_id` and closes the loop on the `ActorTrack` position.
+#### P1 — Actor detection baseline
+`ActorObservation` type in `PerceptionPipelineOutput` (separate from `ObstacleEvidence`).
+Do NOT feed actors into L2. Backend for AirSim: depth-based clustering on visual depth
+output (not GT). Long term: lightweight YOLOv8n or DETR.
 
-### P5 — Multi-drone coordination (future)
+#### P2 — Actor tracking
+`ActorTrack`: id, class, position, velocity, heading, last_seen_ns, confidence.
+Kalman / constant-velocity predictor. Lifecycle: init → update → age-out (2 s).
+`actor_tracks` SSE event. Viewer: labeled dots + velocity vectors.
 
-Not started. Requires: peer discovery, map-partition protocol, actor-ownership protocol.
-Likely IPC: shared L2 DB merge (offline `tools/mission/merge_l2_maps.py`) + lightweight
-peer heartbeat stream. Out of scope until P1–P4 are stable.
+#### P3 — Exploration planner (curiosity flight)
+`FrontierMap` from L2. `ExplorationPlanner` → next waypoint ranked by information gain + cost.
+New mission step type: `ExploreStep`. Plugs into existing `BehaviorSpec` runtime.
+
+#### P4 — Tag / chase / inspect behavior
+`ApproachActorStep`, `OrbitActorStep`, `InspectActorStep`.
+Each closes loop on `ActorTrack` position. Gimbal `CameraPointingCommand` stares at target.
+
+#### P5 — Multi-drone coordination (future, not started)
+Peer discovery, map-partition, actor-ownership protocol.
+Shared L2 DB merge: `tools/mission/merge_l2_maps.py`. Out of scope until P1–P4 stable.
 
 ---
 
 ## 4. Architecture Boundaries
 
 ```
-WorldSnapshot           autonomy state
-PerceptionPipelineOutput  evidence + actor observations
-ObstacleEvidence        static geometry evidence → feeds L1/L2
-ActorObservation        dynamic agent evidence → feeds actor tracker, NOT L2
-Ghost detections        enter through same Observation3D path as real detections
-Artifacts               evidence/debug outputs, not IPC
-Overlay                 subscriber/renderer only
-L0                      reflexive avoidance — no planner coupling
-L3                      planning primitive — no flight command coupling until Stage 7 scoped
+WorldSnapshot              autonomy state (includes PerchCandidate list)
+PerceptionPipelineOutput   evidence + actor observations
+ObstacleEvidence           static geometry evidence → feeds L1/L2
+  SurfacePatch shape       flat surface hit; is_surface_hint=true; not yet "landable"
+  LineSegment shape        thin obstacle (wire, pole); is_thin_structure_hint=true
+ActorObservation           dynamic agent evidence → feeds actor tracker, NOT L2
+Ghost detections           enter through same Observation3D path as real detections
+Artifacts                  evidence/debug outputs, not IPC
+Overlay                    subscriber/renderer only
+L0                         reflexive avoidance — no planner coupling
+L3                         planning primitive — no flight command coupling until Stage 7 scoped
+DepthEngineInterface       platform-transparent depth inference (ONNX/TensorRT)
+DeviceObstacleEvidence     GPU-side POD intermediate; never a stored type; inflated to ObstacleEvidence
+ProjectionParams           kernel input — all POD, no host ptrs; populated from ObstacleSensingVolume
+MetricScaleEstimate        single global scale factor (V0: fixed from AirSim config; V1: VIO-coupled)
+PerchCandidateEvaluator    non-realtime; reads L1 + queries L2; outputs to WorldSnapshot
 ```
 
 Do not:
 - Feed dynamic actor evidence into L2 (actors are not static obstacles).
+- Mark SurfacePatch evidence as "landable" in the detector — that is a behavior tree semantic.
+- Suppress APF repulsion in the detector — repulsion override during landing is a BT gain decision.
+- Use the commanded gimbal position for ProjectionParams — always use the encoder reading at frame timestamp.
 - Add planner blocking, replanning, or command-sink avoidance unless explicitly scoped.
 - Use YOLO/DETR outputs as prerequisite for *obstacle avoidance* (fine for actor ID).
 - Couple obstacle persistence, map-building, or sensing coverage to a flight command sink.
+- Commit `.onnx` or `.engine` model files to the repo — generate on target hardware.
+- Add OpenCV as a production dependency — use CUDA kernels or pure C++ alternatives.
 - Merge L0/L1/L2/L3 representations.
 - Name files or symbols after planning labels or temporary session shorthand.
 
