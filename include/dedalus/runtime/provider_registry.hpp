@@ -57,6 +57,17 @@ struct CoreStackProviderConfig {
 
     // Provider wiring — depth and evaluation (slot B) providers.
     //
+    // ego_provider: primary ego state source.
+    //   Valid: "frame_hint" (AirSim sidecar telemetry),
+    //          "no_telemetry" (static/video-only),
+    //          "airsim" (AirSim RPC direct),
+    //          "visual_odometry" (VL1 — camera-only; pending).
+    //   Env: DEDALUS_EGO_PROVIDER.
+    // ego_provider_eval: slot B ego provider (reference; agreement metric only).
+    //   "" = inactive.  Env: DEDALUS_EGO_PROVIDER_EVAL.
+    //   Typical use: ego_provider=visual_odometry, ego_provider_eval=frame_hint
+    //   logs position delta (ppt of 1 m) while primary is vision-only.
+    //
     // depth: name of the primary depth provider (slot A).  Required when
     //   obstacle_sensing cameras are configured.
     //   Valid: "airsim_gt_detector" (AirSim DepthPlanar → legacy detector),
@@ -74,6 +85,7 @@ struct CoreStackProviderConfig {
     std::string depth_eval;
     std::string detector_eval;
     std::string camera_stabilizer_eval;
+    std::string ego_provider_eval;
     std::string tracker_eval;
     std::string identity_resolver_eval;
     std::string projector_eval;

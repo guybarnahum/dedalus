@@ -23,6 +23,7 @@ CoreStackRunner::CoreStackRunner(CoreStackProviders providers, CoreStackRunnerCo
       snapshot_subscriber_handles_(std::move(config.snapshot_subscribers)),
       depth_slot_a_(std::move(config.depth_slot_a)),
       depth_slot_b_(std::move(config.depth_slot_b)),
+      ego_provider_reference_(std::move(config.ego_provider_reference)),
       detector_reference_(std::move(config.detector_reference)),
       stabilizer_reference_(std::move(config.stabilizer_reference)),
       tracker_reference_(std::move(config.tracker_reference)),

@@ -181,6 +181,15 @@ bool CoreStackRunner::run_once() {
     if (timing_writer_) {
         timing_writer_->record_stage("ego_provider.estimate", duration_us(start));
     }
+    // Slot B ego (reference): runs on same frame, agreement logged only.
+    if (ego_provider_reference_) {
+        const auto b_ego = ego_provider_reference_->estimate(*frame);
+        if (timing_writer_) {
+            const float ag = ego_agreement(ego_estimate, b_ego);
+            timing_writer_->record_stage("ego_provider.slot.agreement_ppt",
+                static_cast<std::int64_t>(ag * 1000.0F));
+        }
+    }
     if (!ego_estimate.ego.has_value()) {
         if (timing_writer_) {
             timing_writer_->record_stage("runtime.post_frame_compute", duration_between_us(frame_available_time, SteadyClock::now()));

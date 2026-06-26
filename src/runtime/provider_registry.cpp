@@ -256,6 +256,17 @@ void ProviderRegistry::populate_runner_eval_slots(
         });
     };
 
+    const auto resolve_opt_shared_ego = [&](const std::string& name)
+        -> std::shared_ptr<EgoStateProvider> {
+        if (name.empty()) return nullptr;
+        return resolve_shared<EgoStateProvider>("ego_provider_eval", name, {
+            {"frame_hint",   [&]() { return std::make_shared<FrameHintEgoProvider>(config.fallback_map_frame_id); }},
+            {"no_telemetry", [&]() { return std::make_shared<NoTelemetryEgoProvider>(config.fallback_map_frame_id); }},
+            {"airsim",       [&]() { return std::make_shared<AirSimEgoStateProvider>(airsim_config_from(config)); }},
+        });
+    };
+
+    runner.ego_provider_reference     = resolve_opt_shared_ego(config.ego_provider_eval);
     runner.detector_reference         = resolve_opt_shared_detector(config.detector_eval);
     runner.stabilizer_reference       = resolve_opt_shared_stabilizer(config.camera_stabilizer_eval);
     runner.tracker_reference          = resolve_opt_shared_tracker(config.tracker_eval);
@@ -264,7 +275,7 @@ void ProviderRegistry::populate_runner_eval_slots(
 }
 
 std::vector<std::string> ProviderRegistry::frame_sources() const { return {"synthetic", "synthetic_mission", "video_only", "recorded_frames", "airsim"}; }
-std::vector<std::string> ProviderRegistry::ego_providers() const { return {"frame_hint", "no_telemetry", "airsim"}; }
+std::vector<std::string> ProviderRegistry::ego_providers() const { return {"frame_hint", "no_telemetry", "airsim", "visual_odometry"}; }
 std::vector<std::string> ProviderRegistry::detectors() const { return {"scripted", "airsim_ground_truth"}; }
 std::vector<std::string> ProviderRegistry::camera_stabilizers() const { return {"null"}; }
 std::vector<std::string> ProviderRegistry::trackers() const { return {"simple_centroid"}; }

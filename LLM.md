@@ -152,8 +152,30 @@ RuntimeEventStreamServer TCP JSONL (port 7788 / --world-snapshot-stream-port)
 
 ## 3. Active Next Slice: Visual Depth + Perception
 
-Two parallel tracks: **VD** (visual depth pipeline, replacing AirSim GT) and **P** (actor
-perception, builds on VD). Planning work (Stages 7–8) is deferred; see Section 5.
+Three parallel tracks: **VD** (visual depth), **VL** (visual localization — camera-only ego), and **P** (actor perception). Planning work (Stages 7–8) is deferred; see Section 5.
+
+### EgoStateProvider — first-class A/B provider (IMPLEMENTED)
+
+`EgoStateProvider` follows the same pattern as every other pipeline stage:
+
+| Aspect | Detail |
+|---|---|
+| Primary config key | `ego_provider: frame_hint` (YAML) |
+| Env var override | `DEDALUS_EGO_PROVIDER` |
+| Slot B eval config | `ego_provider_eval: frame_hint` |
+| Slot B env var | `DEDALUS_EGO_PROVIDER_EVAL` |
+| Agreement metric | `ego_provider.slot.agreement_ppt` — position distance, 1000=same, 0=≥1 m |
+| Runner field | `ego_provider_reference_` (null = inactive) |
+| Valid names | `frame_hint`, `no_telemetry`, `airsim`, `visual_odometry` (VL1, pending) |
+
+Typical usage once VL1 lands:
+```yaml
+ego_provider: visual_odometry        # camera-only primary
+ego_provider_eval: frame_hint        # AirSim telemetry as reference oracle
+```
+Agreement metric then measures VO drift vs AirSim ground truth per frame.
+
+### VL series — Visual Localization (camera-only ego, no external sensors)
 
 ### VD series — Visual Depth Pipeline (AirSim without GT)
 
@@ -221,9 +243,47 @@ cudaMallocManaged buffers: zero-copy on Jetson unified memory by construction.
 **Milestone:** ≥ 30 Hz end-to-end on Orin Nano. Total latency (infer + project + surface +
 thin structure) ≤ 20 ms at 30 Hz. No host-device copy of depth buffer.
 
-#### VD7 — VIO scale coupling (deferred)
-`MetricScaleEstimator`: velocity + feature tracking → `MetricScaleEstimate` at ~50 Hz.
-Altitude fallback when VIO invalid. Deferred until VD1–VD5 stable.
+#### VD7 — Metric scale from VO (merged into VL2; see VL series)
+`MetricScaleEstimate.scale` derived from VO velocity + monocular depth disparity.
+Replaces fixed AirSim-config scale. Deferred until VL1 stable.
+
+---
+
+### VL series — Visual Localization (camera-only ego)
+
+Core design goal: navigate entirely from the RGB camera without AirSim pose API,
+GPS, or any external positioning sensor. `VisualEgoStateProvider` implements
+`EgoStateProvider` and slots into the existing A/B eval framework.
+`frame_hint` (AirSim telemetry) remains available as slot B oracle to measure
+VO drift per frame via `ego_provider.slot.agreement_ppt`.
+
+#### VL1 — VisualEgoStateProvider: frame-to-frame VO
+`VisualOdometryState` — running position/orientation estimate in L2-frame NED.
+Feature tracking: FAST corner detection + Lucas-Kanade optical flow (no OpenCV).
+Essential matrix decomposition → delta R, delta t (direction only).
+Apply `MetricScaleEstimate.scale` → metric translation per frame.
+Integrate into cumulative pose, output as `EgoState`.
+Config: `ego_provider: visual_odometry`.  Registered in `ProviderRegistry::ego_providers()`.
+`EgoStateEstimate.confidence` = 1/(1 + cumulative_drift_estimate).
+**Milestone:** AirSim straight-flight segment → VO position drift < 2 m over 30 s.
+`ego_provider.slot.agreement_ppt` logged with `ego_provider_eval: frame_hint`.
+
+#### VL2 — Scale from depth + L2 re-localization
+Derive metric scale: match depth-map obstacle distances to nearest L2 occupied voxel
+distances. No GPS required — L2 map itself is the metric reference.
+L2 re-localization: when `EgoState.confidence` drops below threshold, run ICP-lite
+against L2 occupied cells visible from current frame → correct accumulated drift.
+`MetricScaleEstimate` updated at re-localization frequency (~1 Hz).
+**Milestone:** VO drift < 0.5 m over a full 3-minute mission circuit. Scale estimate
+converges within 10 s of first L2 re-localization hit.
+
+#### VL3 — Uncertainty propagation + AirSim fallback
+Propagate uncertainty through each VO step (covariance or lightweight scalar).
+`EgoState.confidence` reflects integrated uncertainty.
+In AirSim context: fall back to `frame_hint` when `confidence < 0.3` (configurable).
+In real-world context: no fallback — confidence drives conservative L0 avoidance margins.
+**Milestone:** Simulated feature-poor corridor → confidence drops, wider avoidance margins
+activate, system stays stable.
 
 ---
 
@@ -304,7 +364,8 @@ Every perception pipeline stage supports an optional **slot B (reference)** prov
 ```
 Stage            Slot A (primary)              Slot B (reference)           Agreement metric
 ───────────────  ────────────────────────────  ──────────────────────────   ────────────────────────────
-Depth provider   ObstacleEvidenceProvider      ObstacleEvidenceProvider     voxel overlap ±1 (already done)
+EgoStateProvider EgoStateProvider              EgoStateProvider             position distance ppt of 1 m (done)
+Depth provider   ObstacleEvidenceProvider      ObstacleEvidenceProvider     voxel overlap ±1 (done)
 Detector         Detector                      Detector                     IoU-matched fraction > 0.5
 CameraStabilizer CameraStabilizer              CameraStabilizer             normalized ΔT magnitude (ppt)
 Tracker          Tracker                       Tracker                      class-label agreement on matched tracks
@@ -322,8 +383,54 @@ Rules:
   Agreement free functions live in the same header.
 
 Implemented:
+- `ego_provider_reference_` in `CoreStackRunner`; `DEDALUS_EGO_PROVIDER`/`_EVAL` env vars ✓
 - `depth_slot_a_` / `depth_slot_b_` in `CoreStackRunner` (VD4) ✓
 - All five perception stages: fields in `CoreStackRunnerConfig` + run loop in `run_once()` (EP1) ✓
+
+### Provider Building-Block Contract (applies to every provider type)
+
+Every provider — existing or future — MUST satisfy all of the following:
+
+**1. Configurable via YAML**
+```yaml
+<provider_type>: <name>           # primary slot
+<provider_type>_eval: <name>      # slot B (optional; "" = inactive)
+```
+
+**2. Env var overrides**
+```
+DEDALUS_<PROVIDER_TYPE>           # primary — overrides YAML value
+DEDALUS_<PROVIDER_TYPE>_EVAL      # slot B
+```
+Applied in `apply_eval_env_overrides()` in `config_loader.cpp`.
+
+**3. Validated names**
+`validate_provider_names()` calls `check()` for primary and `check_opt()` for eval.
+`registry.<type>s()` returns the list of valid names.
+
+**4. Runner config fields**
+`CoreStackRunnerConfig` holds a `<type>_reference` shared/unique ptr (null = inactive).
+Initialized from config in `CoreStackRunner` constructor.
+
+**5. `populate_runner_eval_slots()`**
+Resolves eval name → concrete instance; stores in runner.
+
+**6. `run_once()` evaluation**
+If reference slot is non-null: run on same inputs as primary; compute agreement; log:
+```cpp
+timing_writer_->record_stage("<type>.slot.agreement_ppt",
+    static_cast<int64_t>(agreement * 1000));
+```
+
+**7. Agreement function in `evaluation_slot.hpp`**
+One `<type>_agreement(const A&, const B&) → float [0,1]` inline free function.
+0 = no agreement / no data; 1 = perfect agreement.
+
+**8. `provider_registry.hpp` comment**
+`CoreStackProviderConfig` documents valid names and env vars for the provider type.
+
+**9. Zero overhead when inactive**
+Reference slot null check is the only cost when slot B is unused.
 
 Do not:
 - Feed dynamic actor evidence into L2 (actors are not static obstacles).

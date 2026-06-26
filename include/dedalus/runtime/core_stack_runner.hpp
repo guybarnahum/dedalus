@@ -73,6 +73,7 @@ struct CoreStackRunnerConfig {
     //
     // Contract: slot B receives the same primary-slot inputs as slot A.
     //           slot B output is never fed downstream — logged only.
+    std::shared_ptr<EgoStateProvider> ego_provider_reference;
     std::shared_ptr<Detector>         detector_reference;
     std::shared_ptr<CameraStabilizer> stabilizer_reference;
     std::shared_ptr<Tracker>          tracker_reference;
@@ -132,6 +133,7 @@ private:
 
     // Reference slots (slot B) for the five perception pipeline stages.
     // Slot A for each stage lives in providers_.  Null = inactive.
+    std::shared_ptr<EgoStateProvider> ego_provider_reference_;
     std::shared_ptr<Detector>         detector_reference_;
     std::shared_ptr<CameraStabilizer> stabilizer_reference_;
     std::shared_ptr<Tracker>          tracker_reference_;

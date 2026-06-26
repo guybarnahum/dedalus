@@ -22,6 +22,7 @@
 #include <vector>
 
 #include "dedalus/perception/types.hpp"
+#include "dedalus/sensors/ego_state_provider.hpp"
 
 namespace dedalus {
 
@@ -198,6 +199,26 @@ struct StabilizerOutput {
         }
     }
     return static_cast<float>(matched) / static_cast<float>(a.size());
+}
+
+// ---------------------------------------------------------------------------
+// Agreement metric: EgoStateProvider (EgoStateEstimate)
+//
+// Agreement = 1 - (position_distance_m / max_distance_m), clamped to [0, 1].
+// max_distance_m defaults to 1.0 m (one L2 voxel lateral / 2 m vertical).
+// Returns 0 when either estimate has no ego.
+// ---------------------------------------------------------------------------
+
+[[nodiscard]] inline float ego_agreement(
+    const EgoStateEstimate& a,
+    const EgoStateEstimate& b,
+    double max_distance_m = 1.0) {
+    if (!a.ego || !b.ego) return 0.0F;
+    const double dx = a.ego->local_T_body.position.x - b.ego->local_T_body.position.x;
+    const double dy = a.ego->local_T_body.position.y - b.ego->local_T_body.position.y;
+    const double dz = a.ego->local_T_body.position.z - b.ego->local_T_body.position.z;
+    const double dist = std::sqrt(dx * dx + dy * dy + dz * dz);
+    return static_cast<float>(std::max(0.0, 1.0 - dist / max_distance_m));
 }
 
 }  // namespace dedalus

@@ -140,8 +140,10 @@ void build_depth_slots(CoreStackConfig& config) {
                             config.runner.visual_onnx_depth);
 }
 
-// Apply env var overrides for eval provider names.
+// Apply env var overrides for primary and eval provider names.
 void apply_eval_env_overrides(CoreStackProviderConfig& config) {
+    config.ego_provider           = env_str_or(config.ego_provider,           "DEDALUS_EGO_PROVIDER");
+    config.ego_provider_eval      = env_str_or(config.ego_provider_eval,      "DEDALUS_EGO_PROVIDER_EVAL");
     config.detector_eval          = env_str_or(config.detector_eval,          "DEDALUS_DETECTOR_EVAL");
     config.camera_stabilizer_eval = env_str_or(config.camera_stabilizer_eval, "DEDALUS_CAMERA_STABILIZER_EVAL");
     config.tracker_eval           = env_str_or(config.tracker_eval,           "DEDALUS_TRACKER_EVAL");
@@ -404,6 +406,7 @@ void apply_config_value(CoreStackConfig& config, const std::string& key, const s
     if (parse_airsim_pattern_binding_key(config.providers, key, value)) return;
     if (key == "frame_source") config.providers.frame_source = value;
     else if (key == "ego_provider") config.providers.ego_provider = value;
+    else if (key == "ego_provider_eval") config.providers.ego_provider_eval = value;
     else if (key == "depth") config.providers.depth = value;
     else if (key == "depth_eval") config.providers.depth_eval = value;
     else if (key == "detector") config.providers.detector = value;
@@ -530,6 +533,7 @@ void validate_provider_names(const CoreStackProviderConfig& config, const Provid
     };
     check("frame_source",        config.frame_source,        registry.frame_sources());
     check("ego_provider",        config.ego_provider,        registry.ego_providers());
+    check_opt("ego_provider_eval", config.ego_provider_eval, registry.ego_providers());
     check("detector",            config.detector,            registry.detectors());
     check("camera_stabilizer",   config.camera_stabilizer,   registry.camera_stabilizers());
     check("tracker",             config.tracker,             registry.trackers());
