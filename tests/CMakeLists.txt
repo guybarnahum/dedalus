@@ -254,6 +254,13 @@ dedalus_add_native_test(
 )
 
 dedalus_add_native_test(
+    NAME visual_ego_state_provider
+    LAYER unit
+    TAGS sensors vl1 vl2 vl3 visual_odometry validation
+    SOURCES unit/test_visual_ego_state_provider.cpp
+)
+
+dedalus_add_native_test(
     NAME evaluation_slot
     LAYER unit
     TAGS perception evaluation ep1 validation

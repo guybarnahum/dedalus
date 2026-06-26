@@ -6,6 +6,8 @@
 #include <utility>
 #include <vector>
 
+#include "dedalus/sensors/visual_ego_state_provider.hpp"
+
 namespace dedalus {
 namespace {
 
@@ -51,6 +53,14 @@ CoreStackRunner::CoreStackRunner(CoreStackProviders providers, CoreStackRunnerCo
     // Open (or create) the Level 2 SQLite persistence DB.  A missing file is not
     // an error — open_db() creates a fresh DB with the correct schema.
     // A missing path means no persistence this session.
+    // VL2/VL3: inject L2 map and slot-B fallback into VisualEgoStateProvider if active.
+    if (auto* vp = dynamic_cast<VisualEgoStateProvider*>(providers_.ego_provider.get())) {
+        vp->set_l2_map(&mission_local_planning_map_);
+        if (ego_provider_reference_) {
+            vp->set_fallback_provider(ego_provider_reference_);
+        }
+    }
+
     if (!planning_map_persistence_path_.empty()) {
         mission_local_planning_map_.open_db(planning_map_persistence_path_);
 

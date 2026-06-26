@@ -12,6 +12,7 @@
 
 #include "dedalus/sensors/recorded_frame_source.hpp"
 #include "dedalus/sensors/replay_frame_source.hpp"
+#include "dedalus/sensors/visual_ego_state_provider.hpp"
 #include "dedalus/simulation/airsim_providers.hpp"
 
 namespace dedalus {
@@ -157,9 +158,14 @@ CoreStackProviders ProviderRegistry::create(const CoreStackProviderConfig& confi
     });
 
     providers.ego_provider = resolve<EgoStateProvider>("ego_provider", config.ego_provider, {
-        {"frame_hint",   [&]() { return std::make_unique<FrameHintEgoProvider>(config.fallback_map_frame_id); }},
-        {"no_telemetry", [&]() { return std::make_unique<NoTelemetryEgoProvider>(config.fallback_map_frame_id); }},
-        {"airsim",       [&]() { return std::make_unique<AirSimEgoStateProvider>(airsim); }},
+        {"frame_hint",      [&]() { return std::make_unique<FrameHintEgoProvider>(config.fallback_map_frame_id); }},
+        {"no_telemetry",    [&]() { return std::make_unique<NoTelemetryEgoProvider>(config.fallback_map_frame_id); }},
+        {"airsim",          [&]() { return std::make_unique<AirSimEgoStateProvider>(airsim); }},
+        {"visual_odometry", [&]() {
+            VisualOdometryConfig vo;
+            vo.map_frame_id = config.fallback_map_frame_id;
+            return std::make_unique<VisualEgoStateProvider>(vo);
+        }},
     });
 
     providers.detector = resolve_shared<Detector>("detector", config.detector, {
