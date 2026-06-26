@@ -10,6 +10,26 @@ option(DEDALUS_BUILD_APPS "Build Dedalus runtime/debug apps" ON)
 option(DEDALUS_BUILD_TESTS "Build Dedalus unit tests" ON)
 option(DEDALUS_ENABLE_ONNX_DEPTH "Build ONNXDepthEngine (requires ONNX Runtime)" OFF)
 
+# CUDA depth kernels — auto-detected via CUDAToolkit probe.
+# Override: -DDEDALUS_CUDA=ON (force on) or -DDEDALUS_CUDA=OFF (force off).
+find_package(CUDAToolkit QUIET)
+option(DEDALUS_CUDA "Enable CUDA depth kernels" ${CUDAToolkit_FOUND})
+# TensorRT inference engine — requires DEDALUS_CUDA + TensorRT headers/libs.
+option(DEDALUS_TENSORRT "Enable TensorRTDepthEngine (requires DEDALUS_CUDA + TensorRT)" OFF)
+
+if(DEDALUS_CUDA)
+    find_package(CUDAToolkit REQUIRED)  # promote to REQUIRED now that the option is ON
+    enable_language(CUDA)
+    set(CMAKE_CUDA_STANDARD 17)
+    set(CMAKE_CUDA_STANDARD_REQUIRED ON)
+    # Default: L4 (sm_89) + A100 (sm_80) + A10/RTX30xx (sm_86).
+    # Override on the command line: -DCMAKE_CUDA_ARCHITECTURES=89
+    if(NOT DEFINED CMAKE_CUDA_ARCHITECTURES)
+        set(CMAKE_CUDA_ARCHITECTURES "80;86;89" CACHE STRING
+            "CUDA architectures to compile for")
+    endif()
+endif()
+
 find_package(SQLite3 REQUIRED)
 # Older/patched distro CMake packages find SQLite3 but don't create the
 # imported target.  Create it from the plain variables if missing.
