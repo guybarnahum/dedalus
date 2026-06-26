@@ -34,7 +34,10 @@ CoreStackRunner::CoreStackRunner(CoreStackProviders providers, CoreStackRunnerCo
       mission_obstacle_map_delta_writer_(MissionObstacleMapDeltaWriter::from_environment()),
       mission_traversability_map_artifact_writer_(
           MissionTraversabilityMapArtifactWriter::from_environment()),
-      planning_map_persistence_path_(std::move(config.planning_map_persistence_path)) {
+      planning_map_persistence_path_(std::move(config.planning_map_persistence_path)),
+      perch_candidate_evaluator_(config.perch_candidate_evaluator) {
+    depth_slot_a_name_ = depth_slot_a_ ? depth_slot_a_->provider_name() : "";
+
     if (!snapshot_subscriber_handles_.empty()) {
         if (!snapshot_publisher_) {
             snapshot_publisher_ = std::make_shared<WorldSnapshotPublisher>();

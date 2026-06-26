@@ -602,6 +602,7 @@ std::string to_json(const WorldSnapshot& snapshot) {
     out << "{\n";
     out << "  \"timestamp_ns\": " << snapshot.timestamp.timestamp_ns << ",\n";
     out << "  \"active_map_frame_id\": \"" << escape_json(snapshot.active_map_frame_id.value) << "\",\n";
+    out << "  \"depth_source_name\": \"" << escape_json(snapshot.depth_source_name) << "\",\n";
     out << "  \"appearance_condition\": {\n";
     out << "    \"lighting_mode\": \"" << to_string(snapshot.appearance_condition.lighting_mode) << "\",\n";
     out << "    \"weather_mode\": \"" << to_string(snapshot.appearance_condition.weather_mode) << "\",\n";

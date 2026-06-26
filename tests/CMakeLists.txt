@@ -263,6 +263,13 @@ dedalus_add_native_test(
 
 
 dedalus_add_native_test(
+    NAME perch_candidate_evaluator
+    LAYER unit
+    TAGS sensing perch_candidate vd5 validation
+    SOURCES unit/test_perch_candidate_evaluator.cpp
+)
+
+dedalus_add_native_test(
     NAME trajectory_safety_evaluator
     LAYER unit
     TAGS avoidance trajectory_safety

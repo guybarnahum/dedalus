@@ -21,6 +21,7 @@
 #include "dedalus/avoidance/mission_obstacle_map_delta_writer.hpp"
 #include "dedalus/avoidance/mission_traversability_map_artifact_writer.hpp"
 #include "dedalus/avoidance/trajectory_safety_evaluator.hpp"
+#include "dedalus/runtime/perch_candidate_evaluator.hpp"
 
 #include "dedalus/perception/ghost_targets.hpp"
 #include "dedalus/runtime/evaluation_slot.hpp"
@@ -73,6 +74,8 @@ struct CoreStackRunnerConfig {
     std::shared_ptr<Tracker>          tracker_reference;
     std::shared_ptr<IdentityResolver> identity_resolver_reference;
     std::shared_ptr<Projector3D>      projector_reference;
+
+    PerchCandidateEvaluatorConfig perch_candidate_evaluator;
 
     MissionMapAssimilatorConfig mission_map_assimilator;
 
@@ -147,7 +150,10 @@ private:
     MissionObstacleMapDeltaWriter mission_obstacle_map_delta_writer_;
     MissionTraversabilityMapArtifactWriter mission_traversability_map_artifact_writer_;
     LocalFlightMapAccumulator local_flight_map_accumulator_;
+    std::string               depth_slot_a_name_;   // provider_name() cached at construction
     TrajectorySafetyEvaluator trajectory_safety_evaluator_;
+    PerchCandidateEvaluator   perch_candidate_evaluator_;
+    std::uint32_t             perch_cadence_tick_{0U};
     std::vector<CameraPointingState> camera_pointing_states_;
     std::optional<TimePoint> ghost_scenario_start_;
     // Optional file path for Level 2 planning map cross-mission persistence.
