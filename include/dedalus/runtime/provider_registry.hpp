@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cstddef>
 #include <memory>
 #include <string>
 #include <vector>
@@ -15,6 +16,36 @@
 
 namespace dedalus {
 
+// Flat config for the "visual_onnx" depth provider.
+// Aggregates ONNXDepthEngineConfig + VisualDepthObstacleDetectorConfig fields
+// without pulling ONNX or CUDA headers into this header.
+// config_loader translates this into the concrete component configs at runtime.
+struct VisualONNXDepthConfig {
+    // DepthEngine (ONNX) params
+    std::string model_path;                          // required: path to .onnx file
+    std::string input_name{"image"};
+    std::string output_name{"depth"};
+    int    model_input_width{518};                   // DepthAnythingV2-Small default
+    int    model_input_height{518};
+    bool   use_cuda{false};                          // CUDA EP (requires DEDALUS_CUDA)
+    int    cuda_device_id{0};
+    std::size_t cuda_arena_limit_bytes{1ULL * 1024 * 1024 * 1024};  // 1 GiB
+    bool   use_coreml{false};                        // CoreML EP (macOS)
+
+    // MetricScaleEstimate
+    float  scale{1.0F};                              // metres / (1/relative_depth)
+
+    // VisualDepthObstacleDetector params
+    std::size_t pixel_stride{4U};
+    float  min_depth_m{0.2F};
+    float  max_depth_m{80.0F};
+    float  voxel_size_m{0.5F};
+    float  confidence{0.75F};
+    std::size_t max_evidence{512U};
+    bool   detect_surface_patches{true};
+    bool   detect_thin_structures{true};
+};
+
 struct CoreStackProviderConfig {
     std::string frame_source{"synthetic"};
     std::string ego_provider{"frame_hint"};
@@ -29,7 +60,9 @@ struct CoreStackProviderConfig {
     // depth: name of the primary depth provider (slot A).  Required when
     //   obstacle_sensing cameras are configured.
     //   Valid: "airsim_gt_detector" (AirSim DepthPlanar → legacy detector),
-    //          "airsim_gt_vd"       (AirSim DepthPlanar → VD kernels).
+    //          "airsim_gt_vd"       (AirSim DepthPlanar → VD kernels),
+    //          "visual_onnx"        (RGB camera → ONNX model → VD kernels;
+    //                                requires DEDALUS_ENABLE_ONNX_DEPTH=ON).
     //   Env: DEDALUS_DEPTH.
     // depth_eval: slot B depth provider (reference; agreement metric only).
     //   "" = inactive.  Same valid values as depth.  Env: DEDALUS_DEPTH_EVAL.

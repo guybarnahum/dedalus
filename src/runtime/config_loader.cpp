@@ -15,6 +15,11 @@
 
 #include "dedalus/sensing/airsim_depth_evidence_provider.hpp"
 #include "dedalus/sensing/airsim_emulation_depth_obstacle_detector.hpp"
+#ifdef DEDALUS_ONNX_DEPTH_ENABLED
+#include "dedalus/sensing/metric_scale_estimate.hpp"
+#include "dedalus/sensing/onnx_depth_engine.hpp"
+#include "dedalus/sensing/visual_depth_obstacle_detector.hpp"
+#endif
 
 namespace dedalus {
 namespace {
@@ -74,12 +79,48 @@ std::string env_str_or(const std::string& config_value, const char* env_var) {
 // Returns nullptr if name is empty (slot inactive).
 std::unique_ptr<ObstacleEvidenceProvider> make_depth_provider(
     const std::string& name,
-    const AirSimDepthObstacleDetectorConfig& airsim_gt_config) {
+    const AirSimDepthObstacleDetectorConfig& airsim_gt_config,
+    const VisualONNXDepthConfig& visual_onnx_config) {
     if (name.empty()) return nullptr;
     if (name == "airsim_gt_detector")
         return std::make_unique<AirSimDepthEvidenceProvider>(airsim_gt_config);
     if (name == "airsim_gt_vd")
         return std::make_unique<AirSimEmulationDepthObstacleDetector>();
+    if (name == "visual_onnx") {
+#ifdef DEDALUS_ONNX_DEPTH_ENABLED
+        if (visual_onnx_config.model_path.empty())
+            throw std::invalid_argument("visual_onnx: visual_onnx.model_path is required");
+        ONNXDepthEngineConfig engine_cfg;
+        engine_cfg.model_path           = visual_onnx_config.model_path;
+        engine_cfg.input_name           = visual_onnx_config.input_name;
+        engine_cfg.output_name          = visual_onnx_config.output_name;
+        engine_cfg.model_input_width    = visual_onnx_config.model_input_width;
+        engine_cfg.model_input_height   = visual_onnx_config.model_input_height;
+        engine_cfg.use_cuda             = visual_onnx_config.use_cuda;
+        engine_cfg.cuda_device_id       = visual_onnx_config.cuda_device_id;
+        engine_cfg.cuda_arena_limit_bytes = visual_onnx_config.cuda_arena_limit_bytes;
+        engine_cfg.use_coreml           = visual_onnx_config.use_coreml;
+        VisualDepthObstacleDetectorConfig detector_cfg;
+        detector_cfg.pixel_stride           = visual_onnx_config.pixel_stride;
+        detector_cfg.min_depth_m            = visual_onnx_config.min_depth_m;
+        detector_cfg.max_depth_m            = visual_onnx_config.max_depth_m;
+        detector_cfg.voxel_size_m           = visual_onnx_config.voxel_size_m;
+        detector_cfg.confidence             = visual_onnx_config.confidence;
+        detector_cfg.max_evidence           = visual_onnx_config.max_evidence;
+        detector_cfg.detect_surface_patches = visual_onnx_config.detect_surface_patches;
+        detector_cfg.detect_thin_structures = visual_onnx_config.detect_thin_structures;
+        MetricScaleEstimate scale;
+        scale.scale      = visual_onnx_config.scale;
+        scale.confidence = 1.0F;  // fixed at startup (VD7 will couple to VIO)
+        return std::make_unique<VisualDepthObstacleDetector>(
+            std::make_unique<ONNXDepthEngine>(std::move(engine_cfg)),
+            scale, detector_cfg);
+#else
+        (void)visual_onnx_config;
+        throw std::invalid_argument(
+            "visual_onnx: build requires -DDEDALUS_ENABLE_ONNX_DEPTH=ON");
+#endif
+    }
     throw std::invalid_argument("unknown depth provider: " + name);
 }
 
@@ -92,9 +133,11 @@ void build_depth_slots(CoreStackConfig& config) {
         env_str_or(config.providers.depth_eval, "DEDALUS_DEPTH_EVAL");
 
     config.runner.depth_slot_a =
-        make_depth_provider(depth_name, config.runner.airsim_depth_obstacle_detector);
+        make_depth_provider(depth_name, config.runner.airsim_depth_obstacle_detector,
+                            config.runner.visual_onnx_depth);
     config.runner.depth_slot_b =
-        make_depth_provider(depth_eval_name, config.runner.airsim_depth_obstacle_detector);
+        make_depth_provider(depth_eval_name, config.runner.airsim_depth_obstacle_detector,
+                            config.runner.visual_onnx_depth);
 }
 
 // Apply env var overrides for eval provider names.
@@ -289,6 +332,38 @@ bool parse_airsim_pattern_binding_key(CoreStackProviderConfig& config, const std
 }
 
 
+bool parse_visual_onnx_key(
+    CoreStackRunnerConfig& config,
+    const std::string& key,
+    const std::string& value) {
+    const std::string prefix = "visual_onnx.";
+    if (key.rfind(prefix, 0U) != 0U) return false;
+    const auto field = key.substr(prefix.size());
+    auto& cfg = config.visual_onnx_depth;
+    if (field == "model_path")                { cfg.model_path = value; }
+    else if (field == "input_name")           { cfg.input_name = value; }
+    else if (field == "output_name")          { cfg.output_name = value; }
+    else if (field == "model_input_width")    { cfg.model_input_width  = std::stoi(value); }
+    else if (field == "model_input_height")   { cfg.model_input_height = std::stoi(value); }
+    else if (field == "scale")                { cfg.scale = std::stof(value); }
+    else if (field == "use_cuda")             { cfg.use_cuda = parse_bool(value); }
+    else if (field == "cuda_device_id")       { cfg.cuda_device_id = std::stoi(value); }
+    else if (field == "cuda_arena_limit_bytes") {
+        cfg.cuda_arena_limit_bytes = static_cast<std::size_t>(std::stoull(value));
+    }
+    else if (field == "use_coreml")           { cfg.use_coreml = parse_bool(value); }
+    else if (field == "pixel_stride")         { cfg.pixel_stride = static_cast<std::size_t>(std::stoul(value)); }
+    else if (field == "min_depth_m")          { cfg.min_depth_m = std::stof(value); }
+    else if (field == "max_depth_m")          { cfg.max_depth_m = std::stof(value); }
+    else if (field == "voxel_size_m")         { cfg.voxel_size_m = std::stof(value); }
+    else if (field == "confidence")           { cfg.confidence = std::stof(value); }
+    else if (field == "max_evidence")         { cfg.max_evidence = static_cast<std::size_t>(std::stoul(value)); }
+    else if (field == "detect_surface_patches") { cfg.detect_surface_patches = parse_bool(value); }
+    else if (field == "detect_thin_structures") { cfg.detect_thin_structures = parse_bool(value); }
+    else { throw std::invalid_argument("unknown visual_onnx field: " + key); }
+    return true;
+}
+
 bool parse_airsim_depth_obstacle_detector_key(
     CoreStackRunnerConfig& config,
     const std::string& key,
@@ -323,6 +398,7 @@ bool parse_airsim_depth_obstacle_detector_key(
 }
 
 void apply_config_value(CoreStackConfig& config, const std::string& key, const std::string& value) {
+    if (parse_visual_onnx_key(config.runner, key, value)) return;
     if (parse_airsim_depth_obstacle_detector_key(config.runner, key, value)) return;
     if (parse_airsim_object_binding_key(config.providers, key, value)) return;
     if (parse_airsim_pattern_binding_key(config.providers, key, value)) return;
@@ -416,7 +492,7 @@ void validate_obstacle_sensing_cameras(const MissionOptions& options) {
 
 void validate_depth_provider_name(const std::string& name, const char* field) {
     if (name.empty()) return;
-    if (name != "airsim_gt_detector" && name != "airsim_gt_vd")
+    if (name != "airsim_gt_detector" && name != "airsim_gt_vd" && name != "visual_onnx")
         throw std::invalid_argument(std::string(field) + ": unknown depth provider: " + name);
 }
 

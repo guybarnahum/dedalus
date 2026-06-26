@@ -34,6 +34,18 @@ bridge_command: python3 simulation/airsim/scripts/airsim-stream-frames-binary.py
 # Activates the two-slot depth provider path in CoreStackRunner.
 # airsim_depth_obstacle_detector.* below tunes the detection parameters.
 depth: airsim_gt_detector
+#
+# — visual_onnx slot A (real monocular depth; requires DEDALUS_ENABLE_ONNX_DEPTH=ON) —
+# To use real monocular visual depth instead of AirSim GT:
+#   depth: visual_onnx
+#   visual_onnx.model_path: models/depth_anything_v2_small.onnx
+#   visual_onnx.use_cuda: true          # set false for CPU-only
+#   visual_onnx.scale: 1.0              # adjust after metric calibration
+#   visual_onnx.pixel_stride: 4
+#   visual_onnx.max_depth_m: 60.0
+#   visual_onnx.max_evidence: 256
+# Optionally keep airsim_gt_detector as slot B (agreement metric):
+#   depth_eval: airsim_gt_detector
 
 # Explicit camera sensing coverage required for depth slot volume matching.
 # Camera pitch is updated from camera_pointing_intent during object behavior.

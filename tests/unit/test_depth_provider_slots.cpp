@@ -138,7 +138,7 @@ void test_emulation_evaluates_surfaces_and_thin() {
 // Test 5: provider_name() returns the expected string.
 void test_provider_names() {
     dedalus::AirSimDepthEvidenceProvider adapter;
-    require(adapter.provider_name() == "airsim_depth_gt",
+    require(adapter.provider_name() == "airsim_gt_detector",
         "adapter provider_name mismatch");
 
     dedalus::AirSimEmulationDepthObstacleDetector emulator;

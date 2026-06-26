@@ -8,7 +8,7 @@ a rich HTML report comparing slot A and slot B depth providers.
 Profiler stages consumed:
   depth_slot_a.evidence_count   — int, evidence items from slot A
   depth_slot_b.evidence_count   — int, evidence items from slot B (optional)
-  depth_slot.agreement_ppt      — int, A∩B agreement parts-per-thousand (0–1000)
+  depth.voxel_overlap_ppt       — int, A∩B voxel overlap parts-per-thousand (0–1000)
   depth_slot_a.detect           — int, slot A detect latency (µs)
 
 Usage:
@@ -34,7 +34,7 @@ from pathlib import Path
 STAGE_KEYS = {
     "a_count":    "depth_slot_a.evidence_count",
     "b_count":    "depth_slot_b.evidence_count",
-    "agreement":  "depth_slot.agreement_ppt",
+    "agreement":  "depth.voxel_overlap_ppt",
     "a_latency":  "depth_slot_a.detect",
 }
 

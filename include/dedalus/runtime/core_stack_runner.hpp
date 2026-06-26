@@ -52,6 +52,10 @@ struct CoreStackRunnerConfig {
     // Config loaders populate this; callers that inject providers directly can leave it default.
     AirSimDepthObstacleDetectorConfig airsim_depth_obstacle_detector;
 
+    // Config for the visual_onnx depth provider.
+    // Populated by config_loader when depth: visual_onnx (or depth_eval: visual_onnx).
+    VisualONNXDepthConfig visual_onnx_depth;
+
     // Two-slot depth provider injection.
     //
     // Slot A (primary): evidence feeds L1/L2 map.
