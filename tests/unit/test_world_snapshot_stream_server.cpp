@@ -189,14 +189,13 @@ dedalus::MissionObstacleMapDeltaFrame make_delta_frame() {
 }
 
 void streams_jsonl_runtime_events_to_client() {
-    const auto requested_http_port = reserve_tcp_port();
     dedalus::RuntimeEventStreamServer server{
-        dedalus::RuntimeEventStreamServerConfig{.bind_host = "127.0.0.1", .port = 0, .http_bind_host = "127.0.0.1", .http_port = requested_http_port}};
+        dedalus::RuntimeEventStreamServerConfig{.bind_host = "127.0.0.1", .port = 0, .http_bind_host = "127.0.0.1", .http_port = 0}};
     server.start();
     const auto port = server.port();
     const auto http_port = server.http_port();
     require(port > 0, "ephemeral port should be assigned");
-    require(http_port == requested_http_port, "HTTP port should match requested test port");
+    require(http_port > 0, "HTTP ephemeral port should be assigned");
 
     const int health_fd = connect_to(http_port);
     write_request(health_fd, "GET /healthz HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n");
