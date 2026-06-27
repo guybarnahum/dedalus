@@ -229,6 +229,56 @@ else
   journalctl --user -u dcv-session.service -n 20 --no-pager
 fi
 
+# ---------------- Step 3b: ONNX Runtime C++ SDK ----------------
+# Installs the prebuilt GPU SDK so CMake can find onnxruntime::onnxruntime.
+# The Python onnxruntime-gpu wheel (Step 5) is a separate install; the C++ SDK
+# provides headers + shared library for the dedalus_core build.
+ORT_VERSION="1.21.1"
+ORT_INSTALL_DIR="/usr/local/onnxruntime"
+ORT_TARBALL="onnxruntime-linux-x64-gpu-${ORT_VERSION}.tgz"
+ORT_URL="https://github.com/microsoft/onnxruntime/releases/download/v${ORT_VERSION}/${ORT_TARBALL}"
+
+if [ ! -f "${ORT_INSTALL_DIR}/lib/cmake/onnxruntime/onnxruntimeConfig.cmake" ]; then
+    run_and_log "Download ONNX Runtime C++ GPU SDK v${ORT_VERSION}" \
+        wget -q -O "/tmp/${ORT_TARBALL}" "${ORT_URL}"
+
+    run_and_log "Install ONNX Runtime C++ SDK to ${ORT_INSTALL_DIR}" bash -c "
+        set -e
+        cd /tmp
+        tar -xzf '${ORT_TARBALL}'
+        sudo rm -rf '${ORT_INSTALL_DIR}'
+        sudo mv 'onnxruntime-linux-x64-gpu-${ORT_VERSION}' '${ORT_INSTALL_DIR}'
+        rm -f '${ORT_TARBALL}'
+    "
+
+    # The cmake config references lib64/ but the tarball ships lib/.
+    run_and_log "Symlink ORT lib → lib64" \
+        sudo ln -sfn "${ORT_INSTALL_DIR}/lib" "${ORT_INSTALL_DIR}/lib64"
+
+    # The cmake INTERFACE_INCLUDE_DIRECTORIES points at include/onnxruntime/
+    # but headers live directly in include/. Create a subdirectory with symlinks.
+    run_and_log "Create ORT include/onnxruntime header links" bash -c "
+        set -e
+        sudo mkdir -p '${ORT_INSTALL_DIR}/include/onnxruntime'
+        for h in '${ORT_INSTALL_DIR}/include/'*.h; do
+            [ -f \"\$h\" ] || continue
+            sudo ln -sf \"\$h\" '${ORT_INSTALL_DIR}/include/onnxruntime/'\"$(basename \$h)\"
+        done
+    "
+else
+    echo "✅ ONNX Runtime C++ SDK already installed at ${ORT_INSTALL_DIR}."
+fi
+
+run_and_log "Validate ORT C++ SDK layout" bash -c "
+    set -e
+    test -f '${ORT_INSTALL_DIR}/lib/libonnxruntime.so'            || { echo 'MISSING: libonnxruntime.so';            exit 1; }
+    test -L '${ORT_INSTALL_DIR}/lib64'                            || { echo 'MISSING: lib64 symlink';                exit 1; }
+    test -f '${ORT_INSTALL_DIR}/include/onnxruntime_cxx_api.h'   || { echo 'MISSING: onnxruntime_cxx_api.h';        exit 1; }
+    test -f '${ORT_INSTALL_DIR}/include/onnxruntime/onnxruntime_cxx_api.h' || { echo 'MISSING: include/onnxruntime/ symlink'; exit 1; }
+    test -f '${ORT_INSTALL_DIR}/lib/cmake/onnxruntime/onnxruntimeConfig.cmake' || { echo 'MISSING: cmake config'; exit 1; }
+    echo 'ORT C++ SDK layout OK'
+"
+
 # ---------------- Step 4: Eclipse iceoryx (IPC) ----------------
 echo "⚙️  Building Eclipse iceoryx (IPC)..."
 if [ ! -f "$ICEORYX_BUILD_DIR/.installed" ]; then
@@ -310,6 +360,15 @@ run_and_log "Install flight Python dependencies" python -m pip install \
   packaging
 
 run_and_log "Verify PX4 Python build dependencies" python -c "import em, yaml, jinja2, toml, jsonschema, genmsg, packaging, menuconfig, kconfiglib; assert hasattr(em, 'RAW_OPT') and hasattr(em, 'BUFFERED_OPT')"
+
+run_and_log "Install perception ML dependencies (depth export)" python -m pip install \
+  torch \
+  transformers \
+  onnx \
+  onnxscript \
+  onnxruntime-gpu
+
+run_and_log "Verify perception ML dependencies" python -c "import torch, transformers, onnx, onnxscript, onnxruntime; print('ORT providers:', onnxruntime.get_available_providers())"
 
 echo "✅ Python environment ready at $VENV_PATH"
 # --------------------------------------------------------------

@@ -22,18 +22,18 @@ cd "$(git rev-parse --show-toplevel)"
 
 git pull --ff-only
 
-# CUDA override: set DEDALUS_CUDA=0 to force off, DEDALUS_CUDA=1 to force on.
-# Without an override, CMakeLists.txt auto-probes via find_package(CUDAToolkit QUIET).
+echo ""
+echo "┌─ Build configuration ──────────────────────────────────────────┐"
+
+# ── CUDA ─────────────────────────────────────────────────────────────
 CUDA_CMAKE_FLAG=""
 if [[ "${DEDALUS_CUDA:-}" == "0" ]]; then
     CUDA_CMAKE_FLAG="-DDEDALUS_CUDA=OFF"
-    echo "[build] CUDA: forced off"
+    echo "│  CUDA:       OFF (forced)"
 elif [[ "${DEDALUS_CUDA:-}" == "1" ]]; then
     CUDA_CMAKE_FLAG="-DDEDALUS_CUDA=ON"
-    echo "[build] CUDA: forced on"
+    echo "│  CUDA:       ON  (forced)"
 else
-    # nvcc may be installed but not in PATH (common on EC2/Ubuntu).
-    # Check standard CUDA toolkit locations.
     NVCC_BIN=""
     for _candidate in \
         "$(command -v nvcc 2>/dev/null)" \
@@ -46,16 +46,45 @@ else
         fi
     done
     if [[ -n "$NVCC_BIN" ]]; then
-        echo "[build] CUDA: detected ($NVCC_BIN) — DEDALUS_CUDA will auto-enable"
-        # Ensure nvcc is reachable for CMake's CUDAToolkit probe
+        GPU_NAME=$(nvidia-smi --query-gpu=name --format=csv,noheader 2>/dev/null | head -n1 || echo "unknown")
+        CUDA_VER=$(nvidia-smi 2>/dev/null | awk '/CUDA Version/{print $9}' || echo "?")
+        echo "│  CUDA:       AUTO — detected nvcc at ${NVCC_BIN}"
+        echo "│              GPU: ${GPU_NAME}  CUDA ${CUDA_VER}"
         export PATH="$(dirname "$NVCC_BIN"):$PATH"
     else
-        echo "[build] CUDA: not detected — CPU-only build"
-        echo "[build]   (install with: sudo apt-get install -y cuda-toolkit)"
+        echo "│  CUDA:       OFF  (nvcc not found — CPU-only)"
+        echo "│              hint: sudo apt-get install -y cuda-toolkit"
     fi
 fi
 
-cmake -S . -B "$BUILD_DIR" -DCMAKE_BUILD_TYPE=RelWithDebInfo ${CUDA_CMAKE_FLAG:+"$CUDA_CMAKE_FLAG"}
+# ── ONNX Runtime ─────────────────────────────────────────────────────
+ORT_INSTALL_DIR="${ORT_INSTALL_DIR:-/usr/local/onnxruntime}"
+ONNX_CMAKE_FLAGS=""
+if [[ "${DEDALUS_ONNX_DEPTH:-}" == "0" ]]; then
+    echo "│  ONNX depth: OFF (forced)"
+elif [[ "${DEDALUS_ONNX_DEPTH:-}" == "1" ]]; then
+    ONNX_CMAKE_FLAGS="-DDEDALUS_ENABLE_ONNX_DEPTH=ON -DCMAKE_PREFIX_PATH=${ORT_INSTALL_DIR}"
+    ORT_VER=$(basename "$(ls "${ORT_INSTALL_DIR}/lib/libonnxruntime.so."* 2>/dev/null | head -n1)" \
+              2>/dev/null | sed 's/libonnxruntime.so.//' || echo "?")
+    echo "│  ONNX depth: ON  (forced)  SDK ${ORT_VER} at ${ORT_INSTALL_DIR}"
+elif [[ -f "${ORT_INSTALL_DIR}/lib/cmake/onnxruntime/onnxruntimeConfig.cmake" ]]; then
+    ONNX_CMAKE_FLAGS="-DDEDALUS_ENABLE_ONNX_DEPTH=ON -DCMAKE_PREFIX_PATH=${ORT_INSTALL_DIR}"
+    ORT_VER=$(basename "$(ls "${ORT_INSTALL_DIR}/lib/libonnxruntime.so."* 2>/dev/null | head -n1)" \
+              2>/dev/null | sed 's/libonnxruntime.so.//' || echo "?")
+    echo "│  ONNX depth: ON  (auto)    SDK ${ORT_VER} at ${ORT_INSTALL_DIR}"
+else
+    echo "│  ONNX depth: OFF (SDK not found at ${ORT_INSTALL_DIR})"
+    echo "│              hint: run ./setup.sh  or set ORT_INSTALL_DIR"
+fi
+
+echo "│  Build dir:  ${BUILD_DIR}"
+echo "│  Jobs:       $(dedalus_build_jobs)"
+echo "└────────────────────────────────────────────────────────────────┘"
+echo ""
+
+cmake -S . -B "$BUILD_DIR" -DCMAKE_BUILD_TYPE=RelWithDebInfo \
+    ${CUDA_CMAKE_FLAG:+"$CUDA_CMAKE_FLAG"} \
+    ${ONNX_CMAKE_FLAGS:+$ONNX_CMAKE_FLAGS}
 
 cmake --build "$BUILD_DIR" -j"$(dedalus_build_jobs)"
 

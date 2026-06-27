@@ -66,6 +66,7 @@ def main() -> None:
             return depth
 
     wrapper = _Wrapper(model)
+    wrapper.eval()
 
     output_path = args.output
     output_path.parent.mkdir(parents=True, exist_ok=True)
