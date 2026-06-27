@@ -91,6 +91,10 @@ EXIT_ON_COMPLETE=1
 KILL_EXISTING=1
 PROGRESS_FLAG="--progress"
 SIM_CONFIG_PATH="$(dirname "$0")/run_mission_config.yaml"
+# MP4 generation — off by default.  Set --output-mp4 to enable.
+ANNOTATION_DIR=""       # where the PPM depth-annotation frames are written (from config annotation_output_path)
+OUTPUT_MP4=""           # destination .mp4; empty = disabled
+OUTPUT_MP4_FPS="10"    # input frame rate for ffmpeg -framerate
 
 usage() {
     cat <<'EOF'
@@ -184,6 +188,11 @@ Options:
   --expect-sequence-step-modes CSV
                                 Step policy modes, e.g. approach:target:target,circle:target:target
   --no-progress               Do not pass --progress to mission-loop
+  --output-mp4 PATH           After mission completes, encode depth-annotation PPMs to H.264 MP4.
+                                Requires ffmpeg on PATH.  The annotation frame directory is taken
+                                from --annotation-dir, or from the config annotation_output_path key.
+  --annotation-dir PATH       Override the annotation PPM frame directory (resolved relative to repo root).
+  --output-mp4-fps N          Input frame rate for ffmpeg.  Default: 10
   --attach                    Attach to tmux after starting
   --keep-tools-running        Do not stop camera bridge / overlay on mission runtime_stop
   --no-kill-existing          Do not kill an existing tmux session with the same name
@@ -411,6 +420,9 @@ while [[ $# -gt 0 ]]; do
         --expect-sequence-steps) VALIDATION_SEQUENCE_STEPS="$2"; shift 2 ;;
         --expect-sequence-step-modes) VALIDATION_SEQUENCE_STEP_MODES="$2"; shift 2 ;;
         --no-progress) PROGRESS_FLAG=""; shift ;;
+        --output-mp4) OUTPUT_MP4="$(creatable_abs_path "$2")"; shift 2 ;;
+        --annotation-dir) ANNOTATION_DIR="$(abs_path "$2")"; shift 2 ;;
+        --output-mp4-fps) OUTPUT_MP4_FPS="$2"; shift 2 ;;
         --attach) ATTACH=1; shift ;;
         --keep-tools-running) EXIT_ON_COMPLETE=0; shift ;;
         --no-kill-existing) KILL_EXISTING=0; shift ;;
@@ -1039,6 +1051,61 @@ if [[ "$MERGE_OBSTACLE_MAP" -eq 1 ]]; then
     POST_MISSION_RUN_SHELL="bash $(printf '%q' "$POST_MISSION_SCRIPT") 2>&1 | tee $(printf '%q' "$POST_MISSION_LOG")"
     tmux new-window -t "$SESSION_NAME" -n post-mission "bash -lc $(printf '%q' "$(tmux_shell_with_failure_hold "$POST_MISSION_RUN_SHELL")")"
 fi
+if [[ -n "$OUTPUT_MP4" ]]; then
+    # Derive annotation dir from config annotation_output_path if not explicit.
+    if [[ -z "$ANNOTATION_DIR" ]]; then
+        _ann="$(config_value 'annotation_output_path')"
+        if [[ -n "$_ann" ]]; then
+            ANNOTATION_DIR="$REPO_ROOT_ABS/$_ann"
+        else
+            ANNOTATION_DIR="$OUTPUT_DIR/annotation"
+        fi
+    fi
+    MP4_LOG="$LOG_DIR_ABS/mp4_render_${TIMESTAMP}.log"
+    MP4_SHELL=$(cat <<MPEOF
+set -euo pipefail
+cd $(printf '%q' "$REPO_ROOT_ABS")
+EVENTS=$(printf '%q' "$OUTPUT_DIR/mission_events.jsonl")
+TIMEOUT=$(printf '%q' "$VALIDATION_TIMEOUT_S")
+python3 - "\$EVENTS" "\$TIMEOUT" <<'PYWAIT'
+import json, sys, time
+from pathlib import Path
+path = Path(sys.argv[1])
+timeout_s = float(sys.argv[2])
+start = time.monotonic()
+print(f"mp4-render: waiting for runtime_stop in {path}", flush=True)
+while True:
+    events = []
+    if path.exists():
+        for line in path.read_text(encoding="utf-8").splitlines():
+            try: events.append(json.loads(line.strip()))
+            except: pass
+    if any(isinstance(e, dict) and e.get("event") == "runtime_stop" for e in events):
+        print("mp4-render: runtime_stop observed", flush=True)
+        break
+    if timeout_s > 0 and time.monotonic() - start >= timeout_s:
+        raise SystemExit(f"mp4-render: timed out after {timeout_s}s")
+    time.sleep(2.0)
+PYWAIT
+ANN_DIR=$(printf '%q' "$ANNOTATION_DIR")
+OUTPUT_MP4=$(printf '%q' "$OUTPUT_MP4")
+echo "mp4-render: encoding \${ANN_DIR}/*.ppm → \${OUTPUT_MP4}"
+shopt -s nullglob
+frames=("\${ANN_DIR}"/*.ppm)
+if [[ \${#frames[@]} -eq 0 ]]; then
+    echo "mp4-render: no .ppm frames found in \${ANN_DIR}; skipping"
+    exit 0
+fi
+ffmpeg -y -framerate $(printf '%q' "$OUTPUT_MP4_FPS") -pattern_type glob \
+    -i "\${ANN_DIR}/*.ppm" \
+    -vf "scale=trunc(iw/2)*2:trunc(ih/2)*2" \
+    -c:v libx264 -crf 23 -pix_fmt yuv420p \
+    "\${OUTPUT_MP4}"
+echo "mp4-render: wrote \${OUTPUT_MP4}"
+MPEOF
+)
+    tmux new-window -t "$SESSION_NAME" -n mp4-render "bash -lc $(printf '%q' "$(tmux_shell_with_failure_hold "$MP4_SHELL")") 2>&1 | tee $(printf '%q' "$MP4_LOG")"
+fi
 MISSION_ENV_VARS=()
 if [[ -n "${DEDALUS_SITE_ID:-}" ]]; then
     MISSION_ENV_VARS+=("DEDALUS_SITE_ID=$DEDALUS_SITE_ID")
@@ -1160,6 +1227,14 @@ if [[ "$MERGE_OBSTACLE_MAP" -eq 1 ]]; then
     echo ""
 fi
 
+if [[ -n "$OUTPUT_MP4" ]]; then
+    echo "MP4 render (post-mission):"
+    echo "  annotation dir: $ANNOTATION_DIR"
+    echo "  output mp4:     $OUTPUT_MP4"
+    echo "  fps:            $OUTPUT_MP4_FPS"
+    echo "  log:            $MP4_LOG"
+    echo ""
+fi
 echo "Exit on mission complete: $([[ "$EXIT_ON_COMPLETE" -eq 1 ]] && echo yes || echo no)"
 echo "Useful commands:"
 echo "  attach: tmux attach -t $SESSION_NAME"
