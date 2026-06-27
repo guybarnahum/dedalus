@@ -509,6 +509,7 @@ int main(int argc, char** argv) {
                 dedalus::RuntimeEventStreamServerConfig{
                     .bind_host = args.world_snapshot_stream_host,
                     .port = static_cast<std::uint16_t>(args.world_snapshot_stream_port),
+                    .http_enabled = (args.runtime_event_http_port > 0),
                     .http_bind_host = args.runtime_event_http_host,
                     .http_port = static_cast<std::uint16_t>(args.runtime_event_http_port),
                     .http_static_root = args.runtime_event_static_root});

@@ -190,7 +190,7 @@ dedalus::MissionObstacleMapDeltaFrame make_delta_frame() {
 
 void streams_jsonl_runtime_events_to_client() {
     dedalus::RuntimeEventStreamServer server{
-        dedalus::RuntimeEventStreamServerConfig{.bind_host = "127.0.0.1", .port = 0, .http_bind_host = "127.0.0.1", .http_port = 0}};
+        dedalus::RuntimeEventStreamServerConfig{.bind_host = "127.0.0.1", .port = 0, .http_enabled = true, .http_bind_host = "127.0.0.1", .http_port = 0}};
     server.start();
     const auto port = server.port();
     const auto http_port = server.http_port();

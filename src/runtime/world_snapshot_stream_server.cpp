@@ -189,7 +189,7 @@ void RuntimeEventStreamServer::start() {
         throw;
     }
 
-    if (config_.http_port != 0) {
+    if (config_.http_enabled || config_.http_port != 0) {
         try {
             http_listen_fd_ = create_listen_socket(
                 config_.http_bind_host,

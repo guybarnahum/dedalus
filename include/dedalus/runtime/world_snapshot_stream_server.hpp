@@ -25,7 +25,9 @@ namespace dedalus {
 struct RuntimeEventStreamServerConfig {
     std::string bind_host{"127.0.0.1"};
     std::uint16_t port{0};
-    // Optional browser-facing HTTP/SSE endpoint. Disabled when http_port == 0.
+    // Optional browser-facing HTTP/SSE endpoint.
+    // Set http_enabled=true to activate; http_port=0 assigns an ephemeral OS port.
+    bool http_enabled{false};
     std::string http_bind_host{"127.0.0.1"};
     std::uint16_t http_port{0};
     // Optional static-file root for browser diagnostics. Empty disables static serving.
