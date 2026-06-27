@@ -1,42 +1,22 @@
-# AirSim trajectory-scenario far-animal diagonal-motion mixed-mode approach->circle run config.
+# ── Mission: Follow slow animal with per-step altitude profile ─────────────────
+# Trajectory-scenario ghost target: slow animal at 0.20 m/s along local +X,
+# starting at [58.0, -22.0, 0.0].  Uses the 2.31A altitude-profile behavior
+# spec which varies flight height across sequence steps.
 #
-# 2.30B stress target:
-#   source_track_id: ghost_far_animal_001
-#   class: animal
-#   source: config/behaviors/ghost_detections/far_animal_diagonal.json
-#   initial_position_local_m: [58.0, -22.0, 0.0]
-#   velocity: 0.35 m/s along local +X and +Y
-
-frame_source: airsim
-ego_provider: frame_hint
-detector: scripted
-camera_stabilizer: null
-tracker: simple_centroid
-identity_resolver: appearance_only
-projector: flat_ground
-world_model: in_memory
-frame_annotator: ppm_sequence
-annotation_output_path: out/object_behavior_airsim_far_animal_diagonal_mixed_mode_annotation
-annotation_output_fps: 5
-fallback_map_frame_id: map_airsim_mission_0001
-
-source_host: 127.0.0.1
-source_rpc_port: 41451
-vehicle_name: PX4
-vehicle_camera_name: front_center
-bridge_transport: pipe
-bridge_mode: stream_binary_ego
-bridge_command: python3 simulation/airsim/scripts/airsim-stream-frames-binary.py --include-ego --rate-hz 5 --mavlink-armed-endpoints udpin:127.0.0.1:14540
-
-ghost_targets_enabled: true
-ghost_targets_source: trajectory_scenario
-ghost_targets_scenario_path: config/behaviors/ghost_detections/far_animal_diagonal.json
+# Note: safe_height and px4_command_bridge safe-height are 40 m (not 16 m)
+# to accommodate the altitude profile envelope.
+#
+# Ghost source: config/behaviors/ghost_detections/far_animal_slow.json
 
 mission_controller: object_behavior
 mission_tick_hz: 10
 flight_command_sink: px4_bridge
 
-mission_options.behavior_spec_path: config/behaviors/sequence_approach_circle_far_animal_slow_mixed_mode.yaml
+ghost_targets_enabled: true
+ghost_targets_source: trajectory_scenario
+ghost_targets_scenario_path: config/behaviors/ghost_detections/far_animal_slow.json
+
+mission_options.behavior_spec_path: config/behaviors/sequence_approach_circle_far_animal_slow_altitude_profile.yaml
 mission_options.object_behavior_hold_velocity_mps: 0.0
 mission_options.object_behavior_altitude_policy: safe_height_floor
 mission_options.object_behavior_zero_target_velocity: false
@@ -68,12 +48,12 @@ mission_options.object_behavior_debug_every_n_ticks: 10
 mission_options.object_behavior_debug_level: 2
 mission_options.object_behavior_completion_after_s: 240.0
 
-mission_options.flight_control_mode: px4
 mission_options.flight_prepare_session_command: python3 simulation/airsim/scripts/airsim-prepare-session.py --host 127.0.0.1 --rpc-port 41451 --vehicle-name PX4 --mavlink-endpoints udpin:127.0.0.1:14550,udpin:127.0.0.1:14540,udpin:127.0.0.1:14600
-mission_options.flight_safe_height_m: 16
-mission_options.flight_px4_command_bridge: python3 tools/px4/px4-command-bridge.py --mavlink-endpoints udpin:127.0.0.1:14550 --px4-tmux-target dedalus-sim:px4 --safe-height 16 --safe-height-timeout-s 60
+mission_options.flight_safe_height_m: 40
+mission_options.flight_takeoff_height_m: 40
+mission_options.object_behavior_min_height_m: 16
+mission_options.flight_px4_command_bridge: python3 tools/px4/px4-command-bridge.py --mavlink-endpoints udpin:127.0.0.1:14550 --px4-tmux-target dedalus-sim:px4 --safe-height 40 --safe-height-timeout-s 60
 mission_options.flight_home_policy: initial_ego_pose
-
 mission_options.flight_arm_retry_interval_s: 4.0
 mission_options.flight_arm_timeout_s: 30.0
 mission_options.flight_arm_dispatch_fallback_s: 2.0

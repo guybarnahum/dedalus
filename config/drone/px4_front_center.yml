@@ -1,0 +1,27 @@
+# ── Drone: PX4 · front-center camera (RGB only) ───────────────────────────────
+# Standard PX4 vehicle with a single forward-facing monocular camera.
+# The bridge streams RGB + ego at 5 Hz via binary pipe.
+#
+# Use px4_front_center_depth.yml when the depth slot is airsim_gt_detector
+# (adds --include-depth to the bridge command).
+#
+# Override at runtime:
+#   DEDALUS_DRONE_VEHICLE_NAME=<name>   DEDALUS_DRONE_CAMERA_NAME=<cam>
+
+vehicle_name: PX4
+vehicle_camera_name: front_center
+bridge_mode: stream_binary_ego
+bridge_command: python3 simulation/airsim/scripts/airsim-stream-frames-binary.py --include-ego --rate-hz 5 --mavlink-armed-endpoints udpin:127.0.0.1:14540
+
+# Front-center camera sensing geometry (body_T_camera = identity at neutral pitch).
+mission_options.obstacle_sensing.cameras.0.name: front_center
+mission_options.obstacle_sensing.cameras.0.role: visual_obstacle_detector
+mission_options.obstacle_sensing.cameras.0.horizontal_fov_deg: 90
+mission_options.obstacle_sensing.cameras.0.vertical_fov_deg: 60
+mission_options.obstacle_sensing.cameras.0.near_range_m: 0.5
+mission_options.obstacle_sensing.cameras.0.far_range_m: 80
+mission_options.obstacle_sensing.cameras.0.min_reliable_range_m: 1
+mission_options.obstacle_sensing.cameras.0.max_reliable_range_m: 60
+mission_options.obstacle_sensing.cameras.0.body_T_camera_xyz_m: [0, 0, 0]
+mission_options.obstacle_sensing.cameras.0.body_T_camera_rpy_deg: [0, 0, 0]
+mission_options.obstacle_sensing.cameras.0.pointing_source: camera_pointing_intent

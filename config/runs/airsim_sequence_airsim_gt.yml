@@ -1,0 +1,9 @@
+# ── Run: AirSim  ·  approach→circle sequence  ·  AirSim GT ──────────────────
+
+include: config/env/airsim.yml
+include: config/drone/px4_front_center_depth.yml
+include: config/pipeline/airsim_gt.yml
+include: config/mission/sequence_person.yml
+include: config/output/standard_ppm.yml
+
+annotation_output_path: out/sequence_person_airsim_gt_annotation

@@ -1,0 +1,9 @@
+# ── Run: AirSim  ·  approach→circle sequence  ·  Visual pipeline ─────────────
+
+include: config/env/airsim.yml
+include: config/drone/px4_front_center.yml
+include: config/pipeline/visual.yml
+include: config/mission/sequence_person.yml
+include: config/output/standard_ppm.yml
+
+annotation_output_path: out/sequence_person_visual_annotation

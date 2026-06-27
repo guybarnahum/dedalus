@@ -5,13 +5,16 @@
 #include <cmath>
 #include <cstdint>
 #include <cstdlib>
+#include <filesystem>
 #include <fstream>
 #include <iostream>
 #include <limits>
+#include <set>
 #include <sstream>
 #include <stdexcept>
 #include <string>
 #include <utility>
+#include <vector>
 
 #include "dedalus/sensing/airsim_depth_evidence_provider.hpp"
 #include "dedalus/sensing/airsim_emulation_depth_obstacle_detector.hpp"
@@ -551,10 +554,26 @@ void validate_provider_names(const CoreStackProviderConfig& config, const Provid
     check_opt("projector_eval",         config.projector_eval,         registry.projectors());
 }
 
-CoreStackConfig load_core_stack_app_config(const std::string& path) {
-    std::ifstream input{path};
-    if (!input) throw std::runtime_error("failed to open core-stack config: " + path);
-    CoreStackConfig config;
+// Load one file's key-value pairs into config, recursively expanding include: directives.
+// loading_stack tracks the current include chain for circular-include detection.
+// Paths in include: are resolved relative to the including file's directory.
+void load_file_into_config(CoreStackConfig& config,
+                            const std::filesystem::path& file_path,
+                            std::set<std::string>& loading_stack) {
+    const auto canonical = std::filesystem::weakly_canonical(file_path).string();
+    if (loading_stack.count(canonical)) {
+        throw std::runtime_error("circular include detected involving: " + canonical);
+    }
+    loading_stack.insert(canonical);
+
+    std::ifstream input{file_path};
+    if (!input) throw std::runtime_error("failed to open core-stack config: " + file_path.string());
+
+    // Two-pass: collect all (key, value) pairs first so that include: lines are
+    // processed before this file's own keys (include = base, own keys = override).
+    std::vector<std::pair<std::string, std::string>> include_lines;
+    std::vector<std::pair<std::string, std::string>> own_lines;
+
     std::string line;
     int line_number = 0;
     while (std::getline(input, line)) {
@@ -564,13 +583,44 @@ CoreStackConfig load_core_stack_app_config(const std::string& path) {
         line = trim(line);
         if (line.empty()) continue;
         const auto separator_pos = line.find(':');
-        if (separator_pos == std::string::npos) throw std::runtime_error("invalid core-stack config line " + std::to_string(line_number) + ": missing ':'");
+        if (separator_pos == std::string::npos)
+            throw std::runtime_error("invalid config line " + std::to_string(line_number) +
+                                     " in " + file_path.string() + ": missing ':'");
         const std::string key = trim(line.substr(0U, separator_pos));
         const std::string value = strip_quotes(trim(line.substr(separator_pos + 1U)));
-        if (key.empty() || value.empty()) throw std::runtime_error("invalid core-stack config line " + std::to_string(line_number) + ": empty key or value");
-        try { apply_config_value(config, key, value); }
-        catch (const std::exception& ex) { throw std::runtime_error("invalid core-stack config line " + std::to_string(line_number) + ": " + ex.what()); }
+        if (key.empty() || value.empty())
+            throw std::runtime_error("invalid config line " + std::to_string(line_number) +
+                                     " in " + file_path.string() + ": empty key or value");
+        if (key == "include") {
+            include_lines.emplace_back(key, value);
+        } else {
+            own_lines.emplace_back(key, value);
+        }
     }
+
+    // Apply included files first (base configs, earlier = lower priority).
+    for (const auto& [k, inc_path] : include_lines) {
+        const auto resolved = file_path.parent_path() / inc_path;
+        load_file_into_config(config, resolved, loading_stack);
+    }
+
+    // Apply this file's own keys — these override anything set by includes.
+    for (const auto& [key, value] : own_lines) {
+        try { apply_config_value(config, key, value); }
+        catch (const std::exception& ex) {
+            throw std::runtime_error("invalid config key '" + key + "' in " +
+                                     file_path.string() + ": " + ex.what());
+        }
+    }
+
+    loading_stack.erase(canonical);
+}
+
+CoreStackConfig load_core_stack_app_config(const std::string& path) {
+    CoreStackConfig config;
+    std::set<std::string> loading_stack;
+    load_file_into_config(config, std::filesystem::path{path}, loading_stack);
+
     // Apply env var overrides for depth and perception eval provider names
     // before validation so errors reference the final effective names.
     config.providers.depth      = env_str_or(config.providers.depth,      "DEDALUS_DEPTH");
@@ -580,6 +630,30 @@ CoreStackConfig load_core_stack_app_config(const std::string& path) {
     validate_config(config.providers);
 
     // Resolve string names → concrete provider instances.
+    build_depth_slots(config);
+    ProviderRegistry{}.populate_runner_eval_slots(config.providers, config.runner);
+
+    return config;
+}
+
+CoreStackConfig load_core_stack_app_config(const std::vector<std::string>& paths) {
+    if (paths.empty()) throw std::invalid_argument("load_core_stack_app_config: no config paths provided");
+    if (paths.size() == 1U) return load_core_stack_app_config(paths[0]);
+
+    // Merge multiple files left-to-right: each file (and its include: chain) is
+    // applied on top of the previous, so later files take precedence.
+    CoreStackConfig config;
+    std::set<std::string> loading_stack;
+    for (const auto& path : paths) {
+        load_file_into_config(config, std::filesystem::path{path}, loading_stack);
+    }
+
+    config.providers.depth      = env_str_or(config.providers.depth,      "DEDALUS_DEPTH");
+    config.providers.depth_eval = env_str_or(config.providers.depth_eval, "DEDALUS_DEPTH_EVAL");
+    apply_eval_env_overrides(config.providers);
+
+    validate_config(config.providers);
+
     build_depth_slots(config);
     ProviderRegistry{}.populate_runner_eval_slots(config.providers, config.runner);
 

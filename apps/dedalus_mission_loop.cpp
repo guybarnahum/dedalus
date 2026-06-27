@@ -58,7 +58,7 @@ enum class ProgressMode {
 };
 
 struct Args {
-    std::string config_path{"config/core_stack_trajectory_mission_placeholder.yaml"};
+    std::vector<std::string> config_paths;
     std::filesystem::path output_dir{"out/mission_loop_snapshots"};
     int max_frames{0};
     int shutdown_max_frames{300};
@@ -75,6 +75,9 @@ struct Args {
     bool safe_height_override_explicit{false};
     // L2 persistent map path — derived from DEDALUS_SITE_ID if not empty.
     std::string planning_map_persistence_path;
+    // When true, the L2 map runs in-memory only for this session (not written
+    // to SQLite).  Useful while validating noisy visual-odometry evidence.
+    bool no_l2_persist{false};
 };
 
 class ProgressReporter {
@@ -222,7 +225,7 @@ Args parse_args(int argc, char** argv) {
             if (i + 1 >= argc) {
                 throw std::invalid_argument("--config requires a path");
             }
-            args.config_path = argv[++i];
+            args.config_paths.push_back(argv[++i]);
         } else if (arg == "--output-dir") {
             if (i + 1 >= argc) {
                 throw std::invalid_argument("--output-dir requires a path");
@@ -269,6 +272,8 @@ Args parse_args(int argc, char** argv) {
             if (args.behavior_min_height_override_m <= 0.0) {
                 throw std::invalid_argument("--behavior-min-height must be > 0");
             }
+        } else if (arg == "--no-l2-persist") {
+            args.no_l2_persist = true;
         } else if (arg == "--progress") {
             args.progress_mode = ProgressMode::On;
         } else if (arg == "--no-progress") {
@@ -313,10 +318,20 @@ Args parse_args(int argc, char** argv) {
             }
         }
     }
-    // Derive L2 persistence path from DEDALUS_SITE_ID if not set by any other means.
-    if (args.planning_map_persistence_path.empty()) {
-        if (const char* site_id = std::getenv("DEDALUS_SITE_ID")) {
-            args.planning_map_persistence_path = std::string{"maps/"} + site_id + "/l2_map.db";
+    // Default config path when none was specified.
+    if (args.config_paths.empty()) {
+        args.config_paths.push_back("config/core_stack_ci.yaml");
+    }
+    // Derive L2 persistence path from DEDALUS_SITE_ID unless ephemeral mode is active.
+    // Ephemeral mode: --no-l2-persist flag OR DEDALUS_L2_NO_PERSIST=1 env var.
+    // In ephemeral mode the L2 map runs in-memory only; no SQLite writes this session.
+    {
+        const char* no_persist_env = std::getenv("DEDALUS_L2_NO_PERSIST");
+        const bool env_no_persist = (no_persist_env != nullptr && std::string{no_persist_env} != "0");
+        if (!args.no_l2_persist && !env_no_persist && args.planning_map_persistence_path.empty()) {
+            if (const char* site_id = std::getenv("DEDALUS_SITE_ID")) {
+                args.planning_map_persistence_path = std::string{"maps/"} + site_id + "/l2_map.db";
+            }
         }
     }
     return args;
@@ -446,7 +461,7 @@ int main(int argc, char** argv) {
         const auto args = parse_args(argc, argv);
         std::filesystem::create_directories(args.output_dir);
 
-        auto app_config = dedalus::load_core_stack_app_config(args.config_path);
+        auto app_config = dedalus::load_core_stack_app_config(args.config_paths);
         auto& config = app_config.providers;
         apply_cli_overrides(config, args);
         dedalus::ProviderRegistry registry;

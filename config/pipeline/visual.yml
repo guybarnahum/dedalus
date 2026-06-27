@@ -1,0 +1,36 @@
+# ── Pipeline: Visual ego + monocular depth (no AirSim GT) ─────────────────────
+# Fully visual sensing — no AirSim ground truth used for ego or depth:
+#   ego:   VisualOdometryProvider — FAST-9 + LK optical flow + FoE RANSAC +
+#          VL2 metric scale from L2 map, VL3 fallback to frame_hint.
+#   depth: DepthAnything V2 Small — ONNX inference on RGB, CUDA accelerated.
+#
+# Requires:
+#   - Build with -DDEDALUS_ENABLE_ONNX_DEPTH=ON (auto when ORT SDK present)
+#   - models/depth_anything_v2_vits.onnx  (build.sh exports it automatically)
+#   - drone/px4_front_center.yml (no --include-depth needed)
+#
+# Tip: disable L2 persistence during initial validation to avoid accumulating
+# noisy VO evidence in the site map:
+#   DEDALUS_L2_NO_PERSIST=1 simulation/airsim/run_mission.sh ...
+#
+# Override at runtime:
+#   DEDALUS_PIPELINE_EGO=frame_hint           — revert ego to AirSim hint
+#   DEDALUS_PIPELINE_DEPTH=airsim_gt_detector — revert depth to GT
+#   DEDALUS_PIPELINE_DEPTH_MODEL=<path>       — use a different ONNX model
+
+ego_provider: visual_odometry
+depth: visual_onnx
+detector: scripted
+camera_stabilizer: null
+tracker: simple_centroid
+identity_resolver: appearance_only
+projector: flat_ground
+world_model: in_memory
+
+visual_onnx.model_path: models/depth_anything_v2_vits.onnx
+visual_onnx.use_cuda: true
+visual_onnx.pixel_stride: 4
+visual_onnx.min_depth_m: 0.5
+visual_onnx.max_depth_m: 60.0
+visual_onnx.voxel_size_m: 1.5
+visual_onnx.max_evidence: 256

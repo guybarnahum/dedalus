@@ -1,0 +1,19 @@
+# ── Run: AirSim  ·  circle person  ·  Visual ego + ONNX depth ────────────────
+# Fully visual pipeline — no AirSim ground truth used for ego or depth.
+#
+# Tip: disable L2 persistence while validating visual odometry accuracy:
+#   DEDALUS_L2_NO_PERSIST=1 simulation/airsim/run_mission.sh ...
+#
+# Usage:
+#   simulation/airsim/run_mission.sh \
+#     --config config/runs/airsim_circle_visual.yml \
+#     --output-dir out/circle_visual \
+#     --pipeline-timing
+
+include: config/env/airsim.yml
+include: config/drone/px4_front_center.yml
+include: config/pipeline/visual.yml
+include: config/mission/circle_person.yml
+include: config/output/standard_ppm.yml
+
+annotation_output_path: out/circle_visual_annotation

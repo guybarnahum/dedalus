@@ -1,0 +1,9 @@
+# ── Run: AirSim  ·  follow slow animal (altitude profile)  ·  AirSim GT ──────
+
+include: config/env/airsim.yml
+include: config/drone/px4_front_center_depth.yml
+include: config/pipeline/airsim_gt.yml
+include: config/mission/follow_animal_slow_altitude.yml
+include: config/output/standard_ppm.yml
+
+annotation_output_path: out/follow_animal_slow_altitude_annotation

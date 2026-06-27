@@ -1,0 +1,7 @@
+# ── Mission: Disabled (sensor-only / bench run) ────────────────────────────────
+# No mission controller, no flight commands.  The drone stays grounded while
+# the perception pipeline processes frames.
+# Use for pipeline debugging without arming the vehicle.
+
+mission_controller: disabled
+flight_command_sink: disabled

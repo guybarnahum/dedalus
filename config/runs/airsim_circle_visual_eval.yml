@@ -1,0 +1,17 @@
+# ── Run: AirSim  ·  circle person  ·  Visual primary + AirSim GT eval ────────
+# Visual depth as slot A; AirSim GT depth as eval slot B.
+# Agreement logged per-frame: depth_slot_b.evidence_count  depth.voxel_overlap_ppt
+#
+# Usage:
+#   simulation/airsim/run_mission.sh \
+#     --config config/runs/airsim_circle_visual_eval.yml \
+#     --output-dir out/circle_visual_eval \
+#     --pipeline-timing
+
+include: config/env/airsim.yml
+include: config/drone/px4_front_center_depth.yml
+include: config/pipeline/visual_eval_airsim_gt.yml
+include: config/mission/circle_person.yml
+include: config/output/standard_ppm.yml
+
+annotation_output_path: out/circle_visual_eval_annotation

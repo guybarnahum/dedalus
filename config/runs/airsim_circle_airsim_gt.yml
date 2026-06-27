@@ -1,0 +1,17 @@
+# ── Run: AirSim  ·  circle person  ·  AirSim GT ego + depth ──────────────────
+# Baseline run using AirSim ground truth for both ego and depth.
+# Good for validating mission wiring before enabling the visual pipeline.
+#
+# Usage:
+#   simulation/airsim/run_mission.sh \
+#     --config config/runs/airsim_circle_airsim_gt.yml \
+#     --output-dir out/circle_airsim_gt \
+#     --pipeline-timing
+
+include: config/env/airsim.yml
+include: config/drone/px4_front_center_depth.yml
+include: config/pipeline/airsim_gt.yml
+include: config/mission/circle_person.yml
+include: config/output/standard_ppm.yml
+
+annotation_output_path: out/circle_airsim_gt_annotation

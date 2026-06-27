@@ -1,0 +1,6 @@
+# ── Output: PPM frame annotation sequence ─────────────────────────────────────
+# Writes annotated frames as a PPM sequence alongside mission output.
+# annotation_output_path is typically set per-run in the runs/ manifest.
+
+frame_annotator: ppm_sequence
+annotation_output_fps: 5

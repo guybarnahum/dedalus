@@ -1,0 +1,5 @@
+# ── Output: Pipeline timing profiler ──────────────────────────────────────────
+# Enables per-stage latency recording.  Output path is set by --pipeline-timing-path.
+# Combine with output/standard_ppm.yml for full observability.
+
+pipeline_timing_enabled: true

@@ -1,0 +1,4 @@
+# ── Output: CI minimal (no annotation, no profiling) ──────────────────────────
+
+frame_annotator: null
+pipeline_timing_enabled: false

@@ -1,61 +1,18 @@
-# Visual-only depth + ego run — no AirSim ground truth for sensing.
+# ── Mission: Circle existing person ───────────────────────────────────────────
+# Object-behavior mission that orbits a detected person at a fixed radius.
+# Camera pitch tracks the target via the gimbal bridge.
 #
-# Inherits the circle behavior target from the base config.
-# Differences from …_circle.yml:
-#   ego_provider:  visual_odometry  (VL1-VL3 FAST-9 + LK + FoE RANSAC)
-#   depth:         visual_onnx      (DepthAnything V2 Small via ONNX)
-#   bridge_command: no --include-ego, no --include-depth
+# Default ghost binding:
+#   source_track_id: ghost_person_001   airsim_object: BRPlayer_01_96
 #
-# Requires: build with -DDEDALUS_ENABLE_ONNX_DEPTH=ON and model at:
-#   models/depth_anything_v2_vits.onnx  (run build.sh or export_depth_anything.py)
+# Environmental objects (trees, walls, fences, cables, rocks) are bound via
+# regex patterns so L0/L1/L2 obstacle maps populate during the orbit.
+#
+# Override duration at runtime:  --behavior-duration-s 120
 
-frame_source: airsim
-ego_provider: visual_odometry
-detector: scripted
-camera_stabilizer: null
-tracker: simple_centroid
-identity_resolver: appearance_only
-projector: flat_ground
-world_model: in_memory
-occupancy_source: airsim_ground_truth
-frame_annotator: ppm_sequence
-annotation_output_path: out/object_behavior_airsim_existing_object_circle_visual_annotation
-annotation_output_fps: 5
-fallback_map_frame_id: map_airsim_mission_0001
-
-source_host: 127.0.0.1
-source_rpc_port: 41451
-vehicle_name: PX4
-vehicle_camera_name: front_center
-bridge_transport: pipe
-bridge_mode: stream_binary_ego
-# No --include-ego (visual_odometry doesn't use AirSim ego hint as primary).
-# No --include-depth (visual_onnx runs ONNX inference on the RGB frame).
-bridge_command: python3 simulation/airsim/scripts/airsim-stream-frames-binary.py --rate-hz 5 --mavlink-armed-endpoints udpin:127.0.0.1:14540
-
-# Depth slot A: DepthAnything V2 Small (real monocular depth, ONNX).
-depth: visual_onnx
-visual_onnx.model_path: models/depth_anything_v2_vits.onnx
-visual_onnx.use_cuda: true
-visual_onnx.pixel_stride: 4
-visual_onnx.max_depth_m: 60.0
-visual_onnx.voxel_size_m: 1.5
-visual_onnx.max_evidence: 256
-# Slot B: AirSim GT depth for agreement metric (comment out for fully AirSim-free run).
-# depth_eval: airsim_gt_detector
-
-# Camera sensing volume (same geometry as base config).
-mission_options.obstacle_sensing.cameras.0.name: front_center
-mission_options.obstacle_sensing.cameras.0.role: visual_obstacle_detector
-mission_options.obstacle_sensing.cameras.0.horizontal_fov_deg: 90
-mission_options.obstacle_sensing.cameras.0.vertical_fov_deg: 60
-mission_options.obstacle_sensing.cameras.0.near_range_m: 0.5
-mission_options.obstacle_sensing.cameras.0.far_range_m: 80
-mission_options.obstacle_sensing.cameras.0.min_reliable_range_m: 1
-mission_options.obstacle_sensing.cameras.0.max_reliable_range_m: 60
-mission_options.obstacle_sensing.cameras.0.body_T_camera_xyz_m: [0, 0, 0]
-mission_options.obstacle_sensing.cameras.0.body_T_camera_rpy_deg: [0, 0, 0]
-mission_options.obstacle_sensing.cameras.0.pointing_source: camera_pointing_intent
+mission_controller: object_behavior
+mission_tick_hz: 10
+flight_command_sink: px4_bridge
 
 ghost_targets_enabled: true
 ghost_targets_source: airsim_objects
@@ -100,10 +57,6 @@ ghost_targets_airsim.patterns.4.confidence: 0.80
 ghost_targets_airsim.patterns.4.size_m: [1.5, 1.5, 1.0]
 ghost_targets_airsim.patterns.4.max_matches: 32
 
-mission_controller: object_behavior
-mission_tick_hz: 10
-flight_command_sink: px4_bridge
-
 mission_options.behavior_spec_path: config/behaviors/circle_existing_object_person.yaml
 mission_options.object_behavior_hold_velocity_mps: 0.0
 mission_options.object_behavior_altitude_policy: safe_height_floor
@@ -139,7 +92,6 @@ mission_options.flight_prepare_session_command: python3 simulation/airsim/script
 mission_options.flight_safe_height_m: 16
 mission_options.flight_px4_command_bridge: python3 tools/px4/px4-command-bridge.py --mavlink-endpoints udpin:127.0.0.1:14550 --px4-tmux-target dedalus-sim:px4 --safe-height 16 --safe-height-timeout-s 60
 mission_options.flight_home_policy: initial_ego_pose
-
 mission_options.flight_arm_retry_interval_s: 4.0
 mission_options.flight_arm_timeout_s: 30.0
 mission_options.flight_arm_dispatch_fallback_s: 2.0
@@ -148,7 +100,3 @@ mission_options.flight_land_retry_interval_s: 4.0
 mission_options.flight_land_timeout_s: 90.0
 mission_options.flight_disarm_retry_interval_s: 4.0
 mission_options.flight_disarm_timeout_s: 30.0
-
-airsim_depth_obstacle_detector.voxel_size_m: 1.5
-airsim_depth_obstacle_detector.max_evidence: 256
-airsim_depth_obstacle_detector.max_depth_m: 60.0

@@ -1,0 +1,23 @@
+# ── Pipeline: AirSim ground-truth ego + depth ──────────────────────────────────
+# Uses AirSim-provided telemetry for ego (frame_hint) and AirSim DepthPlanar
+# for obstacle depth (airsim_gt_detector).  This is the known-good baseline:
+# validate mission wiring here before switching to the visual pipeline.
+#
+# Requires: drone/px4_front_center_depth.yml (bridge must stream depth frames).
+#
+# Eval overrides at runtime:
+#   DEDALUS_PIPELINE_EGO_EVAL=visual_odometry    — compare visual ego vs GT
+#   DEDALUS_PIPELINE_DEPTH_EVAL=visual_onnx       — compare visual depth vs GT
+
+ego_provider: frame_hint
+depth: airsim_gt_detector
+detector: scripted
+camera_stabilizer: null
+tracker: simple_centroid
+identity_resolver: appearance_only
+projector: flat_ground
+world_model: in_memory
+
+airsim_depth_obstacle_detector.voxel_size_m: 1.5
+airsim_depth_obstacle_detector.max_evidence: 256
+airsim_depth_obstacle_detector.max_depth_m: 60.0
