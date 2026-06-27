@@ -1,0 +1,21 @@
+# Example AirSim provider composition. Not used by CI — integration providers
+# are available only when AirSim is running. Used by test_airsim_provider_boundary
+# to verify that AirSim provider names are accepted by the registry.
+frame_source: airsim
+ego_provider: airsim
+detector: airsim_ground_truth
+tracker: simple_centroid
+identity_resolver: appearance_only
+projector: airsim_depth
+world_model: in_memory
+fallback_map_frame_id: map_airsim_0001
+
+source_host: 127.0.0.1
+source_rpc_port: 41451
+vehicle_name: PX4
+vehicle_camera_name: front_center
+bridge_transport: pipe
+bridge_command: python3 simulation/airsim/scripts/airsim-stream-frames-binary.py --rate-hz 5
+
+mission_controller: none
+flight_command_sink: disabled
