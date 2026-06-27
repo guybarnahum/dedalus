@@ -129,7 +129,7 @@ Campaign spec example:
 
 ```bash
 python3 tools/mission/run-mission-campaign.py \
-  --campaign-file config/mission_campaigns/synthetic_ci.json \
+  --campaign-file config/ci/synthetic_ci.json \
   --campaign-id campaign_0001 \
   --app ./build-staging/apps/dedalus_mission_loop \
   --output-root out/mission_campaigns \
@@ -159,7 +159,7 @@ out/mission_campaigns/<campaign>/<campaign_id>/
 Synthetic mixed CI campaign:
 
 ```text
-config/mission_campaigns/synthetic_ci.json
+config/ci/synthetic_ci.json
 ```
 
 This includes:
@@ -172,7 +172,7 @@ synthetic_abort_land_timeout x1     expected Abort
 Live AirSim campaign preset:
 
 ```text
-config/mission_campaigns/airsim_live_smoke.json
+config/ci/airsim_live_smoke_ci.json
 ```
 
 This includes:
@@ -190,7 +190,7 @@ Use dry-run to validate campaign parsing, repeat expansion, expected final state
 
 ```bash
 python3 tools/mission/run-mission-campaign.py \
-  --campaign-file config/mission_campaigns/airsim_live_smoke.json \
+  --campaign-file config/ci/airsim_live_smoke_ci.json \
   --campaign-id dry_run_0001 \
   --output-root out/mission_campaigns \
   --dry-run \
@@ -213,7 +213,7 @@ Assuming AirSim/PX4 is already running:
 
 ```bash
 python3 tools/mission/run-mission-campaign.py \
-  --campaign-file config/mission_campaigns/airsim_live_smoke.json \
+  --campaign-file config/ci/airsim_live_smoke_ci.json \
   --campaign-id live_0001 \
   --output-root out/mission_campaigns \
   --progress \

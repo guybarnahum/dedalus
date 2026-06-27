@@ -205,7 +205,7 @@ or:
 
 ```bash
 python3 tools/mission/run-mission-campaign.py \
-  --campaign-file config/mission_campaigns/airsim_live_smoke.json \
+  --campaign-file config/ci/airsim_live_smoke_ci.json \
   --campaign-id live_<N> \
   --output-root out/mission_campaigns \
   --progress \
