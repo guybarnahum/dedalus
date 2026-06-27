@@ -268,7 +268,7 @@ The optional runtime event stream is enabled by:
 
 ```bash
 ./build-staging/apps/dedalus_mission_loop \
-  --config config/core_stack_object_behavior_airsim_existing_object.yaml \
+  --config config/ci/core_stack_object_behavior_airsim_existing_object.yaml \
   --output-dir out/object_behavior_airsim_existing_object \
   --world-snapshot-stream-port 47770 \
   --progress

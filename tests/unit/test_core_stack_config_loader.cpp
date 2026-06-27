@@ -21,7 +21,7 @@ bool contains(const std::vector<std::string>& values, const std::string& expecte
 }  // namespace
 
 int main() {
-    const auto config = dedalus::load_core_stack_config("config/core_stack_ci.yaml");
+    const auto config = dedalus::load_core_stack_config("config/ci/core_stack_ci.yaml");
 
     if (config.frame_source != "synthetic" || config.ego_provider != "frame_hint" ||
         config.detector != "scripted" || config.tracker != "simple_centroid" ||
@@ -51,7 +51,7 @@ int main() {
         return 1;
     }
 
-    const auto profile_config = dedalus::load_core_stack_config("config/core_stack_profile_ci.yaml");
+    const auto profile_config = dedalus::load_core_stack_config("config/ci/core_stack_profile_ci.yaml");
     if (!profile_config.pipeline_timing_enabled) {
         std::cerr << "core_stack_profile_ci did not enable pipeline timing\n";
         return 1;
@@ -61,7 +61,7 @@ int main() {
         return 1;
     }
 
-    const auto sensing_config = dedalus::load_core_stack_config("config/core_stack_sensing_coverage_ci.yaml");
+    const auto sensing_config = dedalus::load_core_stack_config("config/ci/core_stack_sensing_coverage_ci.yaml");
     if (sensing_config.mission_options.obstacle_sensing_cameras.size() != 2U) {
         std::cerr << "sensing coverage config did not parse two obstacle sensing cameras\n";
         return 1;
@@ -89,7 +89,7 @@ int main() {
         return 1;
     }
 
-    const auto ghost_config = dedalus::load_core_stack_config("config/core_stack_ghost_targets_ci.yaml");
+    const auto ghost_config = dedalus::load_core_stack_config("config/ci/core_stack_ghost_targets_ci.yaml");
     if (!ghost_config.ghost_targets_enabled) {
         std::cerr << "ghost target config did not enable ghost targets\n";
         return 1;
@@ -108,7 +108,7 @@ int main() {
         return 1;
     }
 
-    const auto mission_config = dedalus::load_core_stack_config("config/core_stack_trajectory_mission_placeholder.yaml");
+    const auto mission_config = dedalus::load_core_stack_config("config/ci/core_stack_trajectory_mission_placeholder.yaml");
     if (mission_config.mission_controller != "trajectory_mission") {
         std::cerr << "mission placeholder did not parse mission_controller\n";
         return 1;
@@ -134,7 +134,7 @@ int main() {
         return 1;
     }
 
-    const auto object_behavior_config = dedalus::load_core_stack_config("config/core_stack_object_behavior_mission.yaml");
+    const auto object_behavior_config = dedalus::load_core_stack_config("config/ci/core_stack_object_behavior_mission.yaml");
     if (object_behavior_config.mission_controller != "object_behavior") {
         std::cerr << "object behavior config did not parse mission_controller\n";
         return 1;
@@ -156,7 +156,7 @@ int main() {
     }
 
     const auto airsim_object_config = dedalus::load_core_stack_config(
-        "config/core_stack_object_behavior_airsim_existing_object_example.yaml");
+        "config/ci/core_stack_object_behavior_airsim_existing_object_example.yaml");
     if (!airsim_object_config.ghost_targets_enabled ||
         airsim_object_config.ghost_targets_source != "airsim_objects") {
         std::cerr << "AirSim existing-object config did not enable airsim_objects ghost source\n";

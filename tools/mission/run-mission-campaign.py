@@ -145,7 +145,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--campaign-id", default=default_campaign_id(), help="Campaign run id")
     parser.add_argument("--scenario", default="trajectory_ci", help="Scenario name")
     parser.add_argument("--repeats", type=int, default=3, help="Number of scenario repeats")
-    parser.add_argument("--config", default="config/core_stack_synthetic_mission_ci.yaml")
+    parser.add_argument("--config", default="config/ci/core_stack_synthetic_mission_ci.yaml")
     parser.add_argument("--output-root", default="out/mission_campaigns")
     parser.add_argument("--app", default="./build-staging/apps/dedalus_mission_loop")
     parser.add_argument("--max-frames", type=int, default=220)

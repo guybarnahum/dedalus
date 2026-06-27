@@ -19,7 +19,7 @@ TARGET_ENV="AirSimNH"
 WITH_CORE_STACK=0
 WITH_FLIGHT_CONTROL=0
 CORE_BUILD_DIR="../../build-staging"
-CORE_CONFIG="../../config/core_stack_airsim_binary_rgb_ego.yaml"
+CORE_CONFIG="../../config/ci/core_stack_airsim_binary_rgb_ego.yaml"
 CORE_OUTPUT_DIR="../../out/airsim_run_$TIMESTAMP"
 CORE_MAX_FRAMES="0"
 CORE_SAMPLING_FPS="5"
@@ -65,7 +65,7 @@ Options:
   --core-build-dir PATH         Build directory containing apps/dedalus_replay_recording.
                                 Default: ../../build-staging
   --core-config PATH            Core-stack config template to use.
-                                Default: ../../config/core_stack_airsim_binary_rgb_ego.yaml
+                                Default: ../../config/ci/core_stack_airsim_binary_rgb_ego.yaml
   --core-output-dir PATH        Snapshot output directory.
                                 Default: ../out/airsim_run_<timestamp>
   --core-sampling-fps FPS       Capture sampling FPS. run.sh writes a generated runtime config

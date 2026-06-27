@@ -16,10 +16,10 @@ sequence:
 The matrix:
 
 ```text
-slow      config/core_stack_object_behavior_airsim_far_animal_slow_mixed_mode.yml
-medium    config/core_stack_object_behavior_airsim_far_animal_medium_mixed_mode.yml
-lateral   config/core_stack_object_behavior_airsim_far_animal_lateral_mixed_mode.yml
-diagonal  config/core_stack_object_behavior_airsim_far_animal_diagonal_mixed_mode.yml
+slow      config/ci/core_stack_object_behavior_airsim_far_animal_slow_mixed_mode.yml
+medium    config/ci/core_stack_object_behavior_airsim_far_animal_medium_mixed_mode.yml
+lateral   config/ci/core_stack_object_behavior_airsim_far_animal_lateral_mixed_mode.yml
+diagonal  config/ci/core_stack_object_behavior_airsim_far_animal_diagonal_mixed_mode.yml
 ```
 
 Validation command pattern:
@@ -64,7 +64,7 @@ Suggested run order:
 
 ```bash
 ./run_mission.sh \
-  --config ../../config/core_stack_object_behavior_airsim_far_animal_medium_mixed_mode.yml \
+  --config ../../config/ci/core_stack_object_behavior_airsim_far_animal_medium_mixed_mode.yml \
   --output-dir ../../out/object_behavior_airsim_far_animal_medium_mixed_mode \
   --expect-sequence \
   --expect-sequence-steps approach,circle \
@@ -73,7 +73,7 @@ Suggested run order:
   --attach
 
 ./run_mission.sh \
-  --config ../../config/core_stack_object_behavior_airsim_far_animal_lateral_mixed_mode.yml \
+  --config ../../config/ci/core_stack_object_behavior_airsim_far_animal_lateral_mixed_mode.yml \
   --output-dir ../../out/object_behavior_airsim_far_animal_lateral_mixed_mode \
   --expect-sequence \
   --expect-sequence-steps approach,circle \
@@ -82,7 +82,7 @@ Suggested run order:
   --attach
 
 ./run_mission.sh \
-  --config ../../config/core_stack_object_behavior_airsim_far_animal_diagonal_mixed_mode.yml \
+  --config ../../config/ci/core_stack_object_behavior_airsim_far_animal_diagonal_mixed_mode.yml \
   --output-dir ../../out/object_behavior_airsim_far_animal_diagonal_mixed_mode \
   --expect-sequence \
   --expect-sequence-steps approach,circle \

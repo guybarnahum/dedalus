@@ -41,7 +41,7 @@ Use:
 
 ```bash
 ./build-validation/apps/dedalus_replay_recording \
-  --config config/core_stack_airsim_binary_rgb_ego.yaml \
+  --config config/ci/core_stack_airsim_binary_rgb_ego.yaml \
   --output-dir out/airsim_binary_snapshots \
   --max-frames 5
 ```
@@ -50,7 +50,7 @@ For the frame-attached ego path:
 
 ```bash
 ./build-validation/apps/dedalus_replay_recording \
-  --config config/core_stack_airsim_binary_rgb_ego_hint.yaml \
+  --config config/ci/core_stack_airsim_binary_rgb_ego_hint.yaml \
   --output-dir out/airsim_binary_ego_hint_snapshots \
   --max-frames 5
 ```
@@ -104,7 +104,7 @@ When `sidecar_size > 0`, `AirSimFrameSource` reads the sidecar bytes after the R
 CI uses:
 
 ```text
-config/core_stack_airsim_binary_ci.yaml
+config/ci/core_stack_airsim_binary_ci.yaml
 tests/fixtures/airsim_binary_bridge_ci_fake.py
 tests/unit/test_airsim_provider_boundary.cpp
 ```
@@ -112,7 +112,7 @@ tests/unit/test_airsim_provider_boundary.cpp
 The frame-attached ego path uses:
 
 ```text
-config/core_stack_airsim_binary_state_ci.yaml
+config/ci/core_stack_airsim_binary_state_ci.yaml
 tests/fixtures/airsim_binary_state_bridge_ci_fake.py
 tests/unit/test_airsim_provider_boundary.cpp
 ```

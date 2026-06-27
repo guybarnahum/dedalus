@@ -22,13 +22,13 @@ This is not a direct C++ AirSim RPC client. The C++ `AirSimFrameSource` and `Air
 For RGB only with fallback/no-telemetry ego, use:
 
 ```text
-config/core_stack_airsim_live_rgb.yaml
+config/ci/core_stack_airsim_live_rgb.yaml
 ```
 
 For RGB plus AirSim ego telemetry, use:
 
 ```text
-config/core_stack_airsim_live_rgb_ego.yaml
+config/ci/core_stack_airsim_live_rgb_ego.yaml
 ```
 
 Example RGB + ego config:
@@ -65,14 +65,14 @@ Then run the core stack from the repo root:
 ```bash
 cd ~/dedalus
 ./build-validation/apps/dedalus_core_stack \
-  --config config/core_stack_airsim_live_rgb_ego.yaml
+  --config config/ci/core_stack_airsim_live_rgb_ego.yaml
 ```
 
 For multiple snapshots:
 
 ```bash
 ./build-validation/apps/dedalus_replay_recording \
-  --config config/core_stack_airsim_live_rgb_ego.yaml \
+  --config config/ci/core_stack_airsim_live_rgb_ego.yaml \
   --output-dir out/airsim_live_snapshots \
   --max-frames 5
 ```
@@ -116,7 +116,7 @@ Those providers preserve the config and module boundary for later work but do no
 CI does not require AirSim. It validates the live bridge path with:
 
 ```text
-config/core_stack_airsim_bridge_ci.yaml
+config/ci/core_stack_airsim_bridge_ci.yaml
 tests/fixtures/airsim_bridge_ci_fake.py
 tests/fixtures/airsim_ego_bridge_ci_fake.py
 tests/unit/test_airsim_provider_boundary.cpp

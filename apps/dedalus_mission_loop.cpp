@@ -320,7 +320,7 @@ Args parse_args(int argc, char** argv) {
     }
     // Default config path when none was specified.
     if (args.config_paths.empty()) {
-        args.config_paths.push_back("config/core_stack_ci.yaml");
+        args.config_paths.push_back("config/ci/core_stack_ci.yaml");
     }
     // Derive L2 persistence path from DEDALUS_SITE_ID unless ephemeral mode is active.
     // Ephemeral mode: --no-l2-persist flag OR DEDALUS_L2_NO_PERSIST=1 env var.

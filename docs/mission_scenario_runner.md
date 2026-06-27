@@ -32,7 +32,7 @@ Synthetic Complete lifecycle example:
 python3 tools/mission/run-mission-scenario.py \
   --name synthetic_lifecycle \
   --run-id run_0001 \
-  --config config/core_stack_synthetic_mission_ci.yaml \
+  --config config/ci/core_stack_synthetic_mission_ci.yaml \
   --app ./build-staging/apps/dedalus_mission_loop \
   --output-root out/mission_scenarios \
   --max-frames 220 \
@@ -49,7 +49,7 @@ Synthetic expected-Abort lifecycle example:
 python3 tools/mission/run-mission-scenario.py \
   --name synthetic_abort_land_timeout \
   --run-id run_0001 \
-  --config config/core_stack_synthetic_mission_abort_ci.yaml \
+  --config config/ci/core_stack_synthetic_mission_abort_ci.yaml \
   --app ./build-staging/apps/dedalus_mission_loop \
   --output-root out/mission_scenarios \
   --max-frames 220 \
@@ -114,7 +114,7 @@ python3 tools/mission/run-mission-campaign.py \
   --campaign-id campaign_0001 \
   --scenario synthetic_lifecycle \
   --repeats 3 \
-  --config config/core_stack_synthetic_mission_ci.yaml \
+  --config config/ci/core_stack_synthetic_mission_ci.yaml \
   --app ./build-staging/apps/dedalus_mission_loop \
   --output-root out/mission_campaigns \
   --max-frames 220 \
@@ -179,7 +179,7 @@ This includes:
 
 ```text
 trajectory_px4_bridge_live x3       expected Complete
-config: config/core_stack_trajectory_mission_placeholder.yaml
+config: config/ci/core_stack_trajectory_mission_placeholder.yaml
 safe_height_m: 16
 landed_height_m: 1
 ```

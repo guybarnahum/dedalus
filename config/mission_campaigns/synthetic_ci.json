@@ -9,13 +9,13 @@
   "scenarios": [
     {
       "name": "synthetic_lifecycle",
-      "config": "config/core_stack_synthetic_mission_ci.yaml",
+      "config": "config/ci/core_stack_synthetic_mission_ci.yaml",
       "repeats": 2,
       "expect_final_state": "Complete"
     },
     {
       "name": "synthetic_abort_land_timeout",
-      "config": "config/core_stack_synthetic_mission_abort_ci.yaml",
+      "config": "config/ci/core_stack_synthetic_mission_abort_ci.yaml",
       "repeats": 1,
       "expect_final_state": "Abort"
     }

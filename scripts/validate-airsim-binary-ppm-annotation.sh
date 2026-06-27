@@ -40,7 +40,7 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
 BUILD_DIR="${BUILD_DIR:-$ROOT_DIR/build-staging}"
 OUTPUT_DIR="${OUTPUT_DIR:-$ROOT_DIR/out/airsim_binary_ppm_validation}"
-CONFIG_PATH="${CONFIG_PATH:-$ROOT_DIR/config/core_stack_airsim_binary_ppm_validation.yaml}"
+CONFIG_PATH="${CONFIG_PATH:-$ROOT_DIR/config/ci/core_stack_airsim_binary_ppm_validation.yaml}"
 
 AIRSIM_HOST="${AIRSIM_HOST:-127.0.0.1}"
 AIRSIM_RPC_PORT="${AIRSIM_RPC_PORT:-41451}"

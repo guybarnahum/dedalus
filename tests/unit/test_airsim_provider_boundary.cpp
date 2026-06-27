@@ -17,14 +17,14 @@ bool nearly_equal(double lhs, double rhs) {
 int main() {
     dedalus::ProviderRegistry registry;
 
-    const auto example_config = dedalus::load_core_stack_config("config/core_stack_airsim_example.yaml");
+    const auto example_config = dedalus::load_core_stack_config("config/ci/core_stack_airsim_example.yaml");
     if (example_config.frame_source != "airsim" || example_config.ego_provider != "airsim" ||
         example_config.detector != "airsim_ground_truth" || example_config.projector != "airsim_depth") {
         std::cerr << "AirSim example config did not parse expected provider names\n";
         return 1;
     }
 
-    const auto bridge_config = dedalus::load_core_stack_config("config/core_stack_airsim_bridge_ci.yaml");
+    const auto bridge_config = dedalus::load_core_stack_config("config/ci/core_stack_airsim_bridge_ci.yaml");
     if (bridge_config.frame_source != "airsim" || bridge_config.ego_provider != "airsim" ||
         bridge_config.detector != "scripted" || bridge_config.projector != "flat_ground") {
         std::cerr << "AirSim bridge config did not parse expected provider names\n";
@@ -73,7 +73,7 @@ int main() {
         return 1;
     }
 
-    const auto stream_config = dedalus::load_core_stack_config("config/core_stack_airsim_stream_ci.yaml");
+    const auto stream_config = dedalus::load_core_stack_config("config/ci/core_stack_airsim_stream_ci.yaml");
     if (stream_config.bridge_mode != "stream_jsonl" || stream_config.frame_source != "airsim") {
         std::cerr << "AirSim stream config did not parse expected bridge mode\n";
         return 1;
@@ -97,7 +97,7 @@ int main() {
         return 1;
     }
 
-    const auto binary_config = dedalus::load_core_stack_config("config/core_stack_airsim_binary_ci.yaml");
+    const auto binary_config = dedalus::load_core_stack_config("config/ci/core_stack_airsim_binary_ci.yaml");
     if (binary_config.bridge_mode != "stream_binary" || binary_config.frame_source != "airsim") {
         std::cerr << "AirSim binary config did not parse expected bridge mode\n";
         return 1;
@@ -124,7 +124,7 @@ int main() {
         return 1;
     }
 
-    const auto state_config = dedalus::load_core_stack_config("config/core_stack_airsim_binary_state_ci.yaml");
+    const auto state_config = dedalus::load_core_stack_config("config/ci/core_stack_airsim_binary_state_ci.yaml");
     if (state_config.bridge_mode != "stream_binary_ego" || state_config.ego_provider != "frame_hint") {
         std::cerr << "AirSim binary state config did not parse expected bridge mode/providers\n";
         return 1;

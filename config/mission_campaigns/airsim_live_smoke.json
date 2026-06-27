@@ -10,7 +10,7 @@
   "scenarios": [
     {
       "name": "trajectory_px4_bridge_live",
-      "config": "config/core_stack_trajectory_mission_placeholder.yaml",
+      "config": "config/ci/core_stack_trajectory_mission_placeholder.yaml",
       "repeats": 3
     }
   ]

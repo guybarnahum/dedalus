@@ -18,7 +18,7 @@ The persistent path avoids spawning Python for every RGB frame. It still keeps t
 Use:
 
 ```text
-config/core_stack_airsim_stream_rgb_ego.yaml
+config/ci/core_stack_airsim_stream_rgb_ego.yaml
 ```
 
 Key fields:
@@ -47,14 +47,14 @@ Then run the core stack from the repo root:
 ```bash
 cd ~/dedalus
 ./build-validation/apps/dedalus_core_stack \
-  --config config/core_stack_airsim_stream_rgb_ego.yaml
+  --config config/ci/core_stack_airsim_stream_rgb_ego.yaml
 ```
 
 For a bounded snapshot sequence:
 
 ```bash
 ./build-validation/apps/dedalus_replay_recording \
-  --config config/core_stack_airsim_stream_rgb_ego.yaml \
+  --config config/ci/core_stack_airsim_stream_rgb_ego.yaml \
   --output-dir out/airsim_stream_snapshots \
   --max-frames 5
 ```
@@ -74,7 +74,7 @@ The persistent frame bridge writes one compact JSON object per stdout line:
 CI does not require AirSim. It uses:
 
 ```text
-config/core_stack_airsim_stream_ci.yaml
+config/ci/core_stack_airsim_stream_ci.yaml
 tests/fixtures/airsim_stream_bridge_ci_fake.py
 tests/unit/test_airsim_provider_boundary.cpp
 ```

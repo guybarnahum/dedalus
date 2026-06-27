@@ -176,14 +176,14 @@ Manual two-run validation remains useful while debugging:
 
 ```bash
 ./build-staging/apps/dedalus_mission_loop \
-  --config config/core_stack_object_behavior_airsim_existing_object_circle.yml \
+  --config config/ci/core_stack_object_behavior_airsim_existing_object_circle.yml \
   --output-dir out/airsim_mission_snapshots_run1 \
   --max-frames 900 \
   --shutdown-max-frames 400 \
   --progress 2>&1 | tee out/airsim_mission_debug_run1.log
 
 ./build-staging/apps/dedalus_mission_loop \
-  --config config/core_stack_object_behavior_airsim_existing_object_circle.yml \
+  --config config/ci/core_stack_object_behavior_airsim_existing_object_circle.yml \
   --output-dir out/airsim_mission_snapshots_run2 \
   --max-frames 900 \
   --shutdown-max-frames 400 \
@@ -213,7 +213,7 @@ simulation/airsim/scripts/airsim-stream-frames-binary.py
 tools/mission/mission-events-summary.py
 tools/mission/validate-mission-artifacts.py
 tools/mission/repeat-mission-smoke.sh
-config/core_stack_object_behavior_airsim_existing_object_circle.yml
+config/ci/core_stack_object_behavior_airsim_existing_object_circle.yml
 ```
 
 ## Build and test

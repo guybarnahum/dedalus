@@ -22,7 +22,7 @@ def main() -> int:
     cmd = [
         str(app),
         "--config",
-        "config/core_stack_recorded_ci.yaml",
+        "config/ci/core_stack_recorded_ci.yaml",
         "--output-dir",
         str(output_dir),
         "--max-frames",

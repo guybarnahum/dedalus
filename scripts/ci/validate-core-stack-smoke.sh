@@ -2,7 +2,7 @@
 set -u
 
 BUILD_DIR="${BUILD_DIR:-build-validation}"
-CONFIG_PATH="${DEDALUS_CORE_STACK_CONFIG:-config/core_stack_ci.yaml}"
+CONFIG_PATH="${DEDALUS_CORE_STACK_CONFIG:-config/ci/core_stack_ci.yaml}"
 SNAPSHOT_PATH="${SNAPSHOT_PATH:-/tmp/world_snapshot.json}"
 SUMMARY_TITLE="${SUMMARY_TITLE:-CI Validation Summary}"
 BUILD_RUN_LABEL="${BUILD_RUN_LABEL:-Build & run}"

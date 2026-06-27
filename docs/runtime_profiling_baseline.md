@@ -29,7 +29,7 @@ Create an effective config with pipeline timing enabled:
 
 ```bash
 EFF0_CONFIG="/tmp/dedalus_eff0_airsim_profile.yml"
-cp config/core_stack_object_behavior_airsim_existing_object_circle.yml "$EFF0_CONFIG"
+cp config/ci/core_stack_object_behavior_airsim_existing_object_circle.yml "$EFF0_CONFIG"
 cat >> "$EFF0_CONFIG" <<'EOF'
 pipeline_timing_enabled: true
 pipeline_timing_output_path: out/profile/eff0_airsim_pipeline_profile.jsonl

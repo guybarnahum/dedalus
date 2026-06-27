@@ -16,7 +16,7 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 BUILD_DIR="${BUILD_DIR:-$ROOT_DIR/build-staging}"
 OUTPUT_DIR="${OUTPUT_DIR:-$ROOT_DIR/out/recorded_ppm_validation}"
-CONFIG_PATH="${CONFIG_PATH:-$ROOT_DIR/config/core_stack_recorded_ppm_annotation_ci.yaml}"
+CONFIG_PATH="${CONFIG_PATH:-$ROOT_DIR/config/ci/core_stack_recorded_ppm_annotation_ci.yaml}"
 
 APP_PATH="$BUILD_DIR/apps/dedalus_replay_recording"
 

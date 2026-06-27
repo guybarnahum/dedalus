@@ -10,7 +10,7 @@
 namespace {
 
 std::string config_path_from_args(int argc, char** argv) {
-    std::string config_path = "config/core_stack_ci.yaml";
+    std::string config_path = "config/ci/core_stack_ci.yaml";
 
     for (int i = 1; i < argc; ++i) {
         const std::string arg = argv[i];

@@ -8,7 +8,7 @@
 # and post-run validators. They do NOT belong in mission model config.
 #
 # Mission model settings (detector, tracker, behavior type, obstacle sensing
-# parameters) belong in config/core_stack_*.yaml and work identically on
+# parameters) belong in config/ci/core_stack_*.yaml and work identically on
 # real hardware — keep them simulation-independent.
 #
 # All keys are optional. Omit any key to keep the hardcoded default.

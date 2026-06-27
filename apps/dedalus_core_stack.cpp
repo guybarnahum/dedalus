@@ -11,7 +11,7 @@
 namespace {
 
 struct CliOptions {
-    std::string config_path{"config/core_stack_ci.yaml"};
+    std::string config_path{"config/ci/core_stack_ci.yaml"};
     int max_frames{1};
 };
 

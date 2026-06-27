@@ -24,7 +24,7 @@ int main() {
         return 1;
     }
 
-    const auto config = dedalus::load_core_stack_config("config/core_stack_recorded_ci.yaml");
+    const auto config = dedalus::load_core_stack_config("config/ci/core_stack_recorded_ci.yaml");
     if (config.frame_source != "recorded_frames" ||
         config.recorded_manifest_path != "tests/fixtures/recorded_frames/manifest.txt") {
         std::cerr << "recorded provider config did not parse expected frame source settings\n";

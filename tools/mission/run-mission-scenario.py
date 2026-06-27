@@ -200,7 +200,7 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--name", default="trajectory_mission", help="Scenario name")
     parser.add_argument("--run-id", default=default_run_id(), help="Run directory name under <output-root>/<name>")
-    parser.add_argument("--config", default="config/core_stack_trajectory_mission_placeholder.yaml")
+    parser.add_argument("--config", default="config/ci/core_stack_trajectory_mission_placeholder.yaml")
     parser.add_argument("--output-root", default="out/mission_scenarios")
     parser.add_argument("--app", default="./build-staging/apps/dedalus_mission_loop")
     parser.add_argument("--validator", default="python3 tools/mission/validate-mission-artifacts.py")

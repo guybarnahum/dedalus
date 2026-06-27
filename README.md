@@ -95,7 +95,7 @@ The Virtual Proving Ground (`simulation/` directory) provides a complete high-fi
 
    # Launch mission (output-dir, mission-id, L2 DB path all auto-derived).
    simulation/airsim/run_mission.sh \
-     --config config/core_stack_object_behavior_airsim_existing_object_circle.yml
+     --config config/ci/core_stack_object_behavior_airsim_existing_object_circle.yml
 
    # Open viewer in another terminal (same DEDALUS_SITE_ID picks up L2 map).
    DEDALUS_SITE_ID=airsim_47.641N_122.140W \
@@ -183,14 +183,14 @@ The CI-safe synthetic provider path is:
 
 ```bash
 ./build-validation/apps/dedalus_core_stack \
-  --config config/core_stack_ci.yaml
+  --config config/ci/core_stack_ci.yaml
 ```
 
 The CI-safe recorded-frame path is:
 
 ```bash
 ./build-validation/apps/dedalus_core_stack \
-  --config config/core_stack_recorded_ci.yaml
+  --config config/ci/core_stack_recorded_ci.yaml
 ```
 
 That recorded config reads the tiny fixture manifest in `tests/fixtures/recorded_frames/` through `RecordedFrameSource`. It does not require AirSim, OpenCV, GStreamer, FFmpeg, or media codecs.
@@ -265,7 +265,7 @@ projector: airsim_depth
 The example config is:
 
 ```bash
-config/core_stack_airsim_example.yaml
+config/ci/core_stack_airsim_example.yaml
 ```
 
 It includes:

@@ -7,7 +7,7 @@ This document captures the implemented state of the Dedalus core-stack and its r
 The repo has a buildable C++20 core-stack skeleton with dependency-free provider composition:
 
 ```text
-config/core_stack_ci.yaml OR config/core_stack_recorded_ci.yaml OR config/core_stack_airsim_example.yaml
+config/ci/core_stack_ci.yaml OR config/ci/core_stack_recorded_ci.yaml OR config/ci/core_stack_airsim_example.yaml
   -> load_core_stack_config()
       -> CoreStackProviderConfig
           -> ProviderRegistry
@@ -78,7 +78,7 @@ Recorded or simulation-exported frames can be replayed into deterministic snapsh
 
 ```bash
 ./build-validation/apps/dedalus_replay_recording \
-  --config config/core_stack_recorded_ci.yaml \
+  --config config/ci/core_stack_recorded_ci.yaml \
   --output-dir out/replay_snapshots \
   --max-frames 0
 ```

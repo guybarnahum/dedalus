@@ -277,7 +277,7 @@ Ghost/scripted target scenario:
   config/behaviors/ghost_targets/*.yaml
 
 Core-stack config that references behavior:
-  config/core_stack_object_behavior_mission.yaml
+  config/ci/core_stack_object_behavior_mission.yaml
 ```
 
 This matters because the same behavior spec should be usable against live AirSim, recorded frames, synthetic CI, and future real hardware. Simulation may provide test targets/scenarios, but it should not own the behavior language.
@@ -805,7 +805,7 @@ config/behaviors/approach_target.yaml
 config/behaviors/sequence_approach_circle.yaml
 config/behaviors/ghost_targets/person_pair_crossing.yaml
 
-config/core_stack_object_behavior_mission.yaml
+config/ci/core_stack_object_behavior_mission.yaml
 ```
 
 Visibility/recording files:
@@ -903,7 +903,7 @@ After object-conditioned behavior exists:
 
 ```bash
 ./build-staging/apps/dedalus_mission_loop \
-  --config config/core_stack_object_behavior_mission.yaml \
+  --config config/ci/core_stack_object_behavior_mission.yaml \
   --output-dir out/object_behavior_mission \
   --max-frames 30 \
   --shutdown-max-frames 30 \

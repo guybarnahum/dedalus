@@ -18,7 +18,7 @@ pipeline_timing_output_path: out/profile/pipeline_profile.jsonl
 The CI-safe example config is:
 
 ```text
-config/core_stack_profile_ci.yaml
+config/ci/core_stack_profile_ci.yaml
 ```
 
 ## Output format
@@ -50,7 +50,7 @@ frame_annotator.annotate
 
 ```bash
 ./build-staging/apps/dedalus_replay_recording \
-  --config config/core_stack_profile_ci.yaml \
+  --config config/ci/core_stack_profile_ci.yaml \
   --output-dir out/profile_snapshots \
   --max-frames 1
 

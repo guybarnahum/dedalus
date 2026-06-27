@@ -25,7 +25,7 @@ enum class ProgressMode {
 };
 
 struct Args {
-    std::string config_path{"config/core_stack_recorded_ci.yaml"};
+    std::string config_path{"config/ci/core_stack_recorded_ci.yaml"};
     std::filesystem::path output_dir{"out/replay_snapshots"};
     int max_frames{0};
     ProgressMode progress_mode{ProgressMode::Auto};

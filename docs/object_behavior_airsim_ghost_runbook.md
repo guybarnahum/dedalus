@@ -450,7 +450,7 @@ Terminal 1, run mission-loop with runtime event stream enabled:
 
 ```bash
 ./build-staging/apps/dedalus_mission_loop \
-  --config config/core_stack_object_behavior_airsim_ghost.yaml \
+  --config config/ci/core_stack_object_behavior_airsim_ghost.yaml \
   --output-dir out/object_behavior_airsim_ghost \
   --max-frames 900 \
   --shutdown-max-frames 400 \
