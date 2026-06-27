@@ -381,6 +381,7 @@ input[type=number],input[type=text],input[type=datetime-local],select{
   color:#ccc;padding:5px 7px;font-size:11px}
 input:focus,select:focus{outline:1px solid #5af;border-color:#5af}
 .row2{display:grid;grid-template-columns:1fr 1fr;gap:6px}
+.col1{display:flex;flex-direction:column;gap:6px}
 .hint{font-size:10px;color:#555;margin-top:3px}
 .shortcuts{display:flex;gap:5px;margin-top:5px}
 
@@ -389,7 +390,7 @@ button{border:none;border-radius:4px;padding:7px 10px;font-size:11px;cursor:poin
 button:disabled{opacity:.4;cursor:default}
 button:hover:not(:disabled){opacity:.85}
 .btn-sc{background:#1e2a1e;color:#6d6;padding:4px 9px;font-size:10px;width:auto;margin-top:0;border-radius:3px;flex:1}
-.btn-reset{background:#222;color:#777;padding:4px 9px;font-size:10px;width:auto;margin-top:0;border-radius:3px}
+.btn-reset{background:#2a1e1e;color:#f88;padding:4px 9px;font-size:10px;width:auto;margin-top:0;border-radius:3px}
 .btn-delete{background:#501a1a;color:#f88}
 .btn-safe{background:#1a3020;color:#7f7}
 .btn-export{background:#252535;color:#99f}
@@ -434,14 +435,14 @@ canvas{display:block;flex:1;width:100%}
     <input type="number" id="f-age-h" placeholder="e.g. 168  =  7 days" min="0" step="1">
 
     <label>Date range (from – to)</label>
-    <div class="row2">
+    <div class="col1">
       <input type="datetime-local" id="f-from" title="From (inclusive lower bound)">
       <input type="datetime-local" id="f-to"   title="To (inclusive upper bound)">
     </div>
     <div class="shortcuts">
       <button class="btn-sc" id="btn-today">Today</button>
       <button class="btn-sc" id="btn-last-hour">Last hour</button>
-      <button class="btn-reset" id="btn-reset-filter">Reset</button>
+      <button class="btn-reset" id="btn-reset-filter" disabled>Reset</button>
     </div>
 
     <label>Score below (delete cells with score &lt; this)</label>
@@ -822,6 +823,7 @@ function schedulePreview() {
 }
 
 function runPreview() {
+  document.getElementById('btn-reset-filter').disabled = !hasAnyFilter();
   if (!hasAnyFilter()) {
     highlightedKeys.clear();
     document.getElementById('preview-count').textContent = '';
