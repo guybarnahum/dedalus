@@ -20,6 +20,14 @@ TEST_LABEL_REGEX="${TEST_LABEL_REGEX:-}"
 
 cd "$(git rev-parse --show-toplevel)"
 
+# Activate the project venv if not already active, so all python3 calls below
+# use the same environment as setup.sh installs into.
+VENV_PATH="${DEDALUS_VENV_PATH:-$(pwd)/venv}"
+if [[ -z "${VIRTUAL_ENV:-}" && -f "${VENV_PATH}/bin/activate" ]]; then
+    # shellcheck source=/dev/null
+    source "${VENV_PATH}/bin/activate"
+fi
+
 git pull --ff-only
 
 echo ""

@@ -371,6 +371,25 @@ run_and_log "Install perception ML dependencies (depth export)" python -m pip in
 run_and_log "Verify perception ML dependencies" python -c "import torch, transformers, onnx, onnxscript, onnxruntime; print('ORT providers:', onnxruntime.get_available_providers())"
 
 echo "✅ Python environment ready at $VENV_PATH"
+
+# ---------------- Step 5b: Depth Model Export ----------------
+# Export the DepthAnything V2 Small model to ONNX if the ORT C++ SDK is
+# installed and the model file is not already present.
+DEPTH_MODEL="${DEPTH_MODEL:-$REPO_ROOT/models/depth_anything_v2_vits.onnx}"
+ORT_INSTALL_DIR="/usr/local/onnxruntime"
+if [ -f "${ORT_INSTALL_DIR}/lib/cmake/onnxruntime/onnxruntimeConfig.cmake" ]; then
+    if [ -f "$DEPTH_MODEL" ]; then
+        echo "✅ Depth model already present at $DEPTH_MODEL — skipping export."
+    else
+        mkdir -p "$(dirname "$DEPTH_MODEL")"
+        run_and_log "Export DepthAnything V2 Small → ONNX" \
+            python "$REPO_ROOT/tools/perception/export_depth_anything.py" \
+                   --output "$DEPTH_MODEL"
+        echo "✅ Depth model exported to $DEPTH_MODEL"
+    fi
+else
+    echo "ℹ️  Skipping depth model export — ORT C++ SDK not installed (run Step 3b first)."
+fi
 # --------------------------------------------------------------
 
 # ---------------- Step 6: Pre-load Environments ----------------
