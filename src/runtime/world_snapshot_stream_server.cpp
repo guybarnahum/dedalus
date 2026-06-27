@@ -335,6 +335,17 @@ void RuntimeEventStreamServer::http_accept_loop() {
             break;
         }
 
+        // The listen fd is nonblocking (set by create_listen_socket); accepted
+        // fds inherit that flag on Linux.  The request recv below must block
+        // until the client sends its headers, so clear O_NONBLOCK here.  SSE
+        // clients are switched back to nonblocking after the headers are sent.
+        {
+            const int fl = ::fcntl(client_fd, F_GETFL, 0);
+            if (fl >= 0) {
+                (void)::fcntl(client_fd, F_SETFL, fl & ~O_NONBLOCK);
+            }
+        }
+
         char buffer[4096];
         const auto received = ::recv(client_fd, buffer, sizeof(buffer) - 1, 0);
         if (received <= 0) {
