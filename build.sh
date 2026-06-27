@@ -20,13 +20,17 @@ TEST_LABEL_REGEX="${TEST_LABEL_REGEX:-}"
 
 cd "$(git rev-parse --show-toplevel)"
 
-# Activate the project venv if not already active, so all python3 calls below
-# use the same environment as setup.sh installs into.
+# Always activate the project venv so all python3/python calls below resolve to
+# the same environment setup.sh installs into, regardless of the caller's shell.
 VENV_PATH="${DEDALUS_VENV_PATH:-$(pwd)/venv}"
-if [[ -z "${VIRTUAL_ENV:-}" && -f "${VENV_PATH}/bin/activate" ]]; then
+if [[ -f "${VENV_PATH}/bin/activate" ]]; then
     # shellcheck source=/dev/null
     source "${VENV_PATH}/bin/activate"
 fi
+# Prefer the venv's explicit interpreter to guard against PATH ordering issues.
+PYTHON_BIN="${VENV_PATH}/bin/python3"
+if [[ ! -x "$PYTHON_BIN" ]]; then PYTHON_BIN="${VENV_PATH}/bin/python"; fi
+if [[ ! -x "$PYTHON_BIN" ]]; then PYTHON_BIN="python3"; fi
 
 git pull --ff-only
 
@@ -106,7 +110,7 @@ if [[ -n "$ONNX_CMAKE_FLAGS" ]]; then
     else
         echo "[build] depth model: not found at ${DEPTH_MODEL} — exporting …"
         mkdir -p "$(dirname "$DEPTH_MODEL")"
-        python3 tools/perception/export_depth_anything.py --output "$DEPTH_MODEL"
+        "$PYTHON_BIN" tools/perception/export_depth_anything.py --output "$DEPTH_MODEL"
         echo "[build] depth model: exported to ${DEPTH_MODEL}"
     fi
 fi
@@ -114,8 +118,8 @@ fi
 # Generate the viewer SPA into the build directory so it is always in sync
 # with the dedalus_viewer binary.  Serve with:
 #   ./build/apps/dedalus_viewer --static-root "$BUILD_DIR" --replay-dir <out-dir>
-python3 tools/visualization/mission_unified_viewer.py --output "$BUILD_DIR/viewer.html"
-python3 tools/validation/validate-mission-unified-viewer.py "$BUILD_DIR/viewer.html"
+"$PYTHON_BIN" tools/visualization/mission_unified_viewer.py --output "$BUILD_DIR/viewer.html"
+"$PYTHON_BIN" tools/validation/validate-mission-unified-viewer.py "$BUILD_DIR/viewer.html"
 
 ctest_args=(--test-dir "$BUILD_DIR" --output-on-failure)
 
@@ -140,6 +144,6 @@ else
   esac
 fi
 
-python3 tools/validation/check-architectural-naming.py .
+"$PYTHON_BIN" tools/validation/check-architectural-naming.py .
 
 git status --short
