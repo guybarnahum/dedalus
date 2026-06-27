@@ -88,6 +88,21 @@ cmake -S . -B "$BUILD_DIR" -DCMAKE_BUILD_TYPE=RelWithDebInfo \
 
 cmake --build "$BUILD_DIR" -j"$(dedalus_build_jobs)"
 
+# ── Model preparation ─────────────────────────────────────────────────────────
+# Export the depth model if ONNX depth is enabled and the model file is absent.
+# Skip silently when ONNX depth is off (no ONNX_CMAKE_FLAGS set).
+DEPTH_MODEL="${DEPTH_MODEL:-models/depth_anything_v2_vits.onnx}"
+if [[ -n "$ONNX_CMAKE_FLAGS" ]]; then
+    if [[ -f "$DEPTH_MODEL" ]]; then
+        echo "[build] depth model: found at ${DEPTH_MODEL} — skipping export"
+    else
+        echo "[build] depth model: not found at ${DEPTH_MODEL} — exporting …"
+        mkdir -p "$(dirname "$DEPTH_MODEL")"
+        python3 tools/perception/export_depth_anything.py --output "$DEPTH_MODEL"
+        echo "[build] depth model: exported to ${DEPTH_MODEL}"
+    fi
+fi
+
 # Generate the viewer SPA into the build directory so it is always in sync
 # with the dedalus_viewer binary.  Serve with:
 #   ./build/apps/dedalus_viewer --static-root "$BUILD_DIR" --replay-dir <out-dir>
