@@ -381,14 +381,15 @@ input[type=number],input[type=text],input[type=datetime-local],select{
   color:#ccc;padding:5px 7px;font-size:11px}
 input:focus,select:focus{outline:1px solid #5af;border-color:#5af}
 .row2{display:grid;grid-template-columns:1fr 1fr;gap:6px}
-.row2b{display:grid;grid-template-columns:1fr auto;gap:6px;align-items:end}
 .hint{font-size:10px;color:#555;margin-top:3px}
+.shortcuts{display:flex;gap:5px;margin-top:5px}
 
 /* ── buttons ── */
 button{border:none;border-radius:4px;padding:7px 10px;font-size:11px;cursor:pointer;font-weight:500;width:100%;margin-top:8px;transition:opacity .15s}
 button:disabled{opacity:.4;cursor:default}
 button:hover:not(:disabled){opacity:.85}
-.btn-today{background:#1e2a1e;color:#6d6;padding:5px 8px;font-size:10px;width:auto;margin-top:0;border-radius:3px}
+.btn-sc{background:#1e2a1e;color:#6d6;padding:4px 9px;font-size:10px;width:auto;margin-top:0;border-radius:3px;flex:1}
+.btn-reset{background:#222;color:#777;padding:4px 9px;font-size:10px;width:auto;margin-top:0;border-radius:3px}
 .btn-delete{background:#501a1a;color:#f88}
 .btn-safe{background:#1a3020;color:#7f7}
 .btn-export{background:#252535;color:#99f}
@@ -432,14 +433,16 @@ canvas{display:block;flex:1;width:100%}
     <label>Delete cells older than (hours)</label>
     <input type="number" id="f-age-h" placeholder="e.g. 168  =  7 days" min="0" step="1">
 
-    <label>Delete before</label>
-    <div class="row2b">
-      <input type="datetime-local" id="f-before">
-      <button class="btn-today" id="btn-today" title="Set to start of today">Today</button>
+    <label>Date range (from – to)</label>
+    <div class="row2">
+      <input type="datetime-local" id="f-from" title="From (inclusive lower bound)">
+      <input type="datetime-local" id="f-to"   title="To (inclusive upper bound)">
     </div>
-
-    <label>Delete after</label>
-    <input type="datetime-local" id="f-after">
+    <div class="shortcuts">
+      <button class="btn-sc" id="btn-today">Today</button>
+      <button class="btn-sc" id="btn-last-hour">Last hour</button>
+      <button class="btn-reset" id="btn-reset-filter">Reset</button>
+    </div>
 
     <label>Score below (delete cells with score &lt; this)</label>
     <input type="number" id="f-score" placeholder="e.g. 2.0" min="0" step="0.1">
@@ -748,7 +751,7 @@ async function reload() { await loadStats(); await loadCells(); }
 // The actual delete still goes to the server (authoritative).
 
 function hasAnyFilter() {
-  return ['f-age-h','f-before','f-after','f-score','f-conf',
+  return ['f-age-h','f-from','f-to','f-score','f-conf',
           'f-cx-min','f-cx-max','f-cy-min','f-cy-max','f-cz-min','f-cz-max']
     .some(id => document.getElementById(id).value.trim() !== '');
 }
@@ -762,21 +765,11 @@ function cellMatchesFilter(c) {
     if (a <= ageH * 3600) return false;
   }
 
-  const before = document.getElementById('f-before').value;
-  if (before) {
-    const cutMs = new Date(before).getTime();
-    const cellMs = c.updated_ns / 1e6;
-    // delete cells with timestamp < "before" → match if cellMs < cutMs
-    // cells with updated_ns=0 (no timestamp): treated as epoch → always < cutMs
-    if (cellMs >= cutMs) return false;
-  }
-
-  const after = document.getElementById('f-after').value;
-  if (after) {
-    const cutMs = new Date(after).getTime();
-    const cellMs = c.updated_ns / 1e6;
-    if (cellMs <= cutMs) return false;
-  }
+  const from = document.getElementById('f-from').value;
+  const to   = document.getElementById('f-to').value;
+  const cellMs = c.updated_ns / 1e6;
+  if (from && cellMs < new Date(from).getTime()) return false;
+  if (to   && cellMs > new Date(to).getTime())   return false;
 
   const maxScore = parseFloat(document.getElementById('f-score').value);
   if (!isNaN(maxScore) && c.score >= maxScore) return false;
@@ -800,11 +793,11 @@ function buildFilterBody() {
   const ageH = parseFloat(document.getElementById('f-age-h').value);
   if (!isNaN(ageH) && ageH >= 0) body.max_age_s = ageH * 3600;
 
-  const before = document.getElementById('f-before').value;
-  if (before) body.before_ns = new Date(before).getTime() * 1e6;
+  const from = document.getElementById('f-from').value;
+  if (from) body.after_ns = new Date(from).getTime() * 1e6;
 
-  const after = document.getElementById('f-after').value;
-  if (after) body.after_ns = new Date(after).getTime() * 1e6;
+  const to = document.getElementById('f-to').value;
+  if (to) body.before_ns = new Date(to).getTime() * 1e6;
 
   const score = parseFloat(document.getElementById('f-score').value);
   if (!isNaN(score)) body.max_score = score;
@@ -848,19 +841,40 @@ function runPreview() {
 }
 
 // Wire every filter input to auto-preview
-['f-age-h','f-before','f-after','f-score','f-conf',
+['f-age-h','f-from','f-to','f-score','f-conf',
  'f-cx-min','f-cx-max','f-cy-min','f-cy-max','f-cz-min','f-cz-max']
   .forEach(id => document.getElementById(id).addEventListener('input', schedulePreview));
 
-// [Today] shortcut: set "before" to midnight today (local)
-document.getElementById('btn-today').addEventListener('click', () => {
-  const d = new Date();
-  d.setHours(0, 0, 0, 0);
-  // datetime-local value format: "YYYY-MM-DDTHH:MM"
+function toDatetimeLocal(d) {
   const pad = n => String(n).padStart(2, '0');
-  const local = `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}T00:00`;
-  document.getElementById('f-before').value = local;
+  return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}` +
+         `T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+
+// [Today] shortcut: from = midnight, to = now
+document.getElementById('btn-today').addEventListener('click', () => {
+  const now = new Date();
+  const midnight = new Date(now); midnight.setHours(0, 0, 0, 0);
+  document.getElementById('f-from').value = toDatetimeLocal(midnight);
+  document.getElementById('f-to').value   = toDatetimeLocal(now);
   schedulePreview();
+});
+
+// [Last Hour] shortcut: from = now-1h, to = now
+document.getElementById('btn-last-hour').addEventListener('click', () => {
+  const now = new Date();
+  const anHourAgo = new Date(now.getTime() - 3600 * 1000);
+  document.getElementById('f-from').value = toDatetimeLocal(anHourAgo);
+  document.getElementById('f-to').value   = toDatetimeLocal(now);
+  schedulePreview();
+});
+
+// [Reset] clears all filter inputs and collapses preview
+document.getElementById('btn-reset-filter').addEventListener('click', () => {
+  ['f-age-h','f-from','f-to','f-score','f-conf',
+   'f-cx-min','f-cx-max','f-cy-min','f-cy-max','f-cz-min','f-cz-max']
+    .forEach(id => { document.getElementById(id).value = ''; });
+  runPreview();
 });
 
 // ── delete (server-authoritative) ─────────────────────────────────────────
