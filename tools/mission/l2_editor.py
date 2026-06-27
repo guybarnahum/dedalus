@@ -102,7 +102,8 @@ def api_cells() -> dict:
                 "confidence": r["confidence"],
                 "count": r["count"],
                 "updated_ns": updated_ns,
-                "age_s": (now_ns - updated_ns) / 1e9 if updated_ns else 0,
+                # age_s == -1 means no timestamp (updated_ns==0); JS treats as max age
+                "age_s": (now_ns - updated_ns) / 1e9 if updated_ns > 0 else -1,
             })
         return {
             "cells": cells,
@@ -358,7 +359,7 @@ EDITOR_HTML = r"""<!DOCTYPE html>
 body{font-family:system-ui,sans-serif;background:#111;color:#ddd;display:flex;height:100vh;overflow:hidden}
 
 /* ── sidebar ── */
-#sidebar{width:280px;min-width:280px;background:#1a1a1a;border-right:1px solid #333;display:flex;flex-direction:column;overflow:hidden}
+#sidebar{width:285px;min-width:285px;background:#1a1a1a;border-right:1px solid #333;display:flex;flex-direction:column;overflow:hidden}
 #sidebar-top{padding:10px 12px 6px;border-bottom:1px solid #333}
 #sidebar-top h1{font-size:13px;font-weight:600;color:#aaa;letter-spacing:.05em;text-transform:uppercase}
 #db-path{font-size:10px;color:#555;margin-top:2px;word-break:break-all}
@@ -380,27 +381,29 @@ input[type=number],input[type=text],input[type=datetime-local],select{
   color:#ccc;padding:5px 7px;font-size:11px}
 input:focus,select:focus{outline:1px solid #5af;border-color:#5af}
 .row2{display:grid;grid-template-columns:1fr 1fr;gap:6px}
+.row2b{display:grid;grid-template-columns:1fr auto;gap:6px;align-items:end}
 .hint{font-size:10px;color:#555;margin-top:3px}
 
 /* ── buttons ── */
 button{border:none;border-radius:4px;padding:7px 10px;font-size:11px;cursor:pointer;font-weight:500;width:100%;margin-top:8px;transition:opacity .15s}
 button:disabled{opacity:.4;cursor:default}
 button:hover:not(:disabled){opacity:.85}
-.btn-preview{background:#2a3a50;color:#7bf}
+.btn-today{background:#1e2a1e;color:#6d6;padding:5px 8px;font-size:10px;width:auto;margin-top:0;border-radius:3px}
 .btn-delete{background:#501a1a;color:#f88}
 .btn-safe{background:#1a3020;color:#7f7}
 .btn-export{background:#252535;color:#99f}
 #preview-count{font-size:11px;color:#fa0;margin-top:6px;min-height:16px}
 
 /* ── colorbar ── */
-#colorbar{display:flex;align-items:center;gap:6px;padding:6px 12px 4px;font-size:10px;color:#555;border-bottom:1px solid #282828}
-#colorbar-gradient{height:8px;flex:1;border-radius:3px;background:linear-gradient(to right,#2ecc71,#f1c40f,#e67e22,#e74c3c)}
-#color-mode{font-size:10px;padding:2px 6px;background:#1a1a1a;border:1px solid #333;border-radius:3px;color:#aaa;cursor:pointer}
+#colorbar{display:flex;align-items:center;gap:6px;padding:5px 12px 4px;font-size:10px;color:#555;border-bottom:1px solid #282828}
+#colorbar-gradient{height:8px;flex:1;border-radius:3px}
+#color-label-lo{min-width:24px}
+#color-label-hi{min-width:24px;text-align:right}
 
 /* ── canvas ── */
-#canvas-wrap{flex:1;position:relative;overflow:hidden;background:#0d0d0d}
-canvas{display:block;width:100%;height:100%}
-#hud{position:absolute;top:8px;right:10px;font-size:10px;color:#444;pointer-events:none;line-height:1.8}
+#canvas-wrap{flex:1;position:relative;overflow:hidden;background:#0d0d0d;display:flex;flex-direction:column}
+canvas{display:block;flex:1;width:100%}
+#hud{position:absolute;top:36px;right:10px;font-size:10px;color:#444;pointer-events:none;line-height:1.8}
 #hud span{color:#666}
 #loading{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;font-size:13px;color:#555;pointer-events:none}
 </style>
@@ -426,20 +429,22 @@ canvas{display:block;width:100%;height:100%}
 
   <!-- ── Filter panel ── -->
   <div class="tab-panel active" id="panel-filter">
-    <label>Max age (hours) — delete cells older than this</label>
-    <input type="number" id="f-age-h" placeholder="e.g. 168 (7 days)" min="0" step="1">
-    <div class="hint">Leave blank to ignore</div>
+    <label>Delete cells older than (hours)</label>
+    <input type="number" id="f-age-h" placeholder="e.g. 168  =  7 days" min="0" step="1">
 
     <label>Delete before</label>
-    <input type="datetime-local" id="f-before">
+    <div class="row2b">
+      <input type="datetime-local" id="f-before">
+      <button class="btn-today" id="btn-today" title="Set to start of today">Today</button>
+    </div>
 
     <label>Delete after</label>
     <input type="datetime-local" id="f-after">
 
-    <label>Max score (delete cells with score &lt; this)</label>
+    <label>Score below (delete cells with score &lt; this)</label>
     <input type="number" id="f-score" placeholder="e.g. 2.0" min="0" step="0.1">
 
-    <label>Max confidence (delete cells with conf &lt; this)</label>
+    <label>Confidence below (delete cells with conf &lt; this)</label>
     <input type="number" id="f-conf" placeholder="e.g. 0.3" min="0" max="1" step="0.05">
 
     <label>Spatial X range (metres)</label>
@@ -460,7 +465,6 @@ canvas{display:block;width:100%;height:100%}
       <input type="number" id="f-cz-max" placeholder="max">
     </div>
 
-    <button class="btn-preview" id="btn-preview">Preview deletion</button>
     <div id="preview-count"></div>
     <button class="btn-delete" id="btn-delete" disabled>Delete <span id="del-label">0</span> cells (auto-backup)</button>
     <button class="btn-safe" id="btn-backup" style="margin-top:14px">Backup .db now</button>
@@ -491,11 +495,11 @@ canvas{display:block;width:100%;height:100%}
   <div class="tab-panel" id="panel-view">
     <label>Colour by</label>
     <select id="color-by">
-      <option value="age">Age (green=new, red=old)</option>
+      <option value="age">Age (green=new → red=old)</option>
       <option value="score">Score</option>
       <option value="confidence">Confidence</option>
     </select>
-    <label>Max age scale (days)</label>
+    <label>Age colour scale (days = full red)</label>
     <input type="number" id="age-scale" value="30" min="1" step="1">
     <label>Show Z layers</label>
     <div class="row2">
@@ -506,24 +510,29 @@ canvas{display:block;width:100%;height:100%}
     <div class="hint" style="margin-top:14px">
       Pan: right-drag or middle-drag<br>
       Zoom: scroll wheel<br>
-      Reset: double-click canvas
+      Reset view: double-click canvas
     </div>
   </div>
 </div>
 
-<!-- ── colorbar strip ── -->
+<!-- ── 3D view ── -->
 <div id="canvas-wrap">
   <div id="colorbar">
-    <span>new</span>
-    <div id="colorbar-gradient"></div>
-    <span>old</span>
-    <span id="color-mode" title="colour mode">age</span>
+    <span id="color-label-lo">new</span>
+    <div id="colorbar-gradient" style="background:linear-gradient(to right,#3ecf6e,#f0c330,#e8732a,#d63030)"></div>
+    <span id="color-label-hi">old</span>
+    &nbsp;
+    <span style="color:#333">|</span>
+    &nbsp;
+    <span style="color:#555">colour: </span>
+    <span id="color-mode" style="color:#888">age</span>
+    &nbsp;&nbsp;
+    <span style="color:#333">highlighted: </span>
+    <span id="h-hi" style="color:#fa0">0</span>
+    &nbsp;/&nbsp;
+    <span id="h-total" style="color:#666">–</span>
   </div>
   <canvas id="c"></canvas>
-  <div id="hud">
-    Cells: <span id="h-total">–</span><br>
-    Highlighted: <span id="h-hi">0</span>
-  </div>
   <div id="loading">Loading cells…</div>
 </div>
 
@@ -533,7 +542,7 @@ canvas{display:block;width:100%;height:100%}
 
 // ── state ──────────────────────────────────────────────────────────────────
 let allCells = [];
-let highlightedKeys = new Set();  // "xi,yi,zi" strings
+let highlightedKeys = new Set();   // "xi,yi,zi" strings of cells matching filter
 let colorBy = 'age';
 let ageScaleDays = 30;
 let zFilterMin = -Infinity, zFilterMax = Infinity;
@@ -543,129 +552,101 @@ let stats = {};
 // ── Three.js setup ─────────────────────────────────────────────────────────
 const canvas = document.getElementById('c');
 const renderer = new THREE.WebGLRenderer({canvas, antialias: true});
-renderer.setPixelRatio(window.devicePixelRatio);
+renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
 renderer.setClearColor(0x0d0d0d);
 
-// Orthographic camera — true 45° isometric angle
-const aspect = () => canvas.clientWidth / canvas.clientHeight;
 let frustumSize = 80;
-function makeCamera() {
-  const a = aspect();
-  const cam = new THREE.OrthographicCamera(
-    -frustumSize * a / 2,  frustumSize * a / 2,
-     frustumSize / 2,     -frustumSize / 2,
-    -2000, 2000
-  );
-  // Isometric: equal angles on all three axes
-  cam.position.set(1, 1, 1).normalize().multiplyScalar(frustumSize * 2);
-  cam.lookAt(0, 0, 0);
-  return cam;
-}
-let camera = makeCamera();
+function aspect() { return canvas.clientWidth / Math.max(canvas.clientHeight, 1); }
 
+let camera = new THREE.OrthographicCamera(-1,1,1,-1,-2000,2000);
 const scene = new THREE.Scene();
-scene.add(new THREE.AmbientLight(0xffffff, 0.55));
-const dirLight = new THREE.DirectionalLight(0xffffff, 0.7);
-dirLight.position.set(3, 5, 2);
+scene.add(new THREE.AmbientLight(0xffffff, 0.6));
+const dirLight = new THREE.DirectionalLight(0xffffff, 0.65);
+dirLight.position.set(2, 4, 3);
 scene.add(dirLight);
 
-// Target (pan offset) — camera orbits this point
 let target = new THREE.Vector3(0, 0, 0);
 
-// ── geometry ───────────────────────────────────────────────────────────────
-const GEO = new THREE.BoxGeometry(1, 1, 1);
+// ── geometry — shared ──────────────────────────────────────────────────────
+// Slightly inset box so adjacent voxels show a thin gap
+const GEO = new THREE.BoxGeometry(0.96, 0.96, 0.96);
 let mesh = null;
-let highlightMesh = null;
+let hiMesh = null;
 
-// ── colour helpers ─────────────────────────────────────────────────────────
-const COL = new THREE.Color();
+// ── colour ─────────────────────────────────────────────────────────────────
+// NOTE: do NOT use vertexColors:true on MeshLambertMaterial with InstancedMesh.
+// BoxGeometry has no vertex color attribute; the shader would multiply instance
+// colors by zero, producing black.  Plain white material + instance colors is
+// correct — the renderer injects USE_INSTANCING_COLOR automatically.
+
+const _COL = new THREE.Color();
+
 function colorForCell(c) {
+  let t;
   if (colorBy === 'age') {
-    const t = Math.min(c.age_s / (ageScaleDays * 86400), 1.0);
-    // green → yellow → orange → red
-    if (t < 0.33) COL.setHSL(0.38 - t * 0.38 / 0.33, 0.85, 0.42);
-    else if (t < 0.66) { const u = (t - 0.33) / 0.33; COL.setHSL(0.08 - u * 0.05, 0.9, 0.43); }
-    else { const u = (t - 0.66) / 0.34; COL.setHSL(0.03 - u * 0.03, 1.0, 0.40 - u * 0.05); }
+    // age_s=-1 means updated_ns was 0 (no timestamp) → treat as maximally old
+    const a = c.age_s < 0 ? ageScaleDays * 86400
+            : (isFinite(c.age_s) ? c.age_s : ageScaleDays * 86400);
+    t = Math.min(Math.max(a / (ageScaleDays * 86400), 0), 1);
   } else if (colorBy === 'score') {
-    const mx = stats.score_max || 10;
-    const t = Math.min(c.score / mx, 1.0);
-    COL.setHSL(0.62 - t * 0.6, 0.9, 0.42);
+    const mx = (stats.score_max > 0) ? stats.score_max : 10;
+    t = Math.min(Math.max(c.score / mx, 0), 1);
   } else {
-    const t = Math.min(Math.max(c.confidence, 0), 1);
-    COL.setHSL(0.62 - t * 0.6, 0.9, 0.42);
+    t = Math.min(Math.max(c.confidence, 0), 1);
   }
-  return COL.clone();
+  // hue: 0.36 (green) → 0 (red), lightness 0.50 — always visible, never black
+  _COL.setHSL((1 - t) * 0.36, 0.88, 0.50);
+  return _COL.clone();
 }
 
-// ── build scene ────────────────────────────────────────────────────────────
+// ── build instanced meshes ─────────────────────────────────────────────────
 function buildScene() {
-  if (mesh) { scene.remove(mesh); mesh.dispose(); mesh = null; }
-  if (highlightMesh) { scene.remove(highlightMesh); highlightMesh.dispose(); highlightMesh = null; }
+  if (mesh)   { scene.remove(mesh);   mesh.dispose();   mesh = null; }
+  if (hiMesh) { scene.remove(hiMesh); hiMesh.dispose(); hiMesh = null; }
 
-  const visible = allCells.filter(c =>
-    c.cz >= zFilterMin && c.cz <= zFilterMax
-  );
-  const hiCells  = visible.filter(c => highlightedKeys.has(`${c.xi},${c.yi},${c.zi}`));
-  const normCells = visible.filter(c => !highlightedKeys.has(`${c.xi},${c.yi},${c.zi}`));
+  const visible = allCells.filter(c => c.cz >= zFilterMin && c.cz <= zFilterMax);
+  const normal  = visible.filter(c => !highlightedKeys.has(`${c.xi},${c.yi},${c.zi}`));
+  const hi      = visible.filter(c =>  highlightedKeys.has(`${c.xi},${c.yi},${c.zi}`));
 
-  // Normal cells
-  if (normCells.length > 0) {
-    const mat = new THREE.MeshLambertMaterial({vertexColors: true});
-    mesh = new THREE.InstancedMesh(GEO, mat, normCells.length);
-    mesh.instanceMatrix.setUsage(THREE.StaticDrawUsage);
+  // Helper: place + colour an InstancedMesh
+  function buildMesh(cells, scaleX, scaleY, scaleZ, colFn) {
+    if (cells.length === 0) return null;
+    const mat = new THREE.MeshLambertMaterial({color: 0xffffff});
+    const m = new THREE.InstancedMesh(GEO, mat, cells.length);
+    m.instanceMatrix.setUsage(THREE.StaticDrawUsage);
     const M = new THREE.Matrix4();
-    const S = new THREE.Vector3(cellSizeM, cellSizeM, vCellSizeM);
-    normCells.forEach((c, i) => {
-      M.makeScale(S.x, S.y, S.z);
-      M.setPosition(c.cx, c.cz, -c.cy);  // Y-up: map Z→Three Y, map Y→Three -Z
-      mesh.setMatrixAt(i, M);
-      mesh.setColorAt(i, colorForCell(c));
-    });
-    mesh.instanceMatrix.needsUpdate = true;
-    mesh.instanceColor.needsUpdate = true;
-    scene.add(mesh);
-  }
-
-  // Highlighted (preview-delete) cells — red/orange
-  if (hiCells.length > 0) {
-    const hmat = new THREE.MeshLambertMaterial({vertexColors: true, transparent: true, opacity: 0.85});
-    highlightMesh = new THREE.InstancedMesh(GEO, hmat, hiCells.length);
-    const M = new THREE.Matrix4();
-    const HI = new THREE.Color(1.0, 0.25, 0.1);
-    hiCells.forEach((c, i) => {
-      M.makeScale(cellSizeM * 1.05, vCellSizeM * 1.05, cellSizeM * 1.05);
+    cells.forEach((c, i) => {
+      // Coordinate mapping: map X→ThreeX, map Z(alt)→ThreeY(up), map Y→Three-Z
+      M.makeScale(scaleX, scaleY, scaleZ);
       M.setPosition(c.cx, c.cz, -c.cy);
-      highlightMesh.setMatrixAt(i, M);
-      highlightMesh.setColorAt(i, HI);
+      m.setMatrixAt(i, M);
+      m.setColorAt(i, colFn(c));
     });
-    highlightMesh.instanceMatrix.needsUpdate = true;
-    highlightMesh.instanceColor.needsUpdate = true;
-    scene.add(highlightMesh);
+    m.instanceMatrix.needsUpdate = true;
+    if (m.instanceColor) m.instanceColor.needsUpdate = true;
+    return m;
   }
+
+  const HI_COL = new THREE.Color(1.0, 0.22, 0.08);
+
+  mesh   = buildMesh(normal, cellSizeM, vCellSizeM, cellSizeM, colorForCell);
+  hiMesh = buildMesh(hi, cellSizeM * 1.06, vCellSizeM * 1.06, cellSizeM * 1.06, () => HI_COL.clone());
+
+  if (mesh)   scene.add(mesh);
+  if (hiMesh) { hiMesh.material.transparent = true; hiMesh.material.opacity = 0.88; scene.add(hiMesh); }
 
   document.getElementById('h-total').textContent = visible.length;
-  document.getElementById('h-hi').textContent = hiCells.length;
+  document.getElementById('h-hi').textContent    = hi.length;
 }
 
-// ── centre camera on loaded data ───────────────────────────────────────────
-function fitCamera() {
-  if (allCells.length === 0) return;
-  let mx = -Infinity, mnx = Infinity, my = -Infinity, mny = Infinity;
-  allCells.forEach(c => {
-    if (c.cx > mx) mx = c.cx; if (c.cx < mnx) mnx = c.cx;
-    if (c.cy > my) my = c.cy; if (c.cy < mny) mny = c.cy;
-  });
-  target.set((mx + mnx) / 2, 0, -(my + mny) / 2);
-  frustumSize = Math.max(mx - mnx, my - mny, 30) * 1.3;
-  rebuildCamera();
-}
-
+// ── camera helpers ─────────────────────────────────────────────────────────
 function rebuildCamera() {
   const a = aspect();
   camera.left   = -frustumSize * a / 2;
   camera.right  =  frustumSize * a / 2;
   camera.top    =  frustumSize / 2;
   camera.bottom = -frustumSize / 2;
+  // Isometric position: equal weight on all 3 axes from target
   camera.position.copy(target).addScaledVector(
     new THREE.Vector3(1, 1, 1).normalize(), frustumSize * 2
   );
@@ -673,47 +654,57 @@ function rebuildCamera() {
   camera.updateProjectionMatrix();
 }
 
+function fitCamera() {
+  if (allCells.length === 0) return;
+  let x0 = Infinity, x1 = -Infinity, y0 = Infinity, y1 = -Infinity;
+  allCells.forEach(c => {
+    if (c.cx < x0) x0 = c.cx; if (c.cx > x1) x1 = c.cx;
+    if (c.cy < y0) y0 = c.cy; if (c.cy > y1) y1 = c.cy;
+  });
+  target.set((x0 + x1) / 2, 0, -(y0 + y1) / 2);
+  frustumSize = Math.max(x1 - x0, y1 - y0, 20) * 1.4;
+  rebuildCamera();
+}
+
 // ── render loop ────────────────────────────────────────────────────────────
 function resize() {
-  const w = canvas.clientWidth, h = canvas.clientHeight;
-  renderer.setSize(w, h, false);
+  renderer.setSize(canvas.clientWidth, canvas.clientHeight, false);
   rebuildCamera();
 }
 window.addEventListener('resize', resize);
+(function loop() { requestAnimationFrame(loop); renderer.render(scene, camera); })();
 
-(function animate() {
-  requestAnimationFrame(animate);
-  renderer.render(scene, camera);
-})();
+// ── pan / zoom controls ────────────────────────────────────────────────────
+// Isometric screen axes in world space
+const ISO_RIGHT = new THREE.Vector3(-1, 0,  1).normalize();
+const ISO_UP    = new THREE.Vector3(-1, 2, -1).normalize();
 
-// ── pan / zoom ─────────────────────────────────────────────────────────────
-const RIGHT = new THREE.Vector3(-1, 0, 1).normalize();  // isometric screen-X
-const UP    = new THREE.Vector3(-1, 2, -1).normalize(); // isometric screen-Y
-
-let dragBtn = -1;
-let lastMX = 0, lastMY = 0;
+let dragActive = false, lastMX = 0, lastMY = 0;
 
 canvas.addEventListener('contextmenu', e => e.preventDefault());
 canvas.addEventListener('mousedown', e => {
-  if (e.button === 1 || e.button === 2) { dragBtn = e.button; lastMX = e.clientX; lastMY = e.clientY; }
+  if (e.button === 1 || e.button === 2) {
+    dragActive = true; lastMX = e.clientX; lastMY = e.clientY;
+    e.preventDefault();
+  }
 });
-window.addEventListener('mouseup', () => { dragBtn = -1; });
+window.addEventListener('mouseup', () => { dragActive = false; });
 window.addEventListener('mousemove', e => {
-  if (dragBtn < 0) return;
+  if (!dragActive) return;
   const dx = e.clientX - lastMX, dy = e.clientY - lastMY;
   lastMX = e.clientX; lastMY = e.clientY;
-  const scale = frustumSize / Math.min(canvas.clientWidth, canvas.clientHeight);
-  target.addScaledVector(RIGHT, -dx * scale);
-  target.addScaledVector(UP,     dy * scale);
+  const s = frustumSize / Math.min(canvas.clientWidth, canvas.clientHeight);
+  target.addScaledVector(ISO_RIGHT, -dx * s);
+  target.addScaledVector(ISO_UP,     dy * s);
   rebuildCamera();
 });
 canvas.addEventListener('wheel', e => {
   e.preventDefault();
   frustumSize *= e.deltaY > 0 ? 1.12 : 0.89;
-  frustumSize = Math.max(5, Math.min(frustumSize, 2000));
+  frustumSize = Math.max(4, Math.min(frustumSize, 3000));
   rebuildCamera();
 }, {passive: false});
-canvas.addEventListener('dblclick', () => { fitCamera(); });
+canvas.addEventListener('dblclick', fitCamera);
 
 // ── data load ──────────────────────────────────────────────────────────────
 async function loadStats() {
@@ -721,12 +712,19 @@ async function loadStats() {
   stats = await r.json();
   document.getElementById('db-path').textContent = stats.db_path || '';
   document.getElementById('s-total').textContent = stats.total_cells ?? '–';
-  const scoreStr = stats.score_min != null
-    ? `${stats.score_min?.toFixed(1)}–${stats.score_max?.toFixed(1)}` : '–';
-  document.getElementById('s-score').textContent = scoreStr;
-  if (stats.ts_min_ns && stats.ts_max_ns) {
-    const ageMaxDays = ((stats.now_ns - stats.ts_min_ns) / 1e9 / 86400).toFixed(1);
-    document.getElementById('s-age').textContent = `0–${ageMaxDays}d`;
+  if (stats.score_min != null) {
+    document.getElementById('s-score').textContent =
+      `${stats.score_min.toFixed(1)}–${stats.score_max.toFixed(1)}`;
+  }
+  if (stats.ts_min_ns && stats.now_ns) {
+    const days = ((stats.now_ns - stats.ts_min_ns) / 1e9 / 86400).toFixed(1);
+    document.getElementById('s-age').textContent = `0–${days}d`;
+    // Auto-set age scale to the actual data range
+    const ageEl = document.getElementById('age-scale');
+    if (!ageEl._touched) {
+      ageEl.value = Math.max(1, Math.ceil(parseFloat(days)));
+      ageScaleDays = parseFloat(ageEl.value);
+    }
   }
 }
 
@@ -735,20 +733,68 @@ async function loadCells() {
   const r = await fetch('/api/cells');
   const data = await r.json();
   allCells = data.cells || [];
-  cellSizeM  = data.params?.cell_size_m  ?? 1.0;
+  cellSizeM  = data.params?.cell_size_m ?? 1.0;
   vCellSizeM = data.params?.vertical_cell_size_m ?? 2.0;
   document.getElementById('loading').style.display = 'none';
-  highlightedKeys.clear();
+  runPreview();   // apply current filter immediately
   buildScene();
   fitCamera();
 }
 
-async function reload() {
-  await loadStats();
-  await loadCells();
+async function reload() { await loadStats(); await loadCells(); }
+
+// ── client-side filter ────────────────────────────────────────────────────
+// Preview is always live — no server round-trip needed.
+// The actual delete still goes to the server (authoritative).
+
+function hasAnyFilter() {
+  return ['f-age-h','f-before','f-after','f-score','f-conf',
+          'f-cx-min','f-cx-max','f-cy-min','f-cy-max','f-cz-min','f-cz-max']
+    .some(id => document.getElementById(id).value.trim() !== '');
 }
 
-// ── filter helpers ─────────────────────────────────────────────────────────
+function cellMatchesFilter(c) {
+  const ageH = parseFloat(document.getElementById('f-age-h').value);
+  if (!isNaN(ageH) && ageH >= 0) {
+    // delete cells OLDER than ageH hours → match if age_s > ageH*3600
+    // cells with age_s=-1 (no timestamp) are treated as maximally old → always match
+    const a = c.age_s < 0 ? Infinity : c.age_s;
+    if (a <= ageH * 3600) return false;
+  }
+
+  const before = document.getElementById('f-before').value;
+  if (before) {
+    const cutMs = new Date(before).getTime();
+    const cellMs = c.updated_ns / 1e6;
+    // delete cells with timestamp < "before" → match if cellMs < cutMs
+    // cells with updated_ns=0 (no timestamp): treated as epoch → always < cutMs
+    if (cellMs >= cutMs) return false;
+  }
+
+  const after = document.getElementById('f-after').value;
+  if (after) {
+    const cutMs = new Date(after).getTime();
+    const cellMs = c.updated_ns / 1e6;
+    if (cellMs <= cutMs) return false;
+  }
+
+  const maxScore = parseFloat(document.getElementById('f-score').value);
+  if (!isNaN(maxScore) && c.score >= maxScore) return false;
+
+  const maxConf = parseFloat(document.getElementById('f-conf').value);
+  if (!isNaN(maxConf) && c.confidence >= maxConf) return false;
+
+  for (const [pfx, val] of [['cx', c.cx], ['cy', c.cy], ['cz', c.cz]]) {
+    const lo = parseFloat(document.getElementById(`f-${pfx}-min`).value);
+    const hi = parseFloat(document.getElementById(`f-${pfx}-max`).value);
+    if (!isNaN(lo) && val < lo) return false;
+    if (!isNaN(hi) && val > hi) return false;
+  }
+
+  return true;
+}
+
+// Build the filter body to POST to /api/delete
 function buildFilterBody() {
   const body = {};
   const ageH = parseFloat(document.getElementById('f-age-h').value);
@@ -766,7 +812,7 @@ function buildFilterBody() {
   const conf = parseFloat(document.getElementById('f-conf').value);
   if (!isNaN(conf)) body.max_confidence = conf;
 
-  for (const ax of ['cx', 'cy', 'cz']) {
+  for (const ax of ['cx','cy','cz']) {
     const lo = parseFloat(document.getElementById(`f-${ax}-min`).value);
     const hi = parseFloat(document.getElementById(`f-${ax}-max`).value);
     if (!isNaN(lo)) body[`${ax}_min`] = lo;
@@ -775,56 +821,86 @@ function buildFilterBody() {
   return body;
 }
 
-// ── preview delete ─────────────────────────────────────────────────────────
-document.getElementById('btn-preview').addEventListener('click', async () => {
-  const body = buildFilterBody();
-  const r = await fetch('/api/preview_delete', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(body)});
-  const data = await r.json();
-  if (data.error) { document.getElementById('preview-count').textContent = `⚠ ${data.error}`; return; }
-  const n = data.would_delete;
-  document.getElementById('preview-count').textContent = `${n} cells match`;
+// Always-live preview — debounced, runs client-side
+let _previewTimer = null;
+function schedulePreview() {
+  clearTimeout(_previewTimer);
+  _previewTimer = setTimeout(runPreview, 220);
+}
+
+function runPreview() {
+  if (!hasAnyFilter()) {
+    highlightedKeys.clear();
+    document.getElementById('preview-count').textContent = '';
+    document.getElementById('del-label').textContent = '0';
+    document.getElementById('btn-delete').disabled = true;
+    buildScene();
+    return;
+  }
+  const matched = allCells.filter(cellMatchesFilter);
+  highlightedKeys = new Set(matched.map(c => `${c.xi},${c.yi},${c.zi}`));
+  const n = matched.length;
+  document.getElementById('preview-count').textContent =
+    n > 0 ? `${n} cells selected (red)` : 'no cells match';
   document.getElementById('del-label').textContent = n;
   document.getElementById('btn-delete').disabled = (n === 0);
-  highlightedKeys = new Set((data.sample || []).map(c => `${c.xi},${c.yi},${c.zi}`));
   buildScene();
+}
+
+// Wire every filter input to auto-preview
+['f-age-h','f-before','f-after','f-score','f-conf',
+ 'f-cx-min','f-cx-max','f-cy-min','f-cy-max','f-cz-min','f-cz-max']
+  .forEach(id => document.getElementById(id).addEventListener('input', schedulePreview));
+
+// [Today] shortcut: set "before" to midnight today (local)
+document.getElementById('btn-today').addEventListener('click', () => {
+  const d = new Date();
+  d.setHours(0, 0, 0, 0);
+  // datetime-local value format: "YYYY-MM-DDTHH:MM"
+  const pad = n => String(n).padStart(2, '0');
+  const local = `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}T00:00`;
+  document.getElementById('f-before').value = local;
+  schedulePreview();
 });
 
-// ── delete ─────────────────────────────────────────────────────────────────
+// ── delete (server-authoritative) ─────────────────────────────────────────
 document.getElementById('btn-delete').addEventListener('click', async () => {
-  const n = parseInt(document.getElementById('del-label').textContent);
-  if (!confirm(`Delete ${n} cells from the L2 map?\n\nA .bak backup will be created automatically.`)) return;
-  const body = buildFilterBody();
-  const r = await fetch('/api/delete', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(body)});
+  const n = parseInt(document.getElementById('del-label').textContent) || 0;
+  if (n === 0) return;
+  if (!confirm(`Delete ${n} cells from the L2 map?\n\nA .bak backup is created automatically.`)) return;
+  const r = await fetch('/api/delete', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify(buildFilterBody()),
+  });
   const data = await r.json();
   if (data.error) { alert(`Error: ${data.error}`); return; }
   alert(`Deleted ${data.deleted} cells.\nBackup: ${data.backup}`);
-  document.getElementById('btn-delete').disabled = true;
-  document.getElementById('preview-count').textContent = '';
   await reload();
 });
 
 // ── backup ─────────────────────────────────────────────────────────────────
 document.getElementById('btn-backup').addEventListener('click', async () => {
-  const r = await fetch('/api/backup', {method:'POST'});
-  const data = await r.json();
+  const data = await (await fetch('/api/backup', {method:'POST'})).json();
   alert(`Backup created:\n${data.backup}`);
 });
 
-// ── reload ─────────────────────────────────────────────────────────────────
 document.getElementById('btn-reload').addEventListener('click', reload);
 
-// ── export file ────────────────────────────────────────────────────────────
+// ── export ─────────────────────────────────────────────────────────────────
 document.getElementById('btn-exp-file').addEventListener('click', async () => {
   const dest = document.getElementById('exp-file').value.trim();
   if (!dest) { alert('Enter a destination path'); return; }
-  const r = await fetch('/api/export/file', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({dest})});
-  const data = await r.json();
+  const data = await (await fetch('/api/export/file', {
+    method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({dest}),
+  })).json();
   const el = document.getElementById('exp-status');
   el.style.color = data.ok ? '#7f7' : '#f88';
-  el.textContent = data.ok ? `Copied (${(data.size/1024/1024).toFixed(2)} MB) → ${data.dest}` : `Error: ${data.error}`;
+  el.textContent = data.ok
+    ? `Copied (${(data.size/1048576).toFixed(2)} MB) → ${data.dest}`
+    : `Error: ${data.error}`;
 });
 
-// ── export S3 ──────────────────────────────────────────────────────────────
 document.getElementById('btn-exp-s3').addEventListener('click', async () => {
   const body = {
     bucket:  document.getElementById('exp-bucket').value.trim(),
@@ -834,13 +910,13 @@ document.getElementById('btn-exp-s3').addEventListener('click', async () => {
   };
   if (!body.bucket || !body.key) { alert('Enter bucket and S3 key'); return; }
   const el = document.getElementById('exp-status');
-  el.style.color = '#aaa';
-  el.textContent = 'Uploading…';
-  const r = await fetch('/api/export/s3', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(body)});
-  const data = await r.json();
+  el.style.color = '#aaa'; el.textContent = 'Uploading…';
+  const data = await (await fetch('/api/export/s3', {
+    method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(body),
+  })).json();
   el.style.color = data.ok ? '#7f7' : '#f88';
   el.textContent = data.ok
-    ? `Uploaded (${(data.size/1024/1024).toFixed(2)} MB) → s3://${data.bucket}/${data.key}`
+    ? `Uploaded (${(data.size/1048576).toFixed(2)} MB) → s3://${data.bucket}/${data.key}`
     : `Error: ${data.error}`;
 });
 
@@ -854,7 +930,8 @@ document.querySelectorAll('.tab').forEach(tab => {
   });
 });
 
-// ── view apply ─────────────────────────────────────────────────────────────
+// ── view settings ──────────────────────────────────────────────────────────
+document.getElementById('age-scale').addEventListener('input', function() { this._touched = true; });
 document.getElementById('btn-apply-view').addEventListener('click', () => {
   colorBy = document.getElementById('color-by').value;
   ageScaleDays = parseFloat(document.getElementById('age-scale').value) || 30;
@@ -863,6 +940,18 @@ document.getElementById('btn-apply-view').addEventListener('click', () => {
   zFilterMin = isNaN(zlo) ? -Infinity : zlo;
   zFilterMax = isNaN(zhi) ?  Infinity : zhi;
   document.getElementById('color-mode').textContent = colorBy;
+  // Update colorbar labels
+  if (colorBy === 'age') {
+    document.getElementById('color-label-lo').textContent = 'new';
+    document.getElementById('color-label-hi').textContent = `${ageScaleDays}d+`;
+    document.getElementById('colorbar-gradient').style.background =
+      'linear-gradient(to right,#3ecf6e,#f0c330,#e8732a,#d63030)';
+  } else {
+    document.getElementById('color-label-lo').textContent = 'low';
+    document.getElementById('color-label-hi').textContent = 'high';
+    document.getElementById('colorbar-gradient').style.background =
+      'linear-gradient(to right,#3ecf6e,#3090d0)';
+  }
   buildScene();
 });
 
