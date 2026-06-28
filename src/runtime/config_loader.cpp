@@ -556,10 +556,12 @@ void validate_provider_names(const CoreStackProviderConfig& config, const Provid
 
 // Load one file's key-value pairs into config, recursively expanding include: directives.
 // loading_stack tracks the current include chain for circular-include detection.
-// Include paths are resolved relative to CWD (repo root).
+// base_dir: directory used to resolve relative include paths (captured once at top-level load,
+//           so resolution is stable regardless of CWD changes at runtime).
 void load_file_into_config(CoreStackConfig& config,
                             const std::filesystem::path& file_path,
-                            std::set<std::string>& loading_stack) {
+                            std::set<std::string>& loading_stack,
+                            const std::filesystem::path& base_dir) {
     const auto canonical = std::filesystem::weakly_canonical(file_path).string();
     if (loading_stack.count(canonical)) {
         throw std::runtime_error("circular include detected involving: " + canonical);
@@ -571,7 +573,9 @@ void load_file_into_config(CoreStackConfig& config,
     if (!input) {
         throw std::runtime_error(
             "❌ config load failed: cannot open '" + file_path.string() + "'\n"
-            "   Check that the file exists and include paths are relative to repo root (CWD).");
+            "   absolute path tried: " + std::filesystem::absolute(file_path).string() + "\n"
+            "   base_dir for includes: " + base_dir.string() + "\n"
+            "   Include paths must be relative to repo root (e.g. 'config/env/airsim.yaml').");
     }
 
     // Two-pass: collect all (key, value) pairs first so that include: lines are
@@ -604,17 +608,14 @@ void load_file_into_config(CoreStackConfig& config,
     }
 
     // Apply included files first (base configs, earlier = lower priority).
-    // Include paths are resolved relative to CWD (repo root), not relative to
-    // the including file.  All config/runs/*.yaml files use repo-root-relative
-    // paths (e.g. "config/env/airsim.yaml") which only makes sense from CWD.
+    // Include paths are resolved relative to base_dir (repo root), captured once
+    // at the top-level load call — not relative to the including file and not
+    // sensitive to runtime CWD changes.
     for (const auto& [k, inc_path] : include_lines) {
-        const auto resolved = std::filesystem::path{inc_path};
-        if (!std::filesystem::exists(resolved)) {
-            throw std::runtime_error(
-                "include not found: '" + inc_path + "' included from " +
-                file_path.string() + " (paths are relative to repo root / CWD)");
-        }
-        load_file_into_config(config, resolved, loading_stack);
+        const auto resolved = std::filesystem::path{inc_path}.is_absolute()
+            ? std::filesystem::path{inc_path}
+            : base_dir / inc_path;
+        load_file_into_config(config, resolved, loading_stack, base_dir);
     }
 
     // Apply this file's own keys — these override anything set by includes.
@@ -632,7 +633,8 @@ void load_file_into_config(CoreStackConfig& config,
 CoreStackConfig load_core_stack_app_config(const std::string& path) {
     CoreStackConfig config;
     std::set<std::string> loading_stack;
-    load_file_into_config(config, std::filesystem::path{path}, loading_stack);
+    const auto base_dir = std::filesystem::current_path();
+    load_file_into_config(config, std::filesystem::path{path}, loading_stack, base_dir);
 
     // Apply env var overrides for depth and perception eval provider names
     // before validation so errors reference the final effective names.
@@ -657,8 +659,9 @@ CoreStackConfig load_core_stack_app_config(const std::vector<std::string>& paths
     // applied on top of the previous, so later files take precedence.
     CoreStackConfig config;
     std::set<std::string> loading_stack;
+    const auto base_dir = std::filesystem::current_path();
     for (const auto& path : paths) {
-        load_file_into_config(config, std::filesystem::path{path}, loading_stack);
+        load_file_into_config(config, std::filesystem::path{path}, loading_stack, base_dir);
     }
 
     config.providers.depth      = env_str_or(config.providers.depth,      "DEDALUS_DEPTH");
