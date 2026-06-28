@@ -14,7 +14,7 @@ trajectory: +X at 0.20 m/s
 Primary config:
 
 ```text
-config/ci/core_stack_object_behavior_airsim_far_animal_slow_mixed_mode.yml
+config/ci/core_stack_object_behavior_airsim_far_animal_slow_mixed_mode.yaml
 ```
 
 Primary behavior spec:
@@ -44,7 +44,7 @@ Primary AirSim validation:
 cd ~/dedalus/simulation/airsim
 
 ./run_mission.sh \
-  --config ../../config/ci/core_stack_object_behavior_airsim_far_animal_slow_mixed_mode.yml \
+  --config ../../config/ci/core_stack_object_behavior_airsim_far_animal_slow_mixed_mode.yaml \
   --output-dir ../../out/object_behavior_airsim_far_animal_slow_mixed_mode \
   --expect-sequence \
   --expect-sequence-steps approach,circle \
@@ -75,7 +75,7 @@ Static far-person mixed-mode regression:
 cd ~/dedalus/simulation/airsim
 
 ./run_mission.sh \
-  --config ../../config/ci/core_stack_object_behavior_airsim_existing_object_sequence_far_person_mixed_mode.yml \
+  --config ../../config/ci/core_stack_object_behavior_airsim_existing_object_sequence_far_person_mixed_mode.yaml \
   --output-dir ../../out/object_behavior_airsim_existing_object_sequence_far_person_mixed_mode_regression \
   --expect-sequence \
   --expect-sequence-steps approach,circle \

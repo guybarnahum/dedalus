@@ -4,14 +4,14 @@
 #
 # Usage:
 #   simulation/airsim/run_mission.sh \
-#     --config config/runs/airsim_circle_visual_eval.yml \
+#     --config config/runs/airsim_circle_visual_eval.yaml \
 #     --output-dir out/circle_visual_eval \
 #     --pipeline-timing
 
-include: config/env/airsim.yml
-include: config/drone/px4_front_center_depth.yml
-include: config/pipeline/visual_eval_airsim_gt.yml
-include: config/mission/circle_person.yml
-include: config/output/standard_ppm.yml
+include: config/env/airsim.yaml
+include: config/drone/px4_front_center_depth.yaml
+include: config/pipeline/visual_eval_airsim_gt.yaml
+include: config/mission/circle_person.yaml
+include: config/output/standard_ppm.yaml
 
 annotation_output_path: out/circle_visual_eval_annotation

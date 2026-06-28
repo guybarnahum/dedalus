@@ -5,7 +5,7 @@
 #
 # Not needed for visual_onnx — that slot infers depth from RGB.
 
-include: config/drone/px4_front_center.yml
+include: config/drone/px4_front_center.yaml
 
 # Override bridge_command from the base drone config to add depth streaming.
 bridge_command: python3 simulation/airsim/scripts/airsim-stream-frames-binary.py --include-ego --include-depth --depth-stride 16 --rate-hz 5 --mavlink-armed-endpoints udpin:127.0.0.1:14540

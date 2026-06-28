@@ -3,9 +3,9 @@
 # Agreement metric logged per-frame to profiler JSONL:
 #   depth_slot_b.evidence_count     depth.voxel_overlap_ppt
 #
-# Requires: drone/px4_front_center_depth.yml (eval slot needs depth frames).
+# Requires: drone/px4_front_center_depth.yaml (eval slot needs depth frames).
 
-include: config/pipeline/visual.yml
+include: config/pipeline/visual.yaml
 
 depth_eval: airsim_gt_detector
 airsim_depth_obstacle_detector.voxel_size_m: 1.5

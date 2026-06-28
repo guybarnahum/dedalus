@@ -1,7 +1,0 @@
-# ── Environment: Synthetic / CI ────────────────────────────────────────────────
-# Frame source for synthetic test runs — no live simulator required.
-# Used by CI and offline unit validation.
-
-frame_source: synthetic
-fallback_map_frame_id: map_synthetic_0001
-occupancy_source: synthetic_fixture

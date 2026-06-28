@@ -713,7 +713,12 @@ int main(int argc, char** argv) {
         }
         return 0;
     } catch (const std::exception& ex) {
-        std::cerr << "dedalus_mission_loop: " << ex.what() << "\n";
+        std::cerr << "\n";
+        std::cerr << "════════════════════════════════════════════════════════════\n";
+        std::cerr << "❌  MISSION LOOP STARTUP FAILED\n";
+        std::cerr << "    " << ex.what() << "\n";
+        std::cerr << "════════════════════════════════════════════════════════════\n";
+        std::cerr << "\n";
         return 2;
     }
 }

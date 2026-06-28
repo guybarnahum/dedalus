@@ -215,7 +215,7 @@ Start AirSim mission:
 ```bash
 DEDALUS_SITE_ID=airsim_47.641N_122.140W \
 simulation/airsim/run_mission.sh \
-  --config config/ci/core_stack_object_behavior_airsim_existing_object_circle.yml \
+  --config config/ci/core_stack_object_behavior_airsim_existing_object_circle.yaml \
   --runtime-event-http-port 8080 \
   --runtime-event-static-root build-staging
 ```

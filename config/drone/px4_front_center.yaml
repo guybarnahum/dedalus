@@ -2,7 +2,7 @@
 # Standard PX4 vehicle with a single forward-facing monocular camera.
 # The bridge streams RGB + ego at 5 Hz via binary pipe.
 #
-# Use px4_front_center_depth.yml when the depth slot is airsim_gt_detector
+# Use px4_front_center_depth.yaml when the depth slot is airsim_gt_detector
 # (adds --include-depth to the bridge command).
 #
 # Override at runtime:

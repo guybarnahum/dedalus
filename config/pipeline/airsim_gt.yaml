@@ -3,7 +3,7 @@
 # for obstacle depth (airsim_gt_detector).  This is the known-good baseline:
 # validate mission wiring here before switching to the visual pipeline.
 #
-# Requires: drone/px4_front_center_depth.yml (bridge must stream depth frames).
+# Requires: drone/px4_front_center_depth.yaml (bridge must stream depth frames).
 #
 # Eval overrides at runtime:
 #   DEDALUS_PIPELINE_EGO_EVAL=visual_odometry    — compare visual ego vs GT

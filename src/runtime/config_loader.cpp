@@ -556,7 +556,7 @@ void validate_provider_names(const CoreStackProviderConfig& config, const Provid
 
 // Load one file's key-value pairs into config, recursively expanding include: directives.
 // loading_stack tracks the current include chain for circular-include detection.
-// Paths in include: are resolved relative to the including file's directory.
+// Include paths are resolved relative to CWD (repo root).
 void load_file_into_config(CoreStackConfig& config,
                             const std::filesystem::path& file_path,
                             std::set<std::string>& loading_stack) {
@@ -566,8 +566,13 @@ void load_file_into_config(CoreStackConfig& config,
     }
     loading_stack.insert(canonical);
 
+    std::cerr << "config: loading " << file_path.string() << "\n";
     std::ifstream input{file_path};
-    if (!input) throw std::runtime_error("failed to open core-stack config: " + file_path.string());
+    if (!input) {
+        throw std::runtime_error(
+            "❌ config load failed: cannot open '" + file_path.string() + "'\n"
+            "   Check that the file exists and include paths are relative to repo root (CWD).");
+    }
 
     // Two-pass: collect all (key, value) pairs first so that include: lines are
     // processed before this file's own keys (include = base, own keys = override).
@@ -599,8 +604,16 @@ void load_file_into_config(CoreStackConfig& config,
     }
 
     // Apply included files first (base configs, earlier = lower priority).
+    // Include paths are resolved relative to CWD (repo root), not relative to
+    // the including file.  All config/runs/*.yaml files use repo-root-relative
+    // paths (e.g. "config/env/airsim.yaml") which only makes sense from CWD.
     for (const auto& [k, inc_path] : include_lines) {
-        const auto resolved = file_path.parent_path() / inc_path;
+        const auto resolved = std::filesystem::path{inc_path};
+        if (!std::filesystem::exists(resolved)) {
+            throw std::runtime_error(
+                "include not found: '" + inc_path + "' included from " +
+                file_path.string() + " (paths are relative to repo root / CWD)");
+        }
         load_file_into_config(config, resolved, loading_stack);
     }
 

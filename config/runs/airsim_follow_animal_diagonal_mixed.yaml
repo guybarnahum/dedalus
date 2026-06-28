@@ -1,0 +1,9 @@
+# ── Run: AirSim  ·  follow diagonal animal (mixed mode)  ·  AirSim GT ────────
+
+include: config/env/airsim.yaml
+include: config/drone/px4_front_center_depth.yaml
+include: config/pipeline/airsim_gt.yaml
+include: config/mission/follow_animal_diagonal_mixed.yaml
+include: config/output/standard_ppm.yaml
+
+annotation_output_path: out/follow_animal_diagonal_mixed_annotation

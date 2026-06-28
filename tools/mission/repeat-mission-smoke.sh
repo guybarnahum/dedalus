@@ -2,7 +2,7 @@
 set -euo pipefail
 
 RUNS="${RUNS:-3}"
-CONFIG="${CONFIG:-config/ci/core_stack_object_behavior_airsim_existing_object_circle.yml}"
+CONFIG="${CONFIG:-config/ci/core_stack_object_behavior_airsim_existing_object_circle.yaml}"
 OUTPUT_ROOT="${OUTPUT_ROOT:-out/repeat_mission_smoke}"
 MAX_FRAMES="${MAX_FRAMES:-900}"
 SHUTDOWN_MAX_FRAMES="${SHUTDOWN_MAX_FRAMES:-400}"
@@ -16,7 +16,7 @@ Usage:
 
 Environment overrides:
   RUNS                  Default: 3
-  CONFIG                Default: config/ci/core_stack_object_behavior_airsim_existing_object_circle.yml
+  CONFIG                Default: config/ci/core_stack_object_behavior_airsim_existing_object_circle.yaml
   OUTPUT_ROOT           Default: out/repeat_mission_smoke
   MAX_FRAMES            Default: 900
   SHUTDOWN_MAX_FRAMES   Default: 400
@@ -49,7 +49,7 @@ fi
 
 if [[ ! -f "$CONFIG" ]]; then
   echo "Missing mission config: $CONFIG" >&2
-  echo "Override with CONFIG=/path/to/config.yml" >&2
+  echo "Override with CONFIG=/path/to/config.yaml" >&2
   exit 2
 fi
 

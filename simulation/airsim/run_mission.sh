@@ -19,7 +19,7 @@ mkdir -p "$LOG_DIR_ABS"
 
 BUILD_DIR="$REPO_ROOT_ABS/build-staging"
 MISSION_BIN="$BUILD_DIR/apps/dedalus_mission_loop"
-CONFIG_PATH="$REPO_ROOT_ABS/config/runs/airsim_circle_airsim_gt.yml"
+CONFIG_PATH="$REPO_ROOT_ABS/config/runs/airsim_circle_airsim_gt.yaml"
 OUTPUT_DIR=""          # derived from MISSION_SLUG+TIMESTAMP after arg parse if not explicit
 OUTPUT_DIR_EXPLICIT=0
 STREAM_HOST="127.0.0.1"
@@ -116,7 +116,7 @@ Examples:
 Options:
   --session NAME              tmux session name. Default: dedalus-mission
   --build-dir PATH            build dir. Default: ../../build-staging
-  --config PATH               mission config. Default: ../../config/runs/airsim_circle_airsim_gt.yml
+  --config PATH               mission config. Default: ../../config/runs/airsim_circle_airsim_gt.yaml
   --sim-config PATH           sim/validation run config YAML. Default: run_mission_config.yaml (auto-loaded if present)
   --output-dir PATH           output dir. Default: ../../out/object_behavior_airsim_existing_object_circle
   --stream-host HOST          runtime stream host. Default: 127.0.0.1
@@ -436,7 +436,7 @@ done
 MISSION_SLUG="$(basename "$CONFIG_PATH")"
 MISSION_SLUG="${MISSION_SLUG#core_stack_}"
 MISSION_SLUG="${MISSION_SLUG%.yaml}"
-MISSION_SLUG="${MISSION_SLUG%.yml}"
+MISSION_SLUG="${MISSION_SLUG%.yaml}"
 
 # DEDALUS_SITE_ID: single source of truth for the geo-region L2 map.
 # Explicit --obstacle-map-site-id / --obstacle-map-site-frame-id override these.
@@ -540,7 +540,7 @@ mkdir -p "$OUTPUT_DIR" "$CAMERA_FRAMES_DIR" "$PROFILE_DIR" "$(dirname "$MISSION_
 
 
 if [[ -n "$SOURCE_FRAME_RATE_HZ" || "$WITH_FRAME_PRODUCER_TIMING" -eq 1 || "$WITH_PIPELINE_TIMING" -eq 1 ]]; then
-    EFFECTIVE_CONFIG_PATH="$OUTPUT_DIR/effective_core_stack_${TIMESTAMP}.yml"
+    EFFECTIVE_CONFIG_PATH="$OUTPUT_DIR/effective_core_stack_${TIMESTAMP}.yaml"
     python3 - "$CONFIG_PATH" "$EFFECTIVE_CONFIG_PATH" "$SOURCE_FRAME_RATE_HZ" "$WITH_FRAME_PRODUCER_TIMING" "$FRAME_PRODUCER_TIMING_PATH" "$WITH_PIPELINE_TIMING" "$PIPELINE_TIMING_PATH" <<'PY'
 from __future__ import annotations
 import shlex

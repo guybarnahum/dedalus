@@ -6,7 +6,7 @@ Canonical existing-object configs:
 
 ```text
 config/ci/core_stack_object_behavior_airsim_existing_object.yaml
-config/ci/core_stack_object_behavior_airsim_existing_object_circle.yml
+config/ci/core_stack_object_behavior_airsim_existing_object_circle.yaml
 ```
 
 Default binding:
@@ -112,7 +112,7 @@ mission_event
 Circle behavior uses:
 
 ```text
-config/ci/core_stack_object_behavior_airsim_existing_object_circle.yml
+config/ci/core_stack_object_behavior_airsim_existing_object_circle.yaml
 config/behaviors/circle_existing_object_person.yaml
 ```
 
@@ -147,7 +147,7 @@ Terminal 1:
 
 ```bash
 ./build-staging/apps/dedalus_mission_loop \
-  --config config/ci/core_stack_object_behavior_airsim_existing_object_circle.yml \
+  --config config/ci/core_stack_object_behavior_airsim_existing_object_circle.yaml \
   --output-dir out/object_behavior_airsim_existing_object_circle \
   --max-frames 5400 \
   --shutdown-max-frames 1800 \

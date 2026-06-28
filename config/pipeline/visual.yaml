@@ -7,7 +7,7 @@
 # Requires:
 #   - Build with -DDEDALUS_ENABLE_ONNX_DEPTH=ON (auto when ORT SDK present)
 #   - models/depth_anything_v2_vits.onnx  (build.sh exports it automatically)
-#   - drone/px4_front_center.yml (no --include-depth needed)
+#   - drone/px4_front_center.yaml (no --include-depth needed)
 #
 # Tip: disable L2 persistence during initial validation to avoid accumulating
 # noisy VO evidence in the site map:

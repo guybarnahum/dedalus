@@ -95,7 +95,7 @@ The Virtual Proving Ground (`simulation/` directory) provides a complete high-fi
 
    # Launch mission (output-dir, mission-id, L2 DB path all auto-derived).
    simulation/airsim/run_mission.sh \
-     --config config/ci/core_stack_object_behavior_airsim_existing_object_circle.yml
+     --config config/ci/core_stack_object_behavior_airsim_existing_object_circle.yaml
 
    # Open viewer in another terminal (same DEDALUS_SITE_ID picks up L2 map).
    DEDALUS_SITE_ID=airsim_47.641N_122.140W \
@@ -390,9 +390,9 @@ Three GitHub Actions workflows gate the build and smoke-validate the `WorldSnaps
 
 | Workflow | File | Trigger | Build type | Purpose |
 |---|---|---|---|---|
-| **CI** | `ci.yml` | PR targeting `staging` or `main`; manual dispatch | Debug | Gate PRs — must pass before merge |
-| **Staging** | `staging.yml` | Push to `staging` or `main`; manual dispatch | Debug | Pre-release gate for branch integrations |
-| **Production** | `production.yml` | Push of `v*.*.*` tag; manual dispatch | Release (`-O2`) | Validate release candidates |
+| **CI** | `ci.yaml` | PR targeting `staging` or `main`; manual dispatch | Debug | Gate PRs — must pass before merge |
+| **Staging** | `staging.yaml` | Push to `staging` or `main`; manual dispatch | Debug | Pre-release gate for branch integrations |
+| **Production** | `production.yaml` | Push of `v*.*.*` tag; manual dispatch | Release (`-O2`) | Validate release candidates |
 
 **Trigger rationale:**
 - CI is PR-only — every contribution is validated before merge, not just after.

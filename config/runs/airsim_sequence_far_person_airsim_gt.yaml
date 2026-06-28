@@ -1,0 +1,9 @@
+# ── Run: AirSim  ·  far person sequence  ·  AirSim GT ────────────────────────
+
+include: config/env/airsim.yaml
+include: config/drone/px4_front_center_depth.yaml
+include: config/pipeline/airsim_gt.yaml
+include: config/mission/sequence_far_person.yaml
+include: config/output/standard_ppm.yaml
+
+annotation_output_path: out/sequence_far_person_airsim_gt_annotation
