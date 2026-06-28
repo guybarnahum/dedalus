@@ -1073,21 +1073,34 @@ TIMEOUT=$(printf '%q' "$VALIDATION_TIMEOUT_S")
 python3 - "\$EVENTS" "\$TIMEOUT" <<'PYWAIT'
 import json, sys, time
 from pathlib import Path
+
+def is_terminal(events):
+    for e in events:
+        if not isinstance(e, dict): continue
+        ev = e.get("event", "")
+        if ev == "runtime_stop": return "runtime_stop"
+        # Abort state transition is terminal — runtime_stop may not follow if
+        # the process was killed or crashed after transitioning to Abort.
+        if ev == "state_transition" and e.get("to") == "Abort": return "state_transition:Abort"
+    return None
+
 path = Path(sys.argv[1])
 timeout_s = float(sys.argv[2])
 start = time.monotonic()
-print(f"mp4-render: waiting for runtime_stop in {path}", flush=True)
+print(f"mp4-render: waiting for terminal event in {path}", flush=True)
 while True:
     events = []
     if path.exists():
         for line in path.read_text(encoding="utf-8").splitlines():
             try: events.append(json.loads(line.strip()))
             except: pass
-    if any(isinstance(e, dict) and e.get("event") == "runtime_stop" for e in events):
-        print("mp4-render: runtime_stop observed", flush=True)
+    reason = is_terminal(events)
+    if reason:
+        print(f"mp4-render: terminal event observed: {reason}", flush=True)
         break
     if timeout_s > 0 and time.monotonic() - start >= timeout_s:
-        raise SystemExit(f"mp4-render: timed out after {timeout_s}s")
+        print(f"mp4-render: WARNING timed out after {timeout_s}s without terminal event; encoding whatever frames exist", flush=True)
+        break
     time.sleep(2.0)
 PYWAIT
 ANN_DIR=$(printf '%q' "$ANNOTATION_DIR")
