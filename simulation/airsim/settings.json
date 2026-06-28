@@ -18,8 +18,8 @@
     "CaptureSettings": [
       {
         "ImageType": 0,
-        "Width": 1920,
-        "Height": 1080,
+        "Width": 640,
+        "Height": 360,
         "FOV_Degrees": 84,
         "AutoExposureSpeed": 100,
         "AutoExposureBias": 0,
@@ -27,8 +27,8 @@
       },
       {
         "ImageType": 2,
-        "Width": 1920,
-        "Height": 1080,
+        "Width": 640,
+        "Height": 360,
         "FOV_Degrees": 84,
         "AutoExposureSpeed": 100,
         "AutoExposureBias": 0,
@@ -61,8 +61,8 @@
           "CaptureSettings": [
             {
               "ImageType": 0,
-              "Width": 1920,
-              "Height": 1080,
+              "Width": 640,
+              "Height": 360,
               "FOV_Degrees": 84,
               "AutoExposureSpeed": 100,
               "AutoExposureBias": 0,
@@ -70,8 +70,8 @@
             },
             {
               "ImageType": 2,
-              "Width": 1920,
-              "Height": 1080,
+              "Width": 640,
+              "Height": 360,
               "FOV_Degrees": 84,
               "AutoExposureSpeed": 100,
               "AutoExposureBias": 0,
