@@ -10,7 +10,7 @@
 #     --output-dir out/circle_visual \
 #     --pipeline-timing
 
-include: config/env/airsim.yaml
+include: config/world-env/airsim.yaml
 include: config/drone/px4_front_center.yaml
 include: config/pipeline/visual.yaml
 include: config/mission/circle_person.yaml

@@ -1,6 +1,6 @@
 # ── Run: AirSim  ·  far person mixed-mode sequence  ·  AirSim GT ─────────────
 
-include: config/env/airsim.yaml
+include: config/world-env/airsim.yaml
 include: config/drone/px4_front_center_depth.yaml
 include: config/pipeline/airsim_gt.yaml
 include: config/mission/sequence_far_person_mixed.yaml

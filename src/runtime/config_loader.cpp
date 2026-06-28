@@ -575,7 +575,7 @@ void load_file_into_config(CoreStackConfig& config,
             "❌ config load failed: cannot open '" + file_path.string() + "'\n"
             "   absolute path tried: " + std::filesystem::absolute(file_path).string() + "\n"
             "   base_dir for includes: " + base_dir.string() + "\n"
-            "   Include paths must be relative to repo root (e.g. 'config/env/airsim.yaml').");
+            "   Include paths must be relative to repo root (e.g. 'config/world-env/airsim.yaml').");
     }
 
     // Two-pass: collect all (key, value) pairs first so that include: lines are

@@ -52,11 +52,7 @@ __pycache__/
 .venv*/
 venv/
 ENV/
-# "env/" was too broad — matched config/env/. Scope it to root-level virtualenvs only.
 /env/
-# Un-ignore config/env/ — caught by the ENV/ rule above on case-insensitive match.
-!config/env/
-!config/env/**
 
 pip-wheel-metadata/
 *.egg-info/

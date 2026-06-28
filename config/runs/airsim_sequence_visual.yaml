@@ -1,6 +1,6 @@
 # ── Run: AirSim  ·  approach→circle sequence  ·  Visual pipeline ─────────────
 
-include: config/env/airsim.yaml
+include: config/world-env/airsim.yaml
 include: config/drone/px4_front_center.yaml
 include: config/pipeline/visual.yaml
 include: config/mission/sequence_person.yaml
