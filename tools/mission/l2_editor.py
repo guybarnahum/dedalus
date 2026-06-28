@@ -245,6 +245,77 @@ def _backup() -> str:
     return dest
 
 
+def api_sources() -> dict:
+    """Return list of (mission_id, method, cell_count, total_hits) from cell_votes."""
+    with DB_LOCK, _connect() as conn:
+        # Graceful: cell_votes table may not exist in v1 databases.
+        try:
+            rows = conn.execute("""
+                SELECT cv.mission_id,
+                       COALESCE(m.name, 'unknown') AS method,
+                       COUNT(*)          AS cell_count,
+                       SUM(cv.hit_count) AS total_hits,
+                       MIN(cv.first_ns)  AS first_ns,
+                       MAX(cv.last_ns)   AS last_ns
+                FROM cell_votes cv
+                LEFT JOIN methods m ON cv.method_id = m.id
+                GROUP BY cv.mission_id, cv.method_id
+                ORDER BY last_ns DESC
+            """).fetchall()
+            sources = [
+                {
+                    "mission_id":  r["mission_id"],
+                    "method":      r["method"],
+                    "cell_count":  r["cell_count"],
+                    "total_hits":  r["total_hits"],
+                    "first_ns":    r["first_ns"],
+                    "last_ns":     r["last_ns"],
+                }
+                for r in rows
+            ]
+        except Exception:
+            sources = []
+        return {"sources": sources}
+
+
+def api_source_cells(mission_id: str) -> dict:
+    """Return the set of (xi,yi,zi) contributed by mission_id, for client-side highlighting."""
+    with DB_LOCK, _connect() as conn:
+        try:
+            rows = conn.execute(
+                "SELECT xi, yi, zi FROM cell_votes WHERE mission_id=?", (mission_id,)
+            ).fetchall()
+            keys = [f"{r['xi']},{r['yi']},{r['zi']}" for r in rows]
+        except Exception:
+            keys = []
+        return {"mission_id": mission_id, "keys": keys}
+
+
+def api_remove_mission(body: dict) -> dict:
+    """Delete all cell_votes for mission_id; cascade-delete zero-count cells."""
+    mission_id = body.get("mission_id", "")
+    if not mission_id:
+        return {"ok": False, "error": "mission_id required"}
+    backup_info = api_backup()  # auto-backup before destructive op
+    with DB_LOCK, _connect() as conn:
+        try:
+            # Triggers update cells.mission_count per affected row.
+            cur = conn.execute("DELETE FROM cell_votes WHERE mission_id=?", (mission_id,))
+            votes_deleted = cur.rowcount
+            cur = conn.execute("DELETE FROM cells WHERE mission_count = 0")
+            cells_deleted = cur.rowcount
+            conn.commit()
+        except Exception as exc:
+            return {"ok": False, "error": str(exc)}
+    return {
+        "ok": True,
+        "mission_id": mission_id,
+        "votes_deleted": votes_deleted,
+        "cells_deleted": cells_deleted,
+        "backup": backup_info,
+    }
+
+
 def api_backup() -> dict:
     path = _backup()
     return {"backup": path}
@@ -327,6 +398,13 @@ class Handler(BaseHTTPRequestHandler):
             self._send_json(api_stats())
         elif path == "/api/cells":
             self._send_json(api_cells())
+        elif path == "/api/sources":
+            self._send_json(api_sources())
+        elif path.startswith("/api/source-cells"):
+            from urllib.parse import parse_qs
+            qs = parse_qs(urlparse(self.path).query)
+            mid = qs.get("mission_id", [""])[0]
+            self._send_json(api_source_cells(mid))
         else:
             self.send_error(404)
 
@@ -339,6 +417,8 @@ class Handler(BaseHTTPRequestHandler):
             self._send_json(api_delete(body))
         elif path == "/api/backup":
             self._send_json(api_backup())
+        elif path == "/api/remove-mission":
+            self._send_json(api_remove_mission(body))
         elif path == "/api/export/file":
             self._send_json(api_export_file(body))
         elif path == "/api/export/s3":
@@ -396,6 +476,18 @@ button:hover:not(:disabled){opacity:.85}
 .btn-export{background:#252535;color:#99f}
 #preview-count{font-size:11px;color:#fa0;margin-top:6px;min-height:16px}
 
+/* ── source table ── */
+.src-table{width:100%;border-collapse:collapse;font-size:10px;margin-top:6px}
+.src-table th{color:#555;font-weight:500;text-align:left;padding:3px 4px;border-bottom:1px solid #2a2a2a}
+.src-table td{padding:4px 4px;border-bottom:1px solid #1e1e1e;vertical-align:middle;color:#bbb}
+.src-table tr.selected td{background:#1a2a1a}
+.src-table tr:hover td{background:#1f1f1f}
+.btn-src-sel{background:#1e2a1e;color:#6d6;border:none;border-radius:3px;padding:2px 6px;font-size:9px;cursor:pointer}
+.btn-src-sel.active{background:#2a4a2a;color:#8f8}
+.btn-src-rm{background:#2a1e1e;color:#f88;border:none;border-radius:3px;padding:2px 6px;font-size:9px;cursor:pointer}
+.btn-src-rm:hover{opacity:.8}
+#src-status{font-size:10px;color:#fa0;min-height:14px;margin-top:6px}
+
 /* ── colorbar ── */
 #colorbar{display:flex;align-items:center;gap:6px;padding:5px 12px 4px;font-size:10px;color:#555;border-bottom:1px solid #282828}
 #colorbar-gradient{height:8px;flex:1;border-radius:3px}
@@ -425,6 +517,7 @@ canvas{display:block;flex:1;width:100%}
 
   <div id="tabs">
     <div class="tab active" data-panel="filter">Filter</div>
+    <div class="tab" data-panel="sources">Sources</div>
     <div class="tab" data-panel="export">Export</div>
     <div class="tab" data-panel="view">View</div>
   </div>
@@ -473,6 +566,29 @@ canvas{display:block;flex:1;width:100%}
     <button class="btn-delete" id="btn-delete" disabled>Delete <span id="del-label">0</span> cells (auto-backup)</button>
     <button class="btn-safe" id="btn-backup" style="margin-top:14px">Backup .db now</button>
     <button class="btn-safe" id="btn-reload" style="background:#222;color:#888">Reload cells</button>
+  </div>
+
+  <!-- ── Sources panel ── -->
+  <div class="tab-panel" id="panel-sources">
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:4px">
+      <span style="font-size:11px;color:#888">Mission provenance</span>
+      <button class="btn-sc" id="btn-src-reload" style="flex:unset;padding:2px 8px">Refresh</button>
+    </div>
+    <div id="src-status"></div>
+    <table class="src-table">
+      <thead>
+        <tr>
+          <th>Mission</th><th>Method</th><th title="Distinct cells">Cells</th><th title="Total tick hits">Hits</th><th></th><th></th>
+        </tr>
+      </thead>
+      <tbody id="src-tbody">
+        <tr><td colspan="6" style="color:#444;padding:8px 4px">No source data — requires v2 schema db</td></tr>
+      </tbody>
+    </table>
+    <div class="hint" style="margin-top:8px">
+      <b>Select</b> highlights those cells in red.<br>
+      <b>Remove</b> permanently removes that mission's votes (auto-backup first).
+    </div>
   </div>
 
   <!-- ── Export panel ── -->
@@ -903,6 +1019,93 @@ document.getElementById('btn-backup').addEventListener('click', async () => {
 
 document.getElementById('btn-reload').addEventListener('click', reload);
 
+// ── sources ────────────────────────────────────────────────────────────────
+
+let selectedMissionId = null;
+let selectedMissionKeys = new Set();  // "xi,yi,zi" strings for voxel highlight
+
+async function loadSources() {
+  const r = await fetch('/api/sources');
+  const data = await r.json();
+  const tbody = document.getElementById('src-tbody');
+  if (!data.sources || data.sources.length === 0) {
+    tbody.innerHTML = '<tr><td colspan="6" style="color:#444;padding:8px 4px">No source data — requires v2 schema db</td></tr>';
+    return;
+  }
+  tbody.innerHTML = data.sources.map(s => {
+    const age = s.last_ns > 0
+      ? formatAge((Date.now()*1e6 - s.last_ns) / 1e9)
+      : '–';
+    const mid = s.mission_id.replace(/'/g, '&#39;');
+    const isSelected = (s.mission_id === selectedMissionId);
+    return `<tr class="${isSelected ? 'selected' : ''}">
+      <td title="${mid}">${mid.length > 18 ? mid.slice(0,17)+'…' : mid}</td>
+      <td>${s.method}</td>
+      <td>${s.cell_count}</td>
+      <td>${s.total_hits}</td>
+      <td><button class="btn-src-sel${isSelected?' active':''}" onclick="toggleSourceSelect('${mid}')">
+        ${isSelected ? 'Clear' : 'Select'}</button></td>
+      <td><button class="btn-src-rm" onclick="removeSource('${mid}')">Remove</button></td>
+    </tr>`;
+  }).join('');
+}
+
+function formatAge(s) {
+  if (s < 3600) return `${Math.round(s/60)}m`;
+  if (s < 86400) return `${(s/3600).toFixed(1)}h`;
+  return `${(s/86400).toFixed(1)}d`;
+}
+
+async function toggleSourceSelect(mission_id) {
+  if (selectedMissionId === mission_id) {
+    // Deselect
+    selectedMissionId = null;
+    selectedMissionKeys.clear();
+    document.getElementById('src-status').textContent = '';
+    highlightedKeys.clear();
+    buildScene();
+    loadSources();
+    return;
+  }
+  selectedMissionId = mission_id;
+  document.getElementById('src-status').textContent = 'Loading…';
+  const r = await fetch(`/api/source-cells?mission_id=${encodeURIComponent(mission_id)}`);
+  const data = await r.json();
+  selectedMissionKeys = new Set(data.keys || []);
+  // Override normal filter highlight with mission selection.
+  highlightedKeys = new Set(selectedMissionKeys);
+  document.getElementById('src-status').textContent =
+    `${selectedMissionKeys.size} cells selected (mission: ${mission_id})`;
+  buildScene();
+  loadSources();
+}
+
+async function removeSource(mission_id) {
+  if (!confirm(`Remove all L2 votes for mission:\n${mission_id}\n\nA backup is created automatically.`)) return;
+  document.getElementById('src-status').textContent = 'Removing…';
+  const r = await fetch('/api/remove-mission', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({mission_id}),
+  });
+  const data = await r.json();
+  if (data.ok) {
+    document.getElementById('src-status').textContent =
+      `Removed: ${data.cells_deleted} cells deleted, ${data.votes_deleted} votes cleared.`;
+    if (selectedMissionId === mission_id) {
+      selectedMissionId = null;
+      selectedMissionKeys.clear();
+      highlightedKeys.clear();
+    }
+    await reload();
+    await loadSources();
+  } else {
+    document.getElementById('src-status').textContent = `Error: ${data.error}`;
+  }
+}
+
+document.getElementById('btn-src-reload').addEventListener('click', loadSources);
+
 // ── export ─────────────────────────────────────────────────────────────────
 document.getElementById('btn-exp-file').addEventListener('click', async () => {
   const dest = document.getElementById('exp-file').value.trim();
@@ -943,6 +1146,7 @@ document.querySelectorAll('.tab').forEach(tab => {
     document.querySelectorAll('.tab-panel').forEach(p => p.classList.remove('active'));
     tab.classList.add('active');
     document.getElementById(`panel-${tab.dataset.panel}`).classList.add('active');
+    if (tab.dataset.panel === 'sources') loadSources();
   });
 });
 

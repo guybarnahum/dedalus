@@ -6,6 +6,8 @@
 #include <functional>
 #include <mutex>
 #include <optional>
+#include <string>
+#include <string_view>
 #include <unordered_map>
 #include <unordered_set>
 #include <vector>
@@ -181,6 +183,18 @@ public:
     //     2. Loads cells from DB within drone_pos ± horizon_m not yet in memory.
     void slide_window(const Vec3& drone_pos);
 
+    // Set the mission identity used when attributing cell votes to a mission.
+    // Must be called before open_db().  Calling after open_db() is a no-op on
+    // the already-resolved method_id.
+    void set_mission_context(std::string_view mission_id, std::string_view method);
+
+    // Remove all cell_votes for mission_id from the open DB and delete any
+    // cells whose mission_count drops to zero.  Operates DB-only; does not
+    // evict from the in-memory window (call reset()+open_db() to reload).
+    // Returns the number of cells deleted from the cells table.
+    // No-op and returns 0 if no DB is open.
+    std::size_t remove_mission(std::string_view mission_id);
+
     // ── L2 planning query API (Stage 2.5) ────────────────────────────────────
     // Pure queries — no side effects on L2 state.  Operate on the in-memory
     // window only; call slide_window() first to ensure the relevant region is
@@ -270,6 +284,14 @@ private:
     // Stage 5: monotonically increasing version counter.
     // Incremented once per update_from_traversability() call.
     std::uint64_t map_seq_{0U};
+
+    // Mission provenance — set by set_mission_context() before open_db().
+    // mission_id_  : identifies the flight/run that owns this L2 session.
+    // method_      : human-readable detection method name (e.g. "airsim_gt").
+    // method_id_   : row id from the methods table; -1 if not yet resolved.
+    std::string  mission_id_{"unknown_mission"};
+    std::string  method_{"unknown_method"};
+    std::int64_t method_id_{-1};
 };
 
 }  // namespace dedalus

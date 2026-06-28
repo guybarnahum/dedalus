@@ -62,6 +62,15 @@ CoreStackRunner::CoreStackRunner(CoreStackProviders providers, CoreStackRunnerCo
     }
 
     if (!planning_map_persistence_path_.empty()) {
+        // Inject mission identity before opening the DB so cell_votes rows
+        // are attributed to the correct (mission_id, method) pair.
+        // mission_id: from DEDALUS_MISSION_OBSTACLE_MAP_MISSION_ID (set by run_mission.sh).
+        // method:     derived from the slot-A provider name (e.g. "airsim_depth_obstacle_detector").
+        {
+            const char* mid_env = std::getenv("DEDALUS_MISSION_OBSTACLE_MAP_MISSION_ID");
+            const std::string mid = mid_env ? mid_env : "unknown_mission";
+            mission_local_planning_map_.set_mission_context(mid, depth_slot_a_name_);
+        }
         mission_local_planning_map_.open_db(planning_map_persistence_path_);
 
         // Start background flush thread: drains dirty cells every 10 s.
