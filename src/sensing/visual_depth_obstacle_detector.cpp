@@ -1,5 +1,6 @@
 #include "dedalus/sensing/visual_depth_obstacle_detector.hpp"
 
+#include <cmath>
 #include <cstdint>
 #include <vector>
 
@@ -174,13 +175,30 @@ std::vector<ObstacleEvidence> detect_visual_depth_obstacles(
         }
     }
 
-    return inflate(
+    auto result = inflate(
         buf.data(),
         count,
         ego_frame.sensing_volume.camera_name,
         "visual_depth_obstacle_detector",
         ego_frame.ego.map_frame_id,
         ego_frame.frame.timestamp);
+
+    // Compute body-frame bearing and elevation from projected local positions.
+    // Uses the sensing volume axes (forward/right/up in local frame) — the same
+    // geometry the AirSim GT path uses — so L0 sensor observations are populated.
+    const auto& sv = ego_frame.sensing_volume;
+    for (auto& ev : result) {
+        const double dx = ev.center_local.x - sv.origin_local.x;
+        const double dy = ev.center_local.y - sv.origin_local.y;
+        const double dz = ev.center_local.z - sv.origin_local.z;
+        const double fwd   = dx*sv.forward_axis_local.x + dy*sv.forward_axis_local.y + dz*sv.forward_axis_local.z;
+        const double right = dx*sv.right_axis_local.x   + dy*sv.right_axis_local.y   + dz*sv.right_axis_local.z;
+        const double up    = dx*sv.up_axis_local.x      + dy*sv.up_axis_local.y      + dz*sv.up_axis_local.z;
+        ev.bearing_rad   = static_cast<float>(std::atan2(right, fwd));
+        ev.elevation_rad = static_cast<float>(std::atan2(up, std::hypot(fwd, right)));
+    }
+
+    return result;
 }
 
 }  // namespace dedalus
