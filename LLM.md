@@ -285,6 +285,61 @@ In real-world context: no fallback — confidence drives conservative L0 avoidan
 **Milestone:** Simulated feature-poor corridor → confidence drops, wider avoidance margins
 activate, system stays stable.
 
+#### VL4 — Cross-session L2 frame anchoring and active relocalization
+
+**Design concept (conceived Jun 27 2026; see IP-13).**
+
+Replace the static per-session `fallback_map_frame_id` origin with a dynamic frame whose
+anchor is the persistent L2 map itself. The `fallback_map_frame_id` config key becomes a
+human-readable site label only; the geometric origin is resolved at runtime by matching
+the first depth observations against existing L2 voxels.
+
+Key design properties (validated in design session):
+
+- **Resolution is sufficient.** 1 m × 1 m × 2 m voxels support relocalization at UAV
+  operational scales. Sub-meter accuracy is not required for avoidance or target pursuit.
+- **Active disambiguation.** When the initial match is ambiguous (sparse map, repeated
+  structure), the drone moves deliberately to reduce the pose hypothesis set — the same
+  strategy biological agents use in uncertain environments.
+- **Site-relative, cold-start safe.** The L2 origin is wherever the first session started.
+  Re-anchoring to a better georeference later is a single affine DB transform. An empty
+  L2 map behaves identically to the current static-frame system.
+- **Elastic local correction.** Internal frame consistency matters more than external
+  ground truth. When a region is revisited and displacement Δ is measured, the correction
+  is applied locally with stiffness proportional to evidence density — dense regions resist
+  deformation, sparse regions flex. No full pose graph required.
+
+```
+VL4a  Startup relocalization
+      On open_db() with non-empty L2, project first N depth frames → candidate cloud.
+      ICP-lite match against L2 occupied cells within search radius.
+      If match score > threshold: adopt T_new→L2 as session pose offset.
+      If match score < threshold: feed ambiguity signal to exploration planner (P3).
+      Milestone: second session on same site re-enters L2 frame within 1.5 m.
+
+VL4b  Loop closure correction (mid-flight)
+      On strong L2 re-localization match: compute Δ = observed − predicted.
+      Apply Δ to running pose offset, weighted by match confidence.
+      Lightweight alternative to graph-SLAM loop closure.
+      Milestone: 5-minute circuit returns within 0.5 m of departure in L2 coords.
+
+VL4c  Elastic local voxel correction
+      When Δ suggests local map error (not just drift): shift L2 voxel positions
+      in radius R = f(Δ) around match site, linear falloff to zero at R.
+      Weight by cell mission_count (denser = stiffer).
+      Milestone: corrected region aligns with re-observed geometry within 1 voxel.
+
+VL4d  Re-anchoring API
+      MissionLocalPlanningMap::re_anchor(Vec3 translation, Quat rotation):
+        full DB rigid transform (UPDATE cells SET cx=..., cy=..., cz=...).
+      Exposed via l2_editor.py /api/re-anchor for manual correction from viewer.
+      Milestone: editor can shift entire L2 map to a new georeference origin.
+```
+
+**Dependencies:** VL2 (ICP-lite machinery), VL3 (confidence signal for disambiguation
+trigger), exploration planner P3 (executes disambiguation trajectory).
+**IP:** IP-13. Consider combined provisional with IP-05 and IP-03.
+
 ---
 
 ### EP series — Evaluation Pipeline (A/B reference slots for all perception stages)

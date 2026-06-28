@@ -205,6 +205,35 @@ A signed distance field computation method wherein EDT is computed at a first (f
 
 ---
 
+## IP-13 · L2-Anchored Cross-Session Relocalization with Active Disambiguation and Elastic Local Frame Correction
+
+**Status:** Designed, not yet implemented.
+
+**Technical description:**
+On session start — and optionally mid-flight — the drone matches incoming depth observations against occupied voxels in the persistent L2 `MissionLocalPlanningMap` to estimate the rigid transform T_new→L2. Once this transform is known, all subsequent ego poses are expressed directly in the existing L2 frame rather than in a freshly-initialised per-session coordinate frame. The `fallback_map_frame_id` config key degenerates to a human-readable site label; it no longer defines an absolute origin.
+
+Four key properties of the design, validated through discussion:
+
+1. **Coarse resolution is sufficient** — 1 m × 1 m × 2 m voxels are adequate for relocalization at UAV operational scales. Sub-meter precision is not required for avoidance, target pursuit, or landing handoff.
+
+2. **Active disambiguation** — when the initial L2 observation match is ambiguous (sparse map, repeated structure), the drone actively moves to reduce the pose hypothesis set, exactly as biological agents do. This is treated as a first-class strategy, not a fallback.
+
+3. **Site-relative frame, cold-start safe** — the L2 origin is wherever the first session started. The frame is not geographically fixed. If a better georeference is later available (GPS fix, known landmark), the entire DB can be re-anchored via a single affine transform (`UPDATE cells SET cx=cx+dx, cy=cy+dy, cz=cz+dz`). Cold start on an empty map behaves identically to the current static-frame system.
+
+4. **Elastic local correction** — internal frame consistency matters more than agreement with external ground truth. When a region is revisited and the match displacement is Δ, the correction is applied locally with stiffness proportional to evidence density (densely-observed regions resist deformation; sparse regions flex). This is analogous to graph-SLAM loop closure but without a full pose graph: a lightweight "apply delta to cells in radius R, with linear falloff" suffices at L2 resolution. The L2 frame can stretch locally.
+
+Loop closure is the correction mechanism: when the drone re-observes a region, the measured displacement between the predicted L2 key and the matched occupied cells is the drift correction signal. Even a simple "shift the running pose offset by Δ, weighted by match confidence" gives progressive drift correction without a formal SLAM backend.
+
+**Novelty argument:**
+Prior map-based relocalization (Monte Carlo localization, visual place recognition, LiDAR ICP) uses a separate, dedicated localization map. Here the obstacle avoidance voxel map — the same structure driving L0/L1/L3 and landing zone selection — is the localization reference, creating a virtuous loop: better pose → better L2 → better pose. The elastic local correction model (local rigidity proportional to evidence density, applied directly to voxel coordinates without a pose graph) is novel. The treatment of active motion as a first-class disambiguation strategy rather than a SLAM failure mode is novel for persistent-map UAV navigation.
+
+**Claim boundary:**
+A method for autonomous vehicle session initialization wherein the vehicle's coordinate frame is established by matching current sensor observations against a pre-existing persistent obstacle voxel map, with ambiguity resolved by deliberate vehicle motion; and wherein mid-session drift corrections are applied locally to the voxel map with spatial stiffness proportional to evidence density in each region.
+
+**Evidence of conception:** Design session between developer and AI assistant, June 27 2026.
+
+---
+
 ## Summary and Priority
 
 | ID | Title | Priority | Status |
@@ -221,11 +250,14 @@ A signed distance field computation method wherein EDT is computed at a first (f
 | IP-10 | Hysteresis sliding window + async flush | **Medium** | Implemented |
 | IP-11 | Ghost detections as first-class primitives | **Lower** | Implemented |
 | IP-12 | Decoupled EDT resolution + L2-aligned snapping | **Lower** | Implemented |
+| IP-13 | L2-anchored cross-session relocalization + elastic frame | **Highest** | Not implemented — conceived Jun 2026 |
 
 ---
 
 ## Notes for Patent Counsel
 
+- IP-01 and IP-13 have no code yet — conception date June 27 2026, documented in this session. Provisional filing recommended before implementation for both.
+- IP-13 (L2-anchored relocalization) has broadest architectural scope and should be treated as a system claim covering the unified localization+mapping loop. Consider combined filing with IP-05 (VIO scale from L2) and IP-03 (mission provenance), which are sub-claims of the same system.
 - IP-01 has no code yet — conception date is June 27 2026, documented in this session. Provisional filing recommended before implementation.
 - IP-02 through IP-04 are the strongest candidates for claims with clear formula novelty and architecture scope.
 - IP-03 (mission retraction) has broadest commercial applicability: applies to any autonomous system with long-duration persistent maps (self-driving, marine, warehouse robotics) not just UAVs.
