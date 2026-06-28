@@ -33,7 +33,6 @@ public:
     std::optional<FramePacket> next_frame() override;
 
 private:
-    FramePacket next_one_shot_frame();
     std::optional<FramePacket> next_stream_jsonl_frame();
     std::optional<FramePacket> next_stream_binary_frame();
 

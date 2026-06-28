@@ -70,25 +70,6 @@ bool is_dynamic_class(ClassLabel label) {
            label == ClassLabel::Boat;
 }
 
-std::string build_object_pose_command(const AirSimGhostObjectSourceConfig& config, TimePoint timestamp) {
-    validate_bridge_base_command(config.bridge_command);
-    std::ostringstream command;
-    command << config.bridge_command
-            << " --host " << shell_quote(config.host)
-            << " --rpc-port " << config.rpc_port
-            << " --timestamp-ns " << timestamp.timestamp_ns;
-    int max_pattern_matches = 0;
-    for (const auto& object : config.objects) {
-        command << " --object " << shell_quote(object.airsim_object_name);
-    }
-    for (const auto& pattern : config.patterns) {
-        command << " --pattern " << shell_quote(pattern.airsim_object_pattern);
-        max_pattern_matches = std::max(max_pattern_matches, pattern.max_matches);
-    }
-    if (max_pattern_matches > 0) command << " --max-pattern-matches " << max_pattern_matches;
-    return command.str();
-}
-
 std::string build_object_pose_stream_command(
     const AirSimGhostObjectSourceConfig& config,
     const std::vector<AirSimGhostObjectBinding>& objects) {
@@ -405,29 +386,19 @@ public:
             throw std::invalid_argument("AirSim ghost object source requires exact object or pattern bindings");
         }
         inventory_candidates_ = expand_patterns_from_scene_inventory(config_);
-        if (!inventory_candidates_.empty()) {
-            config_.patterns.clear();
-            use_persistent_stream_ = true;
-        }
+        if (!inventory_candidates_.empty()) config_.patterns.clear();
     }
 
-    std::vector<GhostDetectionState> detections_at(TimePoint timestamp, double /*scenario_elapsed_s*/, std::optional<Vec3> ego_position_local) const override {
-        std::vector<AirSimObjectPose> poses;
-        const std::vector<AirSimGhostObjectBinding>* bindings = &config_.objects;
-        if (use_persistent_stream_) {
-            if (!stream_started_) {
-                selected_stream_objects_ = select_nearby_candidates(config_, inventory_candidates_, ego_position_local);
-                stream_command_ = build_object_pose_stream_command(config_, selected_stream_objects_);
-                stream_started_ = true;
-            }
-            const auto line = transport_->read_stream_line(stream_command_);
-            if (!line.has_value()) throw std::runtime_error("persistent AirSim object-pose stream ended unexpectedly");
-            poses = parse_object_pose_json(*line);
-            bindings = &selected_stream_objects_;
-        } else {
-            const auto command = build_object_pose_command(config_, timestamp);
-            poses = parse_object_pose_json(transport_->request_once(command));
+    std::vector<GhostDetectionState> detections_at(TimePoint /*timestamp*/, double /*scenario_elapsed_s*/, std::optional<Vec3> ego_position_local) const override {
+        if (!stream_started_) {
+            selected_stream_objects_ = select_nearby_candidates(config_, inventory_candidates_, ego_position_local);
+            stream_command_ = build_object_pose_stream_command(config_, selected_stream_objects_);
+            stream_started_ = true;
         }
+        const auto line = transport_->read_stream_line(stream_command_);
+        if (!line.has_value()) throw std::runtime_error("persistent AirSim object-pose stream ended unexpectedly");
+        std::vector<AirSimObjectPose> poses = parse_object_pose_json(*line);
+        const std::vector<AirSimGhostObjectBinding>* bindings = &selected_stream_objects_;
 
         std::vector<GhostDetectionState> detections;
         detections.reserve(bindings->size() + poses.size());
@@ -449,7 +420,6 @@ private:
     AirSimGhostObjectSourceConfig config_;
     std::unique_ptr<BridgeTransport> transport_;
     std::vector<InventoryCandidate> inventory_candidates_;
-    bool use_persistent_stream_{false};
     mutable bool stream_started_{false};
     mutable std::vector<AirSimGhostObjectBinding> selected_stream_objects_;
     mutable std::string stream_command_;
