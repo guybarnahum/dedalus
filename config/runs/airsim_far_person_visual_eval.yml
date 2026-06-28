@@ -1,0 +1,8 @@
+# ── Run: AirSim  ·  far person (~61 m)  ·  Visual primary + AirSim GT eval ───
+include: config/env/airsim.yml
+include: config/drone/px4_front_center_depth.yml
+include: config/pipeline/visual_eval_airsim_gt.yml
+include: config/mission/sequence_far_person.yml
+include: config/output/standard_ppm.yml
+
+annotation_output_path: out/far_person_visual_eval_annotation
