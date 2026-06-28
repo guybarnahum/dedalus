@@ -202,6 +202,15 @@ AirSimFrameSource::AirSimFrameSource(AirSimProviderConfig config)
 
 AirSimFrameSource::~AirSimFrameSource() = default;
 
+FramePacket AirSimFrameSource::next_one_shot_frame() {
+    const auto command = build_bridge_command(config_, config_.bridge_command);
+    return frame_from_image(
+        config_,
+        parse_ppm_bytes(transport_->request_once(command)),
+        FrameId{"airsim_live_frame_" + std::to_string(++next_frame_index_)},
+        TimePoint{0});
+}
+
 std::optional<FramePacket> AirSimFrameSource::next_stream_jsonl_frame() {
     const auto command = build_bridge_command(config_, config_.bridge_command);
     const auto json_line = transport_->read_stream_line(command);
@@ -227,6 +236,9 @@ std::optional<FramePacket> AirSimFrameSource::next_frame() {
     }
     if (config_.bridge_mode == "stream_jsonl") {
         return next_stream_jsonl_frame();
+    }
+    if (config_.bridge_mode == "one_shot_ppm") {
+        return next_one_shot_frame();
     }
     throw std::runtime_error("unknown AirSim bridge mode: " + config_.bridge_mode);
 }
