@@ -87,6 +87,7 @@ VALIDATION_EXPECT_SEQUENCE=0
 VALIDATION_SEQUENCE_STEPS="approach,circle"
 VALIDATION_SEQUENCE_STEP_MODES=""
 ATTACH=0
+TAIL=0
 EXIT_ON_COMPLETE=1
 KILL_EXISTING=1
 PROGRESS_FLAG="--progress"
@@ -194,6 +195,7 @@ Options:
   --annotation-dir PATH       Override the annotation PPM frame directory (resolved relative to repo root).
   --output-mp4-fps N          Input frame rate for ffmpeg.  Default: 10
   --attach                    Attach to tmux after starting
+  --tail                      tail -f the mission log after starting (foreground; Ctrl-C to detach)
   --keep-tools-running        Do not stop camera bridge / overlay on mission runtime_stop
   --no-kill-existing          Do not kill an existing tmux session with the same name
   -h, --help                  Show this help
@@ -424,6 +426,7 @@ while [[ $# -gt 0 ]]; do
         --annotation-dir) ANNOTATION_DIR="$(abs_path "$2")"; shift 2 ;;
         --output-mp4-fps) OUTPUT_MP4_FPS="$2"; shift 2 ;;
         --attach) ATTACH=1; shift ;;
+        --tail) TAIL=1; shift ;;
         --keep-tools-running) EXIT_ON_COMPLETE=0; shift ;;
         --no-kill-existing) KILL_EXISTING=0; shift ;;
         -h|--help) usage; exit 0 ;;
@@ -1250,6 +1253,10 @@ fi
 
 if [[ "$ATTACH" -eq 1 ]]; then
     tmux attach -t "$SESSION_NAME"
+fi
+
+if [[ "$TAIL" -eq 1 ]]; then
+    tail -f "$MISSION_LOG"
 fi
 
 
