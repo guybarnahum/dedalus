@@ -255,22 +255,33 @@ const char* obstacle_shape_to_string(const ObstacleEvidenceShape shape) {
     }
 }
 
+// Returns true for SurfacePatch evidence from any depth provider (GT or VD).
 bool is_depth_surface_patch(const ObstacleEvidence& evidence) {
     return evidence.shape == ObstacleEvidenceShape::SurfacePatch &&
-           evidence.source_provider == "airsim_depth_obstacle_detector";
+           (evidence.source_provider == "airsim_depth_obstacle_detector" ||
+            evidence.source_provider == "visual_depth_obstacle_detector");
 }
 
+bool is_visual_depth_evidence(const ObstacleEvidence& evidence) {
+    return evidence.source_provider == "visual_depth_obstacle_detector";
+}
+
+// Color scheme:
+//   Magenta diamond  — SurfacePatch (any depth provider)
+//   Red              — ThinStructureRisk
+//   Cyan             — visual_depth_obstacle_detector voxels
+//   Orange           — airsim_depth_obstacle_detector voxels / other
 RgbColor obstacle_evidence_color(const ObstacleEvidence& evidence) {
     if (is_depth_surface_patch(evidence)) {
-        return RgbColor{255U, 0U, 255U};
+        return RgbColor{255U, 0U, 255U};    // magenta
     }
     if (evidence.state == ObstacleEvidenceState::ThinStructureRisk) {
-        return RgbColor{255U, 70U, 70U};
+        return RgbColor{255U, 70U, 70U};    // red
     }
-    if (evidence.source_kind == OccupancySourceKind::DepthProvider) {
-        return RgbColor{120U, 180U, 255U};
+    if (is_visual_depth_evidence(evidence)) {
+        return RgbColor{0U, 210U, 255U};    // cyan — VD voxels
     }
-    return RgbColor{255U, 150U, 60U};
+    return RgbColor{255U, 150U, 60U};       // orange — GT voxels / other
 }
 
 void draw_surface_patch_marker(

@@ -94,8 +94,9 @@ PROGRESS_FLAG="--progress"
 SIM_CONFIG_PATH="$(dirname "$0")/run_mission_config.yaml"
 # MP4 generation — off by default.  Set --output-mp4 to enable.
 ANNOTATION_DIR=""       # where the PPM depth-annotation frames are written (from config annotation_output_path)
-OUTPUT_MP4=""           # destination .mp4; empty = disabled
-OUTPUT_MP4_FPS="10"    # input frame rate for ffmpeg -framerate
+OUTPUT_MP4=""              # destination .mp4; empty = disabled
+OUTPUT_MP4_FPS="5"        # input frame rate for ffmpeg -framerate (matches annotation_output_fps default)
+OUTPUT_MP4_FPS_EXPLICIT=0 # set to 1 when user passes --output-mp4-fps explicitly
 
 usage() {
     cat <<'EOF'
@@ -424,7 +425,7 @@ while [[ $# -gt 0 ]]; do
         --no-progress) PROGRESS_FLAG=""; shift ;;
         --output-mp4) OUTPUT_MP4="$(creatable_abs_path "$2")"; shift 2 ;;
         --annotation-dir) ANNOTATION_DIR="$(abs_path "$2")"; shift 2 ;;
-        --output-mp4-fps) OUTPUT_MP4_FPS="$2"; shift 2 ;;
+        --output-mp4-fps) OUTPUT_MP4_FPS="$2"; OUTPUT_MP4_FPS_EXPLICIT=1; shift 2 ;;
         --attach) ATTACH=1; shift ;;
         --tail) TAIL=1; shift ;;
         --keep-tools-running) EXIT_ON_COMPLETE=0; shift ;;
@@ -590,6 +591,15 @@ if with_pipeline_timing:
 dst.write_text("\n".join(out) + "\n", encoding="utf-8")
 PY
     CONFIG_PATH="$EFFECTIVE_CONFIG_PATH"
+fi
+
+# Auto-derive MP4 input fps from annotation_output_fps in resolved config.
+# Only applies when --output-mp4-fps was not passed explicitly.
+if [[ "$OUTPUT_MP4_FPS_EXPLICIT" -eq 0 ]]; then
+    _ann_fps="$(config_value 'annotation_output_fps')"
+    if [[ -n "$_ann_fps" ]]; then
+        OUTPUT_MP4_FPS="$_ann_fps"
+    fi
 fi
 
 if [[ "$WITH_SCENE_INVENTORY" -eq 1 ]]; then

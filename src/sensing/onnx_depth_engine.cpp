@@ -7,7 +7,10 @@
 #include <algorithm>
 #include <chrono>
 #include <cmath>
+#include <cstdlib>
+#include <fstream>
 #include <stdexcept>
+#include <string>
 #include <vector>
 
 #include <onnxruntime_cxx_api.h>
@@ -180,6 +183,25 @@ DepthInferenceResult ONNXDepthEngine::infer(const VisualDepthFrame& frame) {
     result.inference_time_ms = static_cast<float>(
         std::chrono::duration_cast<std::chrono::microseconds>(t1 - t0).count()) / 1000.0F;
     result.valid = true;
+
+    // Debug: write a PGM depth map per frame when DEDALUS_DEPTH_DEBUG_DIR is set.
+    // Values are inverted (255 = far, 0 = near) for intuitive grayscale display.
+    // Filename: <dir>/<frame_id>.pgm
+    const char* debug_dir = std::getenv("DEDALUS_DEPTH_DEBUG_DIR");
+    if (debug_dir && !frame.frame_id.value.empty()) {
+        const std::string path =
+            std::string{debug_dir} + "/" + frame.frame_id.value + ".pgm";
+        if (std::ofstream pgm{path, std::ios::binary}) {
+            pgm << "P5\n" << out_w << " " << out_h << "\n255\n";
+            for (std::size_t i = 0; i < n; ++i) {
+                // depth_relative: 1.0 = closest, ~0 = farthest.
+                // Invert so bright = far (conventional depth map look).
+                const auto px = static_cast<unsigned char>(
+                    255U - static_cast<unsigned>(result.depth_relative[i] * 255.0F));
+                pgm.put(static_cast<char>(px));
+            }
+        }
+    }
 
     return result;
 }
