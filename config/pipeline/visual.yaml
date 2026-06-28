@@ -29,6 +29,7 @@ world_model: in_memory
 
 visual_onnx.model_path: models/depth_anything_v2_vits.onnx
 visual_onnx.use_cuda: true
+visual_onnx.cuda_arena_limit_bytes: 4294967296
 visual_onnx.pixel_stride: 4
 visual_onnx.min_depth_m: 0.5
 visual_onnx.max_depth_m: 60.0

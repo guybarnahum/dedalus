@@ -29,7 +29,7 @@ struct VisualONNXDepthConfig {
     int    model_input_height{518};
     bool   use_cuda{false};                          // CUDA EP (requires DEDALUS_CUDA)
     int    cuda_device_id{0};
-    std::size_t cuda_arena_limit_bytes{1ULL * 1024 * 1024 * 1024};  // 1 GiB
+    std::size_t cuda_arena_limit_bytes{4ULL * 1024 * 1024 * 1024};  // 4 GiB — ViT-S needs >1 GiB for intermediate activations
     bool   use_coreml{false};                        // CoreML EP (macOS)
 
     // MetricScaleEstimate
