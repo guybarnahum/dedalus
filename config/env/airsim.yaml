@@ -1,0 +1,13 @@
+# ── Environment: AirSim / Colosseum simulator ──────────────────────────────────
+# Frame source and connection settings for a running AirSim/Colosseum instance.
+# Include this file first, then add drone/, pipeline/, and mission/ layers.
+#
+# Override connection at runtime:
+#   DEDALUS_ENV_SOURCE_HOST=<ip>   DEDALUS_ENV_RPC_PORT=<port>
+
+frame_source: airsim
+source_host: 127.0.0.1
+source_rpc_port: 41451
+bridge_transport: pipe
+fallback_map_frame_id: map_airsim_mission_0001
+occupancy_source: airsim_ground_truth

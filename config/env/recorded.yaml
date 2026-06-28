@@ -1,0 +1,7 @@
+# ── Environment: Recorded frame playback ───────────────────────────────────────
+# Replays a previously captured frame manifest.
+# Set recorded_manifest_path to the manifest JSON for the target session.
+
+frame_source: recorded_frames
+fallback_map_frame_id: map_airsim_mission_0001
+occupancy_source: synthetic_fixture
