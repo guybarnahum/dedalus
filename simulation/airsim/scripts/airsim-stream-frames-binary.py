@@ -175,11 +175,16 @@ def rgb_bytes_from_response(response: object) -> bytes:
 
     pixel_count = width * height
     if len(raw) == pixel_count * 3:
-        return raw
+        # AirSim returns BGR (OpenCV convention) — swap R and B to get RGB.
+        buf = bytearray(raw)
+        for i in range(0, len(buf), 3):
+            buf[i], buf[i + 2] = buf[i + 2], buf[i]
+        return bytes(buf)
     if len(raw) == pixel_count * 4:
+        # BGRA → RGB
         rgb_buffer = bytearray()
         for i in range(0, len(raw), 4):
-            rgb_buffer.extend(raw[i : i + 3])
+            rgb_buffer += bytes([raw[i + 2], raw[i + 1], raw[i]])
         return bytes(rgb_buffer)
 
     raise RuntimeError(
