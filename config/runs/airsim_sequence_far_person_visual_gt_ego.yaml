@@ -1,16 +1,9 @@
-# ── Run: AirSim  ·  far person sequence  ·  Visual depth + AirSim GT ego ──────
-# Visual ONNX depth (Depth-Anything V2 Small) as the sole obstacle detector.
-# Ego uses AirSim frame_hint so the drone flies correctly — ego accuracy is not
-# the variable under test here.  Compare annotation.mp4 against the GT run
-# (airsim_sequence_far_person_airsim_gt) to evaluate visual depth quality.
-
 include: config/world-env/airsim.yaml
 include: config/drone/px4_front_center.yaml
 include: config/pipeline/visual.yaml
 include: config/mission/sequence_far_person.yaml
 include: config/output/standard_ppm.yaml
 
-# Override visual.yaml's VO ego with AirSim telemetry.
 ego_provider: frame_hint
 
 annotation_output_path: out/sequence_far_person_visual_gt_ego_annotation
