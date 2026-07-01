@@ -717,6 +717,23 @@ EgoStateEstimate VisualEgoStateProvider::estimate(const FramePacket& frame) {
                                           static_cast<double>(h)/2.0};
     const float inlier_frac = step_vl1(gray, w, h, K, dt_s);
 
+    // ── Dead-reckoning fallback ───────────────────────────────────────────────
+    // If VO produced no position update (too few features or degenerate flow)
+    // and a velocity hint is present, integrate it directly.  This ensures the
+    // provider is always useful when sensor data exists — even when the visual
+    // tracker fails on a structureless frame.
+    if (inlier_frac == 0.0F && frame.ego_hint) {
+        const auto& v = frame.ego_hint->velocity_local;
+        const double spd = std::sqrt(v.x*v.x + v.y*v.y + v.z*v.z);
+        if (spd > 0.05) {
+            state_.position.x += v.x * dt_s;
+            state_.position.y += v.y * dt_s;
+            state_.position.z += v.z * dt_s;
+            state_.cumulative_drift_m += spd * dt_s;
+            state_.translation_sigma  += spd * dt_s * config_.translation_noise_per_m;
+        }
+    }
+
     // ── VL2: scale update and re-localization ─────────────────────────────────
     if (l2_map_) {
         if (frame.depth_frame) {
