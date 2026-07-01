@@ -171,7 +171,18 @@ CoreStackProviders ProviderRegistry::create(const CoreStackProviderConfig& confi
     providers.detector = resolve_shared<Detector>("detector", config.detector, {
         {"null",                [&]() { return std::make_shared<NullDetector>(); }},
         {"scripted",            [&]() { return std::make_shared<ScriptedDetector>(); }},
-        {"airsim_ground_truth", [&]() { return std::make_shared<AirSimGroundTruthDetector>(airsim); }},
+        {"airsim_ground_truth", [&]() {
+            AirSimProviderConfig det_cfg = airsim;
+            for (const auto& obj : config.ghost_targets_airsim_objects) {
+                AirSimDetectorObjectBinding b;
+                b.airsim_object_name = obj.airsim_object_name;
+                b.class_label        = obj.class_label;
+                b.confidence         = obj.confidence;
+                b.size_m             = obj.size_m;
+                det_cfg.detector_objects.push_back(std::move(b));
+            }
+            return std::make_shared<AirSimGroundTruthDetector>(std::move(det_cfg));
+        }},
     });
 
     providers.camera_stabilizer = resolve_shared<CameraStabilizer>("camera_stabilizer", config.camera_stabilizer, {

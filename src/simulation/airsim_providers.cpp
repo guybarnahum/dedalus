@@ -1,7 +1,9 @@
 #include "dedalus/simulation/airsim_providers.hpp"
 #include "dedalus/simulation/airsim_sidecar_parser.hpp"
 
+#include <algorithm>
 #include <cctype>
+#include <cmath>
 #include <memory>
 #include <sstream>
 #include <stdexcept>
@@ -195,6 +197,88 @@ FramePacket frame_from_image(const AirSimProviderConfig& config, ImageView image
     return frame;
 }
 
+// ── AirSimGroundTruthDetector helpers ─────────────────────────────────────
+
+struct GtObjectPose {
+    std::string name;
+    bool pose_available{false};
+    Vec3 position_ned_m;
+};
+
+// Parse the compact JSON emitted by airsim-object-poses.py (one-shot mode).
+// Format: {"objects":[{"name":"X","pose_available":true,"position_ned_m":[x,y,z],...},...]}
+std::vector<GtObjectPose> parse_gt_object_poses(const std::string& json) {
+    std::vector<GtObjectPose> result;
+    std::size_t cursor = 0U;
+    while (true) {
+        const auto name_marker = json.find("\"name\":", cursor);
+        if (name_marker == std::string::npos) break;
+        // Find the enclosing object.
+        const auto obj_start = json.rfind('{', name_marker);
+        if (obj_start == std::string::npos) break;
+        std::size_t depth = 0U;
+        std::size_t obj_end = obj_start;
+        for (std::size_t i = obj_start; i < json.size(); ++i) {
+            if (json[i] == '{') ++depth;
+            else if (json[i] == '}') { --depth; if (depth == 0U) { obj_end = i; break; } }
+        }
+        const auto obj = json.substr(obj_start, obj_end - obj_start + 1U);
+
+        GtObjectPose pose;
+        // name
+        const auto nq1 = obj.find('"', obj.find("\"name\":") + 7U);
+        const auto nq2 = nq1 != std::string::npos ? obj.find('"', nq1 + 1U) : std::string::npos;
+        if (nq1 != std::string::npos && nq2 != std::string::npos)
+            pose.name = obj.substr(nq1 + 1U, nq2 - nq1 - 1U);
+        // pose_available
+        const auto pa_marker = obj.find("\"pose_available\":");
+        if (pa_marker != std::string::npos) {
+            const auto pa_val = obj.find_first_not_of(" \t", pa_marker + 17U);
+            pose.pose_available = (pa_val != std::string::npos && obj.compare(pa_val, 4U, "true") == 0);
+        }
+        // position_ned_m
+        if (pose.pose_available) {
+            const auto arr_marker = obj.find("\"position_ned_m\":");
+            if (arr_marker != std::string::npos) {
+                const auto open = obj.find('[', arr_marker);
+                const auto close = obj.find(']', open);
+                if (open != std::string::npos && close != std::string::npos) {
+                    std::string body = obj.substr(open + 1U, close - open - 1U);
+                    std::replace(body.begin(), body.end(), ',', ' ');
+                    std::istringstream iss{body};
+                    double x = 0.0, y = 0.0, z = 0.0;
+                    iss >> x >> y >> z;
+                    pose.position_ned_m = Vec3{x, y, z};
+                }
+            }
+        }
+        if (!pose.name.empty()) result.push_back(std::move(pose));
+        cursor = obj_end + 1U;
+    }
+    return result;
+}
+
+// Transform a NED-local relative vector into OpenCV camera frame.
+// Drone body frame: x=forward, y=right, z=down (NED body).
+// Camera (front-center): x=right, y=down, z=forward.
+// RPY: {roll, pitch, yaw} in radians (aerospace ZYX convention).
+Vec3 ned_local_to_camera(const Vec3& p_rel, const Vec3& rpy) {
+    const double cr = std::cos(rpy.x);
+    const double sr = std::sin(rpy.x);
+    const double cp = std::cos(rpy.y);
+    const double sp = std::sin(rpy.y);
+    const double cy = std::cos(rpy.z);
+    const double sy = std::sin(rpy.z);
+
+    // R_body_from_local = (Rz(yaw)*Ry(pitch)*Rx(roll))^T
+    const double bx =  cy*cp*p_rel.x + sy*cp*p_rel.y - sp*p_rel.z;
+    const double by =  (cy*sp*sr - sy*cr)*p_rel.x + (sy*sp*sr + cy*cr)*p_rel.y + cp*sr*p_rel.z;
+    const double bz =  (cy*sp*cr + sy*sr)*p_rel.x + (sy*sp*cr - cy*sr)*p_rel.y + cp*cr*p_rel.z;
+
+    // Front-center camera: cam_x=body_y(right), cam_y=body_z(down), cam_z=body_x(forward)
+    return Vec3{by, bz, bx};
+}
+
 }  // namespace
 
 AirSimFrameSource::AirSimFrameSource(AirSimProviderConfig config)
@@ -267,10 +351,84 @@ std::vector<Observation3D> AirSimDepthProjector::project(
 }
 
 AirSimGroundTruthDetector::AirSimGroundTruthDetector(AirSimProviderConfig config)
-    : config_(std::move(config)) {}
+    : config_(std::move(config)), transport_(std::make_unique<PipeBridgeTransport>()) {}
 
-std::vector<Detection2D> AirSimGroundTruthDetector::detect(const FramePacket&) {
-    throw unavailable("AirSimGroundTruthDetector");
+AirSimGroundTruthDetector::~AirSimGroundTruthDetector() = default;
+
+std::vector<Detection2D> AirSimGroundTruthDetector::detect(const FramePacket& frame) {
+    if (config_.detector_objects.empty() || !frame.ego_hint.has_value()) {
+        return {};
+    }
+
+    // Build one-shot pose query command.
+    validate_bridge_base_command(config_.objects_bridge_command);
+    std::ostringstream command;
+    command << config_.objects_bridge_command
+            << " --host " << shell_quote(config_.host)
+            << " --rpc-port " << config_.rpc_port;
+    for (const auto& obj : config_.detector_objects) {
+        command << " --object " << shell_quote(obj.airsim_object_name);
+    }
+
+    const auto json = transport_->request_once(command.str());
+    const auto poses = parse_gt_object_poses(json);
+
+    const auto& ego = *frame.ego_hint;
+    const double fx = frame.intrinsics.fx;
+    const double fy = frame.intrinsics.fy;
+    const double cx = frame.intrinsics.cx;
+    const double cy = frame.intrinsics.cy;
+    const auto img_w = static_cast<double>(frame.image.width);
+    const auto img_h = static_cast<double>(frame.image.height);
+
+    std::vector<Detection2D> detections;
+    int det_index = 0;
+    for (const auto& obj : config_.detector_objects) {
+        const auto it = std::find_if(poses.begin(), poses.end(),
+            [&](const GtObjectPose& p) { return p.name == obj.airsim_object_name; });
+        if (it == poses.end() || !it->pose_available) continue;
+
+        // NED relative vector: object minus drone, in local frame.
+        const Vec3 p_rel{
+            it->position_ned_m.x - ego.local_T_body.position.x,
+            it->position_ned_m.y - ego.local_T_body.position.y,
+            it->position_ned_m.z - ego.local_T_body.position.z};
+
+        // Transform to OpenCV camera frame.
+        const Vec3 p_cam = ned_local_to_camera(p_rel, ego.local_T_body.rotation_rpy);
+        if (p_cam.z <= 0.5) continue;  // behind camera or too close
+
+        const double u = fx * p_cam.x / p_cam.z + cx;
+        const double v = fy * p_cam.y / p_cam.z + cy;
+
+        // Project object half-extents to pixel half-widths/heights.
+        // size_m.y = lateral (East) width, size_m.z = vertical (Down) height.
+        const double half_w_px = fx * (obj.size_m.y * 0.5) / p_cam.z;
+        const double half_h_px = fy * (obj.size_m.z * 0.5) / p_cam.z;
+
+        const double x0 = u - half_w_px;
+        const double y0 = v - half_h_px;
+        const double x1 = u + half_w_px;
+        const double y1 = v + half_h_px;
+
+        // Skip if entirely outside the image.
+        if (x1 <= 0.0 || y1 <= 0.0 || x0 >= img_w || y0 >= img_h) continue;
+
+        Detection2D det;
+        det.detection_id = DetectionId{"airsim_gt_" + std::to_string(det_index++)};
+        det.frame_id     = frame.frame_id;
+        det.timestamp    = frame.timestamp;
+        det.bbox_px      = Rect2{
+            std::max(0.0, x0),
+            std::max(0.0, y0),
+            std::min(x1, img_w) - std::max(0.0, x0),
+            std::min(y1, img_h) - std::max(0.0, y0)};
+        det.confidence   = static_cast<float>(obj.confidence);
+        det.class_label  = obj.class_label;
+        det.depth_m      = p_cam.z;  // exact depth carried to FlatGroundProjector
+        detections.push_back(std::move(det));
+    }
+    return detections;
 }
 
 }  // namespace dedalus
