@@ -666,7 +666,6 @@ if [[ "$WITH_SENSING_EVIDENCE_OVERLAY" -eq 1 ]]; then
         --show-sensing-volumes
         --show-obstacle-evidence
         --no-sensing-volume-labels
-        --obstacle-evidence-shape surfel_patch
         --obstacle-evidence-display-voxel-m 0.50
         --max-obstacle-evidence 160
     )
