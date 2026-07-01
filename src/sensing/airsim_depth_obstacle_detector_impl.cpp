@@ -156,9 +156,6 @@ std::vector<ObstacleEvidence> detect_airsim_depth_obstacles(
     const double height_minus_one = std::max(1, frame.height - 1);
     const float voxel = clamp_positive(config.voxel_size_m, 0.75F);
     const float confidence = std::clamp(config.confidence, 0.0F, 1.0F);
-    const float normal_confidence = std::clamp(config.normal_confidence, 0.0F, 1.0F);
-    const float patch_depth_m = std::max(0.05F, voxel * 0.25F);
-    const float patch_side_m = std::max(0.10F, voxel);
 
     std::vector<ProjectedDepthSample> projected(expected_size);
     for (int y = 0; y < frame.height; ++y) {
@@ -214,17 +211,9 @@ std::vector<ObstacleEvidence> detect_airsim_depth_obstacles(
             item.source_kind = OccupancySourceKind::DepthProvider;
             item.map_frame_id = sensing_volume.map_frame_id;
             item.state = ObstacleEvidenceState::Occupied;
-            item.shape = ObstacleEvidenceShape::SurfacePatch;
+            item.shape = ObstacleEvidenceShape::Voxel;
             item.center_local = projected_sample.center_local;
-            item.size_m = Vec3{patch_side_m, patch_side_m, patch_depth_m};
-
-            Vec3 normal_local{};
-            if (config.derive_surface_normals_from_depth &&
-                depth_derived_surface_normal(projected, frame.width, frame.height, x, y, normal_local)) {
-                item.has_surface_normal = true;
-                item.surface_normal_local = normal_local;
-                item.normal_confidence = normal_confidence;
-            }
+            item.size_m = Vec3{voxel, voxel, voxel};
             item.occupancy_probability = confidence;
             item.confidence = confidence;
             item.range_m = projected_sample.range_m;

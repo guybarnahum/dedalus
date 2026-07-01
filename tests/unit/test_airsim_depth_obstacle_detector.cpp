@@ -71,8 +71,8 @@ int main() {
         return 1;
     }
     if (item.state != dedalus::ObstacleEvidenceState::Occupied ||
-        item.shape != dedalus::ObstacleEvidenceShape::SurfacePatch) {
-        std::cerr << "depth detector evidence should be occupied surface geometry\n";
+        item.shape != dedalus::ObstacleEvidenceShape::Voxel) {
+        std::cerr << "depth detector evidence should be occupied voxel\n";
         return 1;
     }
     if (!item.inside_sensing_volume || item.inside_swept_volume) {
