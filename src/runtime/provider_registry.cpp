@@ -169,6 +169,7 @@ CoreStackProviders ProviderRegistry::create(const CoreStackProviderConfig& confi
     });
 
     providers.detector = resolve_shared<Detector>("detector", config.detector, {
+        {"null",                [&]() { return std::make_shared<NullDetector>(); }},
         {"scripted",            [&]() { return std::make_shared<ScriptedDetector>(); }},
         {"airsim_ground_truth", [&]() { return std::make_shared<AirSimGroundTruthDetector>(airsim); }},
     });
@@ -282,7 +283,7 @@ void ProviderRegistry::populate_runner_eval_slots(
 
 std::vector<std::string> ProviderRegistry::frame_sources() const { return {"synthetic", "synthetic_mission", "video_only", "recorded_frames", "airsim"}; }
 std::vector<std::string> ProviderRegistry::ego_providers() const { return {"frame_hint", "no_telemetry", "airsim", "visual_odometry"}; }
-std::vector<std::string> ProviderRegistry::detectors() const { return {"scripted", "airsim_ground_truth"}; }
+std::vector<std::string> ProviderRegistry::detectors() const { return {"null", "scripted", "airsim_ground_truth"}; }
 std::vector<std::string> ProviderRegistry::camera_stabilizers() const { return {"null"}; }
 std::vector<std::string> ProviderRegistry::trackers() const { return {"simple_centroid"}; }
 std::vector<std::string> ProviderRegistry::identity_resolvers() const { return {"appearance_only"}; }

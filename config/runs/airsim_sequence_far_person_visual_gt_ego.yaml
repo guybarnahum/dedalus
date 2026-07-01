@@ -5,5 +5,6 @@ include: config/mission/sequence_far_person.yaml
 include: config/output/standard_ppm.yaml
 
 ego_provider: frame_hint
+detector: airsim_ground_truth
 
 annotation_output_path: out/sequence_far_person_visual_gt_ego_annotation

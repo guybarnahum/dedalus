@@ -87,6 +87,11 @@ public:
     std::vector<Detection2D> detect(const FramePacket& frame) override;
 };
 
+class NullDetector final : public Detector {
+public:
+    std::vector<Detection2D> detect(const FramePacket&) override { return {}; }
+};
+
 class NullCameraStabilizer final : public CameraStabilizer {
 public:
     StabilizedFrame stabilize(
