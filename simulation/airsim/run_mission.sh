@@ -97,6 +97,7 @@ ANNOTATION_DIR=""       # where the PPM depth-annotation frames are written (fro
 OUTPUT_MP4=""              # destination .mp4; empty = disabled
 OUTPUT_MP4_FPS="5"        # input frame rate for ffmpeg -framerate (matches annotation_output_fps default)
 OUTPUT_MP4_FPS_EXPLICIT=0 # set to 1 when user passes --output-mp4-fps explicitly
+DEPTH_DEBUG_MP4=""         # raw ONNX depth debug MP4; sets visual_onnx.debug_depth_mp4 in effective config
 
 usage() {
     cat <<'EOF'
@@ -195,6 +196,8 @@ Options:
                                 from --annotation-dir, or from the config annotation_output_path key.
   --annotation-dir PATH       Override the annotation PPM frame directory (resolved relative to repo root).
   --output-mp4-fps N          Input frame rate for ffmpeg.  Default: 10
+  --depth-debug-mp4 PATH      Write raw ONNX depth map frames (Jet colormap) to an H.264 MP4 in real time.
+                                Sets visual_onnx.debug_depth_mp4.  Requires ffmpeg on PATH.
   --attach                    Attach to tmux after starting
   --tail                      tail -f the mission log after starting (foreground; Ctrl-C to detach)
   --keep-tools-running        Do not stop camera bridge / overlay on mission runtime_stop
@@ -426,6 +429,7 @@ while [[ $# -gt 0 ]]; do
         --output-mp4) OUTPUT_MP4="$(creatable_abs_path "$2")"; shift 2 ;;
         --annotation-dir) ANNOTATION_DIR="$(abs_path "$2")"; shift 2 ;;
         --output-mp4-fps) OUTPUT_MP4_FPS="$2"; OUTPUT_MP4_FPS_EXPLICIT=1; shift 2 ;;
+        --depth-debug-mp4) DEPTH_DEBUG_MP4="$(creatable_abs_path "$2")"; shift 2 ;;
         --attach) ATTACH=1; shift ;;
         --tail) TAIL=1; shift ;;
         --keep-tools-running) EXIT_ON_COMPLETE=0; shift ;;
@@ -591,6 +595,14 @@ if with_pipeline_timing:
 dst.write_text("\n".join(out) + "\n", encoding="utf-8")
 PY
     CONFIG_PATH="$EFFECTIVE_CONFIG_PATH"
+fi
+
+# Inject depth debug MP4 path into effective config when requested.
+if [[ -n "$DEPTH_DEBUG_MP4" ]]; then
+    _depth_eff="${OUTPUT_DIR}/effective_core_stack_depth_${TIMESTAMP}.yaml"
+    cat "$CONFIG_PATH" > "$_depth_eff"
+    echo "visual_onnx.debug_depth_mp4: $DEPTH_DEBUG_MP4" >> "$_depth_eff"
+    CONFIG_PATH="$_depth_eff"
 fi
 
 # Auto-derive MP4 input fps from annotation_output_fps in resolved config.
@@ -1258,6 +1270,11 @@ if [[ -n "$OUTPUT_MP4" ]]; then
     echo "  output mp4:     $OUTPUT_MP4"
     echo "  fps:            $OUTPUT_MP4_FPS"
     echo "  log:            $MP4_LOG"
+    echo ""
+fi
+if [[ -n "$DEPTH_DEBUG_MP4" ]]; then
+    echo "Depth debug MP4 (live, via ffmpeg pipe):"
+    echo "  output:         $DEPTH_DEBUG_MP4"
     echo ""
 fi
 echo "Exit on mission complete: $([[ "$EXIT_ON_COMPLETE" -eq 1 ]] && echo yes || echo no)"

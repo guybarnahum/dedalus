@@ -211,9 +211,10 @@ std::vector<ObstacleEvidence> detect_airsim_depth_obstacles(
             item.source_kind = OccupancySourceKind::DepthProvider;
             item.map_frame_id = sensing_volume.map_frame_id;
             item.state = ObstacleEvidenceState::Occupied;
-            item.shape = ObstacleEvidenceShape::Voxel;
+            item.shape = ObstacleEvidenceShape::SurfacePatch;
             item.center_local = projected_sample.center_local;
-            item.size_m = Vec3{voxel, voxel, voxel};
+            // size_m[0]/[1] = patch width/height in the tangent plane (used by overlay).
+            item.size_m = Vec3{voxel, voxel, 0.1};
             item.occupancy_probability = confidence;
             item.confidence = confidence;
             item.range_m = projected_sample.range_m;

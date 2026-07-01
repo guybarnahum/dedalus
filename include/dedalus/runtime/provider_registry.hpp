@@ -44,7 +44,7 @@ struct VisualONNXDepthConfig {
     std::size_t max_evidence{512U};
     bool   detect_surface_patches{true};
     bool   detect_thin_structures{true};
-    std::string debug_depth_output_dir;  // if non-empty, write depth_NNNN.ppm per frame
+    std::string debug_depth_mp4;  // if non-empty, pipe depth frames into ffmpeg → H.264 MP4
 };
 
 struct CoreStackProviderConfig {

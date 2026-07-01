@@ -35,10 +35,10 @@ struct VisualDepthObstacleDetectorConfig {
     // Enable Sobel + NMS + CC thin structure detection (is_thin_structure_hint).
     bool detect_thin_structures{true};
 
-    // When non-empty, write a false-color depth PPM per frame to this directory.
-    // Files: depth_0000.ppm, depth_0001.ppm, ...
-    // Convert to MP4: ffmpeg -framerate 5 -pattern_type glob -i 'depth_*.ppm' depth_debug.mp4
-    std::string debug_depth_output_dir;
+    // When non-empty, pipe each depth frame as Jet-colorized raw RGB into ffmpeg,
+    // writing a live H.264 MP4 at this path.  Set via visual_onnx.debug_depth_mp4.
+    // ffmpeg must be on PATH.  The file is finalized when the detector is destroyed.
+    std::string debug_depth_mp4;
 };
 
 // Visual depth obstacle detector.
@@ -62,7 +62,7 @@ public:
         MetricScaleEstimate                   scale,
         VisualDepthObstacleDetectorConfig     config = {});
 
-    ~VisualDepthObstacleDetector() override = default;
+    ~VisualDepthObstacleDetector() override;
 
     VisualDepthObstacleDetector(const VisualDepthObstacleDetector&)            = delete;
     VisualDepthObstacleDetector& operator=(const VisualDepthObstacleDetector&) = delete;
@@ -74,9 +74,12 @@ public:
     [[nodiscard]] std::vector<ObstacleEvidence> detect(const EgoSensingFrame& frame) override;
 
 private:
+    void write_debug_frame(const DepthInferenceResult& inferred);
+
     std::unique_ptr<DepthEngineInterface> engine_;
     MetricScaleEstimate                   scale_;
     VisualDepthObstacleDetectorConfig     config_;
+    FILE*                                 debug_pipe_{nullptr};  // ffmpeg pipe; null when disabled
 };
 
 // Free-function variant for testing without a class instance.
