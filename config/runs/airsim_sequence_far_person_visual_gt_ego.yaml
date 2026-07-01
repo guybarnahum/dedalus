@@ -5,9 +5,11 @@ include: config/mission/sequence_far_person.yaml
 include: config/output/standard_ppm.yaml
 
 ego_provider: frame_hint
-# Ghost targets provide correct 3D positions directly (NED); using airsim_ground_truth
-# simultaneously routes the same objects through FlatGroundProjector which produces
-# wrong Z (ego.z + 1.5), corrupting circle orbit geometry and preventing landing.
-detector: null
+# Use airsim_ground_truth detector (2D bbox + depth_m) routed through the fixed
+# FlatGroundProjector (full camera back-projection).  Ghost targets disabled:
+# they provide NED positions directly (ground truth not available in real flight).
+detector: airsim_ground_truth
+projector_require_depth: true
+ghost_targets_enabled: false
 
 annotation_output_path: out/sequence_far_person_visual_gt_ego_annotation

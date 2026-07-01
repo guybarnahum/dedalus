@@ -90,6 +90,7 @@ struct CoreStackProviderConfig {
     std::string tracker_eval;
     std::string identity_resolver_eval;
     std::string projector_eval;
+    bool projector_require_depth{false};
     bool ghost_targets_enabled{false};
     std::string ghost_targets_source{"trajectory_scenario"};
     std::string ghost_targets_scenario{"person_pair_crossing"};

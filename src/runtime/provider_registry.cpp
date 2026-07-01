@@ -205,7 +205,11 @@ CoreStackProviders ProviderRegistry::create(const CoreStackProviderConfig& confi
     });
 
     providers.projector = resolve_shared<Projector3D>("projector", config.projector, {
-        {"flat_ground",  [&]() { return std::make_shared<FlatGroundProjector>(); }},
+        {"flat_ground",  [&]() {
+            FlatGroundProjectorConfig pc;
+            pc.require_depth = config.projector_require_depth;
+            return std::make_shared<FlatGroundProjector>(pc);
+        }},
         {"airsim_depth", [&]() { return std::make_shared<AirSimDepthProjector>(airsim); }},
     });
 

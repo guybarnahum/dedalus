@@ -1,6 +1,9 @@
 #include "dedalus/perception/perception_pipeline.hpp"
 
+#include <stdexcept>
 #include <string>
+
+#include "dedalus/geometry/pose_transform.hpp"
 
 namespace dedalus {
 
@@ -93,6 +96,9 @@ std::vector<IdentityHypothesis> AppearanceOnlyIdentityResolver::resolve(const st
     return identities;
 }
 
+FlatGroundProjector::FlatGroundProjector(FlatGroundProjectorConfig config)
+    : config_(config) {}
+
 std::vector<Observation3D> FlatGroundProjector::project(
     const std::vector<Track2D>& tracks,
     const FramePacket& frame,
@@ -101,30 +107,44 @@ std::vector<Observation3D> FlatGroundProjector::project(
     observations.reserve(tracks.size());
 
     for (const auto& track : tracks) {
-        const double bbox_center_x = track.bbox_px.x + (track.bbox_px.width * 0.5);
-        const double normalized_x = (bbox_center_x - frame.intrinsics.cx) / frame.intrinsics.fx;
-        // Use detector-supplied depth when available; fall back to the flat-ground constant.
+        const double bbox_cx = track.bbox_px.x + (track.bbox_px.width  * 0.5);
+        const double bbox_cy = track.bbox_px.y + (track.bbox_px.height * 0.5);
+        // Normalized image coordinates (optical-axis = 0).
+        const double nx = (bbox_cx - frame.intrinsics.cx) / frame.intrinsics.fx;
+        const double ny = (bbox_cy - frame.intrinsics.cy) / frame.intrinsics.fy;
+        // Use detector-supplied depth.  In production all detectors set depth_m
+        // (airsim_ground_truth always sets it; real depth-capable detectors do too).
+        // If require_depth is true, missing depth is a hard error.
         constexpr double kFlatGroundDepthM = 18.0;
+        if (!track.depth_m.has_value() && config_.require_depth) {
+            throw std::runtime_error(
+                "FlatGroundProjector: track " + track.track_id.value +
+                " has no depth_m but require_depth is set");
+        }
         const double depth_m = track.depth_m.value_or(kFlatGroundDepthM);
 
+        // Back-project from camera frame to body frame.
+        // Front-center camera convention: cam_x=right=body_y, cam_y=down=body_z, cam_z=forward=body_x.
+        // p_cam = {nx*depth_m, ny*depth_m, depth_m}  →  p_body = {depth_m, nx*depth_m, ny*depth_m}
+        const Vec3 p_body{depth_m, nx * depth_m, ny * depth_m};
+
         Observation3D observation;
-        observation.track_id = track.track_id;
-        observation.source_detection_id = track.source_detection_id;
+        observation.track_id             = track.track_id;
+        observation.source_detection_id  = track.source_detection_id;
         observation.has_source_detection = track.has_source_detection;
-        observation.source_bbox_px = track.bbox_px;
-        observation.has_source_bbox = true;
-        observation.source_frame_id = frame.frame_id;
-        observation.has_source_frame = true;
-        observation.timestamp = track.timestamp;
-        observation.position_body = Vec3{depth_m, normalized_x * depth_m, 1.5};
-        observation.position_local = Vec3{
-            ego.local_T_body.position.x + observation.position_body.x,
-            ego.local_T_body.position.y + observation.position_body.y,
-            ego.local_T_body.position.z + observation.position_body.z};
-        observation.map_frame_id = ego.map_frame_id;
-        observation.class_label = track.class_label;
-        observation.faction = track.faction;
-        observation.confidence = track.confidence * 0.7F;
+        observation.source_bbox_px       = track.bbox_px;
+        observation.has_source_bbox      = true;
+        observation.source_frame_id      = frame.frame_id;
+        observation.has_source_frame     = true;
+        observation.timestamp            = track.timestamp;
+        observation.position_body        = p_body;
+        // Rotate body-frame vector to local frame and translate by ego position.
+        // transform_point(local_T_body, p_body) = ego.position + R_local_from_body * p_body
+        observation.position_local       = transform_point(ego.local_T_body, p_body);
+        observation.map_frame_id         = ego.map_frame_id;
+        observation.class_label          = track.class_label;
+        observation.faction              = track.faction;
+        observation.confidence           = track.confidence * 0.7F;
         observations.push_back(observation);
     }
 

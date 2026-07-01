@@ -424,6 +424,7 @@ void apply_config_value(CoreStackConfig& config, const std::string& key, const s
     else if (key == "identity_resolver_eval") config.providers.identity_resolver_eval = value;
     else if (key == "projector") config.providers.projector = value;
     else if (key == "projector_eval") config.providers.projector_eval = value;
+    else if (key == "projector_require_depth") config.providers.projector_require_depth = parse_bool(value);
     else if (key == "ghost_targets_enabled") config.providers.ghost_targets_enabled = parse_bool(value);
     else if (key == "ghost_targets_source") config.providers.ghost_targets_source = value;
     else if (key == "ghost_targets_scenario") config.providers.ghost_targets_scenario = value;

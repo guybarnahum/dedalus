@@ -109,12 +109,21 @@ public:
     std::vector<IdentityHypothesis> resolve(const std::vector<Track2D>& tracks) override;
 };
 
+struct FlatGroundProjectorConfig {
+    // When true, project() throws std::runtime_error if a track has no depth_m.
+    // Set in production run configs; leave false for tests that use ScriptedDetector.
+    bool require_depth{false};
+};
+
 class FlatGroundProjector final : public Projector3D {
 public:
+    explicit FlatGroundProjector(FlatGroundProjectorConfig config = {});
     std::vector<Observation3D> project(
         const std::vector<Track2D>& tracks,
         const FramePacket& frame,
         const EgoState& ego) override;
+private:
+    FlatGroundProjectorConfig config_;
 };
 
 }  // namespace dedalus
