@@ -425,19 +425,14 @@ float VisualEgoStateProvider::step_vl1(const std::vector<std::uint8_t>& gray,
         q_norm.emplace_back((f.x - K.cx) / K.fx,
                             (f.y - K.cy) / K.fy);
     }
-    if (static_cast<int>(p_norm.size()) < config_.foe_min_inliers) return 0.0F;
+    if (p_norm.empty()) return 0.0F;
 
-    // ── Focus of Expansion RANSAC → translation direction + omega ────────────
-    static thread_local std::mt19937 rng{42};
+    // ── Mean-flow fallback helper (used below in two places) ─────────────────
+    // Computes mean normalised flow and integrates it as a lateral translation.
+    // Activated when RANSAC is skipped (too few correspondences) or when it
+    // fails to find a valid FoE (uniform translation → FoE at ∞).
     const double threshold_norm = config_.foe_ransac_threshold / K.fx;
-    const FoeResult foe = foe_ransac(p_norm, q_norm,
-                                      config_.foe_ransac_iterations,
-                                      threshold_norm,
-                                      config_.foe_min_inliers,
-                                      rng);
-    if (!foe.valid) {
-        // FoE RANSAC failed — likely a uniform translational flow (FoE at ∞).
-        // Fall back: compute mean normalised flow and integrate as lateral translation.
+    auto apply_mean_flow = [&]() -> float {
         double mx = 0.0, my = 0.0;
         for (std::size_t i = 0; i < p_norm.size(); ++i) {
             mx += q_norm[i].first  - p_norm[i].first;
@@ -448,7 +443,6 @@ float VisualEgoStateProvider::step_vl1(const std::vector<std::uint8_t>& gray,
         const double mfl = std::sqrt(mx * mx + my * my);
         if (mfl < threshold_norm) return 0.0F;  // no detectable motion
 
-        // Pure lateral translation: direction = (mx, my) / |mfl|.
         const double tx    = mx / mfl;
         const double ty    = my / mfl;
         const double scale = static_cast<double>(state_.scale.scale);
@@ -460,6 +454,23 @@ float VisualEgoStateProvider::step_vl1(const std::vector<std::uint8_t>& gray,
         state_.translation_sigma  += scale * config_.translation_noise_per_m;
         return static_cast<float>(p_norm.size()) /
                static_cast<float>(std::max(state_.features.size(), std::size_t{1U}));
+    };
+
+    // ── Focus of Expansion RANSAC → translation direction + omega ────────────
+    // RANSAC needs at least foe_min_inliers correspondences.  With fewer we
+    // skip straight to mean-flow — it handles the uniform-translation case too.
+    if (static_cast<int>(p_norm.size()) < config_.foe_min_inliers) {
+        return apply_mean_flow();
+    }
+
+    static thread_local std::mt19937 rng{42};
+    const FoeResult foe = foe_ransac(p_norm, q_norm,
+                                      config_.foe_ransac_iterations,
+                                      threshold_norm,
+                                      config_.foe_min_inliers,
+                                      rng);
+    if (!foe.valid) {
+        return apply_mean_flow();
     }
 
     const float inlier_frac = static_cast<float>(foe.inliers) /
