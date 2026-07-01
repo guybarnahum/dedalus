@@ -75,7 +75,7 @@ void test_clearance_correct() {
     }
 
     const Vec3 centre{5.0, 0.0, 1.0};
-    auto esdf = compute_esdf(l2, centre, 10.0, 4.0, 5.0);
+    auto esdf = compute_esdf(l2, centre, 10.0, 4.0, 5.0, 1.0);
 
     // 4 m left of wall: drone at x=6.5, wall at x=10.5 → d ≈ 4 m
     const Vec3 query{6.5, 0.5, 1.0};

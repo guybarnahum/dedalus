@@ -41,7 +41,7 @@ void test_incremental_equiv_full() {
 
     // Start with an empty ESDF centred at (5, 0, 1).
     const Vec3 centre{5.0, 0.0, 1.0};
-    auto esdf = compute_esdf(l2, centre, 12.0, 4.0, 6.0);
+    auto esdf = compute_esdf(l2, centre, 12.0, 4.0, 6.0, 1.0);
 
     // Add a flat wall at x = 8 spanning y = −3..3.
     std::vector<Vec3> dirty;
@@ -55,7 +55,7 @@ void test_incremental_equiv_full() {
     esdf.update_incremental(l2, dirty, 6.0);
 
     // Full recompute for reference.
-    const auto esdf_full = compute_esdf(l2, centre, 12.0, 4.0, 6.0);
+    const auto esdf_full = compute_esdf(l2, centre, 12.0, 4.0, 6.0, 1.0);
 
     // Compare at a grid of points in the affected region.
     for (int xi = 3; xi <= 11; ++xi) {
@@ -120,6 +120,7 @@ void test_tube_correctness() {
     cfg.cell_size_m          = 1.0;
     cfg.vertical_cell_size_m = 2.0;
     cfg.d0_m                 = 6.0;
+    cfg.sample_spacing_m     = 1.0;  // fine resolution for correctness checks
     LocalESDFMap esdf(cfg);
 
     // Trajectory: x = 10..14 at y = 0, z = 1.

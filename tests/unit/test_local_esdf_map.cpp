@@ -44,7 +44,7 @@ void test_flat_wall() {
     }
 
     // horiz_half=20m, vert_half=4m (covers z=1 with sz=2)
-    const auto esdf = compute_esdf(l2, Vec3{15.0, 0.0, 1.0}, 20.0, 4.0, 8.0);
+    const auto esdf = compute_esdf(l2, Vec3{15.0, 0.0, 1.0}, 20.0, 4.0, 8.0, 1.0);
 
     // Occupied cell
     {
@@ -79,7 +79,7 @@ void test_corner_geometry() {
     MissionLocalPlanningMap l2;
     insert_occupied(l2, 0.5, 0.5, 1.0);
 
-    const auto esdf = compute_esdf(l2, Vec3{5.0, 5.0, 1.0}, 10.0, 4.0, 8.0);
+    const auto esdf = compute_esdf(l2, Vec3{5.0, 5.0, 1.0}, 10.0, 4.0, 8.0, 1.0);
 
     // Diagonal neighbour 2 cells away in X and Y: d = sqrt(4+4) ≈ 2.83 m
     {
@@ -110,7 +110,7 @@ void test_signed_field() {
         }
     }
 
-    const auto esdf = compute_esdf(l2, Vec3{6.5, 6.5, 1.0}, 10.0, 4.0, 6.0);
+    const auto esdf = compute_esdf(l2, Vec3{6.5, 6.5, 1.0}, 10.0, 4.0, 6.0, 1.0);
 
     // All occupied cells d = −0.5
     for (int xi = 5; xi <= 7; ++xi) {
@@ -139,7 +139,7 @@ void test_is_clear() {
     MissionLocalPlanningMap l2;
     insert_occupied(l2, 10.5, 0.5, 1.0);
 
-    const auto esdf = compute_esdf(l2, Vec3{10.0, 0.0, 1.0}, 8.0, 4.0, 6.0);
+    const auto esdf = compute_esdf(l2, Vec3{10.0, 0.0, 1.0}, 8.0, 4.0, 6.0, 1.0);
 
     assert( esdf.is_clear(Vec3{11.5, 0.5, 1.0}, 0.9));
     assert(!esdf.is_clear(Vec3{11.5, 0.5, 1.0}, 1.1));

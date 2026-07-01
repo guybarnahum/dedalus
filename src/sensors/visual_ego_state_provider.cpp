@@ -435,7 +435,32 @@ float VisualEgoStateProvider::step_vl1(const std::vector<std::uint8_t>& gray,
                                       threshold_norm,
                                       config_.foe_min_inliers,
                                       rng);
-    if (!foe.valid) return 0.0F;
+    if (!foe.valid) {
+        // FoE RANSAC failed — likely a uniform translational flow (FoE at ∞).
+        // Fall back: compute mean normalised flow and integrate as lateral translation.
+        double mx = 0.0, my = 0.0;
+        for (std::size_t i = 0; i < p_norm.size(); ++i) {
+            mx += q_norm[i].first  - p_norm[i].first;
+            my += q_norm[i].second - p_norm[i].second;
+        }
+        mx /= static_cast<double>(p_norm.size());
+        my /= static_cast<double>(p_norm.size());
+        const double mfl = std::sqrt(mx * mx + my * my);
+        if (mfl < threshold_norm) return 0.0F;  // no detectable motion
+
+        // Pure lateral translation: direction = (mx, my) / |mfl|.
+        const double tx    = mx / mfl;
+        const double ty    = my / mfl;
+        const double scale = static_cast<double>(state_.scale.scale);
+        const auto&  R     = state_.rotation;
+        state_.position.x += scale * (R[0]*tx + R[1]*ty);
+        state_.position.y += scale * (R[3]*tx + R[4]*ty);
+        state_.position.z += scale * (R[6]*tx + R[7]*ty);
+        state_.cumulative_drift_m += scale;
+        state_.translation_sigma  += scale * config_.translation_noise_per_m;
+        return static_cast<float>(p_norm.size()) /
+               static_cast<float>(std::max(state_.features.size(), std::size_t{1U}));
+    }
 
     const float inlier_frac = static_cast<float>(foe.inliers) /
                               static_cast<float>(p_norm.size());

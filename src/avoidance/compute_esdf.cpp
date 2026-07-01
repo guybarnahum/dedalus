@@ -267,19 +267,37 @@ LocalESDFMap compute_esdf(const MissionLocalPlanningMap& l2,
     esdf.config_.sample_spacing_m     = spc_xy;
 
     // Iterate coarse grid centres (every step_x/step_z fine cells).
-    // For each, gather Gaussian-weighted APF from fine shell cells nearby.
+    // For each, store the exact EDT distance at the coarse centre and a
+    // Gaussian-weighted APF gradient from nearby fine shell cells.
     for (int ci = step_x / 2; ci < Nx; ci += step_x) {
         for (int cj = step_x / 2; cj < Ny; cj += step_x) {
             for (int ck = step_z / 2; ck < Nz; ck += step_z) {
 
-                // World position of this coarse sample centre
                 const Vec3 cc = cell_centre(ci, cj, ck);
+                const int cki = static_cast<int>(std::floor(cc.x / spc_xy));
+                const int ckj = static_cast<int>(std::floor(cc.y / spc_xy));
+                const int ckk = static_cast<int>(std::floor(cc.z / spc_z));
 
-                // Accumulate Gaussian-weighted APF from fine shell cells nearby.
-                // Also gather max timestamp of nearby occupied cells (L2 age).
+                const std::size_t ci_idx =
+                    static_cast<std::size_t>(ci * Nyz + cj * Nz + ck);
+
+                // Occupied coarse cell: store clamped interior value (d = −0.5 m).
+                if (occ[ci_idx]) {
+                    LocalESDFCell cell;
+                    cell.centre          = cc;
+                    cell.d               = -0.5f;
+                    cell.last_updated_ns = ts_grid[ci_idx];
+                    esdf.cells_[LocalESDFMap::CellKey{cki, ckj, ckk}] = cell;
+                    continue;
+                }
+
+                // Distance at this coarse cell centre from the EDT.
+                const float d_at_centre = std::sqrt(g3[ci_idx]);
+                if (d_at_centre >= d0f) continue;  // outside shell — skip
+
+                // Gather Gaussian-weighted APF gradient from nearby fine cells.
                 double ax = 0.0, ay = 0.0, az = 0.0;
-                double wapf_sum = 0.0, w_sum = 0.0;
-                float d_min = d0f;
+                double w_sum = 0.0;
                 std::int64_t max_ts = 0;
 
                 for (int di = -rx; di <= rx; ++di) {
@@ -294,7 +312,6 @@ LocalESDFMap compute_esdf(const MissionLocalPlanningMap& l2,
 
                             const std::size_t idx =
                                 static_cast<std::size_t>(ni * Nyz + nj * Nz + nk);
-                            // Harvest timestamp from occupied neighbours.
                             if (occ[idx]) {
                                 if (ts_grid[idx] > max_ts) max_ts = ts_grid[idx];
                                 continue;
@@ -325,37 +342,36 @@ LocalESDFMap compute_esdf(const MissionLocalPlanningMap& l2,
                                 (1.0 / static_cast<double>(d_i) - 1.0 / d0_m)
                                 / static_cast<double>(d_i);
 
-                            ax      += w * apf_i * static_cast<double>(gx_r / glen);
-                            ay      += w * apf_i * static_cast<double>(gy_r / glen);
-                            az      += w * apf_i * static_cast<double>(gz_r / glen);
-                            wapf_sum += w * apf_i;
-                            w_sum    += w;
-                            d_min = std::min(d_min, d_i);
+                            ax    += w * apf_i * static_cast<double>(gx_r / glen);
+                            ay    += w * apf_i * static_cast<double>(gy_r / glen);
+                            az    += w * apf_i * static_cast<double>(gz_r / glen);
+                            w_sum += w;
                         }
                     }
                 }
 
-                if (w_sum < 1.0e-10 || wapf_sum < 1.0e-10) continue;
-
+                // Gradient direction: APF-weighted if gather window has data,
+                // otherwise fall back to fine-grid gradient at the coarse centre.
+                Vec3 dir{};
                 const double alen = std::sqrt(ax*ax + ay*ay + az*az);
-                if (alen < 1.0e-10) continue;
-
-                const Vec3 dir{ax / alen, ay / alen, az / alen};
+                if (w_sum > 1.0e-10 && alen > 1.0e-10) {
+                    dir = {ax / alen, ay / alen, az / alen};
+                } else {
+                    const float gx_r = (g3_at(ci+1,cj,ck) - g3_at(ci-1,cj,ck)) / sxf;
+                    const float gy_r = (g3_at(ci,cj+1,ck) - g3_at(ci,cj-1,ck)) / syf;
+                    const float gz_r = (g3_at(ci,cj,ck+1) - g3_at(ci,cj,ck-1)) / szf;
+                    const float glen = std::sqrt(gx_r*gx_r + gy_r*gy_r + gz_r*gz_r);
+                    if (glen > 1.0e-6f)
+                        dir = {gx_r / glen, gy_r / glen, gz_r / glen};
+                }
 
                 LocalESDFCell cell;
                 cell.centre          = cc;
-                cell.d               = d_min;
-                cell.grad            = dir;   // APF-weighted direction (grad == sgrad at coarse scale)
+                cell.d               = d_at_centre;  // exact EDT distance at this centre
+                cell.grad            = dir;
                 cell.sgrad           = dir;
-                cell.last_updated_ns = max_ts;  // inherited from nearest L2 obstacle
+                cell.last_updated_ns = max_ts;
 
-                // Coarse key: use coarse (spc_xy) resolution
-                const int cki = static_cast<int>(
-                    std::floor(cc.x / spc_xy));
-                const int ckj = static_cast<int>(
-                    std::floor(cc.y / spc_xy));
-                const int ckk = static_cast<int>(
-                    std::floor(cc.z / spc_z));
                 esdf.cells_[LocalESDFMap::CellKey{cki, ckj, ckk}] = cell;
             }
         }
