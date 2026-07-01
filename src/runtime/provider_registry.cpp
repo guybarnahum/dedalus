@@ -33,6 +33,13 @@ AirSimProviderConfig airsim_config_from(const CoreStackProviderConfig& config) {
     airsim.bridge_mode = config.bridge_mode;
     airsim.ego_bridge_command = config.ego_bridge_command;
     airsim.map_frame_id = config.fallback_map_frame_id;
+    // Derive camera FOV from the first obstacle sensing camera so frame_from_image()
+    // computes correct focal lengths instead of falling back to the legacy 420 constant.
+    if (!config.mission_options.obstacle_sensing_cameras.empty()) {
+        const auto& cam = config.mission_options.obstacle_sensing_cameras.front();
+        airsim.camera_hfov_rad = cam.horizontal_fov_rad;
+        airsim.camera_vfov_rad = cam.vertical_fov_rad;
+    }
     return airsim;
 }
 

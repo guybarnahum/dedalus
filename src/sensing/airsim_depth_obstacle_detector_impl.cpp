@@ -223,6 +223,14 @@ std::vector<ObstacleEvidence> detect_airsim_depth_obstacles(
             item.inside_swept_volume = false;
             item.is_static_hint = true;
 
+            if (config.derive_surface_normals_from_depth) {
+                Vec3 normal_local{};
+                if (depth_derived_surface_normal(projected, frame.width, frame.height, x, y, normal_local)) {
+                    item.has_surface_normal = true;
+                    item.surface_normal_local = normal_local;
+                }
+            }
+
             evidence.push_back(item);
         }
     }

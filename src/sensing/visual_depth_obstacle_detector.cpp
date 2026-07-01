@@ -1,7 +1,10 @@
 #include "dedalus/sensing/visual_depth_obstacle_detector.hpp"
 
+#include <algorithm>
 #include <cmath>
 #include <cstdint>
+#include <cstdio>
+#include <string>
 #include <vector>
 
 #include "dedalus/sensing/depth_projection_kernel.hpp"
@@ -93,6 +96,52 @@ ProjectionParams make_projection_params(
     return p;
 }
 
+// Write a false-color Jet PPM of a relative-depth map for debugging.
+// High relative_depth = close = warm (red); low = far = cool (blue).
+// The directory must already exist; silently does nothing if fopen fails.
+void write_depth_debug_ppm(
+    const std::string&          dir,
+    int                         index,
+    const DepthInferenceResult& inferred) {
+    if (inferred.width <= 0 || inferred.height <= 0 || inferred.depth_relative.empty()) {
+        return;
+    }
+    char filename[512];
+    std::snprintf(filename, sizeof(filename), "%s/depth_%04d.ppm", dir.c_str(), index);
+
+    const std::size_t n = static_cast<std::size_t>(inferred.width) *
+                          static_cast<std::size_t>(inferred.height);
+
+    float vmin = inferred.depth_relative[0];
+    float vmax = inferred.depth_relative[0];
+    for (std::size_t i = 0U; i < n; ++i) {
+        const float v = inferred.depth_relative[i];
+        if (!std::isfinite(v)) continue;
+        if (v < vmin) vmin = v;
+        if (v > vmax) vmax = v;
+    }
+    const float range = (vmax - vmin > 1.0e-6f) ? (vmax - vmin) : 1.0f;
+
+    std::vector<std::uint8_t> rgb(n * 3U);
+    for (std::size_t i = 0U; i < n; ++i) {
+        const float raw = inferred.depth_relative[i];
+        // Normalize; high relative_depth = closer = 1.0 = red in Jet.
+        const float t = std::isfinite(raw)
+            ? std::clamp((raw - vmin) / range, 0.0f, 1.0f)
+            : 0.0f;
+        // Jet colormap: t=0 → blue (far), t=1 → red (near)
+        rgb[3U*i+0U] = static_cast<std::uint8_t>(std::clamp(255.0f * (1.5f - std::abs(4.0f*t - 3.0f)), 0.0f, 255.0f));
+        rgb[3U*i+1U] = static_cast<std::uint8_t>(std::clamp(255.0f * (1.5f - std::abs(4.0f*t - 2.0f)), 0.0f, 255.0f));
+        rgb[3U*i+2U] = static_cast<std::uint8_t>(std::clamp(255.0f * (1.5f - std::abs(4.0f*t - 1.0f)), 0.0f, 255.0f));
+    }
+
+    FILE* f = std::fopen(filename, "wb");
+    if (f == nullptr) return;
+    std::fprintf(f, "P6\n%d %d\n255\n", inferred.width, inferred.height);
+    std::fwrite(rgb.data(), 1U, rgb.size(), f);
+    std::fclose(f);
+}
+
 }  // namespace
 
 // ---------------------------------------------------------------------------
@@ -131,6 +180,11 @@ std::vector<ObstacleEvidence> detect_visual_depth_obstacles(
     const DepthInferenceResult inferred = engine.infer(vdf);
     if (!inferred.valid || inferred.depth_relative.empty()) {
         return {};
+    }
+
+    if (!cfg.debug_depth_output_dir.empty()) {
+        static int debug_frame_index = 0;
+        write_depth_debug_ppm(cfg.debug_depth_output_dir, debug_frame_index++, inferred);
     }
 
     const ProjectionParams params = make_projection_params(ego_frame, inferred, scale, cfg);

@@ -34,6 +34,11 @@ struct VisualDepthObstacleDetectorConfig {
 
     // Enable Sobel + NMS + CC thin structure detection (is_thin_structure_hint).
     bool detect_thin_structures{true};
+
+    // When non-empty, write a false-color depth PPM per frame to this directory.
+    // Files: depth_0000.ppm, depth_0001.ppm, ...
+    // Convert to MP4: ffmpeg -framerate 5 -pattern_type glob -i 'depth_*.ppm' depth_debug.mp4
+    std::string debug_depth_output_dir;
 };
 
 // Visual depth obstacle detector.

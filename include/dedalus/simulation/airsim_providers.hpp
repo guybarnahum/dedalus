@@ -34,6 +34,12 @@ struct AirSimProviderConfig {
     // Used by AirSimGroundTruthDetector — objects to detect each frame.
     std::string objects_bridge_command{"python3 simulation/airsim/scripts/airsim-object-poses.py"};
     std::vector<AirSimDetectorObjectBinding> detector_objects;
+
+    // Camera FOV derived from obstacle_sensing_cameras config.
+    // When both are > 0, frame_from_image() computes correct focal lengths.
+    // Defaults to 0 (falls back to legacy fx=fy=420).
+    double camera_hfov_rad{0.0};
+    double camera_vfov_rad{0.0};
 };
 
 class AirSimFrameSource final : public FrameSource {
@@ -89,6 +95,7 @@ public:
 
 private:
     AirSimProviderConfig config_;
+    std::string          stream_command_;  // built once in constructor; reused each detect()
     std::unique_ptr<PipeBridgeTransport> transport_;
 };
 

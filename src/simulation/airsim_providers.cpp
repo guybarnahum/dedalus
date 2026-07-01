@@ -182,8 +182,14 @@ FramePacket frame_from_image(const AirSimProviderConfig& config, ImageView image
     frame.timestamp = timestamp;
     frame.camera_id = CameraId{config.camera_name};
     frame.image = std::move(image);
-    frame.intrinsics.fx = 420.0;
-    frame.intrinsics.fy = 420.0;
+    // Compute focal lengths from configured FOV when available; fall back to legacy constant.
+    if (config.camera_hfov_rad > 0.0 && config.camera_vfov_rad > 0.0) {
+        frame.intrinsics.fx = (frame.image.width  * 0.5) / std::tan(config.camera_hfov_rad * 0.5);
+        frame.intrinsics.fy = (frame.image.height * 0.5) / std::tan(config.camera_vfov_rad * 0.5);
+    } else {
+        frame.intrinsics.fx = 420.0;
+        frame.intrinsics.fy = 420.0;
+    }
     frame.intrinsics.cx = static_cast<double>(frame.image.width) * 0.5;
     frame.intrinsics.cy = static_cast<double>(frame.image.height) * 0.5;
 
@@ -351,27 +357,36 @@ std::vector<Observation3D> AirSimDepthProjector::project(
 }
 
 AirSimGroundTruthDetector::AirSimGroundTruthDetector(AirSimProviderConfig config)
-    : config_(std::move(config)), transport_(std::make_unique<PipeBridgeTransport>()) {}
+    : config_(std::move(config)), transport_(std::make_unique<PipeBridgeTransport>()) {
+    // Pre-build the streaming command once so detect() pays no formatting cost per frame.
+    if (!config_.detector_objects.empty()) {
+        validate_bridge_base_command(config_.objects_bridge_command);
+        std::ostringstream cmd;
+        cmd << config_.objects_bridge_command
+            << " --host " << shell_quote(config_.host)
+            << " --rpc-port " << config_.rpc_port
+            << " --stream-jsonl"
+            << " --no-fail-on-missing";
+        for (const auto& obj : config_.detector_objects) {
+            cmd << " --object " << shell_quote(obj.airsim_object_name);
+        }
+        stream_command_ = cmd.str();
+    }
+}
 
 AirSimGroundTruthDetector::~AirSimGroundTruthDetector() = default;
 
 std::vector<Detection2D> AirSimGroundTruthDetector::detect(const FramePacket& frame) {
-    if (config_.detector_objects.empty() || !frame.ego_hint.has_value()) {
+    if (stream_command_.empty() || !frame.ego_hint.has_value()) {
         return {};
     }
 
-    // Build one-shot pose query command.
-    validate_bridge_base_command(config_.objects_bridge_command);
-    std::ostringstream command;
-    command << config_.objects_bridge_command
-            << " --host " << shell_quote(config_.host)
-            << " --rpc-port " << config_.rpc_port;
-    for (const auto& obj : config_.detector_objects) {
-        command << " --object " << shell_quote(obj.airsim_object_name);
-    }
-
-    const auto json = transport_->request_once(command.str());
-    const auto poses = parse_gt_object_poses(json);
+    // Read one pose snapshot from the persistent streaming process.
+    // PipeBridgeTransport keeps the process alive across calls as long as
+    // the command string is identical — no per-frame spawn overhead.
+    const auto json_opt = transport_->read_stream_line(stream_command_);
+    if (!json_opt.has_value()) return {};
+    const auto poses = parse_gt_object_poses(*json_opt);
 
     const auto& ego = *frame.ego_hint;
     const double fx = frame.intrinsics.fx;
