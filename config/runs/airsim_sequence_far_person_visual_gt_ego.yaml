@@ -5,6 +5,9 @@ include: config/mission/sequence_far_person.yaml
 include: config/output/standard_ppm.yaml
 
 ego_provider: frame_hint
-detector: airsim_ground_truth
+# Ghost targets provide correct 3D positions directly (NED); using airsim_ground_truth
+# simultaneously routes the same objects through FlatGroundProjector which produces
+# wrong Z (ego.z + 1.5), corrupting circle orbit geometry and preventing landing.
+detector: null
 
 annotation_output_path: out/sequence_far_person_visual_gt_ego_annotation

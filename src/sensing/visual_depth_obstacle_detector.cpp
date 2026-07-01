@@ -207,6 +207,7 @@ void VisualDepthObstacleDetector::write_debug_frame(const DepthInferenceResult& 
             " -video_size " + std::to_string(inferred.width) + "x" + std::to_string(inferred.height) +
             " -framerate 5 -i pipe:0"
             " -vcodec libx264 -crf 23 -pix_fmt yuv420p"
+            " -movflags frag_keyframe+empty_moov+default_base_moof"
             " -y " + config_.debug_depth_mp4 +
             " 2>/dev/null";
         debug_pipe_ = popen(cmd.c_str(), "w");
