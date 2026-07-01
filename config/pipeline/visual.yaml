@@ -20,7 +20,7 @@
 
 ego_provider: visual_odometry
 depth: visual_onnx
-detector: scripted
+detector: null
 camera_stabilizer: null
 tracker: simple_centroid
 identity_resolver: appearance_only
@@ -35,3 +35,4 @@ visual_onnx.min_depth_m: 0.5
 visual_onnx.max_depth_m: 60.0
 visual_onnx.voxel_size_m: 1.5
 visual_onnx.max_evidence: 256
+visual_onnx.scale: 0.63
