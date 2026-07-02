@@ -149,6 +149,88 @@ fi
 
 run_and_log "Install core tools" sudo DEBIAN_FRONTEND=noninteractive apt-get install -y build-essential cmake git wget curl ninja-build python3 python-is-python3 python3-pip libacl1-dev unzip ffmpeg libsqlite3-dev nvidia-cuda-toolkit
 
+# ── CUDA runtime library selection ──────────────────────────────────────────
+# nvidia-smi reports the maximum CUDA version the installed driver supports.
+# We use that to select a matching ORT wheel and install CUDA runtime libs.
+#
+# Compatibility matrix (onnxruntime-gpu ↔ CUDA ↔ cuDNN):
+#   ort ≥ 1.18  →  CUDA 12.x  +  cuDNN 9.x   (install libcublas-12-* + libcudnn9)
+#   ort = 1.17  →  CUDA 11.8  +  cuDNN 8.x   (no extra apt packages)
+#   ort = 1.16  →  CUDA 11.6  +  cuDNN 8.x   (no extra apt packages)
+#
+# ORT_GPU_PKG is consumed later by the Python venv step.
+
+CUDA_MAX_VER=$(nvidia-smi 2>/dev/null | grep -oP "CUDA Version: \K[0-9]+\.[0-9]+" | head -1)
+if [[ -z "$CUDA_MAX_VER" ]]; then
+  echo "❌ Fatal: could not determine CUDA version from nvidia-smi." >&2; exit 1
+fi
+CUDA_MAX_MAJOR=$(echo "$CUDA_MAX_VER" | cut -d. -f1)
+CUDA_MAX_MINOR=$(echo "$CUDA_MAX_VER" | cut -d. -f2)
+echo "   nvidia-smi max CUDA: ${CUDA_MAX_VER}  (major=${CUDA_MAX_MAJOR} minor=${CUDA_MAX_MINOR})"
+
+if [[ "${CUDA_MAX_MAJOR}" -ge 12 ]]; then
+    # ── CUDA 12 path ──────────────────────────────────────────────────────
+    # Install libcublasLt.so.12 + libcudnn9 from NVIDIA's apt repo if absent.
+    if ldconfig -p 2>/dev/null | grep -q "libcublasLt.so.12"; then
+        echo "✅ libcublasLt.so.12 already present — skipping CUDA 12 cuBLAS install."
+    else
+        # Add NVIDIA CUDA apt keyring (idempotent: skip if cuda-keyring is installed).
+        if ! dpkg -l cuda-keyring &>/dev/null 2>&1; then
+            run_and_log "Add NVIDIA CUDA apt keyring" bash -c "
+                wget -q -O /tmp/cuda-keyring.deb \
+                    https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2204/x86_64/cuda-keyring_1.1-1_all.deb
+                sudo dpkg -i /tmp/cuda-keyring.deb
+                rm -f /tmp/cuda-keyring.deb
+                sudo apt-get update -q
+            "
+        else
+            echo "✅ NVIDIA CUDA apt keyring already installed."
+        fi
+
+        # Discover the latest libcublas-12-x package available in the repo.
+        CUBLAS12_PKG=$(apt-cache search '^libcublas-12-[0-9]' 2>/dev/null \
+                       | grep -v '\-dev' | awk '{print $1}' | sort -V | tail -1)
+        if [[ -z "$CUBLAS12_PKG" ]]; then
+            echo "❌ Fatal: no libcublas-12-* package found after adding NVIDIA repo." >&2
+            echo "   Ensure the instance can reach developer.download.nvidia.com." >&2
+            exit 1
+        fi
+        echo "   Installing cuBLAS package: ${CUBLAS12_PKG}"
+
+        run_and_log "Install CUDA 12 cuBLAS (${CUBLAS12_PKG})" \
+            sudo DEBIAN_FRONTEND=noninteractive apt-get install -y "${CUBLAS12_PKG}"
+
+        # cuDNN 9 is required by onnxruntime-gpu ≥ 1.18; best-effort install.
+        if apt-cache show libcudnn9-cuda-12 &>/dev/null 2>&1; then
+            run_and_log "Install cuDNN 9 (libcudnn9-cuda-12)" \
+                sudo DEBIAN_FRONTEND=noninteractive apt-get install -y libcudnn9-cuda-12
+        else
+            echo "⚠️  libcudnn9-cuda-12 not found in repo — ORT CUDA EP may degrade to no-cuDNN mode."
+        fi
+
+        sudo ldconfig
+    fi
+    ORT_GPU_PKG="onnxruntime-gpu"        # latest wheel; requires CUDA 12 + cuDNN 9
+
+elif [[ "${CUDA_MAX_MAJOR}" -eq 11 && "${CUDA_MAX_MINOR}" -ge 8 ]]; then
+    # ── CUDA 11.8 path ────────────────────────────────────────────────────
+    echo "   CUDA 11.${CUDA_MAX_MINOR} driver — pinning to onnxruntime-gpu==1.17.3"
+    ORT_GPU_PKG="onnxruntime-gpu==1.17.3"
+
+elif [[ "${CUDA_MAX_MAJOR}" -eq 11 && "${CUDA_MAX_MINOR}" -ge 6 ]]; then
+    # ── CUDA 11.6–11.7 path ───────────────────────────────────────────────
+    echo "   CUDA 11.${CUDA_MAX_MINOR} driver — pinning to onnxruntime-gpu==1.16.3"
+    ORT_GPU_PKG="onnxruntime-gpu==1.16.3"
+
+else
+    echo "❌ Fatal: CUDA driver max version ${CUDA_MAX_VER} is below 11.6." >&2
+    echo "   Upgrade the NVIDIA driver before running setup." >&2
+    exit 1
+fi
+
+echo "   ORT GPU package: ${ORT_GPU_PKG}"
+# ── end CUDA selection ───────────────────────────────────────────────────────
+
 if ! command -v docker &>/dev/null; then
   run_and_log "Install Docker Server" sudo apt-get install -y docker.io docker-compose-v2
   sudo usermod -aG docker "$USER"
@@ -366,7 +448,7 @@ run_and_log "Install perception ML dependencies (depth export)" python -m pip in
   transformers \
   onnx \
   onnxscript \
-  onnxruntime-gpu
+  "${ORT_GPU_PKG}"
 
 run_and_log "Verify perception ML dependencies" python -c "
 import torch, transformers, onnx, onnxscript, onnxruntime

@@ -7,6 +7,7 @@
 #include <algorithm>
 #include <chrono>
 #include <cmath>
+#include <cstdio>
 #include <cstdlib>
 #include <fstream>
 #include <stdexcept>
@@ -44,23 +45,41 @@ struct ONNXDepthEngine::Impl {
 
 #if defined(DEDALUS_CUDA_ENABLED)
         if (config.use_cuda) {
-            // CUDA EP — requires onnxruntime-gpu package.
-            // arena_limit caps VRAM to coexist with AirSim (~3 GiB).
-            OrtCUDAProviderOptionsV2* cuda_opts = nullptr;
-            Ort::ThrowOnError(Ort::GetApi().CreateCUDAProviderOptions(&cuda_opts));
-            const std::string dev_id_str = std::to_string(config.cuda_device_id);
-            const std::string arena_str  = std::to_string(config.cuda_arena_limit_bytes);
-            const char* keys[]   = {"device_id", "gpu_mem_limit"};
-            const char* values[] = {dev_id_str.c_str(), arena_str.c_str()};
-            Ort::ThrowOnError(Ort::GetApi().UpdateCUDAProviderOptions(
-                cuda_opts, keys, values, 2));
-            Ort::ThrowOnError(Ort::GetApi().SessionOptionsAppendExecutionProvider_CUDA_V2(
-                session_options, cuda_opts));
-            Ort::GetApi().ReleaseCUDAProviderOptions(cuda_opts);
+            // CUDA EP — requires onnxruntime-gpu package and libcublasLt.so.12 in
+            // LD_LIBRARY_PATH. Falls back to CPU silently if the shared library is
+            // absent; the log line below distinguishes the two cases.
+            try {
+                OrtCUDAProviderOptionsV2* cuda_opts = nullptr;
+                Ort::ThrowOnError(Ort::GetApi().CreateCUDAProviderOptions(&cuda_opts));
+                const std::string dev_id_str = std::to_string(config.cuda_device_id);
+                const std::string arena_str  = std::to_string(config.cuda_arena_limit_bytes);
+                const char* keys[]   = {"device_id", "gpu_mem_limit"};
+                const char* values[] = {dev_id_str.c_str(), arena_str.c_str()};
+                Ort::ThrowOnError(Ort::GetApi().UpdateCUDAProviderOptions(
+                    cuda_opts, keys, values, 2));
+                Ort::ThrowOnError(Ort::GetApi().SessionOptionsAppendExecutionProvider_CUDA_V2(
+                    session_options, cuda_opts));
+                Ort::GetApi().ReleaseCUDAProviderOptions(cuda_opts);
+                std::fprintf(stderr,
+                    "[ONNXDepthEngine] CUDA EP registered (device_id=%d, "
+                    "arena_limit=%zu bytes)\n",
+                    config.cuda_device_id,
+                    static_cast<std::size_t>(config.cuda_arena_limit_bytes));
+            } catch (const Ort::Exception& e) {
+                std::fprintf(stderr,
+                    "[ONNXDepthEngine] WARN: CUDA EP registration failed (%s); "
+                    "falling back to CPU. Check that libcublasLt.so.12 is in "
+                    "LD_LIBRARY_PATH (typically /usr/local/cuda/lib64).\n",
+                    e.what());
+            }
         }
 #endif
 
         session = Ort::Session{env, config.model_path.c_str(), session_options};
+        std::fprintf(stderr,
+            "[ONNXDepthEngine] session created — model: %s, use_cuda: %s\n",
+            config.model_path.c_str(),
+            config.use_cuda ? "true" : "false");
     }
 
     // Bilinear resize of a uint8 HxWx3 image to target_h x target_w.
@@ -183,6 +202,16 @@ DepthInferenceResult ONNXDepthEngine::infer(const VisualDepthFrame& frame) {
     result.inference_time_ms = static_cast<float>(
         std::chrono::duration_cast<std::chrono::microseconds>(t1 - t0).count()) / 1000.0F;
     result.valid = true;
+
+    // Warn if inference is much slower than GPU budget (~50 ms). This usually
+    // means the CUDA EP failed to load and we are running on CPU.
+    if (result.inference_time_ms > 200.0F) {
+        std::fprintf(stderr,
+            "[ONNXDepthEngine] WARN: inference took %.0f ms — likely running on CPU "
+            "(CUDA EP missing libcublasLt.so.12?). "
+            "Set LD_LIBRARY_PATH=/usr/local/cuda/lib64:$LD_LIBRARY_PATH\n",
+            static_cast<double>(result.inference_time_ms));
+    }
 
     // Debug: write a PGM depth map per frame when DEDALUS_DEPTH_DEBUG_DIR is set.
     // Values are inverted (255 = far, 0 = near) for intuitive grayscale display.
