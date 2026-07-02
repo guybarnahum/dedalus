@@ -3,6 +3,8 @@
 #include <algorithm>
 #include <cassert>
 #include <cmath>
+#include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <numeric>
 #include <optional>
@@ -726,11 +728,14 @@ EgoStateEstimate VisualEgoStateProvider::estimate(const FramePacket& frame) {
         state_.scale.scale      = config_.initial_scale_m;
         state_.scale.confidence = 0.1F;
 
-        std::fprintf(stderr,
-            "[VisualEgo] init: pos=(%.2f,%.2f,%.2f) yaw=%.2f rad ego_hint=%s\n",
-            state_.position.x, state_.position.y, state_.position.z,
-            frame.ego_hint ? frame.ego_hint->local_T_body.rotation_rpy.z : 0.0,
-            frame.ego_hint ? "present" : "MISSING");
+        if (std::getenv("DEDALUS_DEBUG_EGO")) {
+            std::fprintf(stderr,
+                "[EgoDebug:vo_init] pos=(%.3f,%.3f,%.3f) yaw=%.3f hint=%s features=%zu\n",
+                state_.position.x, state_.position.y, state_.position.z,
+                frame.ego_hint ? frame.ego_hint->local_T_body.rotation_rpy.z : 0.0,
+                frame.ego_hint ? "present" : "MISSING",
+                state_.features.size());
+        }
 
         EgoStateEstimate est;
         EgoState ego;
@@ -838,18 +843,23 @@ EgoStateEstimate VisualEgoStateProvider::estimate(const FramePacket& frame) {
     }
     ego.confidence = confidence;
 
-    // ── Periodic diagnostic ───────────────────────────────────────────────────
-    // Log position every 30 frames so the mission log shows VO is updating.
-    static int vo_frame_count = 0;
-    if ((++vo_frame_count % 30) == 1) {
-        std::fprintf(stderr,
-            "[VisualEgo] frame=%d pos=(%.2f,%.2f,%.2f) "
-            "inlier_frac=%.2f scale=%.3f conf=%.2f\n",
-            vo_frame_count,
-            state_.position.x, state_.position.y, state_.position.z,
-            static_cast<double>(inlier_frac),
-            static_cast<double>(state_.scale.scale),
-            static_cast<double>(confidence));
+    // ── Periodic diagnostic (DEDALUS_DEBUG_EGO=1) ────────────────────────────
+    // VO-internal state not visible at runner level: inlier_frac, scale, features.
+    // Emits every 30 frames so it doesn't flood the log.
+    if (std::getenv("DEDALUS_DEBUG_EGO")) {
+        static int vo_frame_count = 0;
+        if ((++vo_frame_count % 30) == 1) {
+            std::fprintf(stderr,
+                "[EgoDebug:vo] pos=(%.3f,%.3f,%.3f) yaw=%.3f h=%.2f "
+                "conf=%.2f inlier_frac=%.2f scale=%.3f features=%zu\n",
+                state_.position.x, state_.position.y, state_.position.z,
+                ego.local_T_body.rotation_rpy.z,
+                ego.height_m,
+                static_cast<double>(confidence),
+                static_cast<double>(inlier_frac),
+                static_cast<double>(state_.scale.scale),
+                state_.features.size());
+        }
     }
 
     // Update previous frame
