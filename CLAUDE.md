@@ -6,6 +6,27 @@ Behavioral and project guidelines for LLM sessions on this repo. Read this first
 
 **Tradeoff:** These guidelines bias toward caution over speed. For trivial tasks, use judgment.
 
+## 0. Never Guess — Always Read the Code First
+
+**This is the highest-priority rule. It overrides all others.**
+
+Before writing any code, command, env var name, option name, function signature, flag, config key, file path, or runtime behavior:
+
+**READ THE SOURCE.** Never infer from context. Never assume from docs or memory.
+
+- Env var names → read `config_loader.cpp`
+- CLI flags → read `apps/dedalus_mission_loop.cpp` and the arg parser
+- Config keys → read `config_loader.cpp` key dispatch
+- Function signatures → read the header
+- YAML keys → read the loader that consumes them
+- Runtime behavior → trace the code path, don't assume
+
+If you guess and are wrong, you waste a full session on a typo. The cost of reading is one tool call. The cost of guessing is hours of debugging. **Always pay the one-call cost.**
+
+See LLM.md §7 for the complete env var reference and lookup table.
+
+---
+
 ## 1. Think Before Coding
 
 **Don't assume. Don't hide confusion. Surface tradeoffs.**

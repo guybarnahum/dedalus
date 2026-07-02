@@ -669,6 +669,44 @@ EgoStateEstimate VisualEgoStateProvider::estimate(const FramePacket& frame) {
                 frame.image.bytes[static_cast<std::size_t>(i * frame.image.channels)];
     }
 
+    // ── ego_hint rotation helper ─────────────────────────────────────────────
+    // Updates state_.rotation to R_map_from_camera using the drone's current
+    // heading from ego_hint.
+    //
+    // Convention verified from airsim-stream-frames-binary.py:
+    //   rotation_rpy = [pitch, roll, yaw]  (airsim.to_eularian_angles order)
+    //   so rotation_rpy.z = yaw in NED (0 = North, CW-positive viewed from above)
+    //
+    // Front-facing camera mounting (verified by AirSim front_center camera):
+    //   camera +Z (optical)  = body +X (forward)
+    //   camera +X (img-right) = body +Y (right)
+    //   camera +Y (img-down)  = body +Z (down)
+    //
+    // R_body_from_camera (row-major {0,0,1, 1,0,0, 0,1,0}):
+    //   v_body = R_BC * v_cam → cam-Z→body-X, cam-X→body-Y, cam-Y→body-Z
+    //
+    // R_NED_from_body at yaw θ:
+    //   [cos θ, -sin θ, 0]
+    //   [sin θ,  cos θ, 0]
+    //   [0,      0,     1]
+    //
+    // state_.rotation = R_NED_from_body(yaw) * R_body_from_camera
+    auto update_rotation_from_yaw = [&](double yaw) {
+        const double cy = std::cos(yaw);
+        const double sy = std::sin(yaw);
+        // R_NED_from_body (row-major)
+        const double R_NB[9] = {cy, -sy, 0.0,
+                                 sy,  cy, 0.0,
+                                 0.0, 0.0, 1.0};
+        // R_body_from_camera (row-major) — front-facing camera, verified above
+        const double R_BC[9] = {0.0, 0.0, 1.0,
+                                 1.0, 0.0, 0.0,
+                                 0.0, 1.0, 0.0};
+        double R_tmp[9];
+        mat3_mul(R_NB, R_BC, R_tmp);
+        std::copy(R_tmp, R_tmp + 9, state_.rotation.begin());
+    };
+
     // Initialise on first frame
     if (!state_.initialized) {
         state_.prev_gray   = gray;
@@ -679,12 +717,20 @@ EgoStateEstimate VisualEgoStateProvider::estimate(const FramePacket& frame) {
                      config_.fast_threshold, config_.max_features,
                      state_.features);
 
-        // Seed position from ego_hint if available
+        // Seed position and rotation from ego_hint if available.
+        // rotation_rpy.z = yaw (from airsim.to_eularian_angles → [pitch,roll,yaw])
         if (frame.ego_hint) {
             state_.position = frame.ego_hint->local_T_body.position;
+            update_rotation_from_yaw(frame.ego_hint->local_T_body.rotation_rpy.z);
         }
         state_.scale.scale      = config_.initial_scale_m;
         state_.scale.confidence = 0.1F;
+
+        std::fprintf(stderr,
+            "[VisualEgo] init: pos=(%.2f,%.2f,%.2f) yaw=%.2f rad ego_hint=%s\n",
+            state_.position.x, state_.position.y, state_.position.z,
+            frame.ego_hint ? frame.ego_hint->local_T_body.rotation_rpy.z : 0.0,
+            frame.ego_hint ? "present" : "MISSING");
 
         EgoStateEstimate est;
         EgoState ego;
@@ -700,7 +746,7 @@ EgoStateEstimate VisualEgoStateProvider::estimate(const FramePacket& frame) {
 
     // ── VL1: metric scale hint from AirSim velocity (if present) ─────────────
     double dt_s = 1.0 / 30.0;  // nominal 30 Hz
-    if (frame.ego_hint && frame.ego_hint->velocity_local.x != 0.0) {
+    if (frame.ego_hint) {
         const auto& v = frame.ego_hint->velocity_local;
         const double speed = std::sqrt(v.x*v.x + v.y*v.y + v.z*v.z);
         if (speed > 0.05) {
@@ -732,6 +778,15 @@ EgoStateEstimate VisualEgoStateProvider::estimate(const FramePacket& frame) {
             state_.cumulative_drift_m += spd * dt_s;
             state_.translation_sigma  += spd * dt_s * config_.translation_noise_per_m;
         }
+    }
+
+    // ── Update rotation from ego_hint heading ────────────────────────────────
+    // Overrides the FoE angular-velocity integration with the ground-truth
+    // heading from AirSim.  This keeps the camera→NED rotation accurate
+    // regardless of VO tracking quality or heading drift.
+    // rotation_rpy.z = yaw (airsim.to_eularian_angles returns [pitch,roll,yaw])
+    if (frame.ego_hint) {
+        update_rotation_from_yaw(frame.ego_hint->local_T_body.rotation_rpy.z);
     }
 
     // ── VL2: scale update and re-localization ─────────────────────────────────
@@ -783,6 +838,20 @@ EgoStateEstimate VisualEgoStateProvider::estimate(const FramePacket& frame) {
     }
     ego.confidence = confidence;
 
+    // ── Periodic diagnostic ───────────────────────────────────────────────────
+    // Log position every 30 frames so the mission log shows VO is updating.
+    static int vo_frame_count = 0;
+    if ((++vo_frame_count % 30) == 1) {
+        std::fprintf(stderr,
+            "[VisualEgo] frame=%d pos=(%.2f,%.2f,%.2f) "
+            "inlier_frac=%.2f scale=%.3f conf=%.2f\n",
+            vo_frame_count,
+            state_.position.x, state_.position.y, state_.position.z,
+            static_cast<double>(inlier_frac),
+            static_cast<double>(state_.scale.scale),
+            static_cast<double>(confidence));
+    }
+
     // Update previous frame
     state_.prev_gray   = gray;
     state_.prev_width  = w;
@@ -792,7 +861,6 @@ EgoStateEstimate VisualEgoStateProvider::estimate(const FramePacket& frame) {
     est.ego                 = ego;
     est.confidence          = confidence;
     est.telemetry_available = false;
-    (void)inlier_frac;
     return est;
 }
 
