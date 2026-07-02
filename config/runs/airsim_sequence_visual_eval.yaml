@@ -1,0 +1,19 @@
+# ── Run: AirSim  ·  approach→circle sequence  ·  Visual primary + AirSim GT eval
+# Visual ONNX depth as slot A (primary); AirSim GT depth as eval slot B.
+# Ego uses frame_hint (AirSim telemetry) so the drone flies correctly while
+# depth detection quality is the variable under test.
+# Agreement metric logged per-frame:
+#   depth_slot_b.evidence_count     depth.voxel_overlap_ppt
+#
+# Usage:
+#   simulation/airsim/run_mission.sh \
+#     --config config/runs/airsim_sequence_visual_eval.yaml \
+#     --output-dir out/sequence_visual_eval
+
+include: config/world-env/airsim.yaml
+include: config/drone/px4_front_center_depth.yaml
+include: config/pipeline/visual_eval_airsim_gt.yaml
+include: config/mission/sequence_person.yaml
+include: config/output/standard_ppm.yaml
+
+annotation_output_path: out/sequence_visual_eval_annotation
