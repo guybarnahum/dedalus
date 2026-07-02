@@ -13,9 +13,15 @@
 #include <sstream>
 #include <stdexcept>
 #include <string>
-#include <unistd.h>
 #include <utility>
 #include <vector>
+
+// Platform access to the process environment array.
+#ifdef __APPLE__
+#  include <crt_externs.h>   // _NSGetEnviron()
+#else
+   extern char** environ;    // POSIX — declared at file scope, not in any namespace
+#endif
 
 #include "dedalus/sensing/airsim_depth_evidence_provider.hpp"
 #include "dedalus/sensing/airsim_emulation_depth_obstacle_detector.hpp"
@@ -128,8 +134,13 @@ void warn_unknown_dedalus_vars() {
         "DEDALUS_MISSION_OBSTACLE_MAP_DELTAS_WRITE_EVERY_UPDATES",
         nullptr
     };
-    if (!environ) return;
-    for (char** e = environ; *e; ++e) {
+#ifdef __APPLE__
+    char** env_list = *_NSGetEnviron();  // macOS: environ not in any std header
+#else
+    char** env_list = environ;           // Linux/POSIX
+#endif
+    if (!env_list) return;
+    for (char** e = env_list; *e; ++e) {
         const std::string entry{*e};
         const auto eq_pos = entry.find('=');
         if (eq_pos == std::string::npos) continue;
