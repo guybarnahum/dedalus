@@ -11,6 +11,27 @@ Run `git log --oneline -5` to confirm current commit before starting work.
 
 ---
 
+## ⚠ Never Guess — Always Verify From Code
+
+This rule is absolute. Before using any env var, CLI flag, config key, function signature,
+struct field, CMake option, or script argument, **read the source that defines it**.
+
+| What you need | Where to verify |
+|---|---|
+| Env var name | `grep 'getenv\|env_str_or' src/**/*.cpp` — or see §Runtime Env Var Reference in LLM.md |
+| CLI flag | Read the `add_argument` / `CLI11` block in the relevant `apps/*.cpp` |
+| Config key | Read `apply_config_value()` in `src/runtime/config_loader.cpp` |
+| CMake option | Read the top-level `CMakeLists.txt` and `src/CMakeLists.txt` |
+| Script flag | Read the `getopts` / argparse block in the wrapper `.sh` or `.py` |
+| Struct field / function sig | Read the header in `include/dedalus/` |
+
+A wrong env var is **silently ignored** and burns a full mission run to diagnose.
+`warn_unknown_dedalus_vars()` (config_loader.cpp) now prints a startup warning for
+unknown `DEDALUS_` vars, but that requires a rebuilt binary — do not rely on it as a
+substitute for checking the code first.
+
+---
+
 ## Active Development State
 
 ### Obstacle map stack — COMPLETE
@@ -184,6 +205,52 @@ Representation boundaries — keep these distinct:
 - `MissionLocalTraversabilityMap` (L1) — per-flight filtered accumulator
 - `MissionLocalPlanningMap` (L2) — cross-mission persistent store
 - `LocalESDFMap` (L3) — planning primitive, derived from L2, not persisted
+
+---
+
+## Runtime Env Var Reference
+
+All `DEDALUS_` env vars consumed by the C++ binary. Source of truth: `grep getenv` across `src/`.
+Any unknown `DEDALUS_` var triggers a startup warning from `warn_unknown_dedalus_vars()` in `config_loader.cpp`.
+
+| Env var | Read in | Effect |
+|---|---|---|
+| `DEDALUS_DEPTH` | config_loader.cpp | depth provider name (overrides YAML) |
+| `DEDALUS_DEPTH_EVAL` | config_loader.cpp | depth eval provider name |
+| `DEDALUS_EGO_PROVIDER` | config_loader.cpp | ego provider name (overrides YAML) |
+| `DEDALUS_EGO_PROVIDER_EVAL` | config_loader.cpp | ego eval provider name |
+| `DEDALUS_DETECTOR_EVAL` | config_loader.cpp | detector eval name |
+| `DEDALUS_CAMERA_STABILIZER_EVAL` | config_loader.cpp | camera stabilizer eval name |
+| `DEDALUS_TRACKER_EVAL` | config_loader.cpp | tracker eval name |
+| `DEDALUS_IDENTITY_RESOLVER_EVAL` | config_loader.cpp | identity resolver eval name |
+| `DEDALUS_PROJECTOR_EVAL` | config_loader.cpp | projector eval name |
+| `DEDALUS_SITE_ID` | mission_loop + viewer | site identifier; derives L2 DB path `maps/$DEDALUS_SITE_ID/l2_map.db` |
+| `DEDALUS_L2_NO_PERSIST` | dedalus_mission_loop.cpp | `1` = run L2 map in-memory only (no SQLite write) |
+| `DEDALUS_DEPTH_DEBUG_DIR` | onnx_depth_engine.cpp | write per-frame PGM depth maps to this dir |
+| `DEDALUS_AIRSIM_SCENE_INVENTORY` | provider_registry.cpp | path to AirSim scene inventory JSON |
+| `DEDALUS_AIRSIM_GT_NEARBY_RADIUS_M` | provider_registry.cpp | AirSim GT detector search radius |
+| `DEDALUS_AIRSIM_GT_MAX_OBJECTS_PER_FRAME` | provider_registry.cpp | AirSim GT max objects |
+| `DEDALUS_AIRSIM_GT_STATIC_REFRESH_EVERY_N_FRAMES` | provider_registry.cpp | AirSim GT static refresh rate |
+| `DEDALUS_MISSION_TRAVERSABILITY_MAP_ARTIFACT` | trav_map_artifact_writer_env.cpp | `1` = enable trav map artifact write |
+| `DEDALUS_MISSION_TRAVERSABILITY_MAP_PATH` | trav_map_artifact_writer_env.cpp | trav map artifact path |
+| `DEDALUS_MISSION_TRAVERSABILITY_MAP_SITE_ID` | trav_map_artifact_writer_env.cpp | site ID for trav map artifact |
+| `DEDALUS_MISSION_TRAVERSABILITY_MAP_SITE_FRAME_ID` | trav_map_artifact_writer_env.cpp | site frame ID |
+| `DEDALUS_MISSION_TRAVERSABILITY_MAP_MISSION_ID` | trav_map_artifact_writer_env.cpp | mission ID |
+| `DEDALUS_MISSION_TRAVERSABILITY_MAP_WRITE_EVERY_UPDATES` | trav_map_artifact_writer_env.cpp | write frequency |
+| `DEDALUS_MISSION_TRAVERSABILITY_MAP_MAX_CELLS` | trav_map_artifact_writer_env.cpp | max cells |
+| `DEDALUS_MISSION_OBSTACLE_MAP_ARTIFACT` | obstacle_map_artifact_writer_env.cpp | `1` = enable full obstacle map artifact |
+| `DEDALUS_MISSION_OBSTACLE_MAP_PATH` | obstacle_map_artifact_writer_env.cpp | full artifact path |
+| `DEDALUS_MISSION_OBSTACLE_MAP_SITE_ID` | obstacle_map_artifact_writer_env.cpp | site ID |
+| `DEDALUS_MISSION_OBSTACLE_MAP_SITE_FRAME_ID` | obstacle_map_artifact_writer_env.cpp | site frame ID |
+| `DEDALUS_MISSION_OBSTACLE_MAP_MISSION_ID` | obstacle_map_artifact_writer_env.cpp + core_stack_runner.cpp | mission ID |
+| `DEDALUS_MISSION_OBSTACLE_MAP_WRITE_EVERY_UPDATES` | obstacle_map_artifact_writer_env.cpp | write frequency |
+| `DEDALUS_MISSION_OBSTACLE_MAP_DELTAS` | obstacle_map_delta_writer.cpp | `1` = enable delta write |
+| `DEDALUS_MISSION_OBSTACLE_MAP_DELTAS_PATH` | obstacle_map_delta_writer.cpp | delta output path |
+| `DEDALUS_MISSION_OBSTACLE_MAP_DELTAS_WRITE_EVERY_UPDATES` | obstacle_map_delta_writer.cpp | delta write frequency |
+
+**Dead vars (do not use):** `DEDALUS_AIRSIM_ENABLE_DEPTH_OBSTACLES` — never read by runtime; silently ignored and will now trigger a startup warning.
+
+**Mission logs:** `simulation/airsim/logs/mission_<YYYYMMDD_HHMMSS>.log` — written by `run_mission.sh`.
 
 ---
 
