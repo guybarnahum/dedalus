@@ -32,8 +32,8 @@ def main() -> None:
                         help="Output .onnx path (not committed to repo)")
     parser.add_argument("--input-size", type=int, default=518,
                         help="Square input resolution fed to the model (default: 518)")
-    parser.add_argument("--opset", type=int, default=17,
-                        help="ONNX opset version (default: 17)")
+    parser.add_argument("--opset", type=int, default=18,
+                        help="ONNX opset version (default: 18)")
     parser.add_argument("--model-id", default="depth-anything/Depth-Anything-V2-Small-hf",
                         help="HuggingFace model ID")
     args = parser.parse_args()

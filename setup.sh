@@ -368,7 +368,14 @@ run_and_log "Install perception ML dependencies (depth export)" python -m pip in
   onnxscript \
   onnxruntime-gpu
 
-run_and_log "Verify perception ML dependencies" python -c "import torch, transformers, onnx, onnxscript, onnxruntime; print('ORT providers:', onnxruntime.get_available_providers())"
+run_and_log "Verify perception ML dependencies" python -c "
+import torch, transformers, onnx, onnxscript, onnxruntime
+providers = onnxruntime.get_available_providers()
+print('ORT providers:', providers)
+assert 'CUDAExecutionProvider' in providers, \
+    'CUDAExecutionProvider missing — onnxruntime (CPU-only) may have overridden onnxruntime-gpu. ' \
+    'Run: pip uninstall onnxruntime -y'
+"
 
 echo "✅ Python environment ready at $VENV_PATH"
 
