@@ -587,7 +587,7 @@ for line in lines:
         line = "bridge_command: " + shlex.join(parts)
     if not (line.startswith("pipeline_timing_enabled:") or line.startswith("pipeline_timing_output_path:")):
         out.append(line)
-if not bridge_seen:
+if not bridge_seen and (frame_rate or with_frame_timing):
     raise SystemExit("config has no bridge_command line to override")
 if with_pipeline_timing:
     out.append("pipeline_timing_enabled: true")
