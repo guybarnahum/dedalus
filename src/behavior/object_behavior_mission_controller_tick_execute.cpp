@@ -6,6 +6,8 @@
 #include <algorithm>
 #include <cmath>
 #include <cstddef>
+#include <cstdio>
+#include <cstdlib>
 #include <optional>
 #include <string>
 #include <vector>
@@ -221,19 +223,61 @@ void ObjectBehaviorMissionController::tick_go_home(
         emit_camera_pointing(output, *camera_pointing);
     }
 
-    Vec3 raw_velocity = go_home_velocity(ego);
+    // Compute XY distance to home first — needed for both the frame-rate-safe
+    // speed cap and the per-tick diagnostic event.
+    const double dx = home_initialized_ ? home_pose_.position.x - ego.local_T_body.position.x : 0.0;
+    const double dy = home_initialized_ ? home_pose_.position.y - ego.local_T_body.position.y : 0.0;
+    const double dist_xy_m = std::sqrt(dx * dx + dy * dy);
 
-    // Emit per-tick convergence sample: visible in event stream for diagnosing circling.
-    {
-        const auto dx = home_initialized_ ? home_pose_.position.x - ego.local_T_body.position.x : 0.0;
-        const auto dy = home_initialized_ ? home_pose_.position.y - ego.local_T_body.position.y : 0.0;
-        const auto dist_xy_m = std::sqrt(dx * dx + dy * dy);
-        output.events.push_back(ControllerEvent{
-            ControllerEventKind::BehaviorTickSample,
-            ",\"dist_to_home_xy_m\":" + std::to_string(dist_xy_m) +
-            ",\"height_m\":" + std::to_string(height_m) +
-            ",\"home_initialized\":" + (home_initialized_ ? "true" : "false")
-        });
+    // Frame-rate-adaptive speed cap.
+    // Track when the ego snapshot changes to estimate the inter-frame interval.
+    // This makes GoHome convergence self-correcting: the commanded speed is capped
+    // so the drone cannot overshoot past kMinArrivedDistanceM in a single frame,
+    // regardless of how slow (or fast) the ego provider is running.
+    if (ego.timestamp.timestamp_ns > 0 &&
+        last_ego_ts_go_home_.timestamp_ns > 0 &&
+        ego.timestamp.timestamp_ns != last_ego_ts_go_home_.timestamp_ns) {
+        const double observed_s = static_cast<double>(
+            ego.timestamp.timestamp_ns - last_ego_ts_go_home_.timestamp_ns) / 1e9;
+        if (observed_s > 0.0 && observed_s < 30.0) {  // sanity-clamp to [0, 30]s
+            go_home_estimated_frame_interval_s_ = (go_home_estimated_frame_interval_s_ > 0.0)
+                ? 0.3 * observed_s + 0.7 * go_home_estimated_frame_interval_s_  // EMA α=0.3
+                : observed_s;
+        }
+    }
+    if (ego.timestamp.timestamp_ns > 0) {
+        last_ego_ts_go_home_ = ego.timestamp;
+    }
+
+    // Cap speed so we cover at most (dist − ½·arrival_threshold) per frame → guaranteed
+    // single-frame convergence at any fps. Fall back to config speed before first estimate.
+    constexpr double kMinGoHomeSpeedMps = 0.05;
+    constexpr double kArrivalThresholdM = 0.5;  // mirrors kMinArrivedDistanceM
+    double safe_speed = config_.go_home_velocity_mps;
+    if (go_home_estimated_frame_interval_s_ > 0.0 && dist_xy_m > kArrivalThresholdM) {
+        const double frame_cap = (dist_xy_m - 0.5 * kArrivalThresholdM) / go_home_estimated_frame_interval_s_;
+        safe_speed = std::min(safe_speed, std::max(kMinGoHomeSpeedMps, frame_cap));
+    }
+
+    Vec3 raw_velocity = go_home_velocity(ego, safe_speed);
+
+    // Per-tick convergence sample — visible in event stream for post-run diagnostics.
+    output.events.push_back(ControllerEvent{
+        ControllerEventKind::BehaviorTickSample,
+        ",\"dist_to_home_xy_m\":" + std::to_string(dist_xy_m) +
+        ",\"height_m\":" + std::to_string(height_m) +
+        ",\"home_initialized\":" + (home_initialized_ ? "true" : "false") +
+        ",\"go_home_safe_speed_mps\":" + std::to_string(safe_speed) +
+        ",\"go_home_frame_interval_s\":" + std::to_string(go_home_estimated_frame_interval_s_)
+    });
+    if (std::getenv("DEDALUS_DEBUG_EGO")) {
+        std::fprintf(stderr,
+            "[GoHomeDebug] ego=(%.3f,%.3f) home=(%.3f,%.3f) dist=%.3f h=%.2f"
+            " speed=%.3f interval=%.3f\n",
+            ego.local_T_body.position.x, ego.local_T_body.position.y,
+            home_initialized_ ? home_pose_.position.x : 0.0,
+            home_initialized_ ? home_pose_.position.y : 0.0,
+            dist_xy_m, height_m, safe_speed, go_home_estimated_frame_interval_s_);
     }
 
     Vec3 velocity = enforce_takeoff_height_floor(

@@ -1144,6 +1144,8 @@ MPEOF
     tmux new-window -t "$SESSION_NAME" -n mp4-render "bash -lc $(printf '%q' "$(tmux_shell_with_failure_hold "$MP4_SHELL")") 2>&1 | tee $(printf '%q' "$MP4_LOG")"
 fi
 MISSION_ENV_VARS=()
+# Always prepend CUDA lib path so ONNX Runtime uses the GPU (not CPU fallback).
+MISSION_ENV_VARS+=("LD_LIBRARY_PATH=/usr/local/cuda/lib64${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}")
 if [[ -n "${DEDALUS_SITE_ID:-}" ]]; then
     MISSION_ENV_VARS+=("DEDALUS_SITE_ID=$DEDALUS_SITE_ID")
 fi

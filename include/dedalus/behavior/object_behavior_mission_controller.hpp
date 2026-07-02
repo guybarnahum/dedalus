@@ -117,7 +117,7 @@ private:
         const std::string& mode) const;
     [[nodiscard]] ControllerEvent camera_pointing_intent_event(const CameraPointingCommand& command) const;
     void emit_camera_pointing(MissionTickOutput& output, const CameraPointingCommand& command) const;
-    [[nodiscard]] Vec3 go_home_velocity(const EgoState& ego) const;
+    [[nodiscard]] Vec3 go_home_velocity(const EgoState& ego, double speed_mps) const;
     [[nodiscard]] bool completion_elapsed(TimePoint now) const;
     void begin_abort_recovery(TimePoint now, double height_m, const std::string& reason);
     [[nodiscard]] const BehaviorSpec& active_behavior() const;
@@ -166,6 +166,10 @@ private:
     std::size_t sequence_step_index_{0U};
     TimePoint sequence_step_start_;
     bool sequence_step_started_{false};
+    // GoHome frame-rate adaptation: ego timestamp from the last tick_go_home call
+    // and an EMA of the observed inter-frame interval used to cap approach speed.
+    TimePoint last_ego_ts_go_home_;
+    double go_home_estimated_frame_interval_s_{0.0};
 };
 
 }  // namespace dedalus

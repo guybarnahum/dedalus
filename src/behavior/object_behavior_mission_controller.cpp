@@ -24,6 +24,8 @@ double norm_xy(const Vec3& value) {
     return std::sqrt(value.x * value.x + value.y * value.y);
 }
 
+// Pure geometry: fly toward `to` at exactly `speed_mps`, stopping at kMinArrivedDistanceM.
+// Callers are responsible for passing a frame-rate-appropriate speed.
 Vec3 velocity_toward_xy(const Vec3& from, const Vec3& to, double speed_mps) {
     const Vec3 delta{to.x - from.x, to.y - from.y, 0.0};
     const double distance = norm_xy(delta);
@@ -213,11 +215,11 @@ bool ObjectBehaviorMissionController::completion_elapsed(TimePoint now) const {
     return seconds_between(behavior_start_, now) >= after_s;
 }
 
-Vec3 ObjectBehaviorMissionController::go_home_velocity(const EgoState& ego) const {
+Vec3 ObjectBehaviorMissionController::go_home_velocity(const EgoState& ego, double speed_mps) const {
     if (!home_initialized_) {
         return Vec3{0.0, 0.0, 0.0};
     }
-    return velocity_toward_xy(ego.local_T_body.position, home_pose_.position, config_.go_home_velocity_mps);
+    return velocity_toward_xy(ego.local_T_body.position, home_pose_.position, speed_mps);
 }
 
 void ObjectBehaviorMissionController::begin_abort_recovery(

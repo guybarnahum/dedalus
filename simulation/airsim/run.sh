@@ -274,7 +274,11 @@ VENV_PATH="${DEDALUS_VENV_PATH:-$REPO_ROOT_ABS/venv}"
 AIRSIM_CANONICAL_SETTINGS_ABS="$(pwd)/settings.json"
 CORE_BUILD_DIR_ABS="$(cd "$CORE_BUILD_DIR" 2>/dev/null && pwd || true)"
 CORE_CONFIG_ABS="$(cd "$(dirname "$CORE_CONFIG")" && pwd)/$(basename "$CORE_CONFIG")"
-CORE_OUTPUT_DIR_ABS="$(mkdir -p "$CORE_OUTPUT_DIR" && cd "$CORE_OUTPUT_DIR" && pwd)"
+if [[ "$WITH_CORE_STACK" == "1" ]]; then
+    CORE_OUTPUT_DIR_ABS="$(mkdir -p "$CORE_OUTPUT_DIR" && cd "$CORE_OUTPUT_DIR" && pwd)"
+else
+    CORE_OUTPUT_DIR_ABS="$(realpath -m "$CORE_OUTPUT_DIR")"
+fi
 CORE_RUNTIME_CONFIG_ABS="$CORE_OUTPUT_DIR_ABS/core_stack_runtime.yaml"
 
 if [[ "$FLIGHT_TRAJECTORY" = /* ]]; then
