@@ -13,6 +13,7 @@
 #include <sstream>
 #include <stdexcept>
 #include <string>
+#include <unistd.h>
 #include <utility>
 #include <vector>
 
@@ -127,7 +128,6 @@ void warn_unknown_dedalus_vars() {
         "DEDALUS_MISSION_OBSTACLE_MAP_DELTAS_WRITE_EVERY_UPDATES",
         nullptr
     };
-    extern char** environ;
     if (!environ) return;
     for (char** e = environ; *e; ++e) {
         const std::string entry{*e};
