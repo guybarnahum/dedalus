@@ -472,6 +472,8 @@ int main(int argc, char** argv) {
         }
 
         std::cerr << "dedalus_mission_loop: frame_source=" << config.frame_source
+                  << " ego=" << config.ego_provider
+                  << " depth=" << (config.depth.empty() ? "none" : config.depth)
                   << " bridge_mode=" << config.bridge_mode
                   << " flight_sink=" << config.flight_command_sink
                   << " verbosity=" << args.verbosity;

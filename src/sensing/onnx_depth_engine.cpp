@@ -29,6 +29,9 @@ struct ONNXDepthEngine::Impl {
     Ort::SessionOptions session_options;
     Ort::Session        session{nullptr};
 
+    bool cuda_ep_registered  = false;  // set true only when CUDA EP is actually registered
+    bool first_inference_logged = false;
+
     explicit Impl(ONNXDepthEngineConfig cfg) : config(std::move(cfg)) {
         session_options.SetIntraOpNumThreads(1);
         session_options.SetGraphOptimizationLevel(
@@ -60,6 +63,7 @@ struct ONNXDepthEngine::Impl {
                 Ort::ThrowOnError(Ort::GetApi().SessionOptionsAppendExecutionProvider_CUDA_V2(
                     session_options, cuda_opts));
                 Ort::GetApi().ReleaseCUDAProviderOptions(cuda_opts);
+                cuda_ep_registered = true;
                 std::fprintf(stderr,
                     "[ONNXDepthEngine] CUDA EP registered (device_id=%d, "
                     "arena_limit=%zu bytes)\n",
@@ -77,9 +81,12 @@ struct ONNXDepthEngine::Impl {
 
         session = Ort::Session{env, config.model_path.c_str(), session_options};
         std::fprintf(stderr,
-            "[ONNXDepthEngine] session created — model: %s, use_cuda: %s\n",
-            config.model_path.c_str(),
-            config.use_cuda ? "true" : "false");
+            "[ONNXDepthEngine] ============================================\n"
+            "[ONNXDepthEngine]   EP    : %s\n"
+            "[ONNXDepthEngine]   model : %s\n"
+            "[ONNXDepthEngine] ============================================\n",
+            cuda_ep_registered ? "GPU (CUDA)" : "CPU  <-- WARNING: running on CPU",
+            config.model_path.c_str());
     }
 
     // Bilinear resize of a uint8 HxWx3 image to target_h x target_w.
@@ -203,13 +210,24 @@ DepthInferenceResult ONNXDepthEngine::infer(const VisualDepthFrame& frame) {
         std::chrono::duration_cast<std::chrono::microseconds>(t1 - t0).count()) / 1000.0F;
     result.valid = true;
 
-    // Warn if inference is much slower than GPU budget (~50 ms). This usually
-    // means the CUDA EP failed to load and we are running on CPU.
+    // Log first inference — confirms which EP is actually executing under load.
+    if (!impl_->first_inference_logged) {
+        impl_->first_inference_logged = true;
+        const bool looks_like_gpu = result.inference_time_ms < 100.0F;
+        std::fprintf(stderr,
+            "[ONNXDepthEngine] ============================================\n"
+            "[ONNXDepthEngine]   first inference : %.0f ms  [%s]\n"
+            "[ONNXDepthEngine] ============================================\n",
+            static_cast<double>(result.inference_time_ms),
+            looks_like_gpu ? "GPU confirmed"
+                           : "WARN: CPU timing - check LD_LIBRARY_PATH=/usr/local/cuda/lib64:$LD_LIBRARY_PATH");
+    }
+
+    // Ongoing warn for sustained slow inference.
     if (result.inference_time_ms > 200.0F) {
         std::fprintf(stderr,
-            "[ONNXDepthEngine] WARN: inference took %.0f ms — likely running on CPU "
-            "(CUDA EP missing libcublasLt.so.12?). "
-            "Set LD_LIBRARY_PATH=/usr/local/cuda/lib64:$LD_LIBRARY_PATH\n",
+            "[ONNXDepthEngine] WARN: inference %.0f ms — likely CPU "
+            "(CUDA EP missing libcublasLt.so.12?)\n",
             static_cast<double>(result.inference_time_ms));
     }
 

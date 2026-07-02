@@ -13,10 +13,9 @@
 # noisy VO evidence in the site map:
 #   DEDALUS_L2_NO_PERSIST=1 simulation/airsim/run_mission.sh ...
 #
-# Override at runtime:
-#   DEDALUS_PIPELINE_EGO=frame_hint           — revert ego to AirSim hint
-#   DEDALUS_PIPELINE_DEPTH=airsim_gt_detector — revert depth to GT
-#   DEDALUS_PIPELINE_DEPTH_MODEL=<path>       — use a different ONNX model
+# Override at runtime (verified from config_loader.cpp):
+#   DEDALUS_EGO_PROVIDER=frame_hint      — revert ego to AirSim hint
+#   DEDALUS_DEPTH=airsim_gt_detector     — revert depth to GT
 
 ego_provider: visual_odometry
 depth: visual_onnx

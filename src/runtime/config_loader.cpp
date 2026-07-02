@@ -78,6 +78,75 @@ std::string env_str_or(const std::string& config_value, const char* env_var) {
     return config_value;
 }
 
+// Warn about any DEDALUS_ env var not in the authoritative list.
+// Catches typos (e.g. DEDALUS_PIPELINE_EGO instead of DEDALUS_EGO_PROVIDER) that
+// would otherwise be silently ignored. Source of truth: grep getenv + env_str_or
+// across the entire src/ tree.
+void warn_unknown_dedalus_vars() {
+    // Every DEDALUS_ env var read anywhere in the runtime binary.
+    // Keep this list in sync with grepping `getenv("DEDALUS_` and `env_str_or(` in src/.
+    static const char* const kKnown[] = {
+        // config_loader.cpp — provider slot overrides
+        "DEDALUS_DEPTH",
+        "DEDALUS_DEPTH_EVAL",
+        "DEDALUS_EGO_PROVIDER",
+        "DEDALUS_EGO_PROVIDER_EVAL",
+        "DEDALUS_DETECTOR_EVAL",
+        "DEDALUS_CAMERA_STABILIZER_EVAL",
+        "DEDALUS_TRACKER_EVAL",
+        "DEDALUS_IDENTITY_RESOLVER_EVAL",
+        "DEDALUS_PROJECTOR_EVAL",
+        // apps/dedalus_mission_loop.cpp + apps/dedalus_viewer.cpp
+        "DEDALUS_SITE_ID",
+        "DEDALUS_L2_NO_PERSIST",
+        // src/sensing/onnx_depth_engine.cpp
+        "DEDALUS_DEPTH_DEBUG_DIR",
+        // src/runtime/provider_registry.cpp
+        "DEDALUS_AIRSIM_SCENE_INVENTORY",
+        "DEDALUS_AIRSIM_GT_NEARBY_RADIUS_M",
+        "DEDALUS_AIRSIM_GT_MAX_OBJECTS_PER_FRAME",
+        "DEDALUS_AIRSIM_GT_STATIC_REFRESH_EVERY_N_FRAMES",
+        // src/avoidance/mission_traversability_map_artifact_writer_env.cpp
+        "DEDALUS_MISSION_TRAVERSABILITY_MAP_ARTIFACT",
+        "DEDALUS_MISSION_TRAVERSABILITY_MAP_PATH",
+        "DEDALUS_MISSION_TRAVERSABILITY_MAP_SITE_ID",
+        "DEDALUS_MISSION_TRAVERSABILITY_MAP_SITE_FRAME_ID",
+        "DEDALUS_MISSION_TRAVERSABILITY_MAP_MISSION_ID",
+        "DEDALUS_MISSION_TRAVERSABILITY_MAP_WRITE_EVERY_UPDATES",
+        "DEDALUS_MISSION_TRAVERSABILITY_MAP_MAX_CELLS",
+        // src/avoidance/mission_obstacle_map_artifact_writer_env.cpp
+        "DEDALUS_MISSION_OBSTACLE_MAP_ARTIFACT",
+        "DEDALUS_MISSION_OBSTACLE_MAP_PATH",
+        "DEDALUS_MISSION_OBSTACLE_MAP_SITE_ID",
+        "DEDALUS_MISSION_OBSTACLE_MAP_SITE_FRAME_ID",
+        "DEDALUS_MISSION_OBSTACLE_MAP_MISSION_ID",
+        "DEDALUS_MISSION_OBSTACLE_MAP_WRITE_EVERY_UPDATES",
+        // src/avoidance/mission_obstacle_map_delta_writer.cpp
+        "DEDALUS_MISSION_OBSTACLE_MAP_DELTAS",
+        "DEDALUS_MISSION_OBSTACLE_MAP_DELTAS_PATH",
+        "DEDALUS_MISSION_OBSTACLE_MAP_DELTAS_WRITE_EVERY_UPDATES",
+        nullptr
+    };
+    extern char** environ;
+    if (!environ) return;
+    for (char** e = environ; *e; ++e) {
+        const std::string entry{*e};
+        const auto eq_pos = entry.find('=');
+        if (eq_pos == std::string::npos) continue;
+        const std::string var = entry.substr(0U, eq_pos);
+        if (var.size() < 8U || var.substr(0U, 8U) != "DEDALUS_") continue;
+        bool known = false;
+        for (const char* const* k = kKnown; *k; ++k) {
+            if (var == *k) { known = true; break; }
+        }
+        if (!known) {
+            std::cerr << "WARN: unknown DEDALUS_ env var '" << var
+                      << "' — typo? It will be silently ignored.\n"
+                      << "      Known vars: see LLM.md §Runtime Env Var Reference\n";
+        }
+    }
+}
+
 // Build a depth ObstacleEvidenceProvider by string name.
 // Returns nullptr if name is empty (slot inactive).
 std::unique_ptr<ObstacleEvidenceProvider> make_depth_provider(
@@ -634,6 +703,7 @@ void load_file_into_config(CoreStackConfig& config,
 }
 
 CoreStackConfig load_core_stack_app_config(const std::string& path) {
+    warn_unknown_dedalus_vars();
     CoreStackConfig config;
     std::set<std::string> loading_stack;
     const auto base_dir = std::filesystem::current_path();
@@ -660,6 +730,7 @@ CoreStackConfig load_core_stack_app_config(const std::vector<std::string>& paths
 
     // Merge multiple files left-to-right: each file (and its include: chain) is
     // applied on top of the previous, so later files take precedence.
+    warn_unknown_dedalus_vars();
     CoreStackConfig config;
     std::set<std::string> loading_stack;
     const auto base_dir = std::filesystem::current_path();
