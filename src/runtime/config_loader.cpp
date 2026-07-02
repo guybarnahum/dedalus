@@ -106,6 +106,8 @@ void warn_unknown_dedalus_vars() {
         // apps/dedalus_mission_loop.cpp + apps/dedalus_viewer.cpp
         "DEDALUS_SITE_ID",
         "DEDALUS_L2_NO_PERSIST",
+        // debug instrumentation — set to 1 to trace ego position at every layer
+        "DEDALUS_DEBUG_EGO",
         // src/sensing/onnx_depth_engine.cpp
         "DEDALUS_DEPTH_DEBUG_DIR",
         // src/runtime/provider_registry.cpp

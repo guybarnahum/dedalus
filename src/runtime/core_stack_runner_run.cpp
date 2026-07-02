@@ -10,6 +10,8 @@
 #include <chrono>
 #include <cmath>
 #include <cstdint>
+#include <cstdio>
+#include <cstdlib>
 #include <unordered_set>
 #include <vector>
 
@@ -181,9 +183,36 @@ bool CoreStackRunner::run_once() {
     if (timing_writer_) {
         timing_writer_->record_stage("ego_provider.estimate", duration_us(start));
     }
+
+    // DEDALUS_DEBUG_EGO: uniform debug output for both primary and reference ego
+    // providers.  Both slots use an identical format — set DEDALUS_DEBUG_EGO=1 and
+    // grep '[EgoDebug:ego_a]' vs '[EgoDebug:ego_b]' to compare them directly.
+    const bool ego_debug = (std::getenv("DEDALUS_DEBUG_EGO") != nullptr);
+    auto log_ego = [&](const char* tag, const EgoStateEstimate& est) {
+        if (!ego_debug) return;
+        if (est.ego.has_value()) {
+            const auto& p = est.ego->local_T_body.position;
+            const auto& v = est.ego->velocity_local;
+            std::fprintf(stderr,
+                "[EgoDebug:%s] pos=(%.3f,%.3f,%.3f) vel=(%.3f,%.3f,%.3f) "
+                "yaw=%.3f h=%.2f conf=%.2f telemetry=%d\n",
+                tag,
+                p.x, p.y, p.z, v.x, v.y, v.z,
+                est.ego->local_T_body.rotation_rpy.z,
+                est.ego->height_m,
+                static_cast<double>(est.confidence),
+                static_cast<int>(est.telemetry_available));
+        } else {
+            std::fprintf(stderr,
+                "[EgoDebug:%s] EMPTY — frame will be dropped\n", tag);
+        }
+    };
+    log_ego("ego_a", ego_estimate);
+
     // Slot B ego (reference): runs on same frame, agreement logged only.
     if (ego_provider_reference_) {
         const auto b_ego = ego_provider_reference_->estimate(*frame);
+        log_ego("ego_b", b_ego);
         if (timing_writer_) {
             const float ag = ego_agreement(ego_estimate, b_ego);
             timing_writer_->record_stage("ego_provider.slot.agreement_ppt",

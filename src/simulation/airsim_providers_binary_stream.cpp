@@ -5,6 +5,8 @@
 #include <chrono>
 #include <cmath>
 #include <cstdint>
+#include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <limits>
 #include <sstream>
@@ -199,11 +201,39 @@ std::optional<FramePacket> AirSimFrameSource::next_stream_binary_frame() {
         TimePoint{header.timestamp_ns});
     timings.push_back(FrameSourceTiming{"frame_source.detail.construct_frame", elapsed_us(start)});
 
+    // DEDALUS_DEBUG_EGO: warn immediately when bridge sends no sidecar.
+    if (std::getenv("DEDALUS_DEBUG_EGO") && sidecar_payload.empty()) {
+        std::fprintf(stderr,
+            "[EgoDebug:sidecar] seq=%llu NO SIDECAR (sidecar_size=%u, version=%u) "
+            "— ego_hint will be null; is --include-ego missing from bridge_command?\n",
+            static_cast<unsigned long long>(header.sequence),
+            static_cast<unsigned>(header.sidecar_size),
+            static_cast<unsigned>(header.version));
+    }
     if (!sidecar_payload.empty()) {
         start = SteadyClock::now();
         frame.ego_hint = parse_ego_json(sidecar_payload, config_.map_frame_id, frame.timestamp);
         frame.depth_frame = parse_depth_frame_optional(sidecar_payload, frame, config_.map_frame_id);
         timings.push_back(FrameSourceTiming{"frame_source.detail.parse_sidecar", elapsed_us(start)});
+        // DEDALUS_DEBUG_EGO: trace what AirSim sidecar delivered this frame.
+        if (std::getenv("DEDALUS_DEBUG_EGO")) {
+            if (frame.ego_hint) {
+                const auto& p = frame.ego_hint->local_T_body.position;
+                const auto& v = frame.ego_hint->velocity_local;
+                std::fprintf(stderr,
+                    "[EgoDebug:sidecar] seq=%llu pos=(%.3f,%.3f,%.3f) "
+                    "vel=(%.3f,%.3f,%.3f) yaw=%.3f h=%.2f\n",
+                    static_cast<unsigned long long>(header.sequence),
+                    p.x, p.y, p.z, v.x, v.y, v.z,
+                    frame.ego_hint->local_T_body.rotation_rpy.z,
+                    frame.ego_hint->height_m);
+            } else {
+                std::fprintf(stderr,
+                    "[EgoDebug:sidecar] seq=%llu ego_hint MISSING "
+                    "(parse_ego_json returned nullopt despite sidecar present)\n",
+                    static_cast<unsigned long long>(header.sequence));
+            }
+        }
         timings.push_back(FrameSourceTiming{
             frame.depth_frame.has_value()
                 ? "frame_source.detail.depth_sidecar.present"

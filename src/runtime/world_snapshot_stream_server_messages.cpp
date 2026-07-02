@@ -7,6 +7,8 @@
 #include "dedalus/world_model/world_snapshot.hpp"
 
 #include <chrono>
+#include <cstdio>
+#include <cstdlib>
 #include <string>
 #include <utility>
 
@@ -96,6 +98,18 @@ void RuntimeEventStreamServer::on_snapshot(const std::shared_ptr<const WorldSnap
 
 std::string RuntimeEventStreamServer::serialize_snapshot(
     std::uint64_t seq, const WorldSnapshot& snapshot) const {
+    // DEDALUS_DEBUG_EGO: verify what position is actually reaching the SSE stream.
+    if (std::getenv("DEDALUS_DEBUG_EGO")) {
+        const auto& p = snapshot.ego.local_T_body.position;
+        const auto& v = snapshot.ego.velocity_local;
+        std::fprintf(stderr,
+            "[EgoDebug:stream] seq=%llu pos=(%.3f,%.3f,%.3f) vel=(%.3f,%.3f,%.3f) "
+            "yaw=%.3f h=%.2f\n",
+            static_cast<unsigned long long>(seq),
+            p.x, p.y, p.z, v.x, v.y, v.z,
+            snapshot.ego.local_T_body.rotation_rpy.z,
+            snapshot.ego.height_m);
+    }
     return stream_line_for(seq, snapshot);
 }
 
