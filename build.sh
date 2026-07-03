@@ -47,10 +47,12 @@ elif [[ "${DEDALUS_CUDA:-}" == "1" ]]; then
     echo "│  CUDA:       ON  (forced)"
 else
     NVCC_BIN=""
+    # Prefer versioned CUDA 12 compiler over the system-PATH nvcc, which may be
+    # an older toolkit that does not support the GPU's compute architecture.
     for _candidate in \
-        "$(command -v nvcc 2>/dev/null)" \
+        /usr/local/cuda-12.*/bin/nvcc \
         /usr/local/cuda/bin/nvcc \
-        /usr/local/cuda-*/bin/nvcc \
+        "$(command -v nvcc 2>/dev/null)" \
         /usr/bin/nvcc; do
         if [[ -x "$_candidate" ]]; then
             NVCC_BIN="$_candidate"

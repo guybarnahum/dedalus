@@ -142,7 +142,10 @@ def read_object_poses(
 
 
 def emit_payload(payload: dict[str, Any]) -> None:
-    print(json.dumps(payload, separators=(",", ":")), flush=True)
+    try:
+        print(json.dumps(payload, separators=(",", ":")), flush=True)
+    except BrokenPipeError:
+        raise SystemExit(0)  # consumer closed the pipe — exit silently
 
 
 def run_one_shot(args: argparse.Namespace, client: Any) -> int:

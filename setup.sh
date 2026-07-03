@@ -210,6 +210,31 @@ if [[ "${CUDA_MAX_MAJOR}" -ge 12 ]]; then
 
         sudo ldconfig
     fi
+
+    # ── CUDA 12 compiler (nvcc) — required to build cuda_depth_kernels.cu ───
+    # Independent of the cuBLAS check above: runtime libs and the compiler are
+    # separate packages. nvcc may be absent even when libcublasLt.so.12 is present.
+    if ! ls /usr/local/cuda-12.*/bin/nvcc 1>/dev/null 2>&1; then
+        if ! dpkg -l cuda-keyring &>/dev/null 2>&1; then
+            run_and_log "Add NVIDIA CUDA apt keyring (for nvcc)" bash -c "
+                wget -q -O /tmp/cuda-keyring.deb \
+                    https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2204/x86_64/cuda-keyring_1.1-1_all.deb
+                sudo dpkg -i /tmp/cuda-keyring.deb
+                rm -f /tmp/cuda-keyring.deb
+                sudo apt-get update -q
+            "
+        fi
+        CUDA12_NVCC_PKG=$(apt-cache search '^cuda-nvcc-12-[0-9]' 2>/dev/null \
+                          | awk '{print $1}' | sort -V | tail -1)
+        if [[ -z "$CUDA12_NVCC_PKG" ]]; then
+            echo "❌ Fatal: cuda-nvcc-12-* not found in apt. CUDA kernel build will fail." >&2
+            exit 1
+        fi
+        run_and_log "Install CUDA 12 compiler (${CUDA12_NVCC_PKG})" \
+            sudo DEBIAN_FRONTEND=noninteractive apt-get install -y "${CUDA12_NVCC_PKG}"
+    else
+        echo "✅ CUDA 12 nvcc already installed."
+    fi
     ORT_GPU_PKG="onnxruntime-gpu"        # latest wheel; requires CUDA 12 + cuDNN 9
 
 elif [[ "${CUDA_MAX_MAJOR}" -eq 11 && "${CUDA_MAX_MINOR}" -ge 8 ]]; then
