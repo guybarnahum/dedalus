@@ -838,8 +838,9 @@ EgoStateEstimate VisualEgoStateProvider::estimate(const FramePacket& frame) {
     ego.local_T_body.rotation_rpy.x = std::atan2(R[7], R[8]);        // roll
 
     if (frame.ego_hint) {
-        ego.height_m    = frame.ego_hint->height_m;
-        ego.height_valid = frame.ego_hint->height_valid;
+        ego.height_m       = frame.ego_hint->height_m;
+        ego.height_valid   = frame.ego_hint->height_valid;
+        ego.velocity_local = frame.ego_hint->velocity_local;  // pass-through actual drone velocity
     }
     ego.confidence = confidence;
 

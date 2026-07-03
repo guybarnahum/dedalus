@@ -1046,6 +1046,18 @@ def ego_motion_stats(snapshot: dict[str, Any] | None, state: dict[str, Any]) -> 
         if isinstance(cached, dict):
             return cached
     stats: dict[str, Any] = {"position": position, "height_m": ego.get("height_m"), "velocity": None, "vxy_mps": None, "vz_mps": None, "heading_deg": None}
+    # Prefer velocity_local from the snapshot when non-zero (populated by PX4 bridge
+    # and pass-through providers).  Fall back to finite-difference of position for
+    # providers like visual_odometry that previously left velocity_local zeroed.
+    snap_vel = vec3(ego.get("velocity_local"))
+    if snap_vel is not None and math.hypot(snap_vel[0], snap_vel[1]) > 1.0e-6:
+        vxy_mps = math.hypot(snap_vel[0], snap_vel[1])
+        heading_deg = math.degrees(math.atan2(snap_vel[1], snap_vel[0]))
+        stats.update({"velocity": snap_vel, "vxy_mps": vxy_mps, "vz_mps": snap_vel[2], "heading_deg": heading_deg})
+        state["last_ego_position"] = position
+        state["last_ego_timestamp_s"] = timestamp_s
+        state["last_ego_motion_stats"] = stats
+        return stats
     if previous_position is None or previous_timestamp_s is None:
         state["last_ego_position"] = position
         state["last_ego_timestamp_s"] = timestamp_s
@@ -1254,6 +1266,15 @@ def draw_ego_velocity_arrow(client: Any, stats: dict[str, Any], args: argparse.N
             airsim.Vector3r(end.x_val - head_len * math.cos(heading + head_angle), end.y_val - head_len * math.sin(heading + head_angle), z),
         ])
     plot_line_segments(client, points, EGO_VELOCITY_COLOR, args.osd_arrow_thickness, duration)
+    # Speed label above the drone — readable from any camera angle, including the
+    # follow-behind perspective where the 3D arrow is foreshortened to a point.
+    label_z = position[2] - args.osd_arrow_z_lift_m - 1.5
+    label_text = f"V {float(vxy_mps):.1f} m/s"
+    try:
+        client.simPlotStrings([label_text], [airsim.Vector3r(position[0], position[1], label_z)],
+                              scale=1.1, color_rgba=EGO_VELOCITY_COLOR, duration=duration)
+    except Exception:
+        pass
 
 
 def maybe_draw_osd(client: Any, snapshot: dict[str, Any] | None, mission_event: dict[str, Any] | None, args: argparse.Namespace, state: dict[str, Any]) -> None:
