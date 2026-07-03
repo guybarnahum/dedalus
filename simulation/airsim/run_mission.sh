@@ -1144,10 +1144,18 @@ MPEOF
     tmux new-window -t "$SESSION_NAME" -n mp4-render "bash -lc $(printf '%q' "$(tmux_shell_with_failure_hold "$MP4_SHELL")") 2>&1 | tee $(printf '%q' "$MP4_LOG")"
 fi
 MISSION_ENV_VARS=()
-# Prepend both common CUDA lib paths so ONNX Runtime uses the GPU.
-# /usr/local/cuda/lib64         — typical symlink-based install (Ubuntu default)
-# /usr/local/cuda-*/targets/…/lib — versioned install layout (e.g. CUDA 12.6 on EC2)
-MISSION_ENV_VARS+=("LD_LIBRARY_PATH=/usr/local/cuda/lib64:/usr/local/cuda-12.6/targets/x86_64-linux/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}")
+# Prepend CUDA runtime lib paths so ONNX Runtime's CUDA EP loads correctly.
+# Three locations to cover all install layouts:
+#   /usr/local/cuda-<ver>/lib64   — where apt packages (libcufft-12-*, libcublas-12-*) install
+#   /usr/local/cuda/lib64         — symlink-based install (if cuda-12-x meta-pkg is installed)
+#   /usr/local/cuda-*/targets/…   — versioned stub layout (nvcc packages, usually no full .so)
+# libcufft.so.11 (CUDA 12's cufft SONAME) is in lib64, not targets/, so lib64 must come first.
+_CUDA12_LIB64=""
+for _d in /usr/local/cuda-12.*/lib64; do
+    [[ -d "$_d" ]] && _CUDA12_LIB64="$_d"
+done
+MISSION_ENV_VARS+=("LD_LIBRARY_PATH=${_CUDA12_LIB64:+${_CUDA12_LIB64}:}/usr/local/cuda/lib64:/usr/local/cuda-12.6/targets/x86_64-linux/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}")
+unset _CUDA12_LIB64 _d
 if [[ -n "${DEDALUS_SITE_ID:-}" ]]; then
     MISSION_ENV_VARS+=("DEDALUS_SITE_ID=$DEDALUS_SITE_ID")
 fi

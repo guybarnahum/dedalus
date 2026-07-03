@@ -154,9 +154,10 @@ run_and_log "Install core tools" sudo DEBIAN_FRONTEND=noninteractive apt-get ins
 # We use that to select a matching ORT wheel and install CUDA runtime libs.
 #
 # Compatibility matrix (onnxruntime-gpu ↔ CUDA ↔ cuDNN):
-#   ort ≥ 1.18  →  CUDA 12.x  +  cuDNN 9.x   (install libcublas-12-* + libcudnn9)
+#   ort ≥ 1.18  →  CUDA 12.x  +  cuDNN 9.x   (install libcublas-12-* + libcufft-12-* + libcudnn9)
 #   ort = 1.17  →  CUDA 11.8  +  cuDNN 8.x   (no extra apt packages)
 #   ort = 1.16  →  CUDA 11.6  +  cuDNN 8.x   (no extra apt packages)
+# Note: libcufft SONAME follows cufft version, not CUDA major: CUDA 12 → libcufft.so.11.
 #
 # ORT_GPU_PKG is consumed later by the Python venv step.
 
@@ -208,6 +209,33 @@ if [[ "${CUDA_MAX_MAJOR}" -ge 12 ]]; then
             echo "⚠️  libcudnn9-cuda-12 not found in repo — ORT CUDA EP may degrade to no-cuDNN mode."
         fi
 
+        sudo ldconfig
+    fi
+
+    # ── CUDA 12 cuFFT — required by libonnxruntime_providers_cuda.so ────────
+    # libcufft.so.11 is CUDA 12's cufft SONAME (CUDA 11 used .so.10).
+    # It is a separate apt package from cuBLAS; the cuBLAS check above skips the
+    # whole block when cuBLAS is already installed, so cufft gets its own check.
+    if ldconfig -p 2>/dev/null | grep -q "libcufft.so.11"; then
+        echo "✅ libcufft.so.11 already present — skipping CUDA 12 cuFFT install."
+    else
+        if ! dpkg -l cuda-keyring &>/dev/null 2>&1; then
+            run_and_log "Add NVIDIA CUDA apt keyring (for cuFFT)" bash -c "
+                wget -q -O /tmp/cuda-keyring.deb \
+                    https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2204/x86_64/cuda-keyring_1.1-1_all.deb
+                sudo dpkg -i /tmp/cuda-keyring.deb
+                rm -f /tmp/cuda-keyring.deb
+                sudo apt-get update -q
+            "
+        fi
+        CUFFT12_PKG=$(apt-cache search '^libcufft-12-[0-9]' 2>/dev/null \
+                      | grep -v '\-dev' | awk '{print $1}' | sort -V | tail -1)
+        if [[ -z "$CUFFT12_PKG" ]]; then
+            echo "❌ Fatal: libcufft-12-* not found in apt. ORT CUDA EP will fail to load." >&2
+            exit 1
+        fi
+        run_and_log "Install CUDA 12 cuFFT (${CUFFT12_PKG})" \
+            sudo DEBIAN_FRONTEND=noninteractive apt-get install -y "${CUFFT12_PKG}"
         sudo ldconfig
     fi
 
