@@ -155,19 +155,25 @@ static bool test_single_forward_obstacle() {
         return false;
     }
 
-    // State must be Occupied; shape Voxel
+    // State must be Occupied; shape SurfacePatch (project_depth_to_device_evidence
+    // emits shape=3 so evidence renders as normal-oriented diamonds in the overlay).
     if (ev.state != dedalus::ObstacleEvidenceState::Occupied) {
         std::cerr << "FAIL test_single_forward_obstacle: wrong state\n";
         return false;
     }
-    if (ev.shape != dedalus::ObstacleEvidenceShape::Voxel) {
-        std::cerr << "FAIL test_single_forward_obstacle: wrong shape\n";
+    if (ev.shape != dedalus::ObstacleEvidenceShape::SurfacePatch) {
+        std::cerr << "FAIL test_single_forward_obstacle: wrong shape "
+                  << static_cast<int>(ev.shape) << " (expected SurfacePatch=3)\n";
         return false;
     }
 
-    // Hint flags must be off
-    if (ev.is_thin_structure_hint || ev.is_surface_hint) {
-        std::cerr << "FAIL test_single_forward_obstacle: unexpected hint flags\n";
+    // is_surface_hint must be set; is_thin_structure_hint must be off
+    if (ev.is_thin_structure_hint) {
+        std::cerr << "FAIL test_single_forward_obstacle: unexpected thin_structure_hint\n";
+        return false;
+    }
+    if (!ev.is_surface_hint) {
+        std::cerr << "FAIL test_single_forward_obstacle: is_surface_hint not set\n";
         return false;
     }
 
