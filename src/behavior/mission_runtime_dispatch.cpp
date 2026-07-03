@@ -139,6 +139,35 @@ bool MissionRuntime::tick_once() {
         return false;
     }
 
+    // Stale-snapshot detection: same frame timestamp for N consecutive ticks
+    // means the frame pipeline has stalled (e.g. slow inference).  Emit a
+    // throttled warning; do NOT abort — continue with best-effort stale data.
+    const std::uint64_t cur_ts = snapshot->timestamp.timestamp_ns;
+    if (cur_ts > 0U && cur_ts == last_snapshot_ts_ns_) {
+        ++consecutive_stale_ticks_;
+        if (config_.stale_snapshot_warn_ticks > 0 &&
+            consecutive_stale_ticks_ >= config_.stale_snapshot_warn_ticks &&
+            consecutive_stale_ticks_ % config_.stale_snapshot_warn_ticks == 0) {
+            write_event(
+                "\"event\":\"snapshot_stale\""
+                ",\"tick\":" + std::to_string(tick_count_) +
+                ",\"stale_ticks\":" + std::to_string(consecutive_stale_ticks_) +
+                ",\"snapshot_ts_ns\":" + std::to_string(cur_ts) +
+                ",\"state\":" + q(to_string(last_state_)));
+            std::cerr << "dedalus_mission: WARN snapshot_stale"
+                      << " stale_ticks=" << consecutive_stale_ticks_
+                      << " tick=" << tick_count_
+                      << " state=" << to_string(last_state_) << "\n";
+        }
+    } else {
+        if (consecutive_stale_ticks_ > 0 && config_.verbosity >= 1) {
+            std::cerr << "dedalus_mission: snapshot_fresh after "
+                      << consecutive_stale_ticks_ << " stale tick(s)\n";
+        }
+        consecutive_stale_ticks_ = 0;
+        last_snapshot_ts_ns_ = cur_ts;
+    }
+
     MissionTickInput input;
     input.now = now_timepoint();
     input.snapshot = *snapshot;

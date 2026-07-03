@@ -46,6 +46,10 @@ struct MissionRuntimeConfig {
     // in ExecuteMission or GoHome, request a graceful finish so the drone lands
     // before PX4 disarms from Offboard link loss.  0 = disabled.
     int max_consecutive_inflight_overruns{5};
+    // Stale snapshot warning: if the same snapshot timestamp is seen for N
+    // consecutive ticks, emit a snapshot_stale event + stderr warning.
+    // This fires every N ticks while stale (throttled), never aborts.  0 = disabled.
+    int stale_snapshot_warn_ticks{3};
 };
 
 struct MissionRuntimeStats {
@@ -111,6 +115,8 @@ private:
     std::optional<FlightCommandResult> last_command_result_;
     std::optional<CameraPointingResult> last_camera_pointing_result_;
     std::int64_t consecutive_inflight_overruns_{0};
+    std::uint64_t last_snapshot_ts_ns_{0};
+    int consecutive_stale_ticks_{0};
     std::ofstream event_log_;
     mutable std::mutex event_log_mutex_;
     std::atomic<std::uint64_t> events_written_{0};

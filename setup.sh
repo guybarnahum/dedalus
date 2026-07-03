@@ -238,6 +238,32 @@ if [[ "${CUDA_MAX_MAJOR}" -ge 12 ]]; then
         fi
     fi
 
+    # ── CUDA runtime (libcudart) — our binary links CUDA::cudart directly ───
+    # cuda-nvcc-12-x pulls in cuda-cudart-12-x as a dep, so this is usually
+    # satisfied implicitly.  Explicit check so a runtime-only deploy (no nvcc)
+    # doesn't silently fail with a missing-symbol crash at launch.
+    if ! ldconfig -p 2>/dev/null | grep -q "libcudart.so.12"; then
+        if ! dpkg -l cuda-keyring &>/dev/null 2>&1; then
+            run_and_log "Add NVIDIA CUDA apt keyring (for cudart)" bash -c "
+                wget -q -O /tmp/cuda-keyring.deb \
+                    https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2204/x86_64/cuda-keyring_1.1-1_all.deb
+                sudo dpkg -i /tmp/cuda-keyring.deb
+                rm -f /tmp/cuda-keyring.deb
+                sudo apt-get update -q
+            "
+        fi
+        CUDART12_PKG=$(apt-cache search '^cuda-cudart-12-[0-9]' 2>/dev/null \
+                       | grep -v '\-dev' | awk '{print $1}' | sort -V | tail -1)
+        if [[ -z "$CUDART12_PKG" ]]; then
+            echo "❌ Fatal: cuda-cudart-12-* not found in apt." >&2; exit 1
+        fi
+        run_and_log "Install CUDA 12 runtime (${CUDART12_PKG})" \
+            sudo DEBIAN_FRONTEND=noninteractive apt-get install -y "${CUDART12_PKG}"
+        sudo ldconfig
+    else
+        echo "✅ libcudart.so.12 already present."
+    fi
+
     # ── CUDA 12 compiler (nvcc) — required to build cuda_depth_kernels.cu ───
     # Independent of the cuBLAS check above: runtime libs and the compiler are
     # separate packages. nvcc may be absent even when libcublasLt.so.12 is present.
