@@ -2209,12 +2209,107 @@ function updateStatusBar() {
 
 function fmt(v) { const n=Number(v); return Number.isFinite(n)?Number.isInteger(n)?String(n):n.toFixed(2):"—"; }
 
+// ── UI state persistence (localStorage) ───────────────────────────────────────
+// Key: "dedalus_viewer_ui".  Persists layer toggles, color mode, slider values,
+// and panel collapse state across page reloads.  All reads/writes are wrapped in
+// try/catch so a corrupt or missing entry never breaks the viewer.
+
+const UI_STORAGE_KEY = "dedalus_viewer_ui";
+
+function saveUIState() {
+  try {
+    localStorage.setItem(UI_STORAGE_KEY, JSON.stringify({
+      showL0:          state.showL0,
+      showPlanning:    state.showPlanning,
+      showTrav:        state.showTrav,
+      showObstacles:   state.showObstacles,
+      showGhosts:      state.showGhosts,
+      showSensing:     state.showSensing,
+      showTrajectory:  state.showTrajectory,
+      showEsdf:        state.showEsdf,
+      showEsdfCells:   state.showEsdfCells,
+      travColorByType: state.travColorByType,
+      travLodIdx:      Number(el("trav-lod")?.value ?? 2),
+      esdfSmoothR:     esdfSmoothR,
+      esdfVelMode:     el("esdf-vel-mode")?.checked ?? false,
+      pipelineOpen:    el("pipeline-body")?.style.display !== "none",
+    }));
+  } catch(_) {}
+}
+
+function loadUIState() {
+  let ui;
+  try { ui = JSON.parse(localStorage.getItem(UI_STORAGE_KEY) || "null"); }
+  catch(_) { ui = null; }
+  if (!ui) return;
+
+  // Layer toggle flags + button active class
+  for (const [id, key] of [
+    ["toggle-l0",         "showL0"],
+    ["toggle-planning",   "showPlanning"],
+    ["toggle-trav",       "showTrav"],
+    ["toggle-obstacles",  "showObstacles"],
+    ["toggle-ghosts",     "showGhosts"],
+    ["toggle-sensing",    "showSensing"],
+    ["toggle-trajectory", "showTrajectory"],
+    ["toggle-esdf",       "showEsdf"],
+  ]) {
+    if (key in ui) { state[key] = !!ui[key]; el(id)?.classList.toggle("active", state[key]); }
+  }
+
+  // ESDF cells checkbox (state + DOM)
+  if ("showEsdfCells" in ui) {
+    state.showEsdfCells = !!ui.showEsdfCells;
+    const cb = el("esdf-show-cells"); if (cb) cb.checked = state.showEsdfCells;
+  }
+
+  // Trav color mode
+  if ("travColorByType" in ui) {
+    state.travColorByType = !!ui.travColorByType;
+    const tag = el("trav-color-tag");
+    if (tag) tag.textContent = state.travColorByType ? "Type" : "Height";
+    const lh = el("trav-legend-height"), lt = el("trav-legend-type");
+    if (lh) lh.style.visibility = state.travColorByType ? "hidden" : "visible";
+    if (lt) lt.style.visibility = state.travColorByType ? "visible" : "hidden";
+  }
+
+  // Trav LOD slider
+  if ("travLodIdx" in ui) {
+    const s = el("trav-lod");
+    if (s) {
+      s.value = ui.travLodIdx;
+      travDisplayLevelM = TRAV_LOD_LEVELS[ui.travLodIdx] ?? travDisplayLevelM;
+      const v = el("trav-lod-val"); if (v) v.textContent = travDisplayLevelM + "m";
+    }
+  }
+
+  // ESDF smooth-R slider
+  if ("esdfSmoothR" in ui) {
+    esdfSmoothR = ui.esdfSmoothR;
+    const s = el("esdf-r-slider"); if (s) s.value = esdfSmoothR;
+    const m = el("m-esdf-r");      if (m) m.textContent = esdfSmoothR.toFixed(1) + "m";
+  }
+
+  // ESDF vel-mode checkbox
+  if ("esdfVelMode" in ui) { const cb = el("esdf-vel-mode"); if (cb) cb.checked = !!ui.esdfVelMode; }
+
+  // Pipeline metrics panel
+  if ("pipelineOpen" in ui) {
+    const body = el("pipeline-body"), caret = el("pipeline-caret");
+    if (body && caret) {
+      body.style.display = ui.pipelineOpen ? "" : "none";
+      caret.textContent  = ui.pipelineOpen ? "▼" : "▶";
+    }
+  }
+}
+
 function togglePipelineMetrics() {
   const body = el("pipeline-body");
   const caret = el("pipeline-caret");
   const open = body.style.display !== "none";
   body.style.display = open ? "none" : "";
   caret.textContent = open ? "▶" : "▼";
+  saveUIState();
 }
 el("pipeline-body").style.display = "none";  // collapsed by default
 
@@ -2898,11 +2993,13 @@ function onEsdfRSlider(val) {
   el("m-esdf-r").textContent = esdfSmoothR.toFixed(1) + "m";
   buildESDFArrows();
   scheduleDraw();
+  saveUIState();
 }
 
 function onEsdfShowCells(checked) {
   state.showEsdfCells = checked;
   scheduleDraw();
+  saveUIState();
 }
 
 // ── view controls + interaction ────────────────────────────────────────────────
@@ -2952,6 +3049,7 @@ function installViewControls() {
       buildTravFaces();      // L1 only: aggregates 0.5 m cells at new LOD
       // L2 is not re-built here — it renders at its own native 1m cell size
       scheduleDraw();
+      saveUIState();
     });
   }
 
@@ -2977,6 +3075,7 @@ function installViewControls() {
       if (stateKey==="showPlanning") buildPlanningFaces();
       if (stateKey==="showEsdf")    { buildESDFFaces(); buildESDFArrows(); }
       scheduleDraw();
+      saveUIState();
     });
   }
 
@@ -2992,7 +3091,15 @@ function installViewControls() {
     // L2 face colors depend on mode; rebuild geometry cache.
     buildPlanningFaces();
     scheduleDraw();
+    saveUIState();
   });
+
+  // esdf-vel-mode has an inline onchange handler; add saveUIState as a second listener.
+  el("esdf-vel-mode")?.addEventListener("change", saveUIState);
+
+  // Restore persisted UI state.  Must run after all handlers are wired so that
+  // button active classes and state flags are in sync before the first draw.
+  loadUIState();
 }
 
 // Canvas mouse interaction
