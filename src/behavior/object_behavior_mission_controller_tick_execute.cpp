@@ -23,9 +23,6 @@ bool elapsed_at_least(TimePoint start, TimePoint end, double seconds) {
     return seconds_between(start, end) >= seconds;
 }
 
-double norm_xy(const Vec3& value) {
-    return std::sqrt(value.x * value.x + value.y * value.y);
-}
 
 }  // namespace
 
@@ -294,7 +291,16 @@ void ObjectBehaviorMissionController::tick_go_home(
     // Use distance-based arrival rather than velocity == 0: velocity_toward_xy never
     // produces exactly zero while kMinGoHomeSpeedMps > 0, so the old check could
     // keep the drone in GoHome indefinitely even when it had converged on home XY.
-    if (dist_xy_m <= kArrivalThresholdM &&
+    //
+    // At slow tick rates (CPU-mode ONNX, ~1.7 s/frame) PX4 overshoot produces a
+    // stable ~5 m oscillation. The drone's existing momentum when the command
+    // flips direction prevents the 0.5 m threshold from ever triggering. Accept
+    // a relaxed 5 m arrival when the frame interval indicates CPU-rate inference
+    // so the drone lands within the oscillation envelope rather than circling
+    // indefinitely. At GPU rates (interval < 0.5 s) the original threshold holds.
+    const double effective_arrival_m = (go_home_estimated_frame_interval_s_ > 0.5)
+        ? 5.0 : kArrivalThresholdM;
+    if (dist_xy_m <= effective_arrival_m &&
         height_m >= config_.takeoff_height_m) {
         state_ = MissionLifecycleState::Land;
         state_start_ = input.now;
