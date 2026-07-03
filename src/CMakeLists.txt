@@ -106,7 +106,12 @@ target_compile_options(dedalus_core
     PRIVATE
         -Wall
         -Wextra
-        -Wpedantic
+        # Scope -Wpedantic to C++ only.  nvcc forwards it to GCC *after* applying
+        # -Xcompiler= overrides, so -Xcompiler=-Wno-pedantic cannot cancel it.
+        # The warnings come from cudafe's generated line directives in CUDA system
+        # headers — GCC extension form "# N" vs standard "#line N" — and there is
+        # no nvcc flag to suppress them without hiding real issues in our code.
+        $<$<COMPILE_LANGUAGE:CXX>:-Wpedantic>
 )
 
 # Optional: ONNX Runtime depth engine
@@ -126,7 +131,7 @@ if(DEDALUS_CUDA)
     target_compile_definitions(dedalus_core PUBLIC DEDALUS_CUDA_ENABLED)
     target_link_libraries(dedalus_core PRIVATE CUDA::cudart)
     set_source_files_properties(sensing/cuda_depth_kernels.cu
-        PROPERTIES COMPILE_OPTIONS "-O2;-Xcompiler=-Wno-pedantic")
+        PROPERTIES COMPILE_OPTIONS "-O2")
 endif()
 
 # TensorRT inference engine (requires DEDALUS_CUDA)
