@@ -244,9 +244,9 @@ void project_depth_to_device_evidence(
             ev.confidence             = 0.75F;
             ev.range_m                = depth_m;
             ev.state                  = 2U;  // Occupied
-            ev.shape                  = 0U;  // Voxel
+            ev.shape                  = 3U;  // SurfacePatch — renders as normal-oriented diamond in overlay
             ev.is_thin_structure_hint = 0U;
-            ev.is_surface_hint        = 0U;
+            ev.is_surface_hint        = 1U;
         }
     }
 done:;

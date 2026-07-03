@@ -18,6 +18,7 @@ identity_resolver: appearance_only
 projector: flat_ground
 world_model: in_memory
 
+airsim_depth_obstacle_detector.pixel_stride: 4
 airsim_depth_obstacle_detector.voxel_size_m: 1.5
 airsim_depth_obstacle_detector.max_evidence: 256
 airsim_depth_obstacle_detector.max_depth_m: 60.0
