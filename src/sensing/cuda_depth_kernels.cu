@@ -17,6 +17,7 @@
 #include <cmath>
 #include <cstdint>
 #include <queue>
+#include <unordered_set>
 #include <vector>
 
 #include <cuda_runtime.h>
@@ -101,9 +102,9 @@ __global__ void project_depth_kernel(
     ev.confidence             = 0.75F;
     ev.range_m                = depth_m;
     ev.state                  = 2u;  // Occupied
-    ev.shape                  = 0u;  // Voxel
+    ev.shape                  = 3u;  // SurfacePatch — matches CPU project_depth_to_device_evidence
     ev.is_thin_structure_hint = 0u;
-    ev.is_surface_hint        = 0u;
+    ev.is_surface_hint        = 1u;
 }
 
 // ============================================================
@@ -345,6 +346,29 @@ void CudaDepthDispatcher::project(
     if (n > 0u) {
         cudaMemcpy(host_out, impl_->d_evidence,
                    n * sizeof(DeviceObstacleEvidence), cudaMemcpyDeviceToHost);
+    }
+
+    // Deduplicate by voxel index — matches CPU project_depth_to_device_evidence behaviour.
+    // Centers are already snapped: center = (floor(w/vox)+0.5)*vox, so recovering
+    // the index via floor(center/vox) is exact.
+    if (count_out > 1u) {
+        const float inv_vox = 1.0F / p.voxel_size_m;
+        std::unordered_set<std::uint64_t> seen;
+        seen.reserve(count_out);
+        std::uint32_t out = 0u;
+        for (std::uint32_t i = 0u; i < count_out; ++i) {
+            const int ix = static_cast<int>(std::floor(host_out[i].center_x * inv_vox));
+            const int iy = static_cast<int>(std::floor(host_out[i].center_y * inv_vox));
+            const int iz = static_cast<int>(std::floor(host_out[i].center_z * inv_vox));
+            const std::uint64_t key =
+                (static_cast<std::uint64_t>(static_cast<std::uint16_t>(ix)) << 32u)
+              | (static_cast<std::uint64_t>(static_cast<std::uint16_t>(iy)) << 16u)
+              |  static_cast<std::uint64_t>(static_cast<std::uint16_t>(iz));
+            if (seen.insert(key).second) {
+                host_out[out++] = host_out[i];
+            }
+        }
+        count_out = out;
     }
 }
 

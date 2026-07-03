@@ -64,10 +64,15 @@ else
         CUDA_VER=$(nvidia-smi 2>/dev/null | awk '/CUDA Version/{print $9}' || echo "?")
         echo "│  CUDA:       AUTO — detected nvcc at ${NVCC_BIN}"
         echo "│              GPU: ${GPU_NAME}  CUDA ${CUDA_VER}"
-        export PATH="$(dirname "$NVCC_BIN"):$PATH"
+        # Pin the compiler explicitly on the cmake command line — cmake ignores PATH
+        # when CMakeCache already has CMAKE_CUDA_COMPILER set (stale cache from a
+        # prior configure with the wrong nvcc).  Command-line -D always wins.
+        CUDA_CMAKE_FLAG="-DCMAKE_CUDA_COMPILER=${NVCC_BIN}"
+        export CUDACXX="$NVCC_BIN"
     else
         echo "│  CUDA:       OFF  (nvcc not found — CPU-only)"
         echo "│              hint: sudo apt-get install -y cuda-toolkit"
+        CUDA_CMAKE_FLAG="-DDEDALUS_CUDA=OFF"
     fi
 fi
 

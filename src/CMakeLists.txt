@@ -126,7 +126,7 @@ if(DEDALUS_CUDA)
     target_compile_definitions(dedalus_core PUBLIC DEDALUS_CUDA_ENABLED)
     target_link_libraries(dedalus_core PRIVATE CUDA::cudart)
     set_source_files_properties(sensing/cuda_depth_kernels.cu
-        PROPERTIES COMPILE_OPTIONS "-O2")
+        PROPERTIES COMPILE_OPTIONS "-O2;-Xcompiler=-Wno-pedantic")
 endif()
 
 # TensorRT inference engine (requires DEDALUS_CUDA)
