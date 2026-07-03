@@ -663,7 +663,7 @@ for camera in "${CAMERAS[@]}"; do CAMERA_CMD+=(--cameras "$camera"); done
 OVERLAY_CMD=(
     python3 "$REPO_ROOT_ABS/simulation/airsim/scripts/airsim-world-overlay.py"
     --stream-host "$STREAM_HOST" --stream-port "$STREAM_PORT"
-    --follow --rate-hz "$OVERLAY_RATE_HZ" --clear --label --osd
+    --follow --rate-hz "$OVERLAY_RATE_HZ" --clear --label --osd --osd-arrow
     --hide-world
     --hide-planned
     --hide-selected

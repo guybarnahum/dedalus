@@ -254,8 +254,13 @@ void ObjectBehaviorMissionController::tick_go_home(
     constexpr double kMinGoHomeSpeedMps = 0.05;
     constexpr double kArrivalThresholdM = 0.5;  // mirrors kMinArrivedDistanceM
     double safe_speed = config_.go_home_velocity_mps;
-    if (go_home_estimated_frame_interval_s_ > 0.0 && dist_xy_m > kArrivalThresholdM) {
-        const double frame_cap = (dist_xy_m - 0.5 * kArrivalThresholdM) / go_home_estimated_frame_interval_s_;
+    // Cap applies for any positive distance — disabling it below the arrival threshold
+    // caused full-speed (1 m/s) commands when dist < 0.5 m, producing persistent
+    // overshoot oscillation at slow tick rates (e.g. CPU-only ONNX at ~0.6 Hz).
+    // Using dist directly as the numerator guarantees the drone travels at most
+    // dist_xy_m metres in one frame, i.e. it cannot overshoot home.
+    if (go_home_estimated_frame_interval_s_ > 0.0 && dist_xy_m > 0.0) {
+        const double frame_cap = dist_xy_m / go_home_estimated_frame_interval_s_;
         safe_speed = std::min(safe_speed, std::max(kMinGoHomeSpeedMps, frame_cap));
     }
 
@@ -286,7 +291,10 @@ void ObjectBehaviorMissionController::tick_go_home(
         config_.takeoff_height_m,
         transit_behavior.max_vertical_speed_mps);
 
-    if (norm_xy(velocity) <= 0.0 &&
+    // Use distance-based arrival rather than velocity == 0: velocity_toward_xy never
+    // produces exactly zero while kMinGoHomeSpeedMps > 0, so the old check could
+    // keep the drone in GoHome indefinitely even when it had converged on home XY.
+    if (dist_xy_m <= kArrivalThresholdM &&
         height_m >= config_.takeoff_height_m) {
         state_ = MissionLifecycleState::Land;
         state_start_ = input.now;
