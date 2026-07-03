@@ -619,6 +619,15 @@ std::string to_json(const WorldSnapshot& snapshot) {
     out << "  \"timestamp_ns\": " << snapshot.timestamp.timestamp_ns << ",\n";
     out << "  \"active_map_frame_id\": \"" << escape_json(snapshot.active_map_frame_id.value) << "\",\n";
     out << "  \"depth_source_name\": \"" << escape_json(snapshot.depth_source_name) << "\",\n";
+    out << "  \"pipeline\": {\n";
+    out << "    \"ego\": \""               << escape_json(snapshot.ego_provider_name)      << "\",\n";
+    out << "    \"depth\": \""             << escape_json(snapshot.depth_source_name)      << "\",\n";
+    out << "    \"detector\": \""          << escape_json(snapshot.detector_name)          << "\",\n";
+    out << "    \"camera_stabilizer\": \"" << escape_json(snapshot.camera_stabilizer_name) << "\",\n";
+    out << "    \"tracker\": \""           << escape_json(snapshot.tracker_name)           << "\",\n";
+    out << "    \"identity_resolver\": \"" << escape_json(snapshot.identity_resolver_name) << "\",\n";
+    out << "    \"projector\": \""         << escape_json(snapshot.projector_name)         << "\"\n";
+    out << "  },\n";
     out << "  \"appearance_condition\": {\n";
     out << "    \"lighting_mode\": \"" << to_string(snapshot.appearance_condition.lighting_mode) << "\",\n";
     out << "    \"weather_mode\": \"" << to_string(snapshot.appearance_condition.weather_mode) << "\",\n";

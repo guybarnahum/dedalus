@@ -157,6 +157,13 @@ private:
     MissionTraversabilityMapArtifactWriter mission_traversability_map_artifact_writer_;
     LocalFlightMapAccumulator local_flight_map_accumulator_;
     std::string               depth_slot_a_name_;   // provider_name() cached at construction
+    // Pipeline provider names cached from CoreStackProviders at construction.
+    std::string               ego_provider_name_;
+    std::string               detector_name_;
+    std::string               camera_stabilizer_name_;
+    std::string               tracker_name_;
+    std::string               identity_resolver_name_;
+    std::string               projector_name_;
     TrajectorySafetyEvaluator trajectory_safety_evaluator_;
     PerchCandidateEvaluator   perch_candidate_evaluator_;
     std::uint32_t             perch_cadence_tick_{0U};

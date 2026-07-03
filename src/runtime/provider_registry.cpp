@@ -233,6 +233,13 @@ CoreStackProviders ProviderRegistry::create(const CoreStackProviderConfig& confi
                                      config.annotation_output_fps); }},
     });
 
+    providers.ego_provider_name        = config.ego_provider;
+    providers.detector_name            = config.detector;
+    providers.camera_stabilizer_name   = config.camera_stabilizer;
+    providers.tracker_name             = config.tracker;
+    providers.identity_resolver_name   = config.identity_resolver;
+    providers.projector_name           = config.projector;
+
     return providers;
 }
 

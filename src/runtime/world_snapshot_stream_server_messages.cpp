@@ -88,9 +88,22 @@ std::string stream_line_for(std::uint64_t seq, const MissionObstacleMapDeltaFram
 void RuntimeEventStreamServer::on_snapshot(const std::shared_ptr<const WorldSnapshot>& snapshot) {
     // Assign a sequence number on the perception thread (preserves ordering),
     // but defer the expensive to_json() / to_compact_json() to the writer thread.
-    const std::uint64_t seq = [this] {
+    const std::uint64_t seq = [this, &snapshot] {
         std::lock_guard<std::mutex> lock{mutex_};
         ++snapshot_messages_;
+        // Lazily cache pipeline provider names from the first snapshot that has them.
+        // Written once; provider names are static for the lifetime of the process.
+        if (cached_pipeline_providers_json_.empty() && !snapshot->ego_provider_name.empty()) {
+            cached_pipeline_providers_json_ =
+                std::string("{\"ego\":\"")               + snapshot->ego_provider_name      + "\""
+                + ",\"depth\":\""                        + snapshot->depth_source_name       + "\""
+                + ",\"detector\":\""                     + snapshot->detector_name           + "\""
+                + ",\"camera_stabilizer\":\""            + snapshot->camera_stabilizer_name  + "\""
+                + ",\"tracker\":\""                      + snapshot->tracker_name            + "\""
+                + ",\"identity_resolver\":\""            + snapshot->identity_resolver_name  + "\""
+                + ",\"projector\":\""                    + snapshot->projector_name          + "\""
+                + "}";
+        }
         return ++published_seq_;
     }();
     enqueue_snapshot(seq, snapshot);

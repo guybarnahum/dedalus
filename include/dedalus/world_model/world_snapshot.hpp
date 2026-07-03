@@ -200,7 +200,15 @@ struct WorldSnapshot {
     EgoState ego;
     FlightControlState flight_control;
     MapFrameId active_map_frame_id{"map_unknown"};
-    std::string depth_source_name;   // provider_name() of active depth slot A; empty = inactive
+    std::string depth_source_name;        // provider_name() of active depth slot A; empty = inactive
+    // Config-layer names for each active (slot A) pipeline provider.
+    // Empty = not set (e.g. pipeline built without full ProviderRegistry).
+    std::string ego_provider_name;
+    std::string detector_name;
+    std::string camera_stabilizer_name;
+    std::string tracker_name;
+    std::string identity_resolver_name;
+    std::string projector_name;
     AppearanceCondition appearance_condition;
 
     std::vector<AgentState> agents;

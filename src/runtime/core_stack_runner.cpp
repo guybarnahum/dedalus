@@ -39,7 +39,13 @@ CoreStackRunner::CoreStackRunner(CoreStackProviders providers, CoreStackRunnerCo
           MissionTraversabilityMapArtifactWriter::from_environment()),
       perch_candidate_evaluator_(config.perch_candidate_evaluator),
       planning_map_persistence_path_(std::move(config.planning_map_persistence_path)) {
-    depth_slot_a_name_ = depth_slot_a_ ? depth_slot_a_->provider_name() : "";
+    depth_slot_a_name_         = depth_slot_a_ ? depth_slot_a_->provider_name() : "";
+    ego_provider_name_         = providers_.ego_provider_name;
+    detector_name_             = providers_.detector_name;
+    camera_stabilizer_name_    = providers_.camera_stabilizer_name;
+    tracker_name_              = providers_.tracker_name;
+    identity_resolver_name_    = providers_.identity_resolver_name;
+    projector_name_            = providers_.projector_name;
 
     if (!snapshot_subscriber_handles_.empty()) {
         if (!snapshot_publisher_) {

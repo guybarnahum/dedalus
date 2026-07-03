@@ -135,6 +135,17 @@ struct CoreStackProviders {
     std::unique_ptr<InMemoryWorldModel> world_model;
     std::unique_ptr<FrameAnnotationSink> frame_annotator;
     std::vector<CameraSensingConfig> obstacle_sensing_cameras;
+
+    // Config-layer names for each active (slot A) provider.
+    // Populated by ProviderRegistry::create() from CoreStackProviderConfig.
+    // Stored here so CoreStackRunner can surface them in WorldSnapshot without
+    // needing virtual provider_name() on every base class.
+    std::string ego_provider_name;
+    std::string detector_name;
+    std::string camera_stabilizer_name;
+    std::string tracker_name;
+    std::string identity_resolver_name;
+    std::string projector_name;
 };
 
 // CoreStackRunnerConfig is defined in core_stack_runner.hpp (which includes this

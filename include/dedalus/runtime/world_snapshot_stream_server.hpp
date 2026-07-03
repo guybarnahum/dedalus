@@ -194,6 +194,10 @@ private:
     // L2 is always a full snapshot; L3 caches only full (non-delta) snapshots.
     std::string last_planning_sse_{};
     std::string last_esdf_sse_{};
+    // Cached pipeline provider names JSON fragment (set from first snapshot).
+    // Included in /healthz response under the "pipeline" key.
+    // Protected by mutex_; written once (on first snapshot with non-empty names).
+    std::string cached_pipeline_providers_json_{};
 };
 
 using WorldSnapshotStreamServerConfig = RuntimeEventStreamServerConfig;

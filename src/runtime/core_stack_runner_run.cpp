@@ -449,7 +449,13 @@ bool CoreStackRunner::run_once() {
 
     start = SteadyClock::now();
     auto snapshot_for_annotation = providers_.world_model->snapshot();
-    snapshot_for_annotation.depth_source_name = depth_slot_a_name_;
+    snapshot_for_annotation.depth_source_name      = depth_slot_a_name_;
+    snapshot_for_annotation.ego_provider_name      = ego_provider_name_;
+    snapshot_for_annotation.detector_name          = detector_name_;
+    snapshot_for_annotation.camera_stabilizer_name = camera_stabilizer_name_;
+    snapshot_for_annotation.tracker_name           = tracker_name_;
+    snapshot_for_annotation.identity_resolver_name = identity_resolver_name_;
+    snapshot_for_annotation.projector_name         = projector_name_;
     if (timing_writer_) {
         timing_writer_->record_stage("world_model.snapshot", duration_us(start));
     }

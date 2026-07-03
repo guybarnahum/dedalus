@@ -157,12 +157,17 @@ std::string http_response(std::string status,
            body;
 }
 
-std::string healthz_body(std::uint16_t tcp_port, std::uint16_t http_port) {
-    return std::string("{\"ok\":true,\"runtime_event_tcp_port\":") +
-           std::to_string(tcp_port) +
-           ",\"runtime_event_http_port\":" +
-           std::to_string(http_port) +
-           "}\n";
+std::string healthz_body(std::uint16_t tcp_port, std::uint16_t http_port,
+                          const std::string& pipeline_json) {
+    std::string body = std::string("{\"ok\":true,\"runtime_event_tcp_port\":") +
+                       std::to_string(tcp_port) +
+                       ",\"runtime_event_http_port\":" +
+                       std::to_string(http_port);
+    if (!pipeline_json.empty()) {
+        body += ",\"pipeline\":" + pipeline_json;
+    }
+    body += "}\n";
+    return body;
 }
 
 }  // namespace
@@ -401,7 +406,11 @@ void RuntimeEventStreamServer::http_accept_loop() {
         }
 
         if (path == "/healthz") {
-            const auto body = healthz_body(config_.port, config_.http_port);
+            const std::string pipeline_json = [this] {
+                std::lock_guard<std::mutex> lock{mutex_};
+                return cached_pipeline_providers_json_;
+            }();
+            const auto body = healthz_body(config_.port, config_.http_port, pipeline_json);
             const std::string response =
                 "HTTP/1.1 200 OK\r\n"
                 "Content-Type: application/json; charset=utf-8\r\n"
