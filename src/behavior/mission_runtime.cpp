@@ -211,6 +211,35 @@ void MissionRuntime::loop() {
                       << " tick_us=" << tick_us
                       << " budget_us=" << budget_us << "\n";
         }
+
+        // Track consecutive overruns in flight states.  If the threshold is
+        // exceeded, request a graceful finish so the drone lands before PX4
+        // exits Offboard mode from link loss.
+        const bool inflight =
+            (last_state_ == MissionLifecycleState::ExecuteMission ||
+             last_state_ == MissionLifecycleState::GoHome);
+        if (tick_us >= budget_us && inflight) {
+            ++consecutive_inflight_overruns_;
+            if (config_.max_consecutive_inflight_overruns > 0 &&
+                consecutive_inflight_overruns_ >= config_.max_consecutive_inflight_overruns &&
+                !finish_requested_.load()) {
+                write_event(
+                    "\"event\":\"inflight_overrun_abort\""
+                    ",\"tick\":" + std::to_string(tick_count_) +
+                    ",\"consecutive_overruns\":" + std::to_string(consecutive_inflight_overruns_) +
+                    ",\"tick_us\":" + std::to_string(tick_us) +
+                    ",\"budget_us\":" + std::to_string(budget_us) +
+                    ",\"state\":" + q(to_string(last_state_)));
+                std::cerr << "dedalus_mission: inflight_overrun_abort"
+                          << " consecutive=" << consecutive_inflight_overruns_
+                          << " tick=" << tick_count_
+                          << " state=" << to_string(last_state_) << "\n";
+                finish_requested_.store(true);
+            }
+        } else {
+            consecutive_inflight_overruns_ = 0;
+        }
+
         std::this_thread::sleep_until(deadline);
     }
 }

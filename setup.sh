@@ -170,12 +170,30 @@ CUDA_MAX_MINOR=$(echo "$CUDA_MAX_VER" | cut -d. -f2)
 echo "   nvidia-smi max CUDA: ${CUDA_MAX_VER}  (major=${CUDA_MAX_MAJOR} minor=${CUDA_MAX_MINOR})"
 
 if [[ "${CUDA_MAX_MAJOR}" -ge 12 ]]; then
-    # ── CUDA 12 path ──────────────────────────────────────────────────────
-    # Install libcublasLt.so.12 + libcudnn9 from NVIDIA's apt repo if absent.
-    if ldconfig -p 2>/dev/null | grep -q "libcublasLt.so.12"; then
-        echo "✅ libcublasLt.so.12 already present — skipping CUDA 12 cuBLAS install."
+    # ── CUDA 12 ORT CUDA EP runtime libraries ─────────────────────────────
+    # libonnxruntime_providers_cuda.so (ORT ≥ 1.21) needs all five of these
+    # shared libraries at runtime.  Their SONAMEs do not always match the CUDA
+    # major version (e.g. libcufft.so.11 is CUDA 12's cuFFT; curand uses .so.10).
+    #
+    #   SONAME              → apt package stem
+    #   libcublasLt.so.12   → libcublas-12-x
+    #   libcufft.so.11      → libcufft-12-x
+    #   libcurand.so.10     → libcurand-12-x
+    #   libnvrtc.so.12      → libnvrtc-12-x
+    #   libnvJitLink.so.12  → libnvjitlink-12-x
+    _ORT_SONAMES=("libcublasLt.so.12" "libcufft.so.11" "libcurand.so.10" "libnvrtc.so.12" "libnvJitLink.so.12")
+    _ORT_STEMS=("libcublas-12" "libcufft-12" "libcurand-12" "libnvrtc-12" "libnvjitlink-12")
+
+    _MISSING_ORT=()
+    for _soname in "${_ORT_SONAMES[@]}"; do
+        ldconfig -p 2>/dev/null | grep -q "${_soname}" || _MISSING_ORT+=("${_soname}")
+    done
+
+    if [[ "${#_MISSING_ORT[@]}" -eq 0 ]]; then
+        echo "✅ All CUDA 12 ORT EP runtime libs present."
     else
-        # Add NVIDIA CUDA apt keyring (idempotent: skip if cuda-keyring is installed).
+        echo "   Missing CUDA 12 ORT libs: ${_MISSING_ORT[*]}"
+        # Add NVIDIA CUDA apt keyring (idempotent).
         if ! dpkg -l cuda-keyring &>/dev/null 2>&1; then
             run_and_log "Add NVIDIA CUDA apt keyring" bash -c "
                 wget -q -O /tmp/cuda-keyring.deb \
@@ -187,56 +205,37 @@ if [[ "${CUDA_MAX_MAJOR}" -ge 12 ]]; then
         else
             echo "✅ NVIDIA CUDA apt keyring already installed."
         fi
-
-        # Discover the latest libcublas-12-x package available in the repo.
-        CUBLAS12_PKG=$(apt-cache search '^libcublas-12-[0-9]' 2>/dev/null \
+        # Collect the latest versioned package for each missing SONAME.
+        _PKGS_TO_INSTALL=()
+        for _i in "${!_ORT_SONAMES[@]}"; do
+            if ! ldconfig -p 2>/dev/null | grep -q "${_ORT_SONAMES[${_i}]}"; then
+                _pkg=$(apt-cache search "^${_ORT_STEMS[${_i}]}-[0-9]" 2>/dev/null \
                        | grep -v '\-dev' | awk '{print $1}' | sort -V | tail -1)
-        if [[ -z "$CUBLAS12_PKG" ]]; then
-            echo "❌ Fatal: no libcublas-12-* package found after adding NVIDIA repo." >&2
-            echo "   Ensure the instance can reach developer.download.nvidia.com." >&2
-            exit 1
-        fi
-        echo "   Installing cuBLAS package: ${CUBLAS12_PKG}"
+                if [[ -z "${_pkg}" ]]; then
+                    echo "❌ Fatal: no apt package found for ${_ORT_STEMS[${_i}]}-*." >&2
+                    echo "   Ensure the instance can reach developer.download.nvidia.com." >&2
+                    exit 1
+                fi
+                _PKGS_TO_INSTALL+=("${_pkg}")
+            fi
+        done
+        run_and_log "Install CUDA 12 ORT EP libs (${_PKGS_TO_INSTALL[*]})" \
+            sudo DEBIAN_FRONTEND=noninteractive apt-get install -y "${_PKGS_TO_INSTALL[@]}"
+        sudo ldconfig
+    fi
+    unset _ORT_SONAMES _ORT_STEMS _MISSING_ORT _PKGS_TO_INSTALL _soname _i _pkg
 
-        run_and_log "Install CUDA 12 cuBLAS (${CUBLAS12_PKG})" \
-            sudo DEBIAN_FRONTEND=noninteractive apt-get install -y "${CUBLAS12_PKG}"
-
-        # cuDNN 9 is required by onnxruntime-gpu ≥ 1.18; best-effort install.
+    # cuDNN 9 is required by onnxruntime-gpu ≥ 1.18; best-effort install.
+    if ldconfig -p 2>/dev/null | grep -q "libcudnn.so.9"; then
+        echo "✅ libcudnn.so.9 already present — skipping cuDNN 9 install."
+    else
         if apt-cache show libcudnn9-cuda-12 &>/dev/null 2>&1; then
             run_and_log "Install cuDNN 9 (libcudnn9-cuda-12)" \
                 sudo DEBIAN_FRONTEND=noninteractive apt-get install -y libcudnn9-cuda-12
+            sudo ldconfig
         else
             echo "⚠️  libcudnn9-cuda-12 not found in repo — ORT CUDA EP may degrade to no-cuDNN mode."
         fi
-
-        sudo ldconfig
-    fi
-
-    # ── CUDA 12 cuFFT — required by libonnxruntime_providers_cuda.so ────────
-    # libcufft.so.11 is CUDA 12's cufft SONAME (CUDA 11 used .so.10).
-    # It is a separate apt package from cuBLAS; the cuBLAS check above skips the
-    # whole block when cuBLAS is already installed, so cufft gets its own check.
-    if ldconfig -p 2>/dev/null | grep -q "libcufft.so.11"; then
-        echo "✅ libcufft.so.11 already present — skipping CUDA 12 cuFFT install."
-    else
-        if ! dpkg -l cuda-keyring &>/dev/null 2>&1; then
-            run_and_log "Add NVIDIA CUDA apt keyring (for cuFFT)" bash -c "
-                wget -q -O /tmp/cuda-keyring.deb \
-                    https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2204/x86_64/cuda-keyring_1.1-1_all.deb
-                sudo dpkg -i /tmp/cuda-keyring.deb
-                rm -f /tmp/cuda-keyring.deb
-                sudo apt-get update -q
-            "
-        fi
-        CUFFT12_PKG=$(apt-cache search '^libcufft-12-[0-9]' 2>/dev/null \
-                      | grep -v '\-dev' | awk '{print $1}' | sort -V | tail -1)
-        if [[ -z "$CUFFT12_PKG" ]]; then
-            echo "❌ Fatal: libcufft-12-* not found in apt. ORT CUDA EP will fail to load." >&2
-            exit 1
-        fi
-        run_and_log "Install CUDA 12 cuFFT (${CUFFT12_PKG})" \
-            sudo DEBIAN_FRONTEND=noninteractive apt-get install -y "${CUFFT12_PKG}"
-        sudo ldconfig
     fi
 
     # ── CUDA 12 compiler (nvcc) — required to build cuda_depth_kernels.cu ───
