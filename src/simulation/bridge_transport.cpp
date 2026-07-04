@@ -2,12 +2,17 @@
 
 #include <array>
 #include <cctype>
+#include <cerrno>
 #include <cstdio>
 #include <cstdint>
 #include <memory>
 #include <stdexcept>
 #include <string>
 #include <vector>
+
+#include <sys/select.h>
+#include <sys/time.h>
+#include <unistd.h>
 
 namespace dedalus {
 namespace {
@@ -62,6 +67,11 @@ void validate_bridge_base_command(const std::string& command) {
 
 struct PipeBridgeTransport::Impl {
     std::unique_ptr<FILE, int(*)(FILE*)> stream_pipe{nullptr, pclose};
+    // Set to true when the pipe is first opened (by open_stream() or on the
+    // first read_stream_line() call) and cleared after the first successful
+    // read.  While true, read_stream_line() applies a 30 s select() timeout
+    // so a slow subprocess startup produces a clear error instead of hanging.
+    bool first_read_pending{false};
 };
 
 PipeBridgeTransport::PipeBridgeTransport() = default;
@@ -96,6 +106,24 @@ std::string PipeBridgeTransport::request_once(const std::string& command) {
     return output;
 }
 
+// Start the subprocess pipe without reading any data.  Use this before
+// the first read_stream_line() call to give the subprocess time to start
+// (pre-warm).  Idempotent: calling again when pipe is already open is a no-op.
+void PipeBridgeTransport::open_stream(const std::string& command) {
+    if (!impl_) {
+        impl_ = std::make_unique<Impl>();
+    }
+    if (impl_->stream_pipe) {
+        return;  // already open
+    }
+    const auto child_command = ignore_sigint_command(command);
+    impl_->stream_pipe.reset(popen(child_command.c_str(), "r"));
+    if (!impl_->stream_pipe) {
+        throw std::runtime_error("failed to start persistent bridge command (pre-warm)");
+    }
+    impl_->first_read_pending = true;
+}
+
 std::optional<std::string> PipeBridgeTransport::read_stream_line(const std::string& command) {
     if (!impl_) {
         impl_ = std::make_unique<Impl>();
@@ -106,6 +134,32 @@ std::optional<std::string> PipeBridgeTransport::read_stream_line(const std::stri
         impl_->stream_pipe.reset(popen(child_command.c_str(), "r"));
         if (!impl_->stream_pipe) {
             throw std::runtime_error("failed to start persistent bridge command");
+        }
+        impl_->first_read_pending = true;
+    }
+
+    // On the first read after a pipe open, apply a 30 s select() timeout.
+    // This converts an indefinite hang (e.g. AirSim RPC contention) into a
+    // clear error so the caller can diagnose and recover.  Subsequent reads
+    // are streaming and must not be throttled by a timeout.
+    if (impl_->first_read_pending) {
+        impl_->first_read_pending = false;
+        const int fd = fileno(impl_->stream_pipe.get());
+        fd_set rfds;
+        FD_ZERO(&rfds);
+        FD_SET(fd, &rfds);
+        struct timeval tv{};
+        tv.tv_sec  = 30;
+        tv.tv_usec = 0;
+        const int ready = select(fd + 1, &rfds, nullptr, nullptr, &tv);
+        if (ready == 0) {
+            throw std::runtime_error(
+                "bridge subprocess startup timed out (30 s) — AirSim may be busy. "
+                "Command: " + command);
+        }
+        if (ready < 0 && errno != EINTR) {
+            throw std::runtime_error(
+                "select() failed waiting for bridge subprocess: " + command);
         }
     }
 

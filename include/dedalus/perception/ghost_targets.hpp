@@ -75,6 +75,12 @@ public:
     GhostTargetProvider(GhostTargetProvider&&) noexcept;
     GhostTargetProvider& operator=(GhostTargetProvider&&) noexcept;
 
+    // Start the AirSim object-pose stream subprocess without blocking.
+    // Call this before the first frame loop iteration to give the subprocess
+    // time to connect to AirSim so the first frame_at() call does not hang.
+    // No-op for trajectory-scenario backends (no subprocess to start).
+    void pre_warm(std::optional<Vec3> ego_position_local = std::nullopt) const;
+
     GhostDetectionsFrame frame_at(
         TimePoint timestamp,
         MapFrameId map_frame_id,

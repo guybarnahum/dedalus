@@ -2,6 +2,7 @@
 
 #include <chrono>
 #include <filesystem>
+#include <iostream>
 #include <thread>
 #include <utility>
 #include <vector>
@@ -105,6 +106,15 @@ CoreStackRunner::CoreStackRunner(CoreStackProviders providers, CoreStackRunnerCo
                 }
             }
         });
+    }
+
+    // Start the ghost target subprocess early so it has time to connect to
+    // AirSim before the first run_once() call.  ONNX warmup (~500 ms) plus
+    // frame bridge startup gives the subprocess 1-3 s of head start, which is
+    // enough to complete simGetObjectPose even under moderate RPC contention.
+    if (providers_.ghost_targets) {
+        providers_.ghost_targets->pre_warm(std::nullopt);
+        std::cerr << "CoreStackRunner: ghost target subprocess pre-warm started\n";
     }
 
 }

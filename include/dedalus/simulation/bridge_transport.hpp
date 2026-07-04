@@ -26,6 +26,11 @@ public:
 class StreamTransport {
 public:
     virtual ~StreamTransport() = default;
+    // Open the subprocess pipe without reading any data.  Call this to pre-warm
+    // the subprocess before the first read_stream_line() / read_stream_bytes()
+    // call, giving it time to start up without blocking the caller.
+    // Default is a no-op; override in concrete transports that support it.
+    virtual void open_stream(const std::string& command) { (void)command; }
     virtual std::optional<std::string> read_stream_line(const std::string& command) = 0;
     virtual std::optional<std::string> read_stream_bytes(const std::string& command, std::size_t byte_count) = 0;
     virtual std::optional<std::vector<std::uint8_t>> read_stream_byte_vector(
@@ -49,6 +54,7 @@ public:
     PipeBridgeTransport& operator=(const PipeBridgeTransport&) = delete;
 
     std::string request_once(const std::string& command) override;
+    void open_stream(const std::string& command) override;
     std::optional<std::string> read_stream_line(const std::string& command) override;
     std::optional<std::string> read_stream_bytes(const std::string& command, std::size_t byte_count) override;
     std::optional<std::vector<std::uint8_t>> read_stream_byte_vector(

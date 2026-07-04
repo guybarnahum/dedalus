@@ -7,6 +7,7 @@
 #include <cctype>
 #include <fstream>
 #include <iomanip>
+#include <iostream>
 #include <map>
 #include <memory>
 #include <optional>
@@ -364,12 +365,15 @@ std::vector<AirSimGhostObjectBinding> select_nearby_candidates(
 class GhostTargetBackend {
 public:
     virtual ~GhostTargetBackend() = default;
+    virtual void pre_warm(std::optional<Vec3> /*ego_position_local*/) const {}
     virtual std::vector<GhostDetectionState> detections_at(TimePoint timestamp, double scenario_elapsed_s, std::optional<Vec3> ego_position_local) const = 0;
 };
 
 class TrajectoryScenarioBackend final : public GhostTargetBackend {
 public:
     explicit TrajectoryScenarioBackend(GhostScenario scenario) : scenario_(std::move(scenario)) {}
+
+    void pre_warm(std::optional<Vec3> /*ego_position_local*/) const override {}  // no subprocess
 
     std::vector<GhostDetectionState> detections_at(TimePoint /*timestamp*/, double scenario_elapsed_s, std::optional<Vec3> /*ego_position_local*/) const override {
         return scenario_.evaluate(scenario_elapsed_s);
@@ -387,6 +391,18 @@ public:
         }
         inventory_candidates_ = expand_patterns_from_scene_inventory(config_);
         if (!inventory_candidates_.empty()) config_.patterns.clear();
+    }
+
+    // Start the subprocess pipe early (before the first frame loop call) so
+    // it has time to connect to AirSim.  Ego position is optional; when absent
+    // the full object list is streamed (fine when no scene inventory is loaded).
+    void pre_warm(std::optional<Vec3> ego_position_local) const override {
+        if (stream_started_) return;
+        selected_stream_objects_ = select_nearby_candidates(config_, inventory_candidates_, ego_position_local);
+        stream_command_ = build_object_pose_stream_command(config_, selected_stream_objects_);
+        stream_started_ = true;
+        transport_->open_stream(stream_command_);
+        std::cerr << "ghost_targets: pre-warm started subprocess: " << stream_command_ << "\n";
     }
 
     std::vector<GhostDetectionState> detections_at(TimePoint /*timestamp*/, double /*scenario_elapsed_s*/, std::optional<Vec3> ego_position_local) const override {
@@ -440,6 +456,10 @@ GhostTargetProvider::GhostTargetProvider(AirSimGhostObjectSourceConfig config)
 GhostTargetProvider::~GhostTargetProvider() = default;
 GhostTargetProvider::GhostTargetProvider(GhostTargetProvider&&) noexcept = default;
 GhostTargetProvider& GhostTargetProvider::operator=(GhostTargetProvider&&) noexcept = default;
+
+void GhostTargetProvider::pre_warm(std::optional<Vec3> ego_position_local) const {
+    impl_->backend->pre_warm(ego_position_local);
+}
 
 GhostDetectionsFrame GhostTargetProvider::frame_at(TimePoint timestamp, MapFrameId map_frame_id, TimePoint scenario_start, std::optional<Vec3> ego_position_local) const {
     GhostDetectionsFrame frame;

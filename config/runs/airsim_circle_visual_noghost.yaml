@@ -1,0 +1,19 @@
+# ── Run: AirSim  ·  circle person  ·  Visual ONNX depth  ·  no ghost targets ─
+# Same as airsim_circle_visual.yaml but with ghost targets disabled.
+# Use this to isolate the visual ONNX depth pipeline from AirSim RPC contention
+# caused by the ghost target subprocess startup blocking on simGetObjectPose.
+#
+# Usage:
+#   simulation/airsim/run_mission.sh \
+#     --config config/runs/airsim_circle_visual_noghost.yaml \
+#     --output-dir out/circle_visual_noghost \
+#     --pipeline-timing
+
+include: config/world-env/airsim.yaml
+include: config/drone/px4_front_center.yaml
+include: config/pipeline/visual.yaml
+include: config/mission/circle_person.yaml
+include: config/output/standard_ppm.yaml
+
+annotation_output_path: out/circle_visual_noghost_annotation
+ghost_targets_enabled: false
