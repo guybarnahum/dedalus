@@ -37,14 +37,45 @@ volatile std::sig_atomic_t g_interrupt_count = 0;
 
 void handle_interrupt_signal(int) {
     const auto current = g_interrupt_count;
-    if (current < 2) {
-        g_interrupt_count = static_cast<std::sig_atomic_t>(current + 1);
+    if (current == 0) {
+        g_interrupt_count = 1;
+    } else if (current == 1) {
+        g_interrupt_count = 2;
+        // Main thread may be blocked inside run_once() and unable to reach the
+        // counter check. Force-terminate immediately so double Ctrl-C always works.
+        static const char msg[] =
+            "\ndedalus_mission_loop: EXIT reason=double_interrupt; force exit\n";
+        write(STDERR_FILENO, msg, sizeof(msg) - 1);
+        std::_Exit(130);
     }
 }
 
+void handle_fatal_signal(int sig) {
+    // async-signal-safe: write() + sizeof only, no printf/strlen.
+    static const char msg_segv[] =
+        "\ndedalus_mission_loop: EXIT reason=SIGSEGV (segmentation fault)\n";
+    static const char msg_abrt[] =
+        "\ndedalus_mission_loop: EXIT reason=SIGABRT (abort/assert/terminate)\n";
+    static const char msg_fpe[] =
+        "\ndedalus_mission_loop: EXIT reason=SIGFPE (arithmetic error)\n";
+    static const char msg_unkn[] =
+        "\ndedalus_mission_loop: EXIT reason=fatal_signal\n";
+    const char* msg = msg_unkn;
+    std::size_t len = sizeof(msg_unkn) - 1;
+    if (sig == SIGSEGV) { msg = msg_segv; len = sizeof(msg_segv) - 1; }
+    else if (sig == SIGABRT) { msg = msg_abrt; len = sizeof(msg_abrt) - 1; }
+    else if (sig == SIGFPE)  { msg = msg_fpe;  len = sizeof(msg_fpe)  - 1; }
+    write(STDERR_FILENO, msg, len);
+    std::signal(sig, SIG_DFL);
+    raise(sig);
+}
+
 void install_interrupt_handlers() {
-    std::signal(SIGINT, handle_interrupt_signal);
+    std::signal(SIGINT,  handle_interrupt_signal);
     std::signal(SIGTERM, handle_interrupt_signal);
+    std::signal(SIGSEGV, handle_fatal_signal);
+    std::signal(SIGABRT, handle_fatal_signal);
+    std::signal(SIGFPE,  handle_fatal_signal);
 }
 
 int interrupt_count() {
@@ -158,11 +189,11 @@ int run_shell_command(const std::string& command, int verbosity) {
     if (command.empty() || command == "disabled") {
         return 0;
     }
-    if (verbosity >= 1) {
-        std::cerr << "dedalus_mission_loop: prepare_session command=" << command << "\n";
-    }
+    // Always print the command — essential for diagnosing silent exits.
+    std::cerr << "dedalus_mission_loop: prepare_session command=" << command << "\n";
+    // Suppress stdout only. Stderr always flows so errors/tracebacks are visible.
     if (verbosity <= 0) {
-        const std::string quiet_command = "(" + command + ") >/dev/null 2>&1";
+        const std::string quiet_command = "(" + command + ") >/dev/null";
         return std::system(quiet_command.c_str());
     }
     return std::system(command.c_str());
@@ -461,6 +492,8 @@ int main(int argc, char** argv) {
         const auto args = parse_args(argc, argv);
         std::filesystem::create_directories(args.output_dir);
 
+        const auto start_time = std::chrono::steady_clock::now();
+
         auto app_config = dedalus::load_core_stack_app_config(args.config_paths);
         auto& config = app_config.providers;
         apply_cli_overrides(config, args);
@@ -489,8 +522,10 @@ int main(int argc, char** argv) {
         }
 
         const auto prepare_command = config.mission_options.prepare_session_command;
-        if (run_shell_command(prepare_command, args.verbosity) != 0) {
-            throw std::runtime_error("flight prepare session command failed");
+        const int prepare_rc = run_shell_command(prepare_command, args.verbosity);
+        if (prepare_rc != 0) {
+            throw std::runtime_error(
+                "flight prepare session command failed (exit_code=" + std::to_string(prepare_rc) + ")");
         }
 
         auto latest_snapshot = std::make_shared<dedalus::LatestWorldSnapshot>();
@@ -590,7 +625,10 @@ int main(int argc, char** argv) {
         while (true) {
             const int signals = interrupt_count();
             if (signals >= 2) {
-                std::cerr << "\ndedalus_mission_loop: second interrupt received; stopping after local cleanup\n";
+                // Normally unreachable — handle_interrupt_signal() calls _Exit(130) on
+                // the second interrupt. This path fires only if the signal handler is
+                // somehow skipped (e.g. non-realtime signal coalescing).
+                std::cerr << "\ndedalus_mission_loop: EXIT reason=double_interrupt\n";
                 break;
             }
             if (signals >= 1 && !finish_requested) {
@@ -599,12 +637,12 @@ int main(int argc, char** argv) {
                     mission_runtime->request_finish();
                 }
                 std::cerr << "\ndedalus_mission_loop: interrupt received; requesting graceful mission finish"
-                          << " (press Ctrl-C again to force local stop)\n";
+                          << " (Ctrl-C again to force exit immediately)\n";
             }
 
             if (!finish_requested && mission_runtime && mission_runtime->terminal_settled()) {
-                std::cerr << "dedalus_mission_loop: mission terminal state settled="
-                          << dedalus::to_string(mission_runtime->last_state()) << "; stopping frame loop\n";
+                std::cerr << "dedalus_mission_loop: EXIT reason=mission_complete"
+                          << " state=" << dedalus::to_string(mission_runtime->last_state()) << "\n";
                 break;
             }
 
@@ -623,8 +661,8 @@ int main(int argc, char** argv) {
                     break;
                 }
                 if (shutdown_wait_ticks >= args.shutdown_max_frames) {
-                    std::cerr << "dedalus_mission_loop: graceful shutdown frame budget exhausted; stopping at mission state="
-                              << dedalus::to_string(mission_runtime->last_state()) << "\n";
+                    std::cerr << "dedalus_mission_loop: EXIT reason=shutdown_budget_exhausted"
+                              << " state=" << dedalus::to_string(mission_runtime->last_state()) << "\n";
                     break;
                 }
                 ++shutdown_wait_ticks;
@@ -638,7 +676,7 @@ int main(int argc, char** argv) {
             if (!runner.run_once()) {
                 frame_source_ended = true;
                 const int frames = artifact_snapshot_writer->frame_count();
-                std::cerr << "dedalus_mission_loop: frame source ended after " << frames << " frame(s)";
+                std::cerr << "dedalus_mission_loop: EXIT reason=frame_source_ended after " << frames << " frame(s)";
                 if (mission_runtime && !mission_runtime->terminal_settled()) {
                     std::cerr << "; requesting graceful mission finish before runtime_stop\n";
                     if (!finish_requested) {
@@ -693,12 +731,18 @@ int main(int argc, char** argv) {
             runtime_event_stream_server->stop();
         }
 
+        const double elapsed_s = std::chrono::duration<double>(
+            std::chrono::steady_clock::now() - start_time).count();
+
         if (frame_count == 0) {
-            std::cerr << "dedalus_mission_loop: no frames processed\n";
+            std::cerr << "dedalus_mission_loop: EXIT reason=no_frames_processed"
+                      << " elapsed_s=" << std::fixed << std::setprecision(1) << elapsed_s
+                      << " (run with -v for more detail)\n";
             return 1;
         }
 
         std::cout << "Mission summary: snapshots=" << frame_count
+                  << " elapsed_s=" << std::fixed << std::setprecision(1) << elapsed_s
                   << " final_state=" << (mission_runtime ? dedalus::to_string(mission_runtime->last_state()) : "disabled")
                   << " graceful_shutdown_ticks=" << shutdown_wait_ticks
                   << " frame_source_ended=" << (frame_source_ended ? "true" : "false") << "\n";
