@@ -179,10 +179,10 @@ if [[ "${CUDA_MAX_MAJOR}" -ge 12 ]]; then
     #   libcublasLt.so.12   → libcublas-12-x
     #   libcufft.so.11      → libcufft-12-x
     #   libcurand.so.10     → libcurand-12-x
-    #   libnvrtc.so.12      → libnvrtc-12-x
+    #   libnvrtc.so.12      → cuda-nvrtc-12-x  (note: cuda- prefix, not lib-)
     #   libnvJitLink.so.12  → libnvjitlink-12-x
     _ORT_SONAMES=("libcublasLt.so.12" "libcufft.so.11" "libcurand.so.10" "libnvrtc.so.12" "libnvJitLink.so.12")
-    _ORT_STEMS=("libcublas-12" "libcufft-12" "libcurand-12" "libnvrtc-12" "libnvjitlink-12")
+    _ORT_STEMS=("libcublas-12" "libcufft-12" "libcurand-12" "cuda-nvrtc-12" "libnvjitlink-12")
 
     _MISSING_ORT=()
     for _soname in "${_ORT_SONAMES[@]}"; do
