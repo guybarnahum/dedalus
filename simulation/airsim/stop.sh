@@ -84,6 +84,16 @@ kill_process_group "Colosseum" "Colosseum"
 kill_process_group "PX4 SITL" "px4"
 kill_process_group "iox-roudi" "iox-roudi"
 
+# Release TCP 4560 (AirSim ↔ PX4 MAVLink bridge port).
+# AirSim bind()s this port on startup; if a previous AirSim process didn't
+# exit cleanly the socket lingers, causing EADDRINUSE on the next run.sh.
+if command -v fuser &>/dev/null; then
+  if sudo fuser 4560/tcp >/dev/null 2>&1; then
+    echo "→ Releasing TCP 4560 (stale AirSim/PX4 socket)..."
+    sudo fuser -k 4560/tcp 2>/dev/null || true
+  fi
+fi
+
 echo ""
 echo "✅ Simulation stopped."
 echo ""
