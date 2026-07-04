@@ -117,11 +117,11 @@ if [[ -n "$PX4_ONLY" ]]; then
   pkill -9 -f "px4" || true
   tmux kill-session -t dedalus-sim 2>/dev/null || true
 
-  if [ -d "PX4-Autopilot" ]; then
-    run_and_log "Clear PX4 build directory" rm -rf PX4-Autopilot/build
-    run_and_log "Clear PX4 install marker" rm -f PX4-Autopilot/.installed
+  if [ -d "third_party/PX4-Autopilot" ]; then
+    run_and_log "Clear PX4 build directory" rm -rf third_party/PX4-Autopilot/build
+    run_and_log "Clear PX4 install marker" rm -f third_party/PX4-Autopilot/.installed
   else
-    echo "⚠️  PX4-Autopilot does not exist; setup.sh will clone it."
+    echo "⚠️  third_party/PX4-Autopilot does not exist; setup.sh will clone it."
   fi
 
   echo "✅ PX4 reset complete. Run: ./setup.sh --yes"
@@ -188,7 +188,7 @@ if [[ "$MODE" == "soft" ]]; then
     run_and_log "Clear PX4 Build Cache" bash -c 'source "${DEDALUS_VENV_PATH:-$(cd "$(dirname "$0")" && pwd)/venv}/bin/activate" 2>/dev/null || true; make -C PX4-Autopilot clean' || true
   fi
   
-  run_and_log "Clear local CMake build artifacts" bash -c 'rm -rf ../src/build/* 2>/dev/null || true'
+  run_and_log "Clear local CMake build artifacts" bash -c 'rm -rf build-staging/* 2>/dev/null || true'
   
   echo "✅ Soft reset complete. Ready to rebuild."
   exit 0
@@ -204,12 +204,12 @@ if [[ "$MODE" == "hard" ]]; then
 
   echo "🗑️  Purging Heavy Frameworks..."
   run_and_log "Remove .bashrc DCV injection" sed -i '/# --- BEGIN PROJECT DEDALUS DCV AUTO-START ---/,/# --- END PROJECT DEDALUS DCV AUTO-START ---/d' ~/.bashrc || true
-  run_and_log "Delete PX4 Directory" rm -rf PX4-Autopilot
-  run_and_log "Delete iceoryx Build" rm -rf ../infrastructure/iceoryx_build
+  run_and_log "Delete PX4 Directory" rm -rf third_party/PX4-Autopilot
+  run_and_log "Delete iceoryx Build" rm -rf third_party/iceoryx_build
   run_and_log "Prune Docker Images" docker system prune -af --volumes
   
   if ask_yes_no "Do you also want to delete downloaded Colosseum environments (10GB+)?"; then
-     run_and_log "Delete Environments" rm -rf colosseum_environments
+     run_and_log "Delete Environments" rm -rf third_party/colosseum_environments
   fi
 
   echo "✅ Hard reset complete. Run ./setup.sh to rebuild from scratch."
