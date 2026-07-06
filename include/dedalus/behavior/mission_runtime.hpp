@@ -117,6 +117,7 @@ private:
     std::int64_t consecutive_inflight_overruns_{0};
     std::uint64_t last_snapshot_ts_ns_{0};
     int consecutive_stale_ticks_{0};
+    bool stale_cr_pending_{false};  // true when last stale print used \r (needs \n to close)
     std::ofstream event_log_;
     mutable std::mutex event_log_mutex_;
     std::atomic<std::uint64_t> events_written_{0};

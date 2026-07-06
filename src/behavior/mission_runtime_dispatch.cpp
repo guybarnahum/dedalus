@@ -154,15 +154,27 @@ bool MissionRuntime::tick_once() {
                 ",\"stale_ticks\":" + std::to_string(consecutive_stale_ticks_) +
                 ",\"snapshot_ts_ns\":" + std::to_string(cur_ts) +
                 ",\"state\":" + q(to_string(last_state_)));
-            std::cerr << "dedalus_mission: WARN snapshot_stale"
-                      << " stale_ticks=" << consecutive_stale_ticks_
-                      << " tick=" << tick_count_
-                      << " state=" << to_string(last_state_) << "\n";
+            // \r overwrites the same terminal line — tail -f passes raw bytes to
+            // the terminal emulator, which handles CR natively, so the display
+            // shows only the latest count instead of one line per N ticks.
+            std::fprintf(stderr, "\rdedalus_mission: WARN snapshot_stale"
+                " stale_ticks=%-4d tick=%-6d state=%s     ",
+                consecutive_stale_ticks_, tick_count_,
+                to_string(last_state_).c_str());
+            std::fflush(stderr);
+            stale_cr_pending_ = true;
         }
     } else {
-        if (consecutive_stale_ticks_ > 0 && config_.verbosity >= 1) {
-            std::cerr << "dedalus_mission: snapshot_fresh after "
-                      << consecutive_stale_ticks_ << " stale tick(s)\n";
+        if (consecutive_stale_ticks_ > 0) {
+            if (stale_cr_pending_) {
+                // Advance past the \r line so the fresh message starts clean.
+                std::fprintf(stderr, "\n");
+                stale_cr_pending_ = false;
+            }
+            if (config_.verbosity >= 1) {
+                std::cerr << "dedalus_mission: snapshot_fresh after "
+                          << consecutive_stale_ticks_ << " stale tick(s)\n";
+            }
         }
         consecutive_stale_ticks_ = 0;
         last_snapshot_ts_ns_ = cur_ts;
