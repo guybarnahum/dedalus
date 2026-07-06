@@ -7,3 +7,8 @@ include: config/mission/sequence_person.yaml
 include: config/output/standard_ppm.yaml
 
 annotation_output_path: out/sequence_person_visual_annotation
+
+# Suppress obstacle-evidence 3D markers from the overlay so they do not
+# re-appear in the camera feed and create a depth-detection feedback loop.
+# Swept-volume, trajectory, and all other overlays remain active.
+with_sensing_evidence_overlay: false
