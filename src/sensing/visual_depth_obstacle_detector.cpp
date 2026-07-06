@@ -112,9 +112,10 @@ std::vector<ObstacleEvidence> project_from_inferred(
     std::uint32_t count = 0U;
 
 #ifdef DEDALUS_CUDA_ENABLED
-    std::fprintf(stderr, "[CudaDepth] project...\n"); std::fflush(stderr);
+    const bool cdebug = (std::getenv("DEDALUS_MISSION_DEBUG") != nullptr);
+    if (cdebug) { std::fprintf(stderr, "[CudaDepth] project...\n"); std::fflush(stderr); }
     cuda_dispatch().project(inferred.depth_relative.data(), params, buf.data(), count);
-    std::fprintf(stderr, "[CudaDepth] project done (%u ev)\n", count); std::fflush(stderr);
+    if (cdebug) { std::fprintf(stderr, "[CudaDepth] project done (%u ev)\n", count); std::fflush(stderr); }
 #else
     project_depth_to_device_evidence(
         inferred.depth_relative.data(), params, buf.data(), count);
@@ -124,9 +125,9 @@ std::vector<ObstacleEvidence> project_from_inferred(
         std::vector<DeviceObstacleEvidence> patches(64U);
         std::uint32_t patch_count = 0U;
 #ifdef DEDALUS_CUDA_ENABLED
-        std::fprintf(stderr, "[CudaDepth] fit_patches...\n"); std::fflush(stderr);
+        if (cdebug) { std::fprintf(stderr, "[CudaDepth] fit_patches...\n"); std::fflush(stderr); }
         cuda_dispatch().fit_patches(buf.data(), count, params, patches.data(), patch_count);
-        std::fprintf(stderr, "[CudaDepth] fit_patches done (%u patches)\n", patch_count); std::fflush(stderr);
+        if (cdebug) { std::fprintf(stderr, "[CudaDepth] fit_patches done (%u patches)\n", patch_count); std::fflush(stderr); }
 #else
         fit_surface_patches_device(
             buf.data(), count, params, patches.data(), patch_count);
@@ -140,10 +141,10 @@ std::vector<ObstacleEvidence> project_from_inferred(
         std::vector<DeviceObstacleEvidence> thin(64U);
         std::uint32_t thin_count = 0U;
 #ifdef DEDALUS_CUDA_ENABLED
-        std::fprintf(stderr, "[CudaDepth] detect_thin...\n"); std::fflush(stderr);
+        if (cdebug) { std::fprintf(stderr, "[CudaDepth] detect_thin...\n"); std::fflush(stderr); }
         cuda_dispatch().detect_thin(
             inferred.depth_relative.data(), params, thin.data(), thin_count);
-        std::fprintf(stderr, "[CudaDepth] detect_thin done (%u thin)\n", thin_count); std::fflush(stderr);
+        if (cdebug) { std::fprintf(stderr, "[CudaDepth] detect_thin done (%u thin)\n", thin_count); std::fflush(stderr); }
 #else
         detect_thin_structures_device(
             inferred.depth_relative.data(), params, thin.data(), thin_count);
