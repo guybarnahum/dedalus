@@ -1,6 +1,7 @@
 # ── Drone: PX4 · front-center camera (RGB only) ───────────────────────────────
 # Standard PX4 vehicle with a single forward-facing monocular camera.
-# The bridge streams RGB + ego at 5 Hz via binary pipe.
+# The bridge streams RGB + ego at 10 Hz via binary pipe.
+# AirSim simGetImages measured at ~40ms → sustains ~25 fps; 10 Hz is conservative.
 #
 # Use px4_front_center_depth.yaml when the depth slot is airsim_gt_detector
 # (adds --include-depth to the bridge command).
@@ -11,7 +12,7 @@
 vehicle_name: PX4
 vehicle_camera_name: front_center
 bridge_mode: stream_binary_ego
-bridge_command: python3 simulation/airsim/scripts/airsim-stream-frames-binary.py --include-ego --rate-hz 5 --mavlink-armed-endpoints udpin:127.0.0.1:14540
+bridge_command: python3 simulation/airsim/scripts/airsim-stream-frames-binary.py --include-ego --rate-hz 10 --mavlink-armed-endpoints udpin:127.0.0.1:14540
 
 # Front-center camera sensing geometry (body_T_camera = identity at neutral pitch).
 mission_options.obstacle_sensing.cameras.0.name: front_center
