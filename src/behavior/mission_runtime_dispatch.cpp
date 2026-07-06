@@ -158,7 +158,7 @@ bool MissionRuntime::tick_once() {
             // the terminal emulator, which handles CR natively, so the display
             // shows only the latest count instead of one line per N ticks.
             std::fprintf(stderr, "\rdedalus_mission: WARN snapshot_stale"
-                " stale_ticks=%-4d tick=%-6d state=%s     ",
+                " stale_ticks=%-4d tick=%-6zu state=%s     ",
                 consecutive_stale_ticks_, tick_count_,
                 to_string(last_state_));
             std::fflush(stderr);
