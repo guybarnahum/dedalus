@@ -120,7 +120,7 @@ bool CoreStackRunner::run_once() {
         if (!mdebug) return;
         const auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(
             SteadyClock::now() - run_once_start).count();
-        std::fprintf(stderr, "[MissionDebug] %-54s %5lld ms\n", label, ms);
+        std::fprintf(stderr, "[MissionDebug] %-54s %5ld ms\n", label, static_cast<long>(ms));
         std::fflush(stderr);
     };
 
