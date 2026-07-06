@@ -161,7 +161,12 @@ CoreStackProviders ProviderRegistry::create(const CoreStackProviderConfig& confi
             }
             return std::make_unique<RecordedFrameSource>(config.recorded_manifest_path);
         }},
-        {"airsim",            [&]() { return std::make_unique<AirSimFrameSource>(airsim); }},
+        {"airsim",            [&]() -> std::unique_ptr<FrameSource> {
+            // Wrap in AsyncPrefetchFrameSource so the next simGetImages RPC
+            // (~40ms) overlaps with the current frame's compute (~43ms ONNX+CPU).
+            return std::make_unique<AsyncPrefetchFrameSource>(
+                std::make_unique<AirSimFrameSource>(airsim));
+        }},
     });
 
     providers.ego_provider = resolve<EgoStateProvider>("ego_provider", config.ego_provider, {
