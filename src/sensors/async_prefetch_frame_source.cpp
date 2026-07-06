@@ -21,7 +21,11 @@ struct AsyncPrefetchFrameSource::Impl {
 AsyncPrefetchFrameSource::AsyncPrefetchFrameSource(std::unique_ptr<FrameSource> inner)
     : impl_(std::make_unique<Impl>()) {
     impl_->inner = std::move(inner);
-    impl_->launch_prefetch();
+    // Do NOT launch a prefetch here.  Constructing a FrameSource should be
+    // side-effect free (no subprocesses, no connections).  The first prefetch
+    // is launched lazily on the first next_frame() call so that code which
+    // creates providers without calling next_frame() (e.g. config tests) is
+    // not affected.
 }
 
 AsyncPrefetchFrameSource::~AsyncPrefetchFrameSource() {
@@ -37,6 +41,11 @@ AsyncPrefetchFrameSource::~AsyncPrefetchFrameSource() {
 }
 
 std::optional<FramePacket> AsyncPrefetchFrameSource::next_frame() {
+    if (!impl_->prefetched.valid()) {
+        // First call: no prefetch in flight yet — fetch synchronously so the
+        // caller gets frame 0 without delay, then immediately queue frame 1.
+        impl_->launch_prefetch();
+    }
     auto frame = impl_->prefetched.get();
     if (frame.has_value()) {
         // Overlap I/O for the next frame with processing of this one.
