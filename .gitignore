@@ -169,3 +169,9 @@ simulation/airsim/logs/
 simulation/airsim/*.bak_*
 simulation/airsim/PX4-Autopilot/
 simulation/airsim/colosseum_environments/
+
+# Movies
+*.mp4
+*.mov
+*.avi
+*.mkv
