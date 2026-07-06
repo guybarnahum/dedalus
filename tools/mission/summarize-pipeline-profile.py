@@ -159,15 +159,28 @@ def print_friendly(
     comp_samples = stages.get("runtime.post_frame_compute", [])
     gpu_samples  = stages.get("depth_slot_a.detect", [])
 
+    # Derive per-frame CPU time = post_frame_compute - depth_slot_a.detect.
+    # Only include frames where both stages were recorded.
+    cpu_samples: list[int] = []
+    for profile in profiles:
+        raw = profile.get("stages")
+        if not isinstance(raw, dict):
+            continue
+        comp_v = raw.get("runtime.post_frame_compute")
+        gpu_v  = raw.get("depth_slot_a.detect")
+        if isinstance(comp_v, int) and isinstance(gpu_v, int):
+            cpu_samples.append(max(0, comp_v - gpu_v))
+
     med_io   = statistics.median(io_samples)   if io_samples   else 0.0
     med_comp = statistics.median(comp_samples) if comp_samples else 0.0
     med_gpu  = statistics.median(gpu_samples)  if gpu_samples  else 0.0
-    med_cpu  = med_comp - med_gpu
+    med_cpu  = statistics.median(cpu_samples)  if cpu_samples  else 0.0
 
-    p95_total = percentile(totals, 95)      if totals       else 0.0
-    p95_io    = percentile(io_samples, 95)  if io_samples   else 0.0
-    p95_comp  = percentile(comp_samples, 95) if comp_samples else 0.0
-    p95_gpu   = percentile(gpu_samples, 95) if gpu_samples  else 0.0
+    p95_total = percentile(totals, 95)       if totals        else 0.0
+    p95_io    = percentile(io_samples, 95)   if io_samples    else 0.0
+    p95_comp  = percentile(comp_samples, 95) if comp_samples  else 0.0
+    p95_gpu   = percentile(gpu_samples, 95)  if gpu_samples   else 0.0
+    p95_cpu   = percentile(cpu_samples, 95)  if cpu_samples   else 0.0
 
     print()
     print(f"  THROUGHPUT    ≈ {fps_approx:.1f} fps   (1 / {med_total/1000:.1f}ms median frame time)")
@@ -201,9 +214,10 @@ def print_friendly(
             f"       ├─ GPU (depth_slot_a)", med_gpu, p95_gpu,
             max(gpu_samples), pct_of(med_gpu, med_comp),
         )
+    if cpu_samples:
         budget_row(
-            f"       └─ CPU (world model + map)", med_cpu, 0.0,
-            0.0, pct_of(med_cpu, med_comp),
+            f"       └─ CPU residual (compute − GPU)", med_cpu, p95_cpu,
+            max(cpu_samples), pct_of(med_cpu, med_comp),
         )
 
     # ── Stage breakdown by group ───────────────────────────────────────────────
