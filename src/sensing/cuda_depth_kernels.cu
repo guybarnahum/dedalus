@@ -133,50 +133,49 @@ __global__ void ransac_plane_kernel(
         s_nx = 0.0F;  s_ny = 0.0F;  s_nz = 1.0F;  s_pd = 0.0F;
         s_best_cnt = 0u;
     }
-    __syncthreads();
+    __syncthreads();  // all threads always reach this
 
-    if (count < 3u) {
-        if (threadIdx.x == 0) d_block_best[blockIdx.x] = GpuPlane{};
-        return;
-    }
+    // Guard instead of early-return: __syncthreads() must be reached by every
+    // thread in the block unconditionally.  Early returns after the first sync
+    // cause divergent barriers → block deadlock → cudaStreamSynchronize hangs.
+    if (count >= 3u) {
+        unsigned int seed = (blockIdx.x * blockDim.x + threadIdx.x) ^ seed_offset ^ 0xDEADBEEFu;
 
-    unsigned int seed = (blockIdx.x * blockDim.x + threadIdx.x) ^ seed_offset ^ 0xDEADBEEFu;
+        unsigned int ia = lcg_next(seed) % count;
+        unsigned int ib = lcg_next(seed) % count;
+        while (ib == ia) ib = lcg_next(seed) % count;
+        unsigned int ic = lcg_next(seed) % count;
+        while (ic == ia || ic == ib) ic = lcg_next(seed) % count;
 
-    unsigned int ia = lcg_next(seed) % count;
-    unsigned int ib = lcg_next(seed) % count;
-    while (ib == ia) ib = lcg_next(seed) % count;
-    unsigned int ic = lcg_next(seed) % count;
-    while (ic == ia || ic == ib) ic = lcg_next(seed) % count;
+        const float ax = d_pts[ia*3+0], ay = d_pts[ia*3+1], az = d_pts[ia*3+2];
+        const float bx = d_pts[ib*3+0], by = d_pts[ib*3+1], bz = d_pts[ib*3+2];
+        const float cx = d_pts[ic*3+0], cy = d_pts[ic*3+1], cz = d_pts[ic*3+2];
 
-    const float ax = d_pts[ia*3+0], ay = d_pts[ia*3+1], az = d_pts[ia*3+2];
-    const float bx = d_pts[ib*3+0], by = d_pts[ib*3+1], bz = d_pts[ib*3+2];
-    const float cx = d_pts[ic*3+0], cy = d_pts[ic*3+1], cz = d_pts[ic*3+2];
+        float nx = (by-ay)*(cz-az) - (bz-az)*(cy-ay);
+        float ny = (bz-az)*(cx-ax) - (bx-ax)*(cz-az);
+        float nz = (bx-ax)*(cy-ay) - (by-ay)*(cx-ax);
+        const float len = sqrtf(nx*nx + ny*ny + nz*nz);
 
-    float nx = (by-ay)*(cz-az) - (bz-az)*(cy-ay);
-    float ny = (bz-az)*(cx-ax) - (bx-ax)*(cz-az);
-    float nz = (bx-ax)*(cy-ay) - (by-ay)*(cx-ax);
-    const float len = sqrtf(nx*nx + ny*ny + nz*nz);
-    if (len < 1.0e-6F) {
-        __syncthreads();
-        if (threadIdx.x == 0) d_block_best[blockIdx.x] = GpuPlane{s_nx,s_ny,s_nz,s_pd,s_best_cnt};
-        return;
-    }
-    nx /= len;  ny /= len;  nz /= len;
-    const float pd = -(nx*ax + ny*ay + nz*az);
+        // Guard (not early-return) for the degenerate triangle case.
+        if (len >= 1.0e-6F) {
+            nx /= len;  ny /= len;  nz /= len;
+            const float pd = -(nx*ax + ny*ay + nz*az);
 
-    unsigned int cnt = 0u;
-    for (unsigned int i = 0u; i < count; ++i) {
-        const float dist = fabsf(nx*d_pts[i*3+0] + ny*d_pts[i*3+1] + nz*d_pts[i*3+2] + pd);
-        if (dist < inlier_threshold) ++cnt;
-    }
+            unsigned int cnt = 0u;
+            for (unsigned int i = 0u; i < count; ++i) {
+                const float dist = fabsf(nx*d_pts[i*3+0] + ny*d_pts[i*3+1] + nz*d_pts[i*3+2] + pd);
+                if (dist < inlier_threshold) ++cnt;
+            }
 
-    if (cnt > 0u) {
-        const unsigned int old = atomicMax(&s_best_cnt, cnt);
-        if (cnt > old) {
-            s_nx = nx;  s_ny = ny;  s_nz = nz;  s_pd = pd;
+            if (cnt > 0u) {
+                const unsigned int old = atomicMax(&s_best_cnt, cnt);
+                if (cnt > old) {
+                    s_nx = nx;  s_ny = ny;  s_nz = nz;  s_pd = pd;
+                }
+            }
         }
     }
-    __syncthreads();
+    __syncthreads();  // all threads always reach this
 
     if (threadIdx.x == 0) {
         GpuPlane p;
