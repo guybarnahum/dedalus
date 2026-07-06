@@ -20,6 +20,8 @@
 #include <unordered_set>
 #include <vector>
 
+#include <cstdio>
+
 #include <cuda_runtime.h>
 
 namespace dedalus {
@@ -274,10 +276,24 @@ struct CudaDepthDispatcher::Impl {
 // CudaDepthDispatcher public API
 // ============================================================
 CudaDepthDispatcher::CudaDepthDispatcher() : impl_(new Impl) {
-    cudaStreamCreate(&impl_->stream);
+    // Always log CUDA init — this constructor fires on the first detect() call
+    // (static singleton) and cudaStreamCreate triggers full CUDA context init,
+    // which can take 5-30 s on first use.  If the mission hangs here, that
+    // confirms CUDA context init as the hang point.
+    std::fprintf(stderr, "[CudaDepth] init: cudaStreamCreate...\n");
+    std::fflush(stderr);
+    const cudaError_t sc_err = cudaStreamCreate(&impl_->stream);
+    if (sc_err != cudaSuccess) {
+        std::fprintf(stderr, "[CudaDepth] cudaStreamCreate FAILED: %s — GPU unavailable, "
+                     "CUDA kernels will be skipped\n", cudaGetErrorString(sc_err));
+        std::fflush(stderr);
+        return;
+    }
     cudaMalloc(&impl_->d_count,      sizeof(unsigned int));
     cudaMalloc(&impl_->d_block_best, Impl::MAX_RANSAC_BLOCKS * sizeof(GpuPlane));
     cudaMallocHost(&impl_->h_count,  sizeof(unsigned int));
+    std::fprintf(stderr, "[CudaDepth] init: complete\n");
+    std::fflush(stderr);
 }
 
 CudaDepthDispatcher::~CudaDepthDispatcher() {

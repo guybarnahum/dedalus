@@ -113,6 +113,16 @@ std::vector<ObstacleSensingVolume> obstacle_sensing_volumes_from(const SensingCo
 
 bool CoreStackRunner::run_once() {
     const auto run_once_start = SteadyClock::now();
+    // DEDALUS_MISSION_DEBUG=1 — print each stage name + ms since run_once() entry.
+    // Set this to isolate hangs: the last printed stage is where execution is stuck.
+    const bool mdebug = (std::getenv("DEDALUS_MISSION_DEBUG") != nullptr);
+    auto mdebug_print = [&](const char* label) {
+        if (!mdebug) return;
+        const auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+            SteadyClock::now() - run_once_start).count();
+        std::fprintf(stderr, "[MissionDebug] %-54s %5lld ms\n", label, ms);
+        std::fflush(stderr);
+    };
 
     // ── Startup publish of persisted L2 and L3 maps ──────────────────────────
     // Runs on the very first call, before blocking on the frame source.
@@ -153,9 +163,11 @@ bool CoreStackRunner::run_once() {
         }
     }
 
+    mdebug_print("→ frame_source.next_frame");
     auto start = SteadyClock::now();
     auto frame = providers_.frame_source->next_frame();
     const auto frame_available_time = SteadyClock::now();
+    mdebug_print("✓ frame_source.next_frame");
     const auto frame_source_wait_duration_us = duration_between_us(start, frame_available_time);
 
     if (!frame.has_value()) {
@@ -178,6 +190,7 @@ bool CoreStackRunner::run_once() {
             std::max<std::int64_t>(0, frame_source_wait_duration_us - frame_source_reported_io_us));
     }
 
+    mdebug_print("→ ego_provider.estimate");
     start = SteadyClock::now();
     const auto ego_estimate = providers_.ego_provider->estimate(*frame);
     if (timing_writer_) {
@@ -250,6 +263,7 @@ bool CoreStackRunner::run_once() {
         timing_writer_->record_stage("perception_pipeline.construct", duration_us(start));
     }
 
+    mdebug_print("→ perception_pipeline.process");
     start = SteadyClock::now();
     auto perception_output = pipeline.process(*frame, *ego_estimate.ego);
     if (timing_writer_) {
@@ -324,6 +338,7 @@ bool CoreStackRunner::run_once() {
     // Slot B (reference): evidence collected separately for agreement metric only.
     // Agreement = fraction of slot-A voxels with a slot-B voxel within ±1 voxel.
     if (!coverage.camera_volumes.empty() && depth_slot_a_) {
+        mdebug_print("→ depth_slot_a.detect");
         start = SteadyClock::now();
 
         std::vector<ObstacleEvidence> slot_a_evidence;
@@ -344,6 +359,7 @@ bool CoreStackRunner::run_once() {
             }
         }
 
+        mdebug_print("✓ depth_slot_a.detect");
         perception_output.obstacle_evidence.insert(
             perception_output.obstacle_evidence.end(),
             slot_a_evidence.begin(),
@@ -377,12 +393,14 @@ bool CoreStackRunner::run_once() {
         if (!ghost_scenario_start_.has_value()) {
             ghost_scenario_start_ = frame->timestamp;
         }
+        mdebug_print("→ ghost_targets.frame_at");
         start = SteadyClock::now();
         const auto ghost_frame = providers_.ghost_targets->frame_at(
             frame->timestamp,
             ego_estimate.ego->map_frame_id,
             *ghost_scenario_start_,
             ego_estimate.ego->local_T_body.position);
+        mdebug_print("✓ ghost_targets.frame_at");
         if (timing_writer_) {
             timing_writer_->record_stage("ghost_targets.frame_at", duration_us(start));
         }
@@ -405,6 +423,7 @@ bool CoreStackRunner::run_once() {
         }
     }
 
+    mdebug_print("→ world_model.update_ego+ingest");
     start = SteadyClock::now();
     providers_.world_model->update_ego(*ego_estimate.ego);
     if (timing_writer_) {
@@ -447,6 +466,7 @@ bool CoreStackRunner::run_once() {
         }
     }
 
+    mdebug_print("→ world_model.snapshot+L1/L2");
     start = SteadyClock::now();
     auto snapshot_for_annotation = providers_.world_model->snapshot();
     snapshot_for_annotation.depth_source_name      = depth_slot_a_name_;
@@ -746,6 +766,7 @@ bool CoreStackRunner::run_once() {
     }
     snapshot_for_annotation.perch_candidates = cached_perch_candidates_;
 
+    mdebug_print("→ snapshot_publisher.publish");
     if (snapshot_publisher_) {
         start = SteadyClock::now();
         snapshot_publisher_->publish(std::make_shared<WorldSnapshot>(snapshot_for_annotation));
@@ -759,6 +780,7 @@ bool CoreStackRunner::run_once() {
     annotation.perception = perception_output;
     annotation.world_snapshot = snapshot_for_annotation;
 
+    mdebug_print("→ frame_annotator.annotate");
     start = SteadyClock::now();
     providers_.frame_annotator->annotate(annotation);
     if (timing_writer_) {
@@ -768,6 +790,7 @@ bool CoreStackRunner::run_once() {
         timing_writer_->end_frame();
     }
 
+    mdebug_print("✓ run_once complete");
     return true;
 }
 
