@@ -585,7 +585,14 @@ for line in lines:
         if with_frame_timing:
             parts = set_option(parts, "--timing-jsonl", frame_timing_path)
         line = "bridge_command: " + shlex.join(parts)
-    if not (line.startswith("pipeline_timing_enabled:") or line.startswith("pipeline_timing_output_path:")):
+    # Strip keys that run_mission.sh consumes itself and are unknown to the C++ binary.
+    _shell_only = (
+        "pipeline_timing_enabled:", "pipeline_timing_output_path:",
+        "with_sensing_evidence_overlay:", "with_occupancy_overlay:",
+        "with_swept_volume_overlay:", "overlay_rate_hz:",
+        "overlay_max_occupancy_cells:",
+    )
+    if not any(line.startswith(k) for k in _shell_only):
         out.append(line)
 if not bridge_seen and (frame_rate or with_frame_timing):
     raise SystemExit("config has no bridge_command line to override")
