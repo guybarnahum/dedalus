@@ -160,7 +160,7 @@ bool MissionRuntime::tick_once() {
             std::fprintf(stderr, "\rdedalus_mission: WARN snapshot_stale"
                 " stale_ticks=%-4d tick=%-6d state=%s     ",
                 consecutive_stale_ticks_, tick_count_,
-                to_string(last_state_).c_str());
+                to_string(last_state_));
             std::fflush(stderr);
             stale_cr_pending_ = true;
         }
