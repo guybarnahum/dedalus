@@ -22,6 +22,7 @@ from typing import Any
 
 DEFAULT_AGGREGATE_PREFIXES = (
     "runtime.",
+    "frame_source.detail.",  # attribution-only sub-stages of frame_source.next_frame_wait
 )
 
 DEFAULT_AGGREGATE_STAGE_NAMES = {
