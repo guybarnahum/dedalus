@@ -1,6 +1,8 @@
 #pragma once
 
+#include <chrono>
 #include <cstdint>
+#include <cstddef>
 #include <filesystem>
 #include <fstream>
 #include <string>
@@ -39,6 +41,14 @@ private:
     std::ofstream output_;
     PipelineFrameProfile current_frame_;
     bool frame_open_{false};
+
+    // Rolling perf stats — printed to stderr every kStatsPrintEvery frames.
+    // Window covers the last kStatsWindow samples.
+    static constexpr std::size_t kStatsWindow{60U};
+    static constexpr std::size_t kStatsPrintEvery{30U};
+    std::vector<std::int64_t>                          stats_totals_us_;
+    std::vector<std::chrono::steady_clock::time_point> stats_times_;
+    std::size_t stats_frame_count_{0U};
 };
 
 }  // namespace dedalus

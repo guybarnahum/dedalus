@@ -1,6 +1,9 @@
 #include "dedalus/runtime/pipeline_profiler.hpp"
 
+#include <algorithm>
+#include <chrono>
 #include <cmath>
+#include <cstdio>
 #include <filesystem>
 #include <stdexcept>
 #include <string_view>
@@ -138,6 +141,49 @@ void PipelineProfiler::end_frame() {
     }
 
     frame_open_ = false;
+
+    // ── Rolling perf stats ────────────────────────────────────────────────────
+    // Keep the last kStatsWindow frame totals in a ring buffer and print
+    // FPS + latency percentiles to stderr every kStatsPrintEvery frames.
+    const auto now = std::chrono::steady_clock::now();
+    const std::size_t idx = stats_frame_count_ % kStatsWindow;
+    if (stats_totals_us_.size() < kStatsWindow) {
+        stats_totals_us_.push_back(measured_total_us);
+        stats_times_.push_back(now);
+    } else {
+        stats_totals_us_[idx] = measured_total_us;
+        stats_times_[idx]     = now;
+    }
+    ++stats_frame_count_;
+
+    if (stats_frame_count_ % kStatsPrintEvery == 0U) {
+        const std::size_t n = stats_totals_us_.size();
+
+        // Percentiles over the window.
+        std::vector<std::int64_t> sorted = stats_totals_us_;
+        std::sort(sorted.begin(), sorted.end());
+        const auto pct = [&](std::size_t p) -> long {
+            return static_cast<long>(sorted[p * (n - 1U) / 100U] / 1000LL);
+        };
+
+        // FPS: (n-1) inter-frame intervals over the window.
+        double fps = 0.0;
+        if (n >= 2U) {
+            const auto t_oldest = *std::min_element(stats_times_.begin(), stats_times_.end());
+            const auto t_newest = *std::max_element(stats_times_.begin(), stats_times_.end());
+            const double elapsed_s = std::chrono::duration<double>(t_newest - t_oldest).count();
+            if (elapsed_s > 0.0) fps = static_cast<double>(n - 1U) / elapsed_s;
+        }
+
+        std::fprintf(stderr,
+            "[PipelineStats] n=%-3zu fps=%4.2f"
+            "  p50=%ldms p95=%ldms p99=%ldms"
+            "  min=%ldms max=%ldms\n",
+            n, fps, pct(50), pct(95), pct(99),
+            static_cast<long>(sorted.front() / 1000LL),
+            static_cast<long>(sorted.back()  / 1000LL));
+        std::fflush(stderr);
+    }
 }
 
 }  // namespace dedalus
