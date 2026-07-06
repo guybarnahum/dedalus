@@ -191,7 +191,11 @@ DepthInferenceResult ONNXDepthEngine::infer(const VisualDepthFrame& frame) {
     const int out_w = static_cast<int>(shape[shape.size() - 1]);
     const std::size_t n = static_cast<std::size_t>(out_h * out_w);
 
-    // Normalise output to [epsilon, 1.0] (model may output raw logits or [0, ∞))
+    // Normalise output to [epsilon, 1.0] (model may output raw logits or [0, ∞)).
+    // Per-frame max is the correct anchor for DepthAnythingV2 relative depth —
+    // scale = 0.63 was calibrated against this convention.  Close pixels that
+    // exceed min_depth_m (drone props, near-field clutter) are excluded
+    // downstream in the projection kernel, not here.
     float max_val = 1e-6F;
     for (std::size_t i = 0; i < n; ++i) {
         max_val = std::max(max_val, raw[i]);
