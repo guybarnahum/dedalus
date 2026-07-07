@@ -251,22 +251,23 @@ void VisualDepthObstacleDetector::write_debug_frame(
         if (debug_pipe_ == nullptr) return;
     }
 
-    // Normalise depth_relative to [0,1] for consistent rainbow mapping.
-    // t=0 → blue (far), t=1 → red (near).
-    float vmin = inferred.depth_relative[0];
-    float vmax = inferred.depth_relative[0];
-    for (std::size_t i = 0U; i < n; ++i) {
-        const float v = inferred.depth_relative[i];
-        if (!std::isfinite(v)) continue;
-        if (v < vmin) vmin = v;
-        if (v > vmax) vmax = v;
-    }
-    const float range = (vmax - vmin > 1.0e-6f) ? (vmax - vmin) : 1.0f;
+    // Fixed metric scale: both panels map depth_m ∈ [0, max_depth_m] → colour.
+    // t=0 → blue (far, max_depth_m), t=1 → red (close, 0 m).
+    // Using a fixed scale rather than per-frame min/max keeps colours comparable
+    // across frames and prevents close objects (props) from anchoring vmax and
+    // compressing the rest of the scene into a narrow blue band.
+    //
+    // depth_relative = 1/depth_m (calibrated inverse depth, 1/m).
+    // depth_m = scale / depth_relative.  t = 1 - depth_m / max_depth_m.
+    const float display_max_m = params.max_depth_m;   // 60 m by default
 
-    // Rainbow helper: depth_relative → RGB
+    // Rainbow helper: depth_relative → RGB using fixed metric scale
     auto rainbow_rgb = [&](float dr, std::uint8_t& r, std::uint8_t& g, std::uint8_t& b) {
-        const float t = std::isfinite(dr)
-            ? std::clamp((dr - vmin) / range, 0.0f, 1.0f) : 0.0f;
+        float depth_m = display_max_m;
+        if (std::isfinite(dr) && dr > 1e-6f) {
+            depth_m = std::min(params.scale / dr, display_max_m);
+        }
+        const float t = 1.0f - depth_m / display_max_m;  // 0=far/blue, 1=close/red
         r = static_cast<std::uint8_t>(std::clamp(255.0f*(1.5f-std::abs(4.0f*t-3.0f)), 0.0f, 255.0f));
         g = static_cast<std::uint8_t>(std::clamp(255.0f*(1.5f-std::abs(4.0f*t-2.0f)), 0.0f, 255.0f));
         b = static_cast<std::uint8_t>(std::clamp(255.0f*(1.5f-std::abs(4.0f*t-1.0f)), 0.0f, 255.0f));
