@@ -4,6 +4,7 @@
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
+#include <limits>
 #include <string>
 #include <vector>
 
@@ -60,11 +61,33 @@ ProjectionParams make_projection_params(
     const auto& sv = ego_frame.sensing_volume;
     ProjectionParams p;
 
-    // Intrinsics from the source frame
-    p.fx = static_cast<float>(ego_frame.frame.intrinsics.fx);
-    p.fy = static_cast<float>(ego_frame.frame.intrinsics.fy);
-    p.cx = static_cast<float>(ego_frame.frame.intrinsics.cx);
-    p.cy = static_cast<float>(ego_frame.frame.intrinsics.cy);
+    // Intrinsics from the source frame, scaled to the ONNX output resolution.
+    //
+    // The ONNX model resizes the input (e.g. 640×360) to its native square
+    // input (518×518) before inference, producing a 518×518 depth map.  The
+    // resize is non-uniform (different scale factors in x and y) because the
+    // camera aspect ratio ≠ 1.  Back-projecting with the original intrinsics
+    // on the resized depth map gives wrong 3D positions: the principal point
+    // is off-centre and the focal lengths are wrong for the output resolution.
+    //
+    // Scaling fx/fy/cx/cy by the per-axis resize ratio corrects this: a squash
+    // of the horizontal axis by s_x means apparent horizontal angles shrink by
+    // s_x, so fx must shrink by the same factor for tan(θ) = (u-cx)/fx to
+    // recover the original bearing.
+    const float s_x = (ego_frame.frame.image.width  > 0 && inferred.width  > 0)
+        ? static_cast<float>(inferred.width)  / static_cast<float>(ego_frame.frame.image.width)
+        : 1.0F;
+    const float s_y = (ego_frame.frame.image.height > 0 && inferred.height > 0)
+        ? static_cast<float>(inferred.height) / static_cast<float>(ego_frame.frame.image.height)
+        : 1.0F;
+
+    p.fx = static_cast<float>(ego_frame.frame.intrinsics.fx) * s_x;
+    p.fy = static_cast<float>(ego_frame.frame.intrinsics.fy) * s_y;
+    p.cx = static_cast<float>(ego_frame.frame.intrinsics.cx) * s_x;
+    p.cy = static_cast<float>(ego_frame.frame.intrinsics.cy) * s_y;
+    // Distortion coefficients were measured in the original pixel space; they
+    // apply to normalised coordinates (u-cx)/fx and are dimensionless, so they
+    // do not need rescaling.
     p.k1 = static_cast<float>(ego_frame.frame.intrinsics.distortion_k1);
     p.k2 = static_cast<float>(ego_frame.frame.intrinsics.distortion_k2);
 
@@ -223,21 +246,45 @@ void VisualDepthObstacleDetector::write_debug_frame(const DepthInferenceResult& 
 
     const std::size_t n = static_cast<std::size_t>(inferred.width) *
                           static_cast<std::size_t>(inferred.height);
-    float vmin = inferred.depth_relative[0];
-    float vmax = inferred.depth_relative[0];
+
+    // Compute per-pixel metric depth and validity mask using the same filter
+    // as the evidence pipeline (min/max depth).  Masked pixels render black so
+    // the MP4 accurately reflects what goes into L0 evidence rather than the
+    // raw ONNX output (which includes drone props and sky).
+    const float scale      = scale_.scale;
+    const float min_depth  = config_.min_depth_m;
+    const float max_depth  = config_.max_depth_m;
+
+    // Range for the colour ramp: use only evidence-eligible pixels.
+    float vmin = std::numeric_limits<float>::max();
+    float vmax = std::numeric_limits<float>::lowest();
     for (std::size_t i = 0U; i < n; ++i) {
-        const float v = inferred.depth_relative[i];
-        if (!std::isfinite(v)) continue;
-        if (v < vmin) vmin = v;
-        if (v > vmax) vmax = v;
+        const float dr = inferred.depth_relative[i];
+        if (!std::isfinite(dr) || dr <= 0.0F) continue;
+        const float dm = scale / dr;
+        if (dm < min_depth || dm > max_depth) continue;
+        if (dr < vmin) vmin = dr;
+        if (dr > vmax) vmax = dr;
+    }
+    // Fallback: if no eligible pixels, use the full range (avoids blank video).
+    if (vmin > vmax) {
+        for (std::size_t i = 0U; i < n; ++i) {
+            const float v = inferred.depth_relative[i];
+            if (!std::isfinite(v)) continue;
+            if (v < vmin) vmin = v;
+            if (v > vmax) vmax = v;
+        }
     }
     const float range = (vmax - vmin > 1.0e-6f) ? (vmax - vmin) : 1.0f;
 
-    std::vector<std::uint8_t> rgb(n * 3U);
+    std::vector<std::uint8_t> rgb(n * 3U, 0U);  // default black = filtered/invalid
     for (std::size_t i = 0U; i < n; ++i) {
-        const float raw = inferred.depth_relative[i];
-        // t=0 → blue (far), t=1 → red (near) — high relative_depth = closer
-        const float t = std::isfinite(raw) ? std::clamp((raw - vmin) / range, 0.0f, 1.0f) : 0.0f;
+        const float dr = inferred.depth_relative[i];
+        if (!std::isfinite(dr) || dr <= 0.0F) continue;
+        const float dm = scale / dr;
+        if (dm < min_depth || dm > max_depth) continue;  // black — filtered (props, sky)
+        // t=0 → blue (far), t=1 → red (near)
+        const float t = std::clamp((dr - vmin) / range, 0.0f, 1.0f);
         rgb[3U*i+0U] = static_cast<std::uint8_t>(std::clamp(255.0f*(1.5f-std::abs(4.0f*t-3.0f)), 0.0f, 255.0f));
         rgb[3U*i+1U] = static_cast<std::uint8_t>(std::clamp(255.0f*(1.5f-std::abs(4.0f*t-2.0f)), 0.0f, 255.0f));
         rgb[3U*i+2U] = static_cast<std::uint8_t>(std::clamp(255.0f*(1.5f-std::abs(4.0f*t-1.0f)), 0.0f, 255.0f));
