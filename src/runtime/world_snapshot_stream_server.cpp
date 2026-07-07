@@ -45,6 +45,7 @@ int create_listen_socket(const std::string& host, std::uint16_t port, int backlo
 
     int reuse = 1;
     (void)::setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &reuse, sizeof(reuse));
+    (void)::setsockopt(fd, SOL_SOCKET, SO_REUSEPORT, &reuse, sizeof(reuse));
     set_nonblocking(fd);
 
     sockaddr_in addr{};
