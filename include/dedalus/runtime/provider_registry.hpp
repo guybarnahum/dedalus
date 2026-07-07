@@ -31,6 +31,12 @@ struct VisualONNXDepthConfig {
     int    cuda_device_id{0};
     std::size_t cuda_arena_limit_bytes{4ULL * 1024 * 1024 * 1024};  // 4 GiB — ViT-S needs >1 GiB for intermediate activations
     bool   use_coreml{false};                        // CoreML EP (macOS)
+    // When true the ONNX model outputs metric depth in metres (e.g. DepthAnythingV2
+    // Metric variant).  The engine stores 1/depth_m so the projection kernel formula
+    // depth_m = scale / depth_relative gives back metres when scale = 1.0.
+    // When false (default) the engine normalises by per-frame max, which is only
+    // correct if the closest pixel is at exactly `scale` metres — fragile in practice.
+    bool   metric_depth{true};
 
     // MetricScaleEstimate
     float  scale{1.0F};                              // metres / (1/relative_depth)

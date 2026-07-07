@@ -185,6 +185,7 @@ std::unique_ptr<ObstacleEvidenceProvider> make_depth_provider(
         engine_cfg.cuda_device_id       = visual_onnx_config.cuda_device_id;
         engine_cfg.cuda_arena_limit_bytes = visual_onnx_config.cuda_arena_limit_bytes;
         engine_cfg.use_coreml           = visual_onnx_config.use_coreml;
+        engine_cfg.metric_depth         = visual_onnx_config.metric_depth;
         VisualDepthObstacleDetectorConfig detector_cfg;
         detector_cfg.pixel_stride           = visual_onnx_config.pixel_stride;
         detector_cfg.min_depth_m            = visual_onnx_config.min_depth_m;
@@ -440,6 +441,7 @@ bool parse_visual_onnx_key(
         cfg.cuda_arena_limit_bytes = static_cast<std::size_t>(std::stoull(value));
     }
     else if (field == "use_coreml")           { cfg.use_coreml = parse_bool(value); }
+    else if (field == "metric_depth")         { cfg.metric_depth = parse_bool(value); }
     else if (field == "pixel_stride")         { cfg.pixel_stride = static_cast<std::size_t>(std::stoul(value)); }
     else if (field == "min_depth_m")          { cfg.min_depth_m = std::stof(value); }
     else if (field == "max_depth_m")          { cfg.max_depth_m = std::stof(value); }

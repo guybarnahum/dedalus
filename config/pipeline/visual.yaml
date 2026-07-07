@@ -2,11 +2,16 @@
 # Fully visual sensing — no AirSim ground truth used for ego or depth:
 #   ego:   VisualOdometryProvider — FAST-9 + LK optical flow + FoE RANSAC +
 #          VL2 metric scale from L2 map, VL3 fallback to frame_hint.
-#   depth: DepthAnything V2 Small — ONNX inference on RGB, CUDA accelerated.
+#   depth: DepthAnything V2 Small Metric — ONNX inference on RGB, CUDA accelerated.
+#          metric_depth: true → raw ONNX output is absolute metres; engine stores
+#          1/depth_m so projection kernel formula (scale/depth_relative) gives back
+#          metres with scale=1.0.  Cross-frame absolute depth is preserved.
 #
 # Requires:
 #   - Build with -DDEDALUS_ENABLE_ONNX_DEPTH=ON (auto when ORT SDK present)
-#   - models/depth_anything_v2_vits.onnx  (build.sh exports it automatically)
+#   - models/depth_anything_v2_metric_vits.onnx  (export with --metric flag)
+#       python3 tools/perception/export_depth_anything.py \
+#           --output models/depth_anything_v2_metric_vits.onnx
 #   - drone/px4_front_center.yaml (no --include-depth needed)
 #
 # Tip: disable L2 persistence during initial validation to avoid accumulating
@@ -26,7 +31,9 @@ identity_resolver: appearance_only
 projector: flat_ground
 world_model: in_memory
 
-visual_onnx.model_path: models/depth_anything_v2_vits.onnx
+visual_onnx.model_path: models/depth_anything_v2_metric_vits.onnx
+visual_onnx.metric_depth: true
+visual_onnx.scale: 1.0
 visual_onnx.use_cuda: true
 visual_onnx.cuda_arena_limit_bytes: 4294967296
 visual_onnx.pixel_stride: 4
@@ -34,4 +41,3 @@ visual_onnx.min_depth_m: 1.0
 visual_onnx.max_depth_m: 60.0
 visual_onnx.voxel_size_m: 1.5
 visual_onnx.max_evidence: 256
-visual_onnx.scale: 0.63

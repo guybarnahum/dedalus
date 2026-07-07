@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Export DepthAnythingV2-Small to ONNX from HuggingFace weights.
+"""Export DepthAnythingV2 (relative or metric) to ONNX from HuggingFace weights.
 
 The exported model is NOT committed to the repo.
 Run this once on each target device to generate the .onnx file,
@@ -8,14 +8,30 @@ then run compile_depth_engine.sh to produce a TensorRT .engine (Jetson only).
 Requirements:
     pip install torch transformers onnx onnxruntime
 
-Usage:
-    python3 tools/perception/export_depth_anything.py --output /path/to/model.onnx
-    python3 tools/perception/export_depth_anything.py --output /path/to/model.onnx \\
-        --input-size 518 --opset 17
+Usage (metric — recommended for production):
+    python3 tools/perception/export_depth_anything.py --output models/depth_anything_v2_metric_vits.onnx \\
+        --model-id depth-anything/Depth-Anything-V2-Metric-Outdoor-Small-hf
+
+Usage (relative — only for comparison / debugging):
+    python3 tools/perception/export_depth_anything.py --output models/depth_anything_v2_vits.onnx
+
+Model IDs:
+    Metric outdoor (VKITTI — best for drone/aerial):
+        depth-anything/Depth-Anything-V2-Metric-Outdoor-Small-hf
+    Metric indoor (Hypersim):
+        depth-anything/Depth-Anything-V2-Metric-Indoor-Small-hf
+    Relative (no absolute scale):
+        depth-anything/Depth-Anything-V2-Small-hf  (default)
 
 Exported ONNX contract:
     Input:  "image"  float32  [1, 3, H, W]  ImageNet-normalised RGB
-    Output: "depth"  float32  [1, H, W]     Relative depth (higher = closer)
+    Output: "depth"  float32  [1, H, W]
+        - Metric model:   absolute depth in metres (higher = farther)
+        - Relative model: relative depth score    (higher = closer)
+
+Config pairing:
+    Metric:   visual_onnx.metric_depth: true   visual_onnx.scale: 1.0
+    Relative: visual_onnx.metric_depth: false  visual_onnx.scale: <calibrated>
 
 ONNXDepthEngine default input size: 518×518 (DepthAnythingV2-Small native).
 """
@@ -34,8 +50,9 @@ def main() -> None:
                         help="Square input resolution fed to the model (default: 518)")
     parser.add_argument("--opset", type=int, default=18,
                         help="ONNX opset version (default: 18)")
-    parser.add_argument("--model-id", default="depth-anything/Depth-Anything-V2-Small-hf",
-                        help="HuggingFace model ID")
+    parser.add_argument("--model-id",
+                        default="depth-anything/Depth-Anything-V2-Metric-Outdoor-Small-hf",
+                        help="HuggingFace model ID (default: metric outdoor vits)")
     args = parser.parse_args()
 
     try:

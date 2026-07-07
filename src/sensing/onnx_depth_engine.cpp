@@ -191,22 +191,33 @@ DepthInferenceResult ONNXDepthEngine::infer(const VisualDepthFrame& frame) {
     const int out_w = static_cast<int>(shape[shape.size() - 1]);
     const std::size_t n = static_cast<std::size_t>(out_h * out_w);
 
-    // Normalise output to [epsilon, 1.0] (model may output raw logits or [0, ∞)).
-    // Per-frame max is the correct anchor for DepthAnythingV2 relative depth —
-    // scale = 0.63 was calibrated against this convention.  Close pixels that
-    // exceed min_depth_m (drone props, near-field clutter) are excluded
-    // downstream in the projection kernel, not here.
-    float max_val = 1e-6F;
-    for (std::size_t i = 0; i < n; ++i) {
-        max_val = std::max(max_val, raw[i]);
-    }
-
     DepthInferenceResult result;
     result.width  = out_w;
     result.height = out_h;
     result.depth_relative.resize(n);
-    for (std::size_t i = 0; i < n; ++i) {
-        result.depth_relative[i] = std::max(raw[i] / max_val, 1e-6F);
+
+    if (impl_->config.metric_depth) {
+        // Metric model (e.g. DepthAnythingV2-Metric): raw[i] is absolute depth in metres.
+        // Store disparity (1/depth_m) so the projection kernel formula
+        // depth_m = scale / depth_relative recovers metres when scale = 1.0.
+        // This preserves cross-frame absolute depth — no per-frame normalisation.
+        for (std::size_t i = 0; i < n; ++i) {
+            const float dm = (raw[i] > 1e-3F) ? raw[i] : 1e-3F;
+            result.depth_relative[i] = 1.0F / dm;
+        }
+    } else {
+        // Relative model (DepthAnythingV2 default): normalise by per-frame max so
+        // the closest pixel gets depth_relative = 1.0.  Set scale = physical distance
+        // to that closest pixel (calibrated empirically per scene/drone).
+        // NOTE: this destroys absolute depth across frames — use metric_depth: true
+        // whenever the model supports it.
+        float max_val = 1e-6F;
+        for (std::size_t i = 0; i < n; ++i) {
+            max_val = std::max(max_val, raw[i]);
+        }
+        for (std::size_t i = 0; i < n; ++i) {
+            result.depth_relative[i] = std::max(raw[i] / max_val, 1e-6F);
+        }
     }
 
     const auto t1 = std::chrono::steady_clock::now();

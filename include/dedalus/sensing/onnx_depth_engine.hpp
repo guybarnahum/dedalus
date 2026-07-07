@@ -23,6 +23,12 @@ struct ONNXDepthEngineConfig {
     float std_b{0.225F};
 
     bool use_coreml{false};        // enable CoreML EP on macOS (MPS acceleration)
+    // When true the model is expected to output absolute metric depth in metres
+    // (e.g. DepthAnythingV2-Metric).  The engine stores 1/depth_m in
+    // DepthInferenceResult::depth_relative so the downstream formula
+    // depth_m = scale / depth_relative recovers the original metres with scale=1.0.
+    // When false the engine normalises by per-frame max (relative depth mode).
+    bool metric_depth{true};
 
     // CUDA EP — requires onnxruntime-gpu package and DEDALUS_CUDA_ENABLED.
     // On L4 this is the fastest path when TensorRT is not available.
