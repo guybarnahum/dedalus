@@ -250,50 +250,72 @@ void VisualDepthObstacleDetector::write_debug_frame(
         if (debug_pipe_ == nullptr) return;
     }
 
-    // Fixed metric scale: both panels map depth_m ∈ [0, max_depth_m] → colour.
-    // t=0 → blue (far, max_depth_m), t=1 → red (close, 0 m).
-    // Using a fixed scale rather than per-frame min/max keeps colours comparable
-    // across frames and prevents close objects (props) from anchoring vmax and
-    // compressing the rest of the scene into a narrow blue band.
-    //
-    // depth_relative = 1/depth_m (calibrated inverse depth, 1/m).
-    // depth_m = scale / depth_relative.  t = 1 - depth_m / max_depth_m.
-    const float display_max_m = params.max_depth_m;   // 60 m by default
+    // Fixed metric scale: depth_m = scale / depth_relative.
+    // depth_relative = raw model output = calibrated inverse depth (1/m, high=close).
+    const float display_max_m = params.max_depth_m;  // 60 m by default (black = far anchor)
 
-    // Rainbow helper: depth_relative → RGB using fixed metric scale
-    auto rainbow_rgb = [&](float dr, std::uint8_t& r, std::uint8_t& g, std::uint8_t& b) {
+    // Grayscale helper: depth_relative → luminance.
+    // white (255) = close (0 m), black (0) = far (max_depth_m).
+    // Identical scale for both panels so colours are directly comparable.
+    auto grey_lum = [&](float dr) -> std::uint8_t {
         float depth_m = display_max_m;
         if (std::isfinite(dr) && dr > 1e-6f) {
             depth_m = std::min(params.scale / dr, display_max_m);
         }
-        const float t = 1.0f - depth_m / display_max_m;  // 0=far/blue, 1=close/red
-        r = static_cast<std::uint8_t>(std::clamp(255.0f*(1.5f-std::abs(4.0f*t-3.0f)), 0.0f, 255.0f));
-        g = static_cast<std::uint8_t>(std::clamp(255.0f*(1.5f-std::abs(4.0f*t-2.0f)), 0.0f, 255.0f));
-        b = static_cast<std::uint8_t>(std::clamp(255.0f*(1.5f-std::abs(4.0f*t-1.0f)), 0.0f, 255.0f));
+        const float t = 1.0f - depth_m / display_max_m;  // 1=close/white, 0=far/black
+        return static_cast<std::uint8_t>(std::clamp(t * 255.0f, 0.0f, 255.0f));
     };
+
+    // Per-frame depth histogram logged every 30 frames to stderr.
+    // Tells us what fraction of pixels fall in each depth bin so we can
+    // diagnose why the right panel is mostly magenta (too-close filter).
+    static int diag_frame_count = 0;
+    if (++diag_frame_count % 30 == 1) {
+        int b0 = 0, b1 = 0, b2 = 0, b3 = 0, b4 = 0, b5 = 0;
+        const int npix = W * H;
+        for (int pi = 0; pi < npix; ++pi) {
+            const float dr = inferred.depth_relative[pi];
+            float dm = display_max_m * 2.0f;
+            if (std::isfinite(dr) && dr > 1e-6f) dm = params.scale / dr;
+            if      (dm <  0.5f) ++b0;
+            else if (dm <  1.0f) ++b1;
+            else if (dm <  5.0f) ++b2;
+            else if (dm < 20.0f) ++b3;
+            else if (dm < 60.0f) ++b4;
+            else                  ++b5;
+        }
+        const float pct = 100.0f / static_cast<float>(npix);
+        std::fprintf(stderr,
+            "[DepthDebug] frame=%d  depth_m bins: "
+            "<0.5m=%.0f%%  0.5-1m=%.0f%%  1-5m=%.0f%%  "
+            "5-20m=%.0f%%  20-60m=%.0f%%  >60m=%.0f%%  "
+            "[filter %.1f..%.1f m]\n",
+            diag_frame_count,
+            b0*pct, b1*pct, b2*pct, b3*pct, b4*pct, b5*pct,
+            params.min_depth_m, params.max_depth_m);
+    }
 
     // Output: (2W)×H row-major RGB
     std::vector<std::uint8_t> frame_rgb(static_cast<std::size_t>(2 * W * H) * 3U, 0U);
 
     for (int y = 0; y < H; ++y) {
         for (int x = 0; x < W; ++x) {
-            const std::size_t i  = static_cast<std::size_t>(y * W + x);
-            const float       dr = inferred.depth_relative[i];
+            const std::size_t pi = static_cast<std::size_t>(y * W + x);
+            const float       dr = inferred.depth_relative[pi];
 
-            // --- Left panel: raw ONNX output (model diagnostic) ---
-            std::uint8_t r, g, b;
-            rainbow_rgb(dr, r, g, b);
-            const std::size_t li = static_cast<std::size_t>(y * 2 * W + x) * 3U;
-            frame_rgb[li + 0U] = r;
-            frame_rgb[li + 1U] = g;
-            frame_rgb[li + 2U] = b;
+            // LEFT panel: raw ONNX output — white (close) → black (far) grayscale.
+            // Fixed metric scale so intensity is directly comparable across frames.
+            const std::uint8_t lum = grey_lum(dr);
+            const std::size_t  li  = static_cast<std::size_t>(y * 2 * W + x) * 3U;
+            frame_rgb[li + 0U] = lum;
+            frame_rgb[li + 1U] = lum;
+            frame_rgb[li + 2U] = lum;
 
-            // --- Right panel: evidence filter view ---
-            // Colour coding:
-            //   Magenta   — too close (depth_m < min_depth_m): props, near-field clutter
-            //   Dark navy — too far   (depth_m > max_depth_m)
-            //   Rainbow   — valid evidence range
-            //   Brightened — stride-sampled pixel (contributes to L0 evidence)
+            // RIGHT panel: evidence filter view.
+            //   Magenta    — too close (depth_m < min_depth_m): props / near-field clutter
+            //   Dark navy  — too far   (depth_m > max_depth_m): open sky
+            //   White→black — valid range (same grey scale as left panel)
+            //   Cyan dot   — stride-sampled pixel that contributes L0/L1 evidence
             const std::size_t ri = static_cast<std::size_t>(y * 2 * W + W + x) * 3U;
             if (!std::isfinite(dr) || dr <= 1e-6f) {
                 // Invalid model output — dark grey
@@ -313,16 +335,18 @@ void VisualDepthObstacleDetector::write_debug_frame(
                     frame_rgb[ri + 1U] = 10U;
                     frame_rgb[ri + 2U] = 50U;
                 } else {
-                    // Valid range — rainbow, brightened at stride positions
-                    rainbow_rgb(dr, r, g, b);
+                    // Valid range
                     if (x % params.stride == 0 && y % params.stride == 0) {
-                        r = static_cast<std::uint8_t>(std::min(255, static_cast<int>(r) + 80));
-                        g = static_cast<std::uint8_t>(std::min(255, static_cast<int>(g) + 80));
-                        b = static_cast<std::uint8_t>(std::min(255, static_cast<int>(b) + 80));
+                        // Cyan — stride-sampled evidence pixel
+                        frame_rgb[ri + 0U] = 0U;
+                        frame_rgb[ri + 1U] = 220U;
+                        frame_rgb[ri + 2U] = 220U;
+                    } else {
+                        // White→black grayscale (same mapping as left panel)
+                        frame_rgb[ri + 0U] = lum;
+                        frame_rgb[ri + 1U] = lum;
+                        frame_rgb[ri + 2U] = lum;
                     }
-                    frame_rgb[ri + 0U] = r;
-                    frame_rgb[ri + 1U] = g;
-                    frame_rgb[ri + 2U] = b;
                 }
             }
         }
