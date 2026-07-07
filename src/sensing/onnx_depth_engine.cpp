@@ -197,13 +197,14 @@ DepthInferenceResult ONNXDepthEngine::infer(const VisualDepthFrame& frame) {
     result.depth_relative.resize(n);
 
     if (impl_->config.metric_depth) {
-        // Metric model (e.g. DepthAnythingV2-Metric): raw[i] is absolute depth in metres.
-        // Store disparity (1/depth_m) so the projection kernel formula
-        // depth_m = scale / depth_relative recovers metres when scale = 1.0.
-        // This preserves cross-frame absolute depth — no per-frame normalisation.
+        // Metric model (e.g. DepthAnythingV2-Metric) outputs calibrated inverse depth
+        // in 1/m units — same disparity convention as the relative model (high = close),
+        // but absolute across frames.  Store directly; the projection formula
+        // depth_m = scale / depth_relative with scale = 1.0 recovers physical depth:
+        //   depth_m = 1.0 / raw_inverse_depth_per_metre
+        // No per-frame normalisation — cross-frame absolute depth is preserved.
         for (std::size_t i = 0; i < n; ++i) {
-            const float dm = (raw[i] > 1e-3F) ? raw[i] : 1e-3F;
-            result.depth_relative[i] = 1.0F / dm;
+            result.depth_relative[i] = std::max(raw[i], 1e-6F);
         }
     } else {
         // Relative model (DepthAnythingV2 default): normalise by per-frame max so
@@ -225,9 +226,28 @@ DepthInferenceResult ONNXDepthEngine::infer(const VisualDepthFrame& frame) {
         std::chrono::duration_cast<std::chrono::microseconds>(t1 - t0).count()) / 1000.0F;
     result.valid = true;
 
-    // Log first inference — confirms which EP is actually executing under load.
+    // Log first inference — confirms which EP is actually executing under load,
+    // and prints raw model output statistics to verify metric vs relative semantics.
+    // Expected for metric-outdoor model at drone altitude (~5-30 m AGL):
+    //   raw min ~0.5 m, max ~60 m, mean ~10-30 m  → metric ✓
+    // If instead:
+    //   raw min ~0, max ~1  (or ~100)              → relative model, wrong config
+    //   raw max ≈ raw min (all same value)         → model load / EP failure
     if (!impl_->first_inference_logged) {
         impl_->first_inference_logged = true;
+        float raw_min = raw[0], raw_max = raw[0], raw_sum = 0.0F;
+        for (std::size_t i = 0; i < n; ++i) {
+            if (raw[i] < raw_min) raw_min = raw[i];
+            if (raw[i] > raw_max) raw_max = raw[i];
+            raw_sum += raw[i];
+        }
+        std::fprintf(stderr,
+            "[ONNXDepthEngine] raw output  min=%.3f  max=%.3f  mean=%.3f  "
+            "mode=%s\n",
+            static_cast<double>(raw_min),
+            static_cast<double>(raw_max),
+            static_cast<double>(raw_sum / static_cast<float>(n)),
+            impl_->config.metric_depth ? "metric" : "relative");
         const bool looks_like_gpu = result.inference_time_ms < 100.0F;
         std::fprintf(stderr,
             "[ONNXDepthEngine] ============================================\n"
