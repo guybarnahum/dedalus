@@ -234,7 +234,6 @@ void VisualDepthObstacleDetector::write_debug_frame(
 
     const int      W = inferred.width;
     const int      H = inferred.height;
-    const std::size_t n = static_cast<std::size_t>(W * H);
 
     // Side-by-side: left panel = raw model output, right panel = evidence filter view.
     // ffmpeg output width is 2*W.
