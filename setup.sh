@@ -542,7 +542,7 @@ echo "✅ Python environment ready at $VENV_PATH"
 # ---------------- Step 5b: Depth Model Export ----------------
 # Export the DepthAnything V2 Small model to ONNX if the ORT C++ SDK is
 # installed and the model file is not already present.
-DEPTH_MODEL="${DEPTH_MODEL:-$REPO_ROOT/models/depth_anything_v2_vits.onnx}"
+DEPTH_MODEL="${DEPTH_MODEL:-$REPO_ROOT/models/depth_anything_v2_metric_vits.onnx}"
 ORT_INSTALL_DIR="/usr/local/onnxruntime"
 if [ -f "${ORT_INSTALL_DIR}/lib/cmake/onnxruntime/onnxruntimeConfig.cmake" ]; then
     if [ -f "$DEPTH_MODEL" ]; then

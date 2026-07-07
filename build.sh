@@ -110,7 +110,7 @@ cmake --build "$BUILD_DIR" -j"$(dedalus_build_jobs)"
 # ── Model preparation ─────────────────────────────────────────────────────────
 # Export the depth model if ONNX depth is enabled and the model file is absent.
 # Skip silently when ONNX depth is off (no ONNX_CMAKE_FLAGS set).
-DEPTH_MODEL="${DEPTH_MODEL:-models/depth_anything_v2_vits.onnx}"
+DEPTH_MODEL="${DEPTH_MODEL:-models/depth_anything_v2_metric_vits.onnx}"
 if [[ -n "$ONNX_CMAKE_FLAGS" ]]; then
     if [[ -f "$DEPTH_MODEL" ]]; then
         echo "[build] depth model: found at ${DEPTH_MODEL} — skipping export"
