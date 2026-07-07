@@ -4,7 +4,6 @@
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
-#include <limits>
 #include <string>
 #include <vector>
 
@@ -227,14 +226,22 @@ std::string VisualDepthObstacleDetector::provider_name() const {
     return "visual_depth_obstacle_detector";
 }
 
-void VisualDepthObstacleDetector::write_debug_frame(const DepthInferenceResult& inferred) {
+void VisualDepthObstacleDetector::write_debug_frame(
+    const DepthInferenceResult& inferred,
+    const ProjectionParams&     params) {
+
     if (inferred.width <= 0 || inferred.height <= 0 || inferred.depth_relative.empty()) return;
 
-    // Open the ffmpeg pipe on the first valid frame (dimensions known now).
+    const int      W = inferred.width;
+    const int      H = inferred.height;
+    const std::size_t n = static_cast<std::size_t>(W * H);
+
+    // Side-by-side: left panel = raw model output, right panel = evidence filter view.
+    // ffmpeg output width is 2*W.
     if (debug_pipe_ == nullptr) {
         const std::string cmd =
             "ffmpeg -f rawvideo -pixel_format rgb24"
-            " -video_size " + std::to_string(inferred.width) + "x" + std::to_string(inferred.height) +
+            " -video_size " + std::to_string(2 * W) + "x" + std::to_string(H) +
             " -framerate 5 -i pipe:0"
             " -vcodec libx264 -crf 23 -pix_fmt yuv420p"
             " -movflags frag_keyframe+empty_moov+default_base_moof"
@@ -244,52 +251,84 @@ void VisualDepthObstacleDetector::write_debug_frame(const DepthInferenceResult& 
         if (debug_pipe_ == nullptr) return;
     }
 
-    const std::size_t n = static_cast<std::size_t>(inferred.width) *
-                          static_cast<std::size_t>(inferred.height);
-
-    // Compute per-pixel metric depth and validity mask using the same filter
-    // as the evidence pipeline (min/max depth).  Masked pixels render black so
-    // the MP4 accurately reflects what goes into L0 evidence rather than the
-    // raw ONNX output (which includes drone props and sky).
-    const float scale      = scale_.scale;
-    const float min_depth  = config_.min_depth_m;
-    const float max_depth  = config_.max_depth_m;
-
-    // Range for the colour ramp: use only evidence-eligible pixels.
-    float vmin = std::numeric_limits<float>::max();
-    float vmax = std::numeric_limits<float>::lowest();
+    // Normalise depth_relative to [0,1] for consistent rainbow mapping.
+    // t=0 → blue (far), t=1 → red (near).
+    float vmin = inferred.depth_relative[0];
+    float vmax = inferred.depth_relative[0];
     for (std::size_t i = 0U; i < n; ++i) {
-        const float dr = inferred.depth_relative[i];
-        if (!std::isfinite(dr) || dr <= 0.0F) continue;
-        const float dm = scale / dr;
-        if (dm < min_depth || dm > max_depth) continue;
-        if (dr < vmin) vmin = dr;
-        if (dr > vmax) vmax = dr;
-    }
-    // Fallback: if no eligible pixels, use the full range (avoids blank video).
-    if (vmin > vmax) {
-        for (std::size_t i = 0U; i < n; ++i) {
-            const float v = inferred.depth_relative[i];
-            if (!std::isfinite(v)) continue;
-            if (v < vmin) vmin = v;
-            if (v > vmax) vmax = v;
-        }
+        const float v = inferred.depth_relative[i];
+        if (!std::isfinite(v)) continue;
+        if (v < vmin) vmin = v;
+        if (v > vmax) vmax = v;
     }
     const float range = (vmax - vmin > 1.0e-6f) ? (vmax - vmin) : 1.0f;
 
-    std::vector<std::uint8_t> rgb(n * 3U, 0U);  // default black = filtered/invalid
-    for (std::size_t i = 0U; i < n; ++i) {
-        const float dr = inferred.depth_relative[i];
-        if (!std::isfinite(dr) || dr <= 0.0F) continue;
-        const float dm = scale / dr;
-        if (dm < min_depth || dm > max_depth) continue;  // black — filtered (props, sky)
-        // t=0 → blue (far), t=1 → red (near)
-        const float t = std::clamp((dr - vmin) / range, 0.0f, 1.0f);
-        rgb[3U*i+0U] = static_cast<std::uint8_t>(std::clamp(255.0f*(1.5f-std::abs(4.0f*t-3.0f)), 0.0f, 255.0f));
-        rgb[3U*i+1U] = static_cast<std::uint8_t>(std::clamp(255.0f*(1.5f-std::abs(4.0f*t-2.0f)), 0.0f, 255.0f));
-        rgb[3U*i+2U] = static_cast<std::uint8_t>(std::clamp(255.0f*(1.5f-std::abs(4.0f*t-1.0f)), 0.0f, 255.0f));
+    // Rainbow helper: depth_relative → RGB
+    auto rainbow_rgb = [&](float dr, std::uint8_t& r, std::uint8_t& g, std::uint8_t& b) {
+        const float t = std::isfinite(dr)
+            ? std::clamp((dr - vmin) / range, 0.0f, 1.0f) : 0.0f;
+        r = static_cast<std::uint8_t>(std::clamp(255.0f*(1.5f-std::abs(4.0f*t-3.0f)), 0.0f, 255.0f));
+        g = static_cast<std::uint8_t>(std::clamp(255.0f*(1.5f-std::abs(4.0f*t-2.0f)), 0.0f, 255.0f));
+        b = static_cast<std::uint8_t>(std::clamp(255.0f*(1.5f-std::abs(4.0f*t-1.0f)), 0.0f, 255.0f));
+    };
+
+    // Output: (2W)×H row-major RGB
+    std::vector<std::uint8_t> frame_rgb(static_cast<std::size_t>(2 * W * H) * 3U, 0U);
+
+    for (int y = 0; y < H; ++y) {
+        for (int x = 0; x < W; ++x) {
+            const std::size_t i  = static_cast<std::size_t>(y * W + x);
+            const float       dr = inferred.depth_relative[i];
+
+            // --- Left panel: raw ONNX output (model diagnostic) ---
+            std::uint8_t r, g, b;
+            rainbow_rgb(dr, r, g, b);
+            const std::size_t li = static_cast<std::size_t>(y * 2 * W + x) * 3U;
+            frame_rgb[li + 0U] = r;
+            frame_rgb[li + 1U] = g;
+            frame_rgb[li + 2U] = b;
+
+            // --- Right panel: evidence filter view ---
+            // Colour coding:
+            //   Magenta   — too close (depth_m < min_depth_m): props, near-field clutter
+            //   Dark navy — too far   (depth_m > max_depth_m)
+            //   Rainbow   — valid evidence range
+            //   Brightened — stride-sampled pixel (contributes to L0 evidence)
+            const std::size_t ri = static_cast<std::size_t>(y * 2 * W + W + x) * 3U;
+            if (!std::isfinite(dr) || dr <= 1e-6f) {
+                // Invalid model output — dark grey
+                frame_rgb[ri + 0U] = 30U;
+                frame_rgb[ri + 1U] = 30U;
+                frame_rgb[ri + 2U] = 30U;
+            } else {
+                const float depth_m = params.scale / dr;
+                if (depth_m < params.min_depth_m) {
+                    // Too close — magenta
+                    frame_rgb[ri + 0U] = 255U;
+                    frame_rgb[ri + 1U] = 0U;
+                    frame_rgb[ri + 2U] = 255U;
+                } else if (depth_m > params.max_depth_m) {
+                    // Too far — dark navy
+                    frame_rgb[ri + 0U] = 10U;
+                    frame_rgb[ri + 1U] = 10U;
+                    frame_rgb[ri + 2U] = 50U;
+                } else {
+                    // Valid range — rainbow, brightened at stride positions
+                    rainbow_rgb(dr, r, g, b);
+                    if (x % params.stride == 0 && y % params.stride == 0) {
+                        r = static_cast<std::uint8_t>(std::min(255, static_cast<int>(r) + 80));
+                        g = static_cast<std::uint8_t>(std::min(255, static_cast<int>(g) + 80));
+                        b = static_cast<std::uint8_t>(std::min(255, static_cast<int>(b) + 80));
+                    }
+                    frame_rgb[ri + 0U] = r;
+                    frame_rgb[ri + 1U] = g;
+                    frame_rgb[ri + 2U] = b;
+                }
+            }
+        }
     }
-    std::fwrite(rgb.data(), 1U, rgb.size(), debug_pipe_);
+
+    std::fwrite(frame_rgb.data(), 1U, frame_rgb.size(), debug_pipe_);
     std::fflush(debug_pipe_);
 }
 
@@ -299,7 +338,9 @@ std::vector<ObstacleEvidence> VisualDepthObstacleDetector::detect(
     const DepthInferenceResult inferred = engine_->infer(vdf);
     if (!inferred.valid || inferred.depth_relative.empty()) return {};
     if (!config_.debug_depth_mp4.empty()) {
-        write_debug_frame(inferred);
+        const ProjectionParams dbg_params = make_projection_params(
+            ego_frame, inferred, scale_, config_);
+        write_debug_frame(inferred, dbg_params);
     }
     return project_from_inferred(ego_frame, inferred, scale_, config_);
 }

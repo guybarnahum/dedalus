@@ -74,7 +74,8 @@ public:
     [[nodiscard]] std::vector<ObstacleEvidence> detect(const EgoSensingFrame& frame) override;
 
 private:
-    void write_debug_frame(const DepthInferenceResult& inferred);
+    void write_debug_frame(const DepthInferenceResult& inferred,
+                           const ProjectionParams&     params);
 
     std::unique_ptr<DepthEngineInterface> engine_;
     MetricScaleEstimate                   scale_;
