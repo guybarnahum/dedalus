@@ -233,12 +233,14 @@ DepthInferenceResult ONNXDepthEngine::infer(const VisualDepthFrame& frame) {
 
     // Log first inference — confirms which EP is executing and verifies model encoding.
     //
-    // Metric model (metric_depth=true): raw = absolute depth in metres, HIGH=FAR.
-    //   Expected at drone altitude (5-30 m AGL):
-    //     raw min ~0.3 m (props),  max ~60 m (sky/terrain),  mean ~5-20 m  → ✓
+    // Metric model (metric_depth=true): raw = calibrated INVERSE DEPTH in 1/m (HIGH=CLOSE).
+    //   depth_m = 1.0 / raw  (scale=1.0).  Stored directly as depth_relative.
+    //   Expected at drone altitude (5-30 m AGL, AirSim):
+    //     raw range roughly 0.05..3.0  (depth_m 0.3..20 m),  mean raw ~ 0.2..1.0
     //   BAD signs:
-    //     mean < 1.0  → encoding wrong (storing raw as disparity?) or OOD AirSim input
-    //     max ≈ min   → model load / EP failure
+    //     mean raw > 5.0  → everything very close (props dominant or OOD)
+    //     mean raw ≈ 2.5  → uniform black input (check frame pipeline)
+    //     max ≈ min       → model load / EP failure
     //
     // Relative model (metric_depth=false): raw is arbitrary disparity, HIGH=CLOSE.
     //   Expected: raw range [0, ~1] normalised by per-frame max.

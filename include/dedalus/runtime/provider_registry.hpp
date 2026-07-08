@@ -31,11 +31,11 @@ struct VisualONNXDepthConfig {
     int    cuda_device_id{0};
     std::size_t cuda_arena_limit_bytes{4ULL * 1024 * 1024 * 1024};  // 4 GiB — ViT-S needs >1 GiB for intermediate activations
     bool   use_coreml{false};                        // CoreML EP (macOS)
-    // When true the ONNX model outputs metric depth in metres (e.g. DepthAnythingV2
-    // Metric variant).  The engine stores 1/depth_m so the projection kernel formula
-    // depth_m = scale / depth_relative gives back metres when scale = 1.0.
-    // When false (default) the engine normalises by per-frame max, which is only
-    // correct if the closest pixel is at exactly `scale` metres — fragile in practice.
+    // When true the ONNX model outputs calibrated INVERSE DEPTH in 1/m (HIGH=CLOSE),
+    // e.g. DepthAnythingV2-Metric-Outdoor: raw ≈ 0.06..7.5 (close=high).
+    // The engine stores depth_relative = raw directly.
+    // Projection formula: depth_m = scale / depth_relative = 1.0 / raw  (scale=1.0).
+    // When false the engine normalises by per-frame max — fragile without calibration.
     bool   metric_depth{true};
 
     // MetricScaleEstimate
@@ -51,6 +51,12 @@ struct VisualONNXDepthConfig {
     bool   detect_surface_patches{true};
     bool   detect_thin_structures{true};
     std::string debug_depth_mp4;  // if non-empty, pipe depth frames into ffmpeg → H.264 MP4
+    // Temporal motion filter threshold (relative depth change, fraction 0..1).
+    // Pixels whose depth_relative changes by less than this fraction frame-to-frame
+    // are considered static (props / OOD background) and excluded from evidence.
+    // Formula: |dr_now - dr_prev| / mean(dr_now, dr_prev) < threshold → filtered.
+    // 0.0 = disabled (default).  Recommended: 0.02 (2%) when props are visible.
+    float  temporal_filter_threshold{0.0F};
 };
 
 struct CoreStackProviderConfig {

@@ -3,9 +3,9 @@
 #   ego:   VisualOdometryProvider — FAST-9 + LK optical flow + FoE RANSAC +
 #          VL2 metric scale from L2 map, VL3 fallback to frame_hint.
 #   depth: DepthAnything V2 Small Metric — ONNX inference on RGB, CUDA accelerated.
-#          metric_depth: true → raw ONNX output is absolute metres; engine stores
-#          1/depth_m so projection kernel formula (scale/depth_relative) gives back
-#          metres with scale=1.0.  Cross-frame absolute depth is preserved.
+#          metric_depth: true → raw ONNX output is calibrated INVERSE DEPTH in 1/m
+#          (HIGH=CLOSE).  Engine stores depth_relative = raw directly.
+#          Projection: depth_m = scale / depth_relative = 1.0 / raw  (scale=1.0).
 #
 # Requires:
 #   - Build with -DDEDALUS_ENABLE_ONNX_DEPTH=ON (auto when ORT SDK present)
@@ -41,3 +41,12 @@ visual_onnx.min_depth_m: 1.0
 visual_onnx.max_depth_m: 60.0
 visual_onnx.voxel_size_m: 1.5
 visual_onnx.max_evidence: 256
+# Temporal motion filter — relative depth change threshold (fraction 0..1).
+# Pixels whose inverse-depth changes by < this fraction frame-to-frame are treated
+# as static (prop bleed / OOD background) and excluded from evidence.
+# Formula: |dr_now - dr_prev| / mean(dr_now, dr_prev) < threshold → filtered.
+# Props (fixed relative to camera) → Δdr/mean ≈ 0 → always filtered.
+# Approaching obstacle at 10m, 5 m/s cruise → relative change ≈ 5% → passes at 0.02.
+# Limit: obstacles approached at < ~1 m/s at > 15m are filtered until closer.
+# Set to 0.0 to disable (e.g. during hover or slow-speed missions).
+visual_onnx.temporal_filter_threshold: 0.02
