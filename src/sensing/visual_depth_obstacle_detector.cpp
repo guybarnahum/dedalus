@@ -228,7 +228,8 @@ std::string VisualDepthObstacleDetector::provider_name() const {
 
 void VisualDepthObstacleDetector::write_debug_frame(
     const DepthInferenceResult& inferred,
-    const ProjectionParams&     params) {
+    const ProjectionParams&     params,
+    float                       pitch_down_deg) {
 
     if (inferred.width <= 0 || inferred.height <= 0 || inferred.depth_relative.empty()) return;
 
@@ -278,33 +279,6 @@ void VisualDepthObstacleDetector::write_debug_frame(
         return static_cast<std::uint8_t>(std::clamp(t * 255.0f, 0.0f, 255.0f));
     };
 
-    // Per-frame depth histogram logged every 30 frames to stderr.
-    static int diag_frame_count = 0;
-    if (++diag_frame_count % 30 == 1) {
-        int b0 = 0, b1 = 0, b2 = 0, b3 = 0, b4 = 0, b5 = 0;
-        const int npix = W * H;
-        for (int pi = 0; pi < npix; ++pi) {
-            const float dr = inferred.depth_relative[pi];
-            float dm = display_max_m * 2.0f;
-            if (std::isfinite(dr) && dr > 1e-6f) dm = params.scale / dr;
-            if      (dm <  0.5f) ++b0;
-            else if (dm <  1.0f) ++b1;
-            else if (dm <  5.0f) ++b2;
-            else if (dm < 20.0f) ++b3;
-            else if (dm < 60.0f) ++b4;
-            else                  ++b5;
-        }
-        const float pct = 100.0f / static_cast<float>(npix);
-        std::fprintf(stderr,
-            "[DepthDebug] frame=%d  depth_m bins: "
-            "<0.5m=%.0f%%  0.5-1m=%.0f%%  1-5m=%.0f%%  "
-            "5-20m=%.0f%%  20-60m=%.0f%%  >60m=%.0f%%  "
-            "[filter %.1f..%.1f m]\n",
-            diag_frame_count,
-            b0*pct, b1*pct, b2*pct, b3*pct, b4*pct, b5*pct,
-            params.min_depth_m, params.max_depth_m);
-    }
-
     // Output: (2W)×H row-major RGB
     std::vector<std::uint8_t> frame_rgb(static_cast<std::size_t>(2 * W * H) * 3U, 0U);
 
@@ -324,7 +298,11 @@ void VisualDepthObstacleDetector::write_debug_frame(
             // RIGHT panel: evidence filter view.
             //   Dark grey  — invalid model output (dr ≤ 0)
             //   Dark navy  — too far   (depth_m > max_depth_m)
-            //   White→black — filtered (depth_m < min_depth_m) or valid, same grey as left
+            //   Red/Orange/Yellow — filtered (depth_m < min_depth_m), colored by gimbal pitch:
+            //       pitch > 15° → red (OOD — nothing should be this close when looking down)
+            //       pitch <  5° → yellow (expected — props/arms in field of view)
+            //       between     → orange (ambiguous)
+            //   Grey gradient — valid depth, not stride-sampled
             //   Cyan dot   — stride-sampled pixel that passes the depth filter → evidence
             const std::size_t ri = static_cast<std::size_t>(y * 2 * W + W + x) * 3U;
             if (!std::isfinite(dr) || dr <= 1e-6f) {
@@ -346,8 +324,21 @@ void VisualDepthObstacleDetector::write_debug_frame(
                     frame_rgb[ri + 0U] = 0U;
                     frame_rgb[ri + 1U] = 220U;
                     frame_rgb[ri + 2U] = 220U;
+                } else if (depth_m < params.min_depth_m) {
+                    // Filtered (too close): color by gimbal pitch to distinguish
+                    // OOD noise (camera looking down) from expected close readings (props).
+                    //   pitch > 15° (looking down)  → RED   — OOD noise, nothing should be this close
+                    //   pitch <  5° (near level)     → YELLOW — expected (arms / props in view)
+                    //   between                      → ORANGE — ambiguous
+                    if (pitch_down_deg > 15.0f) {
+                        frame_rgb[ri + 0U] = 220U; frame_rgb[ri + 1U] =  40U; frame_rgb[ri + 2U] =  40U;
+                    } else if (pitch_down_deg < 5.0f) {
+                        frame_rgb[ri + 0U] = 220U; frame_rgb[ri + 1U] = 220U; frame_rgb[ri + 2U] =   0U;
+                    } else {
+                        frame_rgb[ri + 0U] = 220U; frame_rgb[ri + 1U] = 130U; frame_rgb[ri + 2U] =   0U;
+                    }
                 } else {
-                    // Filtered (<min_depth_m) or valid non-sampled — grey gradient
+                    // Valid depth, not stride-sampled — grey gradient
                     frame_rgb[ri + 0U] = lum;
                     frame_rgb[ri + 1U] = lum;
                     frame_rgb[ri + 2U] = lum;
@@ -366,10 +357,133 @@ std::vector<ObstacleEvidence> VisualDepthObstacleDetector::detect(
     const DepthInferenceResult inferred = engine_->infer(vdf);
     if (!inferred.valid || inferred.depth_relative.empty()) return {};
 
+    // Camera pitch: NED convention, forward_axis_local.z > 0 means looking downward.
+    const float fwd_z = static_cast<float>(ego_frame.sensing_volume.forward_axis_local.z);
+    const float pitch_down_deg = std::asin(std::clamp(fwd_z, -1.0f, 1.0f))
+                                 * (180.0f / 3.14159265f);
+
+    // Depth histogram — always active (every 30 frames), regardless of debug MP4.
+    static int diag_frame_count = 0;
+    if (++diag_frame_count % 30 == 1) {
+        const int npix = inferred.width * inferred.height;
+        int b0 = 0, b1 = 0, b2 = 0, b3 = 0, b4 = 0, b5 = 0;
+        for (int pi = 0; pi < npix; ++pi) {
+            const float dr = inferred.depth_relative[pi];
+            float dm = 120.0f;
+            if (std::isfinite(dr) && dr > 1e-6f) dm = scale_.scale / dr;
+            if      (dm <  0.5f) ++b0;
+            else if (dm <  1.0f) ++b1;
+            else if (dm <  5.0f) ++b2;
+            else if (dm < 20.0f) ++b3;
+            else if (dm < 60.0f) ++b4;
+            else                  ++b5;
+        }
+        const float pct = 100.0f / static_cast<float>(npix);
+        std::fprintf(stderr,
+            "[DepthDebug] frame=%d pitch=%.1f°  depth_m bins: "
+            "<0.5m=%.0f%%  0.5-1m=%.0f%%  1-5m=%.0f%%  "
+            "5-20m=%.0f%%  20-60m=%.0f%%  >60m=%.0f%%  "
+            "[filter %.1f..%.1f m]\n",
+            diag_frame_count, pitch_down_deg,
+            b0 * pct, b1 * pct, b2 * pct, b3 * pct, b4 * pct, b5 * pct,
+            config_.min_depth_m, config_.max_depth_m);
+    }
+
     if (!config_.debug_depth_mp4.empty()) {
         const ProjectionParams dbg_params = make_projection_params(
             ego_frame, inferred, scale_, config_);
-        write_debug_frame(inferred, dbg_params);
+        write_debug_frame(inferred, dbg_params, pitch_down_deg);
+    }
+
+    // Gimbal-gated range-error frame capture.
+    //
+    // When the camera is tilted > 15° downward nothing physical can be < min_depth_m
+    // from the drone.  If > 5% of pixels are predicted below that floor the model is
+    // producing OOD noise.  Set DEDALUS_DEPTH_CAPTURE_DIR=/tmp/depth_errors to save
+    // depth + RGB .npy pairs for each such frame; load with probe_depth_frame0.py.
+    const char* capture_dir = std::getenv("DEDALUS_DEPTH_CAPTURE_DIR");
+    constexpr float k_capture_pitch_deg = 15.0f;
+    constexpr float k_capture_close_pct = 5.0f;
+    if (capture_dir != nullptr && pitch_down_deg > k_capture_pitch_deg) {
+        const int npix = inferred.width * inferred.height;
+        int close_count = 0;
+        for (int pi = 0; pi < npix; ++pi) {
+            const float dr = inferred.depth_relative[pi];
+            if (std::isfinite(dr) && dr > 1e-6f
+                    && (scale_.scale / dr) < config_.min_depth_m) {
+                ++close_count;
+            }
+        }
+        const float close_pct = 100.0f * static_cast<float>(close_count)
+                                / static_cast<float>(npix);
+        if (close_pct > k_capture_close_pct) {
+            static int capture_idx = 0;
+            ++capture_idx;
+            const std::string base = std::string(capture_dir)
+                + "/cap_" + std::to_string(capture_idx)
+                + "_p"    + std::to_string(static_cast<int>(pitch_down_deg))
+                + "_c"    + std::to_string(static_cast<int>(close_pct));
+
+            // Minimal NPY writer (float32, shape H×W).
+            auto write_npy_f32 = [&](const std::string& path,
+                                     const float* data, int rows, int cols) {
+                FILE* f = std::fopen(path.c_str(), "wb");
+                if (!f) return;
+                char hdr_buf[256];
+                const int hdr_len = std::snprintf(hdr_buf, sizeof(hdr_buf),
+                    "{'descr': '<f4', 'fortran_order': False, 'shape': (%d, %d), }",
+                    rows, cols);
+                const std::uint8_t magic[] = {0x93,'N','U','M','P','Y',0x01,0x00};
+                const int needed = 10 + hdr_len + 1;
+                const int pad    = (64 - (needed % 64)) % 64;
+                const std::uint16_t hdr_size =
+                    static_cast<std::uint16_t>(hdr_len + pad + 1);
+                std::fwrite(magic, 1, 8, f);
+                std::fwrite(&hdr_size, 2, 1, f);
+                std::fwrite(hdr_buf, 1, static_cast<std::size_t>(hdr_len), f);
+                for (int i = 0; i < pad; ++i) std::fputc(' ', f);
+                std::fputc('\n', f);
+                std::fwrite(data, sizeof(float),
+                            static_cast<std::size_t>(rows * cols), f);
+                std::fclose(f);
+            };
+
+            // Minimal NPY writer (uint8, shape H×W×C).
+            auto write_npy_u8 = [&](const std::string& path,
+                                    const std::uint8_t* data,
+                                    int rows, int cols, int ch) {
+                FILE* f = std::fopen(path.c_str(), "wb");
+                if (!f) return;
+                char hdr_buf[256];
+                const int hdr_len = std::snprintf(hdr_buf, sizeof(hdr_buf),
+                    "{'descr': '|u1', 'fortran_order': False, 'shape': (%d, %d, %d), }",
+                    rows, cols, ch);
+                const std::uint8_t magic[] = {0x93,'N','U','M','P','Y',0x01,0x00};
+                const int needed = 10 + hdr_len + 1;
+                const int pad    = (64 - (needed % 64)) % 64;
+                const std::uint16_t hdr_size =
+                    static_cast<std::uint16_t>(hdr_len + pad + 1);
+                std::fwrite(magic, 1, 8, f);
+                std::fwrite(&hdr_size, 2, 1, f);
+                std::fwrite(hdr_buf, 1, static_cast<std::size_t>(hdr_len), f);
+                for (int i = 0; i < pad; ++i) std::fputc(' ', f);
+                std::fputc('\n', f);
+                std::fwrite(data, 1,
+                            static_cast<std::size_t>(rows * cols * ch), f);
+                std::fclose(f);
+            };
+
+            write_npy_f32(base + "_depth.npy",
+                          inferred.depth_relative.data(),
+                          inferred.height, inferred.width);
+            write_npy_u8(base + "_rgb.npy",
+                         vdf.bytes.data(),
+                         vdf.height, vdf.width, vdf.channels);
+
+            std::fprintf(stderr,
+                "[DepthCapture] pitch=%.1f° close=%.0f%% → %s_{depth,rgb}.npy\n",
+                pitch_down_deg, close_pct, base.c_str());
+        }
     }
 
     return project_from_inferred(ego_frame, inferred, scale_, config_);

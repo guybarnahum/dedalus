@@ -75,7 +75,8 @@ public:
 
 private:
     void write_debug_frame(const DepthInferenceResult& inferred,
-                           const ProjectionParams&     params);
+                           const ProjectionParams&     params,
+                           float                       pitch_down_deg);
 
     std::unique_ptr<DepthEngineInterface> engine_;
     MetricScaleEstimate                   scale_;
