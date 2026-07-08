@@ -9,6 +9,7 @@
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
+#include <cstdint>
 #include <fstream>
 #include <stdexcept>
 #include <string>
@@ -197,14 +198,20 @@ DepthInferenceResult ONNXDepthEngine::infer(const VisualDepthFrame& frame) {
     result.depth_relative.resize(n);
 
     if (impl_->config.metric_depth) {
-        // Metric model (e.g. DepthAnythingV2-Metric) outputs calibrated inverse depth
-        // in 1/m units — same disparity convention as the relative model (high = close),
-        // but absolute across frames.  Store directly; the projection formula
-        // depth_m = scale / depth_relative with scale = 1.0 recovers physical depth:
-        //   depth_m = 1.0 / raw_inverse_depth_per_metre
-        // No per-frame normalisation — cross-frame absolute depth is preserved.
+        // Metric model (e.g. DepthAnythingV2-Metric-Outdoor) outputs absolute depth
+        // in metres, with HIGH value = FAR (not inverse depth).
+        //
+        // depth_relative convention throughout the codebase: HIGH = CLOSE (like disparity).
+        // Downstream formula: depth_m = scale / depth_relative.
+        //
+        // To satisfy both: store depth_relative = 1 / raw, so that:
+        //   depth_m = scale / depth_relative = scale * raw = physical_metres  (scale=1.0)
+        //
+        // Do NOT store raw directly — that would invert the depth, making far objects
+        // appear close and vice versa, causing almost the entire scene to be filtered
+        // as too-close (raw ~5-30m → 1/raw ~0.03-0.2m → below min_depth_m=1.0m).
         for (std::size_t i = 0; i < n; ++i) {
-            result.depth_relative[i] = std::max(raw[i], 1e-6F);
+            result.depth_relative[i] = 1.0F / std::max(raw[i], 1e-6F);
         }
     } else {
         // Relative model (DepthAnythingV2 default): normalise by per-frame max so
@@ -226,13 +233,17 @@ DepthInferenceResult ONNXDepthEngine::infer(const VisualDepthFrame& frame) {
         std::chrono::duration_cast<std::chrono::microseconds>(t1 - t0).count()) / 1000.0F;
     result.valid = true;
 
-    // Log first inference — confirms which EP is actually executing under load,
-    // and prints raw model output statistics to verify metric vs relative semantics.
-    // Expected for metric-outdoor model at drone altitude (~5-30 m AGL):
-    //   raw min ~0.5 m, max ~60 m, mean ~10-30 m  → metric ✓
-    // If instead:
-    //   raw min ~0, max ~1  (or ~100)              → relative model, wrong config
-    //   raw max ≈ raw min (all same value)         → model load / EP failure
+    // Log first inference — confirms which EP is executing and verifies model encoding.
+    //
+    // Metric model (metric_depth=true): raw = absolute depth in metres, HIGH=FAR.
+    //   Expected at drone altitude (5-30 m AGL):
+    //     raw min ~0.3 m (props),  max ~60 m (sky/terrain),  mean ~5-20 m  → ✓
+    //   BAD signs:
+    //     mean < 1.0  → encoding wrong (storing raw as disparity?) or OOD AirSim input
+    //     max ≈ min   → model load / EP failure
+    //
+    // Relative model (metric_depth=false): raw is arbitrary disparity, HIGH=CLOSE.
+    //   Expected: raw range [0, ~1] normalised by per-frame max.
     if (!impl_->first_inference_logged) {
         impl_->first_inference_logged = true;
         float raw_min = raw[0], raw_max = raw[0], raw_sum = 0.0F;
@@ -266,22 +277,37 @@ DepthInferenceResult ONNXDepthEngine::infer(const VisualDepthFrame& frame) {
             static_cast<double>(result.inference_time_ms));
     }
 
-    // Debug: write a PGM depth map per frame when DEDALUS_DEPTH_DEBUG_DIR is set.
-    // Values are inverted (255 = far, 0 = near) for intuitive grayscale display.
-    // Filename: <dir>/<frame_id>.pgm
+    // Debug: write raw model output as a NumPy .npy file when DEDALUS_DEPTH_DEBUG_DIR
+    // is set.  Values are the direct model output (metres for metric mode, arbitrary
+    // disparity for relative mode) — full float32 precision, no remapping.
+    //
+    // Load in Python:
+    //   import numpy as np
+    //   raw = np.load("/tmp/depth_dbg/frame_0001.npy")   # shape (H, W)
+    //   depth_m = raw                                     # metric: raw IS metres
+    //   print(raw.min(), raw.max(), raw.mean())
+    //
+    // Filename: <dir>/<frame_id>.npy
     const char* debug_dir = std::getenv("DEDALUS_DEPTH_DEBUG_DIR");
     if (debug_dir && !frame.frame_id.value.empty()) {
         const std::string path =
-            std::string{debug_dir} + "/" + frame.frame_id.value + ".pgm";
-        if (std::ofstream pgm{path, std::ios::binary}) {
-            pgm << "P5\n" << out_w << " " << out_h << "\n255\n";
-            for (std::size_t i = 0; i < n; ++i) {
-                // depth_relative: 1.0 = closest, ~0 = farthest.
-                // Invert so bright = far (conventional depth map look).
-                const auto px = static_cast<unsigned char>(
-                    255U - static_cast<unsigned>(result.depth_relative[i] * 255.0F));
-                pgm.put(static_cast<char>(px));
-            }
+            std::string{debug_dir} + "/" + frame.frame_id.value + ".npy";
+        // NumPy 1.0 format: magic(6) + version(2) + header_len(2) + header + data
+        std::string hdr = "{'descr': '<f4', 'fortran_order': False, 'shape': (";
+        hdr += std::to_string(out_h) + ", " + std::to_string(out_w) + "), }";
+        // Pad so that (10 + header.size()) is a multiple of 64 bytes.
+        while ((hdr.size() + 1U + 10U) % 64U != 0U) hdr += ' ';
+        hdr += '\n';
+        const auto hdr_len = static_cast<std::uint16_t>(hdr.size());
+        if (std::ofstream npy{path, std::ios::binary}) {
+            npy.write("\x93NUMPY", 6);
+            npy.put('\x01'); npy.put('\x00');                    // version 1.0
+            npy.put(static_cast<char>(hdr_len & 0xFFU));
+            npy.put(static_cast<char>((hdr_len >> 8U) & 0xFFU));
+            npy.write(hdr.c_str(), static_cast<std::streamsize>(hdr.size()));
+            // Write the raw model output (not depth_relative) for unambiguous inspection.
+            npy.write(reinterpret_cast<const char*>(raw),
+                      static_cast<std::streamsize>(n * sizeof(float)));
         }
     }
 

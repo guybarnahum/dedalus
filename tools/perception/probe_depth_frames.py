@@ -20,17 +20,22 @@ Usage:
 The script replicates the C++ preprocessing exactly (nearest-neighbour
 resize → ImageNet normalise → NCHW float32 tensor).
 
-Interpretation of output:
-  raw_min low  + raw_max high  → large dynamic range (healthy)
-  raw ≈ 0.06 to 7.5            → inverse depth 1/m → depth_m 0.13 to 16.7 m
-  high raw → depth_m = 1/raw small → CLOSE object
-  low  raw → depth_m = 1/raw large → FAR  object
+Correct model output encoding (from export_depth_anything.py contract):
+  Metric model:   raw = absolute depth in METRES, HIGH = FAR
+  Relative model: raw = disparity score, HIGH = CLOSE (normalised 0..1)
 
-If raw_mean > 1.0 for most frames, most pixels are predicted at depth_m < 1 m
-→ the min_depth_m=1.0 filter in visual.yaml will discard them → magenta in
-the right panel of the debug MP4.  In that case either:
-  a) Lower min_depth_m in config/pipeline/visual.yaml
-  b) The model is out-of-distribution for AirSim renders (see histogram shape)
+For the metric model (the default, depth_anything_v2_metric_vits.onnx):
+  raw_min ≈ 0.3 m   (props / very close objects)
+  raw_max ≈ 60+ m   (open sky or terrain at distance)
+  raw_mean ≈ 5-20 m (typical drone-level outdoor scene)
+
+The C++ engine stores depth_relative = 1/raw so the downstream formula
+  depth_m = scale / depth_relative = raw
+recovers physical metres with scale=1.0.
+
+If raw_mean < 1.0: the model is predicting most of the scene as sub-1 m,
+likely due to AirSim out-of-distribution input or attention bleed from props.
+→ check DEDALUS_DEPTH_DEBUG_DIR .npy files for actual frame values.
 """
 
 from __future__ import annotations
@@ -98,8 +103,10 @@ def make_synthetic_images() -> list[tuple[str, np.ndarray]]:
 # ── statistics helper ─────────────────────────────────────────────────────────
 
 def raw_stats(raw: np.ndarray) -> dict[str, float]:
-    """Summary stats for a 2-D raw model output array."""
-    depth_m = np.where(raw > 1e-6, 1.0 / raw, np.inf)
+    """Summary stats for a 2-D raw model output array.
+    Metric model: raw IS depth_m (metres, high=far).
+    """
+    depth_m = np.where(raw > 1e-6, raw.astype(np.float64), np.inf)
     bins = [0.5, 1.0, 5.0, 20.0, 60.0]
     pcts = []
     prev = 0.0
@@ -255,10 +262,12 @@ def main() -> int:
         print(f"{label:<30} {s['raw_mean']:8.3f} {s['dm_mean']:8.2f}m "
               f"{pct_lt1:6.0f}% {pct_1_5:6.0f}% {pct_5_60:7.0f}%")
 
-    print(f"\nInterpretation:")
-    print(f"  raw high (e.g. >1.0) → depth_m = 1/raw < 1.0m → MAGENTA in right panel")
-    print(f"  raw low  (e.g. <0.2) → depth_m = 1/raw > 5.0m → valid or navy")
-    print(f"  If %<1m is large for real frames, lower visual_onnx.min_depth_m in visual.yaml")
+    print(f"\nInterpretation (metric model: raw = depth_m in metres, high=far):")
+    print(f"  raw < 1.0m  → depth_m < 1.0m → MAGENTA in right panel (min_depth_m filter)")
+    print(f"  raw 1-60m   → valid range → white→black in right panel")
+    print(f"  raw > 60m   → dark navy in right panel (max_depth_m filter)")
+    print(f"  If %<1m is large, lower visual_onnx.min_depth_m in config/pipeline/visual.yaml")
+    print(f"  Healthy drone scene: props at 0.3-0.5m, scene at 5-30m, sky at 60m+")
 
     # ── optional histogram PNG ──
     if args.out_png and all_stats:
@@ -288,8 +297,9 @@ def main() -> int:
             fig, axes = plt.subplots(2, (n + 1) // 2, figsize=(4 * ((n + 1) // 2), 8))
             axes = np.array(axes).flatten()
             for ax, (lbl, raw) in zip(axes, raw_arrays.items()):
-                dm = np.where(raw > 1e-6, 1.0 / raw, 60.0)
-                ax.hist(dm.flatten(), bins=60, range=(0, 30), color="steelblue", edgecolor="none")
+                # Metric model: raw IS depth_m in metres (high=far).
+                dm = np.clip(raw.flatten().astype(np.float32), 0.0, 80.0)
+                ax.hist(dm, bins=60, range=(0, 30), color="steelblue", edgecolor="none")
                 ax.axvline(1.0,  color="magenta", linewidth=1.5, label="min_depth_m=1.0")
                 ax.axvline(60.0, color="navy",    linewidth=1.5, label="max_depth_m=60")
                 ax.set_title(lbl, fontsize=8)
@@ -298,8 +308,8 @@ def main() -> int:
                 ax.legend(fontsize=6)
             for ax in axes[len(raw_arrays):]:
                 ax.set_visible(False)
-            fig.suptitle("depth_m = 1/raw  distribution per input image\n"
-                         "Magenta line = min_depth_m filter (pixels left = magenta in debug MP4)",
+            fig.suptitle("depth_m distribution per input image  (metric model: raw = metres)\n"
+                         "Magenta line = min_depth_m filter — pixels left of it → magenta in debug MP4",
                          fontsize=9)
             fig.tight_layout()
             fig.savefig(args.out_png, dpi=120)
