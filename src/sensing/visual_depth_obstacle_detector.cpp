@@ -417,8 +417,17 @@ std::vector<ObstacleEvidence> VisualDepthObstacleDetector::detect(
         const float close_pct = 100.0f * static_cast<float>(close_count)
                                 / static_cast<float>(npix);
         if (close_pct > k_capture_close_pct) {
-            static int capture_idx = 0;
+            // Rate limiting: max 10 captures per run, minimum 60 frames apart.
+            constexpr int k_max_captures    = 10;
+            constexpr int k_capture_interval = 60;
+            static int capture_idx          = 0;
+            static int frames_since_capture = k_capture_interval;  // allow first immediately
+            ++frames_since_capture;
+            if (capture_idx >= k_max_captures || frames_since_capture < k_capture_interval) {
+                // Skip — either hit the cap or too soon since last capture.
+            } else {
             ++capture_idx;
+            frames_since_capture = 0;
             const std::string base = std::string(capture_dir)
                 + "/cap_" + std::to_string(capture_idx)
                 + "_p"    + std::to_string(static_cast<int>(pitch_down_deg))
@@ -481,8 +490,9 @@ std::vector<ObstacleEvidence> VisualDepthObstacleDetector::detect(
                          vdf.height, vdf.width, vdf.channels);
 
             std::fprintf(stderr,
-                "[DepthCapture] pitch=%.1f° close=%.0f%% → %s_{depth,rgb}.npy\n",
-                pitch_down_deg, close_pct, base.c_str());
+                "[DepthCapture] %d/%d pitch=%.1f° close=%.0f%% → %s_{depth,rgb}.npy\n",
+                capture_idx, k_max_captures, pitch_down_deg, close_pct, base.c_str());
+            }  // else (rate limit passed)
         }
     }
 
