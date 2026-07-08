@@ -250,19 +250,31 @@ void VisualDepthObstacleDetector::write_debug_frame(
         if (debug_pipe_ == nullptr) return;
     }
 
-    // Fixed metric scale: depth_m = scale / depth_relative.
     // depth_relative = raw model output = calibrated inverse depth (1/m, high=close).
-    const float display_max_m = params.max_depth_m;  // 60 m by default (black = far anchor)
+    // depth_m = scale / depth_relative = physical metres.
+    //
+    // Display scale: 30 m anchor with log compression.
+    // Linear 60 m compresses everything < 10 m into the top 17% of the range,
+    // making the whole scene look uniformly white.  Log scale gives perceptually
+    // uniform contrast across the 0.1–30 m obstacle-avoidance range:
+    //   0.1 m (props)  → lum ≈ 252  (nearly white)
+    //   2 m            → lum ≈ 178  (light grey)
+    //   5 m            → lum ≈ 127  (medium grey)
+    //   10 m           → lum ≈  80  (medium dark)
+    //   20 m           → lum ≈  33  (dark)
+    //   30 m+          → lum =   0  (black)
+    const float display_max_m = 30.0f;
+    const float log_denom     = std::log1p(display_max_m);  // log(1 + 30) ≈ 3.43
 
     // Grayscale helper: depth_relative → luminance.
-    // white (255) = close (0 m), black (0) = far (max_depth_m).
-    // Identical scale for both panels so colours are directly comparable.
+    // white (255) = close (0 m), black (0) = far (display_max_m).
+    // Identical mapping for both panels so left/right are directly comparable.
     auto grey_lum = [&](float dr) -> std::uint8_t {
         float depth_m = display_max_m;
         if (std::isfinite(dr) && dr > 1e-6f) {
             depth_m = std::min(params.scale / dr, display_max_m);
         }
-        const float t = 1.0f - depth_m / display_max_m;  // 1=close/white, 0=far/black
+        const float t = 1.0f - std::log1p(depth_m) / log_denom;  // 1=close/white, 0=far/black
         return static_cast<std::uint8_t>(std::clamp(t * 255.0f, 0.0f, 255.0f));
     };
 

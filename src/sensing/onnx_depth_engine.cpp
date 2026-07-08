@@ -198,20 +198,18 @@ DepthInferenceResult ONNXDepthEngine::infer(const VisualDepthFrame& frame) {
     result.depth_relative.resize(n);
 
     if (impl_->config.metric_depth) {
-        // Metric model (e.g. DepthAnythingV2-Metric-Outdoor) outputs absolute depth
-        // in metres, with HIGH value = FAR (not inverse depth).
+        // Metric model (e.g. DepthAnythingV2-Metric-Outdoor) outputs calibrated
+        // INVERSE DEPTH in 1/m — the same disparity convention as the relative model.
+        //   HIGH raw value = CLOSE object   (e.g. raw=7.5 → depth_m = 0.13 m)
+        //   LOW  raw value = FAR   object   (e.g. raw=0.06 → depth_m = 16.7 m)
         //
-        // depth_relative convention throughout the codebase: HIGH = CLOSE (like disparity).
-        // Downstream formula: depth_m = scale / depth_relative.
+        // Store raw directly as depth_relative.  Downstream formula:
+        //   depth_m = scale / depth_relative = 1.0 / raw = physical metres  (scale=1.0)
         //
-        // To satisfy both: store depth_relative = 1 / raw, so that:
-        //   depth_m = scale / depth_relative = scale * raw = physical_metres  (scale=1.0)
-        //
-        // Do NOT store raw directly — that would invert the depth, making far objects
-        // appear close and vice versa, causing almost the entire scene to be filtered
-        // as too-close (raw ~5-30m → 1/raw ~0.03-0.2m → below min_depth_m=1.0m).
+        // Do NOT store 1/raw — that double-inverts the depth, making far objects
+        // appear to have depth_m ≈ 0 m and get filtered as too-close (magenta).
         for (std::size_t i = 0; i < n; ++i) {
-            result.depth_relative[i] = 1.0F / std::max(raw[i], 1e-6F);
+            result.depth_relative[i] = std::max(raw[i], 1e-6F);
         }
     } else {
         // Relative model (DepthAnythingV2 default): normalise by per-frame max so
@@ -284,8 +282,8 @@ DepthInferenceResult ONNXDepthEngine::infer(const VisualDepthFrame& frame) {
     // Load in Python:
     //   import numpy as np
     //   raw = np.load("/tmp/depth_dbg/frame_0001.npy")   # shape (H, W)
-    //   depth_m = raw                                     # metric: raw IS metres
-    //   print(raw.min(), raw.max(), raw.mean())
+    //   depth_m = 1.0 / raw                               # metric: inverse depth 1/m
+    //   print(f"raw: {raw.min():.3f} .. {raw.max():.3f}  depth_m: {depth_m.min():.2f} .. {depth_m.max():.1f}")
     //
     // Filename: <dir>/<frame_id>.npy
     const char* debug_dir = std::getenv("DEDALUS_DEPTH_DEBUG_DIR");

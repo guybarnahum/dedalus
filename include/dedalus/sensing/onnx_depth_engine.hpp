@@ -23,11 +23,11 @@ struct ONNXDepthEngineConfig {
     float std_b{0.225F};
 
     bool use_coreml{false};        // enable CoreML EP on macOS (MPS acceleration)
-    // When true the model outputs absolute depth in metres, HIGH value = FAR
-    // (e.g. DepthAnythingV2-Metric-Outdoor: raw ~ 0.3..80 m).
-    // The engine stores depth_relative = 1/raw so the downstream formula
-    //   depth_m = scale / depth_relative = scale * raw
-    // recovers physical metres with scale=1.0.
+    // When true the model outputs calibrated INVERSE DEPTH in 1/m — same
+    // convention as the relative model (HIGH = CLOSE), but absolute across frames.
+    // (e.g. DepthAnythingV2-Metric-Outdoor: raw ~ 0.06..7.5, high=close)
+    // The engine stores depth_relative = raw directly.  Downstream formula:
+    //   depth_m = scale / depth_relative = 1.0 / raw = physical metres  (scale=1.0)
     // When false the engine normalises by per-frame max (relative mode, HIGH=CLOSE).
     bool metric_depth{true};
 

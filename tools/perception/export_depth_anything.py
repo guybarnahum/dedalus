@@ -26,8 +26,9 @@ Model IDs:
 Exported ONNX contract:
     Input:  "image"  float32  [1, 3, H, W]  ImageNet-normalised RGB
     Output: "depth"  float32  [1, H, W]
-        - Metric model:   absolute depth in metres (higher = farther)
-        - Relative model: relative depth score    (higher = closer)
+        - Metric model:   calibrated inverse depth in 1/m  (higher = CLOSER)
+                          depth_m = 1.0 / raw   (e.g. raw=7.5 → 0.13 m, raw=0.06 → 16.7 m)
+        - Relative model: relative depth score              (higher = CLOSER, no absolute scale)
 
 Config pairing:
     Metric:   visual_onnx.metric_depth: true   visual_onnx.scale: 1.0

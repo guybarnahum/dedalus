@@ -104,9 +104,10 @@ def make_synthetic_images() -> list[tuple[str, np.ndarray]]:
 
 def raw_stats(raw: np.ndarray) -> dict[str, float]:
     """Summary stats for a 2-D raw model output array.
-    Metric model: raw IS depth_m (metres, high=far).
+    Metric model: raw = inverse depth in 1/m (high=close).
+    depth_m = 1/raw recovers physical metres.
     """
-    depth_m = np.where(raw > 1e-6, raw.astype(np.float64), np.inf)
+    depth_m = np.where(raw > 1e-6, 1.0 / raw.astype(np.float64), np.inf)
     bins = [0.5, 1.0, 5.0, 20.0, 60.0]
     pcts = []
     prev = 0.0
@@ -262,12 +263,12 @@ def main() -> int:
         print(f"{label:<30} {s['raw_mean']:8.3f} {s['dm_mean']:8.2f}m "
               f"{pct_lt1:6.0f}% {pct_1_5:6.0f}% {pct_5_60:7.0f}%")
 
-    print(f"\nInterpretation (metric model: raw = depth_m in metres, high=far):")
-    print(f"  raw < 1.0m  → depth_m < 1.0m → MAGENTA in right panel (min_depth_m filter)")
-    print(f"  raw 1-60m   → valid range → white→black in right panel")
-    print(f"  raw > 60m   → dark navy in right panel (max_depth_m filter)")
-    print(f"  If %<1m is large, lower visual_onnx.min_depth_m in config/pipeline/visual.yaml")
-    print(f"  Healthy drone scene: props at 0.3-0.5m, scene at 5-30m, sky at 60m+")
+    print(f"\nInterpretation (metric model: raw = inverse depth 1/m, high=CLOSE):")
+    print(f"  depth_m = 1/raw.  raw > 1.0 → depth_m < 1.0m → MAGENTA (too-close filter)")
+    print(f"  raw 0.017-1.0 → depth_m 1-60m → valid range → white→black in right panel")
+    print(f"  raw < 0.017 → depth_m > 60m → dark navy (too-far filter)")
+    print(f"  Healthy scene: props raw≈2-7 (depth 0.1-0.5m), scene raw≈0.05-0.2 (5-20m)")
+    print(f"  If %<1m is large: ViT attention bleed from props → lower min_depth_m in visual.yaml")
 
     # ── optional histogram PNG ──
     if args.out_png and all_stats:
@@ -297,8 +298,8 @@ def main() -> int:
             fig, axes = plt.subplots(2, (n + 1) // 2, figsize=(4 * ((n + 1) // 2), 8))
             axes = np.array(axes).flatten()
             for ax, (lbl, raw) in zip(axes, raw_arrays.items()):
-                # Metric model: raw IS depth_m in metres (high=far).
-                dm = np.clip(raw.flatten().astype(np.float32), 0.0, 80.0)
+                # Metric model: raw = inverse depth 1/m (high=close), depth_m = 1/raw.
+                dm = np.where(raw > 1e-6, 1.0 / raw, 80.0).flatten().clip(0, 80).astype(np.float32)
                 ax.hist(dm, bins=60, range=(0, 30), color="steelblue", edgecolor="none")
                 ax.axvline(1.0,  color="magenta", linewidth=1.5, label="min_depth_m=1.0")
                 ax.axvline(60.0, color="navy",    linewidth=1.5, label="max_depth_m=60")
