@@ -45,7 +45,7 @@ void handle_interrupt_signal(int) {
         // counter check. Force-terminate immediately so double Ctrl-C always works.
         static const char msg[] =
             "\ndedalus_mission_loop: EXIT reason=double_interrupt; force exit\n";
-        (void)write(STDERR_FILENO, msg, sizeof(msg) - 1);
+        { const ssize_t r = write(STDERR_FILENO, msg, sizeof(msg) - 1); (void)r; }
         std::_Exit(130);
     }
 }
@@ -65,7 +65,7 @@ void handle_fatal_signal(int sig) {
     if (sig == SIGSEGV) { msg = msg_segv; len = sizeof(msg_segv) - 1; }
     else if (sig == SIGABRT) { msg = msg_abrt; len = sizeof(msg_abrt) - 1; }
     else if (sig == SIGFPE)  { msg = msg_fpe;  len = sizeof(msg_fpe)  - 1; }
-    (void)write(STDERR_FILENO, msg, len);
+    { const ssize_t r = write(STDERR_FILENO, msg, len); (void)r; }
     std::signal(sig, SIG_DFL);
     raise(sig);
 }
