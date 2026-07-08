@@ -244,6 +244,9 @@ DepthInferenceResult ONNXDepthEngine::infer(const VisualDepthFrame& frame) {
     //
     // Relative model (metric_depth=false): raw is arbitrary disparity, HIGH=CLOSE.
     //   Expected: raw range [0, ~1] normalised by per-frame max.
+    //
+    // Frame-0 diagnostic dump (always): writes raw depth + RGB to /tmp/ for
+    // offline analysis with tools/perception/probe_depth_frame0.py.
     if (!impl_->first_inference_logged) {
         impl_->first_inference_logged = true;
         float raw_min = raw[0], raw_max = raw[0], raw_sum = 0.0F;
@@ -267,6 +270,50 @@ DepthInferenceResult ONNXDepthEngine::infer(const VisualDepthFrame& frame) {
             static_cast<double>(result.inference_time_ms),
             looks_like_gpu ? "GPU confirmed"
                            : "WARN: CPU timing - check LD_LIBRARY_PATH=/usr/local/cuda/lib64:$LD_LIBRARY_PATH");
+
+        // Dump frame-0 raw depth + input RGB as NumPy .npy for prop analysis.
+        // Load with: tools/perception/probe_depth_frame0.py
+        auto dump_npy_f32 = [](const char* path, const float* data, int h, int w) {
+            std::string hdr = "{'descr': '<f4', 'fortran_order': False, 'shape': (";
+            hdr += std::to_string(h) + ", " + std::to_string(w) + "), }";
+            while ((hdr.size() + 1U + 10U) % 64U != 0U) hdr += ' ';
+            hdr += '\n';
+            const auto hl = static_cast<std::uint16_t>(hdr.size());
+            if (std::ofstream f{path, std::ios::binary}) {
+                f.write("\x93NUMPY", 6);
+                f.put('\x01'); f.put('\x00');
+                f.put(static_cast<char>(hl & 0xFFU));
+                f.put(static_cast<char>((hl >> 8U) & 0xFFU));
+                f.write(hdr.c_str(), static_cast<std::streamsize>(hdr.size()));
+                f.write(reinterpret_cast<const char*>(data),
+                        static_cast<std::streamsize>(h * w) * sizeof(float));
+                std::fprintf(stderr, "[ONNXDepthEngine] frame0 depth → %s\n", path);
+            }
+        };
+        auto dump_npy_u8 = [](const char* path, const std::uint8_t* data,
+                               int h, int w, int c) {
+            std::string hdr = "{'descr': '|u1', 'fortran_order': False, 'shape': (";
+            hdr += std::to_string(h) + ", " + std::to_string(w) + ", "
+                 + std::to_string(c) + "), }";
+            while ((hdr.size() + 1U + 10U) % 64U != 0U) hdr += ' ';
+            hdr += '\n';
+            const auto hl = static_cast<std::uint16_t>(hdr.size());
+            if (std::ofstream f{path, std::ios::binary}) {
+                f.write("\x93NUMPY", 6);
+                f.put('\x01'); f.put('\x00');
+                f.put(static_cast<char>(hl & 0xFFU));
+                f.put(static_cast<char>((hl >> 8U) & 0xFFU));
+                f.write(hdr.c_str(), static_cast<std::streamsize>(hdr.size()));
+                f.write(reinterpret_cast<const char*>(data),
+                        static_cast<std::streamsize>(h * w * c));
+                std::fprintf(stderr, "[ONNXDepthEngine] frame0 rgb   → %s\n", path);
+            }
+        };
+        dump_npy_f32("/tmp/dedalus_frame0_depth.npy", raw, out_h, out_w);
+        if (!frame.bytes.empty() && frame.channels > 0) {
+            dump_npy_u8("/tmp/dedalus_frame0_rgb.npy",
+                        frame.bytes.data(), frame.height, frame.width, frame.channels);
+        }
     }
 
     // Ongoing warn for sustained slow inference.
