@@ -51,12 +51,6 @@ struct VisualONNXDepthConfig {
     bool   detect_surface_patches{true};
     bool   detect_thin_structures{true};
     std::string debug_depth_mp4;  // if non-empty, pipe depth frames into ffmpeg → H.264 MP4
-    // Temporal motion filter threshold (relative depth change, fraction 0..1).
-    // Pixels whose depth_relative changes by less than this fraction frame-to-frame
-    // are considered static (props / OOD background) and excluded from evidence.
-    // Formula: |dr_now - dr_prev| / mean(dr_now, dr_prev) < threshold → filtered.
-    // 0.0 = disabled (default).  Recommended: 0.02 (2%) when props are visible.
-    float  temporal_filter_threshold{0.0F};
 };
 
 struct CoreStackProviderConfig {

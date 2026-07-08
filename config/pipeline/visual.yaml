@@ -41,12 +41,3 @@ visual_onnx.min_depth_m: 1.0
 visual_onnx.max_depth_m: 60.0
 visual_onnx.voxel_size_m: 1.5
 visual_onnx.max_evidence: 256
-# Temporal motion filter — relative depth change threshold (fraction 0..1).
-# Pixels whose inverse-depth changes by < this fraction frame-to-frame are treated
-# as static (prop bleed / OOD background) and excluded from evidence.
-# Formula: |dr_now - dr_prev| / mean(dr_now, dr_prev) < threshold → filtered.
-# Props (fixed relative to camera) → Δdr/mean ≈ 0 → always filtered.
-# Approaching obstacle at 10m, 5 m/s cruise → relative change ≈ 5% → passes at 0.02.
-# Limit: obstacles approached at < ~1 m/s at > 15m are filtered until closer.
-# Set to 0.0 to disable (e.g. during hover or slow-speed missions).
-visual_onnx.temporal_filter_threshold: 0.02

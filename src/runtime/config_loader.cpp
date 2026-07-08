@@ -196,7 +196,6 @@ std::unique_ptr<ObstacleEvidenceProvider> make_depth_provider(
         detector_cfg.detect_surface_patches     = visual_onnx_config.detect_surface_patches;
         detector_cfg.detect_thin_structures     = visual_onnx_config.detect_thin_structures;
         detector_cfg.debug_depth_mp4            = visual_onnx_config.debug_depth_mp4;
-        detector_cfg.temporal_filter_threshold  = visual_onnx_config.temporal_filter_threshold;
         MetricScaleEstimate scale;
         scale.scale      = visual_onnx_config.scale;
         scale.confidence = 1.0F;  // fixed at startup (VD7 will couple to VIO)
@@ -452,7 +451,6 @@ bool parse_visual_onnx_key(
     else if (field == "detect_surface_patches") { cfg.detect_surface_patches = parse_bool(value); }
     else if (field == "detect_thin_structures") { cfg.detect_thin_structures = parse_bool(value); }
     else if (field == "debug_depth_mp4")              { cfg.debug_depth_mp4 = value; }
-    else if (field == "temporal_filter_threshold")    { cfg.temporal_filter_threshold = std::stof(value); }
     else { throw std::invalid_argument("unknown visual_onnx field: " + key); }
     return true;
 }

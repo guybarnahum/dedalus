@@ -228,8 +228,7 @@ std::string VisualDepthObstacleDetector::provider_name() const {
 
 void VisualDepthObstacleDetector::write_debug_frame(
     const DepthInferenceResult& inferred,
-    const ProjectionParams&     params,
-    const std::vector<bool>*    static_mask) {
+    const ProjectionParams&     params) {
 
     if (inferred.width <= 0 || inferred.height <= 0 || inferred.depth_relative.empty()) return;
 
@@ -280,17 +279,11 @@ void VisualDepthObstacleDetector::write_debug_frame(
     };
 
     // Per-frame depth histogram logged every 30 frames to stderr.
-    // Tells us what fraction of pixels fall in each depth bin.
-    // static= shows how many pixels were filtered by the temporal motion filter.
     static int diag_frame_count = 0;
     if (++diag_frame_count % 30 == 1) {
-        int b0 = 0, b1 = 0, b2 = 0, b3 = 0, b4 = 0, b5 = 0, bs = 0;
+        int b0 = 0, b1 = 0, b2 = 0, b3 = 0, b4 = 0, b5 = 0;
         const int npix = W * H;
         for (int pi = 0; pi < npix; ++pi) {
-            if (static_mask != nullptr && (*static_mask)[static_cast<std::size_t>(pi)]) {
-                ++bs;
-                continue;
-            }
             const float dr = inferred.depth_relative[pi];
             float dm = display_max_m * 2.0f;
             if (std::isfinite(dr) && dr > 1e-6f) dm = params.scale / dr;
@@ -306,9 +299,9 @@ void VisualDepthObstacleDetector::write_debug_frame(
             "[DepthDebug] frame=%d  depth_m bins: "
             "<0.5m=%.0f%%  0.5-1m=%.0f%%  1-5m=%.0f%%  "
             "5-20m=%.0f%%  20-60m=%.0f%%  >60m=%.0f%%  "
-            "static=%.0f%%  [filter %.1f..%.1f m]\n",
+            "[filter %.1f..%.1f m]\n",
             diag_frame_count,
-            b0*pct, b1*pct, b2*pct, b3*pct, b4*pct, b5*pct, bs*pct,
+            b0*pct, b1*pct, b2*pct, b3*pct, b4*pct, b5*pct,
             params.min_depth_m, params.max_depth_m);
     }
 
@@ -329,50 +322,35 @@ void VisualDepthObstacleDetector::write_debug_frame(
             frame_rgb[li + 2U] = lum;
 
             // RIGHT panel: evidence filter view.
-            //   Magenta    — too close (depth_m < min_depth_m): props / near-field clutter
-            //   Dark navy  — too far   (depth_m > max_depth_m): open sky
-            //   Dark amber — temporal filter: static pixel (prop bleed / OOD background)
-            //   White→black — valid range (same grey scale as left panel)
-            //   Cyan dot   — stride-sampled pixel that contributes L0/L1 evidence
-            const std::size_t ri  = static_cast<std::size_t>(y * 2 * W + W + x) * 3U;
-            const bool is_static  = (static_mask != nullptr)
-                                  && (*static_mask)[pi];
+            //   Dark grey  — invalid model output (dr ≤ 0)
+            //   Dark navy  — too far   (depth_m > max_depth_m)
+            //   White→black — filtered (depth_m < min_depth_m) or valid, same grey as left
+            //   Cyan dot   — stride-sampled pixel that passes the depth filter → evidence
+            const std::size_t ri = static_cast<std::size_t>(y * 2 * W + W + x) * 3U;
             if (!std::isfinite(dr) || dr <= 1e-6f) {
                 // Invalid model output — dark grey
                 frame_rgb[ri + 0U] = 30U;
                 frame_rgb[ri + 1U] = 30U;
                 frame_rgb[ri + 2U] = 30U;
-            } else if (is_static) {
-                // Temporal filter: static pixel (prop bleed or OOD stable background)
-                // Dark amber — visually distinct from magenta, navy, and grey gradient
-                frame_rgb[ri + 0U] = 90U;
-                frame_rgb[ri + 1U] = 45U;
-                frame_rgb[ri + 2U] = 0U;
             } else {
                 const float depth_m = params.scale / dr;
-                if (depth_m < params.min_depth_m) {
-                    // Too close — magenta
-                    frame_rgb[ri + 0U] = 255U;
-                    frame_rgb[ri + 1U] = 0U;
-                    frame_rgb[ri + 2U] = 255U;
-                } else if (depth_m > params.max_depth_m) {
+                if (depth_m > params.max_depth_m) {
                     // Too far — dark navy
                     frame_rgb[ri + 0U] = 10U;
                     frame_rgb[ri + 1U] = 10U;
                     frame_rgb[ri + 2U] = 50U;
+                } else if (depth_m >= params.min_depth_m
+                           && x % params.stride == 0
+                           && y % params.stride == 0) {
+                    // Valid range, stride-sampled — cyan evidence dot
+                    frame_rgb[ri + 0U] = 0U;
+                    frame_rgb[ri + 1U] = 220U;
+                    frame_rgb[ri + 2U] = 220U;
                 } else {
-                    // Valid range
-                    if (x % params.stride == 0 && y % params.stride == 0) {
-                        // Cyan — stride-sampled evidence pixel
-                        frame_rgb[ri + 0U] = 0U;
-                        frame_rgb[ri + 1U] = 220U;
-                        frame_rgb[ri + 2U] = 220U;
-                    } else {
-                        // White→black grayscale (same mapping as left panel)
-                        frame_rgb[ri + 0U] = lum;
-                        frame_rgb[ri + 1U] = lum;
-                        frame_rgb[ri + 2U] = lum;
-                    }
+                    // Filtered (<min_depth_m) or valid non-sampled — grey gradient
+                    frame_rgb[ri + 0U] = lum;
+                    frame_rgb[ri + 1U] = lum;
+                    frame_rgb[ri + 2U] = lum;
                 }
             }
         }
@@ -388,50 +366,12 @@ std::vector<ObstacleEvidence> VisualDepthObstacleDetector::detect(
     const DepthInferenceResult inferred = engine_->infer(vdf);
     if (!inferred.valid || inferred.depth_relative.empty()) return {};
 
-    // Temporal motion filter: exclude static pixels (props / OOD stable background).
-    //
-    // Computes per-pixel relative depth change from the previous frame:
-    //   relative_change = |dr_now - dr_prev| / mean(dr_now, dr_prev)
-    // Pixels below the threshold are marked static (is_static=true in the mask).
-    // The mask is used both for the debug display (dark amber) and to zero out
-    // static pixels before evidence projection so they contribute no evidence.
-    //
-    // On the first frame prev_depth_relative_ is empty → no mask (all pixels pass).
-    // Filter is disabled when temporal_filter_threshold == 0.
-    std::vector<bool> static_mask;
-    if (config_.temporal_filter_threshold > 0.0f
-        && prev_depth_relative_.size() == inferred.depth_relative.size()) {
-        const float thr = config_.temporal_filter_threshold;
-        const std::size_t npix = inferred.depth_relative.size();
-        static_mask.resize(npix, false);
-        for (std::size_t i = 0; i < npix; ++i) {
-            const float dr_now  = inferred.depth_relative[i];
-            const float dr_prev = prev_depth_relative_[i];
-            const float mean_dr = (dr_now + dr_prev) * 0.5f;
-            // Guard: both near-zero → treat as static (invalid/background)
-            static_mask[i] = (mean_dr < 1e-6f)
-                           || (std::abs(dr_now - dr_prev) / mean_dr < thr);
-        }
-    }
-    // Update history AFTER mask computation so we compare to the actual previous frame.
-    prev_depth_relative_ = inferred.depth_relative;
-
     if (!config_.debug_depth_mp4.empty()) {
         const ProjectionParams dbg_params = make_projection_params(
             ego_frame, inferred, scale_, config_);
-        write_debug_frame(inferred, dbg_params,
-                          static_mask.empty() ? nullptr : &static_mask);
+        write_debug_frame(inferred, dbg_params);
     }
 
-    // Apply temporal mask to evidence generation: zero static pixels so they
-    // fail the dr > 1e-6 check in project_depth_to_device_evidence.
-    if (!static_mask.empty()) {
-        DepthInferenceResult masked = inferred;
-        for (std::size_t i = 0; i < masked.depth_relative.size(); ++i) {
-            if (static_mask[i]) masked.depth_relative[i] = 0.0f;
-        }
-        return project_from_inferred(ego_frame, masked, scale_, config_);
-    }
     return project_from_inferred(ego_frame, inferred, scale_, config_);
 }
 
