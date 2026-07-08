@@ -26,8 +26,8 @@ struct ONNXDepthEngineConfig {
     // When true the model outputs calibrated INVERSE DEPTH in 1/m — same
     // convention as the relative model (HIGH = CLOSE), but absolute across frames.
     // (e.g. DepthAnythingV2-Metric-Outdoor: raw ~ 0.06..7.5, high=close)
-    // The engine stores depth_relative = raw directly.  Downstream formula:
-    //   depth_m = scale / depth_relative = 1.0 / raw = physical metres  (scale=1.0)
+    // The engine stores inverse_depth = raw directly.  Downstream formula:
+    //   depth_m = scale / inverse_depth = 1.0 / raw = physical metres  (scale=1.0)
     // When false the engine normalises by per-frame max (relative mode, HIGH=CLOSE).
     bool metric_depth{true};
 

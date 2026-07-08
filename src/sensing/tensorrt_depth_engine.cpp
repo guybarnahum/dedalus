@@ -231,13 +231,13 @@ struct TensorRTDepthEngine::Impl {
         context->enqueueV2(bindings, stream, nullptr);
 #endif
 
-        result.depth_relative.resize(static_cast<std::size_t>(output_h * output_w));
-        cudaMemcpyAsync(result.depth_relative.data(), d_output, output_bytes,
+        result.inverse_depth.resize(static_cast<std::size_t>(output_h * output_w));
+        cudaMemcpyAsync(result.inverse_depth.data(), d_output, output_bytes,
                         cudaMemcpyDeviceToHost, stream);
         cudaStreamSynchronize(stream);
 
         // Clamp to valid disparity range (model may produce near-zero on sky pixels)
-        for (float& v : result.depth_relative) {
+        for (float& v : result.inverse_depth) {
             if (v <= 0.0F || !std::isfinite(v)) v = 1.0e-4F;
         }
 

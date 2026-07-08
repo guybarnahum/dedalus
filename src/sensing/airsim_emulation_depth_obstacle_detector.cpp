@@ -51,8 +51,8 @@ ProjectionParams make_params(
     return p;
 }
 
-// Convert GT metric depth (metres) to disparity-convention depth_relative.
-// depth_m = scale / depth_relative  →  depth_relative = scale / depth_m
+// Convert GT metric depth (metres) to disparity-convention inverse_depth.
+// depth_m = scale / inverse_depth  →  inverse_depth = scale / depth_m
 // Returns empty if df.depth_m is empty.
 std::vector<float> invert_gt_depth(const AirSimDepthFrame& df, float scale) {
     const std::size_t n = static_cast<std::size_t>(df.width) *
@@ -96,8 +96,8 @@ std::vector<ObstacleEvidence> AirSimEmulationDepthObstacleDetector::detect(
         return {};
     }
 
-    const std::vector<float> depth_relative = invert_gt_depth(df, config_.scale);
-    if (depth_relative.empty()) return {};
+    const std::vector<float> inverse_depth = invert_gt_depth(df, config_.scale);
+    if (inverse_depth.empty()) return {};
 
     const ProjectionParams params = make_params(ego_frame, df, config_);
 
@@ -105,7 +105,7 @@ std::vector<ObstacleEvidence> AirSimEmulationDepthObstacleDetector::detect(
     std::uint32_t count = 0U;
 
     project_depth_to_device_evidence(
-        depth_relative.data(), params, buf.data(), count);
+        inverse_depth.data(), params, buf.data(), count);
 
     // Landable-surface evaluation via RANSAC surface-patch detection.
     if (config_.detect_surface_patches && count > 0U) {
@@ -123,7 +123,7 @@ std::vector<ObstacleEvidence> AirSimEmulationDepthObstacleDetector::detect(
         std::vector<DeviceObstacleEvidence> thin(64U);
         std::uint32_t thin_count = 0U;
         detect_thin_structures_device(
-            depth_relative.data(), params, thin.data(), thin_count);
+            inverse_depth.data(), params, thin.data(), thin_count);
         for (std::uint32_t i = 0U; i < thin_count && count < config_.max_evidence; ++i) {
             buf[count++] = thin[i];
         }

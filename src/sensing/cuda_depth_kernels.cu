@@ -306,7 +306,7 @@ CudaDepthDispatcher::~CudaDepthDispatcher() {
 }
 
 void CudaDepthDispatcher::project(
-    const float*             depth_relative,
+    const float*             inverse_depth,
     const ProjectionParams&  p,
     DeviceObstacleEvidence*  host_out,
     std::uint32_t&           count_out)
@@ -320,7 +320,7 @@ void CudaDepthDispatcher::project(
     impl_->ensure_depth(npix);
     impl_->ensure_evidence(static_cast<std::size_t>(p.max_evidence));
 
-    cudaMemcpyAsync(impl_->d_depth, depth_relative, npix * sizeof(float),
+    cudaMemcpyAsync(impl_->d_depth, inverse_depth, npix * sizeof(float),
                     cudaMemcpyHostToDevice, impl_->stream);
 
     const unsigned int zero = 0u;
@@ -461,7 +461,7 @@ void CudaDepthDispatcher::fit_patches(
 }
 
 void CudaDepthDispatcher::detect_thin(
-    const float*            depth_relative,
+    const float*            inverse_depth,
     const ProjectionParams& params,
     DeviceObstacleEvidence* thin_out,
     std::uint32_t&          thin_count_out)
@@ -474,7 +474,7 @@ void CudaDepthDispatcher::detect_thin(
     const std::size_t npix = static_cast<std::size_t>(W) * static_cast<std::size_t>(H);
     impl_->ensure_depth(npix);
 
-    cudaMemcpyAsync(impl_->d_depth, depth_relative, npix * sizeof(float),
+    cudaMemcpyAsync(impl_->d_depth, inverse_depth, npix * sizeof(float),
                     cudaMemcpyHostToDevice, impl_->stream);
 
     const dim3 block(16, 16);
@@ -549,7 +549,7 @@ void CudaDepthDispatcher::detect_thin(
             else               { va=(v_min+v_max)/2; ua=u_min; vb=va; ub=u_max; }
 
             auto unproj = [&](int u, int v, float& lx, float& ly, float& lz) -> bool {
-                const float dr = depth_relative[
+                const float dr = inverse_depth[
                     static_cast<std::size_t>(v)*static_cast<std::size_t>(W) +
                     static_cast<std::size_t>(u)];
                 if (!std::isfinite(dr) || dr <= 0.0F) return false;

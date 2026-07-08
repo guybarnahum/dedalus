@@ -10,17 +10,17 @@ namespace dedalus {
 
 // Output of a single depth inference pass.
 //
-// depth_relative is a H×W float buffer in row-major order.
+// inverse_depth is a H×W float buffer in row-major order.
 // Values are relative (dimensionless); convert to metric via MetricScaleEstimate:
-//   depth_m = scale / depth_relative[i]  (disparity convention)
+//   depth_m = scale / inverse_depth[i]  (disparity convention)
 //
 // The buffer lives on the CPU here. The CUDA path (VD6) keeps it on device;
-// the interface remains the same — the CPU path fills depth_relative normally,
+// the interface remains the same — the CPU path fills inverse_depth normally,
 // the CUDA path transfers only the compact DeviceObstacleEvidence result.
 struct DepthInferenceResult {
     int width{0};
     int height{0};
-    std::vector<float> depth_relative;  // H × W, values in (0, 1]
+    std::vector<float> inverse_depth;  // H × W, values in (0, 1]
     float inference_time_ms{0.0F};
     bool valid{false};
 };

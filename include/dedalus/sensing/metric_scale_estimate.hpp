@@ -4,7 +4,7 @@ namespace dedalus {
 
 // Single global scale factor mapping relative depth output to metric depth.
 //
-//   depth_m = scale / depth_relative
+//   depth_m = scale / inverse_depth
 //
 // V0: fixed at startup from AirSim camera config. L1 map persistence covers
 // peripheral geometry from prior frames, so single-scale is acceptable at

@@ -561,7 +561,7 @@ void VisualEgoStateProvider::update_scale_vl2(
 
         // depth_m = l2_dist → scale should be: scale * ray_len ≈ l2_dist
         // Current model: translation per frame ≈ scale (constant).
-        // Scale for depth: depth_relative used by the VD stack, not f here.
+        // Scale for depth: inverse_depth used by the VD stack, not f here.
         // Here we just re-calibrate state_.scale.scale as:
         //   new_scale = l2_dist / dm * (current scale magnification factor)
         // This is a ratio between the L2 map's metric and the current scale.

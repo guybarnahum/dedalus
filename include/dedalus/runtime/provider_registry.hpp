@@ -33,8 +33,8 @@ struct VisualONNXDepthConfig {
     bool   use_coreml{false};                        // CoreML EP (macOS)
     // When true the ONNX model outputs calibrated INVERSE DEPTH in 1/m (HIGH=CLOSE),
     // e.g. DepthAnythingV2-Metric-Outdoor: raw ≈ 0.06..7.5 (close=high).
-    // The engine stores depth_relative = raw directly.
-    // Projection formula: depth_m = scale / depth_relative = 1.0 / raw  (scale=1.0).
+    // The engine stores inverse_depth = raw directly.
+    // Projection formula: depth_m = scale / inverse_depth = 1.0 / raw  (scale=1.0).
     // When false the engine normalises by per-frame max — fragile without calibration.
     bool   metric_depth{true};
 

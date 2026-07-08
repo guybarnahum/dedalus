@@ -32,7 +32,7 @@ public:
     // Equivalent to project_depth_to_device_evidence() but each pixel runs
     // in parallel.  No GPU-side voxel dedup (L1 map deduplicates at ingest).
     void project(
-        const float*             depth_relative,  // host, H×W row-major
+        const float*             inverse_depth,  // host, H×W row-major
         const ProjectionParams&  params,
         DeviceObstacleEvidence*  host_out,        // pre-allocated, params.max_evidence entries
         std::uint32_t&           count_out);
@@ -47,7 +47,7 @@ public:
 
     // GPU Sobel depth gradient + host BFS thin-structure connected components.
     void detect_thin(
-        const float*            depth_relative,  // host, H×W row-major
+        const float*            inverse_depth,  // host, H×W row-major
         const ProjectionParams& params,
         DeviceObstacleEvidence* thin_out,
         std::uint32_t&          thin_count_out);

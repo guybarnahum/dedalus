@@ -31,11 +31,11 @@ void undistort_k1k2(float xn, float yn, float k1, float k2, float& xd, float& yd
 
 // Unproject a depth pixel to a local-frame 3D point.
 // Returns false if depth is outside [min, max].
-bool unproject(int u, int v, float depth_relative,
+bool unproject(int u, int v, float inverse_depth,
                const ProjectionParams& p,
                float& lx, float& ly, float& lz) {
-    if (!std::isfinite(depth_relative) || depth_relative <= 0.0F) return false;
-    const float depth_m = p.scale / depth_relative;
+    if (!std::isfinite(inverse_depth) || inverse_depth <= 0.0F) return false;
+    const float depth_m = p.scale / inverse_depth;
     if (depth_m < p.min_depth_m || depth_m > p.max_depth_m) return false;
 
     const float inv_fx = 1.0F / p.fx;
@@ -125,7 +125,7 @@ bool fit_plane_ls(const std::vector<std::array<float,3>>& pts, Plane& out) {
 // Thin-structure helpers
 // ---------------------------------------------------------------------------
 
-// Clamp depth_relative to a metric depth, treating invalid pixels as max_depth_m.
+// Clamp inverse_depth to a metric depth, treating invalid pixels as max_depth_m.
 float safe_depth_m(float dr, const ProjectionParams& p) {
     if (!std::isfinite(dr) || dr <= 0.0F) return p.max_depth_m;
     const float d = p.scale / dr;
@@ -133,7 +133,7 @@ float safe_depth_m(float dr, const ProjectionParams& p) {
 }
 
 // Local max depth in a 5×5 neighbourhood, excluding the centre pixel.
-float local_max_depth(const float* depth_relative, int W, int H,
+float local_max_depth(const float* inverse_depth, int W, int H,
                       int u, int v, const ProjectionParams& p) {
     float mx = 0.0F;
     for (int dv = -2; dv <= 2; ++dv) {
@@ -143,7 +143,7 @@ float local_max_depth(const float* depth_relative, int W, int H,
             const int nv = v + dv;
             if (nu < 0 || nu >= W || nv < 0 || nv >= H) continue;
             const float d = safe_depth_m(
-                depth_relative[static_cast<std::size_t>(nv)*static_cast<std::size_t>(W) +
+                inverse_depth[static_cast<std::size_t>(nv)*static_cast<std::size_t>(W) +
                                static_cast<std::size_t>(nu)], p);
             if (d > mx) mx = d;
         }
@@ -189,7 +189,7 @@ std::vector<std::pair<int,int>> bfs_component(
 // ---------------------------------------------------------------------------
 
 void project_depth_to_device_evidence(
-    const float*             depth_relative,
+    const float*             inverse_depth,
     const ProjectionParams&  params,
     DeviceObstacleEvidence*  out,
     std::uint32_t&           count_out) {
@@ -207,7 +207,7 @@ void project_depth_to_device_evidence(
         for (int u = 0; u < params.width; u += params.stride) {
             if (count_out >= params.max_evidence) goto done;
 
-            const float dr = depth_relative[
+            const float dr = inverse_depth[
                 static_cast<std::size_t>(v) * static_cast<std::size_t>(params.width) +
                 static_cast<std::size_t>(u)];
             if (!std::isfinite(dr) || dr <= 0.0F) continue;
@@ -354,7 +354,7 @@ void fit_surface_patches_device(
 // ---------------------------------------------------------------------------
 
 void detect_thin_structures_device(
-    const float*            depth_relative,
+    const float*            inverse_depth,
     const ProjectionParams& params,
     DeviceObstacleEvidence* thin_out,
     std::uint32_t&          thin_count_out) {
@@ -377,12 +377,12 @@ void detect_thin_structures_device(
         for (int u = 2; u < W-2; ++u) {
             const std::size_t idx = static_cast<std::size_t>(v)*static_cast<std::size_t>(W) +
                                     static_cast<std::size_t>(u);
-            const float dr = depth_relative[idx];
+            const float dr = inverse_depth[idx];
             if (!std::isfinite(dr) || dr <= 0.0F) continue;
             const float dm = params.scale / dr;
             if (dm < params.min_depth_m || dm > params.max_depth_m) continue;
 
-            const float lmax = local_max_depth(depth_relative, W, H, u, v, params);
+            const float lmax = local_max_depth(inverse_depth, W, H, u, v, params);
             if (lmax < dm + min_abs_contrast) continue;  // not significantly closer
             if (dm >= lmax * contrast_fraction) continue; // not close enough relative to bg
 
@@ -436,7 +436,7 @@ void detect_thin_structures_device(
             auto best_dr = [&](int pu, int pv) -> float {
                 const std::size_t i0 = static_cast<std::size_t>(pv)*static_cast<std::size_t>(W) +
                                        static_cast<std::size_t>(pu);
-                float dr0 = depth_relative[i0];
+                float dr0 = inverse_depth[i0];
                 if (!std::isfinite(dr0) || dr0 <= 0.0F) {
                     // Try horizontal neighbours
                     for (int du = -1; du <= 1; ++du) {
@@ -444,7 +444,7 @@ void detect_thin_structures_device(
                         if (nu < 0 || nu >= W) continue;
                         const std::size_t ni = static_cast<std::size_t>(pv)*static_cast<std::size_t>(W) +
                                                static_cast<std::size_t>(nu);
-                        if (mask[ni]) { dr0 = depth_relative[ni]; break; }
+                        if (mask[ni]) { dr0 = inverse_depth[ni]; break; }
                     }
                 }
                 return dr0;

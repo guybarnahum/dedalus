@@ -34,7 +34,7 @@ struct ProjectionParams {
     float min_depth_m{0.2F};
     float max_depth_m{80.0F};
 
-    // Metric scale:  depth_m = scale / depth_relative
+    // Metric scale:  depth_m = scale / inverse_depth
     float scale{1.0F};
 
     // Voxel grid resolution used to deduplicate evidence
@@ -109,7 +109,7 @@ static_assert(sizeof(DeviceObstacleEvidence) == 48,
 // Back-project every stride-th depth sample into local-frame voxels.
 // Writes at most params.max_evidence entries into out[]; actual count in count_out.
 void project_depth_to_device_evidence(
-    const float*              depth_relative,  // H × W, row-major
+    const float*              inverse_depth,  // H × W, row-major
     const ProjectionParams&   params,
     DeviceObstacleEvidence*   out,             // pre-allocated, params.max_evidence entries
     std::uint32_t&            count_out);
@@ -127,7 +127,7 @@ void fit_surface_patches_device(
 // Sobel + NMS + connected-components thin-structure detector.
 // No OpenCV. Emits LineSegment-shaped DeviceObstacleEvidence with is_thin_structure_hint=1.
 void detect_thin_structures_device(
-    const float*            depth_relative,  // H × W, row-major
+    const float*            inverse_depth,  // H × W, row-major
     const ProjectionParams& params,
     DeviceObstacleEvidence* thin_out,
     std::uint32_t&          thin_count_out);

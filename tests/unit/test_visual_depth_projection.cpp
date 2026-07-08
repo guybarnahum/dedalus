@@ -19,20 +19,20 @@ bool near(double actual, double expected, double eps) {
 }
 
 // A mock depth engine that returns a known synthetic depth map.
-// Ignores the frame content; outputs a caller-supplied depth_relative buffer.
+// Ignores the frame content; outputs a caller-supplied inverse_depth buffer.
 class MockDepthEngine final : public dedalus::DepthEngineInterface {
 public:
     int                out_width{0};
     int                out_height{0};
-    std::vector<float> depth_relative;
+    std::vector<float> inverse_depth;
 
     [[nodiscard]] dedalus::DepthInferenceResult infer(
         const dedalus::VisualDepthFrame& /*frame*/) override {
         dedalus::DepthInferenceResult r;
         r.width          = out_width;
         r.height         = out_height;
-        r.depth_relative = depth_relative;
-        r.valid          = !depth_relative.empty();
+        r.inverse_depth = inverse_depth;
+        r.valid          = !inverse_depth.empty();
         return r;
     }
 
@@ -77,7 +77,7 @@ dedalus::EgoSensingFrame make_ego_frame(int w, int h) {
 //
 // Setup: 9×9 depth map, all infinity except the centre pixel.
 // Centre pixel encodes 10 m forward via disparity convention:
-//   depth_m = scale / depth_relative  →  depth_relative = scale / depth_m
+//   depth_m = scale / inverse_depth  →  inverse_depth = scale / depth_m
 //
 // Expected: exactly one ObstacleEvidence whose center_x ≈ 10.0 within
 //           one voxel (0.5 m). center_y and center_z ≈ 0 within one voxel.
@@ -98,7 +98,7 @@ static bool test_single_forward_obstacle() {
     auto engine = std::make_unique<MockDepthEngine>();
     engine->out_width      = W;
     engine->out_height     = H;
-    engine->depth_relative = depth_rel;
+    engine->inverse_depth = depth_rel;
 
     dedalus::MetricScaleEstimate scale;
     scale.scale      = SCALE;
@@ -120,7 +120,7 @@ static bool test_single_forward_obstacle() {
     const auto ego = make_ego_frame(W, H);
     const auto evidence = detector.detect(ego);
 
-    // All non-centre pixels have depth_relative=1e-6 → depth_m=1e9 > max_depth_m → filtered.
+    // All non-centre pixels have inverse_depth=1e-6 → depth_m=1e9 > max_depth_m → filtered.
     // Only the centre pixel should produce evidence.
     if (evidence.size() != 1U) {
         std::cerr << "FAIL test_single_forward_obstacle: expected 1 evidence, got "
@@ -199,12 +199,12 @@ static bool test_depth_range_filter() {
 
     // All pixels at 100 m → beyond max_depth_m=80 → filtered
     std::vector<float> depth_rel(static_cast<std::size_t>(W * H),
-                                 SCALE / 100.0F);  // depth_relative=10 → depth_m=100
+                                 SCALE / 100.0F);  // inverse_depth=10 → depth_m=100
 
     auto engine = std::make_unique<MockDepthEngine>();
     engine->out_width      = W;
     engine->out_height     = H;
-    engine->depth_relative = depth_rel;
+    engine->inverse_depth = depth_rel;
 
     dedalus::MetricScaleEstimate scale;
     scale.scale = SCALE;
@@ -246,7 +246,7 @@ static bool test_voxel_deduplication() {
     auto engine = std::make_unique<MockDepthEngine>();
     engine->out_width      = W;
     engine->out_height     = H;
-    engine->depth_relative = depth_rel;
+    engine->inverse_depth = depth_rel;
 
     dedalus::MetricScaleEstimate scale;
     scale.scale = SCALE;

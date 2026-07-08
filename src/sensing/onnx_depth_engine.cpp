@@ -195,25 +195,23 @@ DepthInferenceResult ONNXDepthEngine::infer(const VisualDepthFrame& frame) {
     DepthInferenceResult result;
     result.width  = out_w;
     result.height = out_h;
-    result.depth_relative.resize(n);
+    result.inverse_depth.resize(n);
 
     if (impl_->config.metric_depth) {
-        // Metric model (e.g. DepthAnythingV2-Metric-Outdoor) outputs calibrated
-        // INVERSE DEPTH in 1/m — the same disparity convention as the relative model.
-        //   HIGH raw value = CLOSE object   (e.g. raw=7.5 → depth_m = 0.13 m)
-        //   LOW  raw value = FAR   object   (e.g. raw=0.06 → depth_m = 16.7 m)
+        // Metric model (e.g. DepthAnythingV2-Metric-Outdoor) outputs DIRECT METRIC
+        // DEPTH in metres: Sigmoid(features) × max_depth (80 m for outdoor VKITTI).
+        //   HIGH raw value = FAR   object   (e.g. raw=18.0 → depth_m = 18.0 m)
+        //   LOW  raw value = CLOSE object   (e.g. raw=1.5  → depth_m = 1.5 m)
         //
-        // Store raw directly as depth_relative.  Downstream formula:
-        //   depth_m = scale / depth_relative = 1.0 / raw = physical metres  (scale=1.0)
-        //
-        // Do NOT store 1/raw — that double-inverts the depth, making far objects
-        // appear to have depth_m ≈ 0 m and get filtered as too-close (magenta).
+        // Convert to inverse depth so the downstream formula
+        //   depth_m = scale / inverse_depth
+        // recovers metres.  With scale=1.0: depth_m = 1/(1/raw) = raw.
         for (std::size_t i = 0; i < n; ++i) {
-            result.depth_relative[i] = std::max(raw[i], 1e-6F);
+            result.inverse_depth[i] = 1.0F / std::max(raw[i], 1e-3F);
         }
     } else {
         // Relative model (DepthAnythingV2 default): normalise by per-frame max so
-        // the closest pixel gets depth_relative = 1.0.  Set scale = physical distance
+        // the closest pixel gets inverse_depth = 1.0.  Set scale = physical distance
         // to that closest pixel (calibrated empirically per scene/drone).
         // NOTE: this destroys absolute depth across frames — use metric_depth: true
         // whenever the model supports it.
@@ -222,7 +220,7 @@ DepthInferenceResult ONNXDepthEngine::infer(const VisualDepthFrame& frame) {
             max_val = std::max(max_val, raw[i]);
         }
         for (std::size_t i = 0; i < n; ++i) {
-            result.depth_relative[i] = std::max(raw[i] / max_val, 1e-6F);
+            result.inverse_depth[i] = std::max(raw[i] / max_val, 1e-6F);
         }
     }
 
@@ -233,13 +231,13 @@ DepthInferenceResult ONNXDepthEngine::infer(const VisualDepthFrame& frame) {
 
     // Log first inference — confirms which EP is executing and verifies model encoding.
     //
-    // Metric model (metric_depth=true): raw = calibrated INVERSE DEPTH in 1/m (HIGH=CLOSE).
-    //   depth_m = 1.0 / raw  (scale=1.0).  Stored directly as depth_relative.
-    //   Expected at drone altitude (5-30 m AGL, AirSim):
-    //     raw range roughly 0.05..3.0  (depth_m 0.3..20 m),  mean raw ~ 0.2..1.0
+    // Metric model (metric_depth=true): raw = direct metric depth in metres (HIGH=FAR).
+    //   Sigmoid(features) × 80 m (outdoor VKITTI).  Stored as inverse_depth = 1/raw.
+    //   Expected at drone altitude (5-30 m AGL):
+    //     raw range roughly 1..80 m,  mean raw ~ 5..20 m
     //   BAD signs:
-    //     mean raw > 5.0  → everything very close (props dominant or OOD)
-    //     mean raw ≈ 2.5  → uniform black input (check frame pipeline)
+    //     mean raw < 0.5  → OOD or all-black input (check frame pipeline)
+    //     mean raw > 75   → saturated at max_depth (check model / EP)
     //     max ≈ min       → model load / EP failure
     //
     // Relative model (metric_depth=false): raw is arbitrary disparity, HIGH=CLOSE.
@@ -331,7 +329,7 @@ DepthInferenceResult ONNXDepthEngine::infer(const VisualDepthFrame& frame) {
     // Load in Python:
     //   import numpy as np
     //   raw = np.load("/tmp/depth_dbg/frame_0001.npy")   # shape (H, W)
-    //   depth_m = 1.0 / raw                               # metric: inverse depth 1/m
+    //   depth_m = raw                                     # metric: direct depth in metres
     //   print(f"raw: {raw.min():.3f} .. {raw.max():.3f}  depth_m: {depth_m.min():.2f} .. {depth_m.max():.1f}")
     //
     // Filename: <dir>/<frame_id>.npy
@@ -352,7 +350,7 @@ DepthInferenceResult ONNXDepthEngine::infer(const VisualDepthFrame& frame) {
             npy.put(static_cast<char>(hdr_len & 0xFFU));
             npy.put(static_cast<char>((hdr_len >> 8U) & 0xFFU));
             npy.write(hdr.c_str(), static_cast<std::streamsize>(hdr.size()));
-            // Write the raw model output (not depth_relative) for unambiguous inspection.
+            // Write the raw model output (not inverse_depth) for unambiguous inspection.
             npy.write(reinterpret_cast<const char*>(raw),
                       static_cast<std::streamsize>(n * sizeof(float)));
         }

@@ -30,7 +30,7 @@ struct AirSimEmulationDepthObstacleDetectorConfig {
     // Enable local-depth-contrast thin-structure detection.
     bool detect_thin_structures{true};
 
-    // Metric scale: depth_relative = scale / depth_m.
+    // Metric scale: inverse_depth = scale / depth_m.
     // GT depth is in metres so scale=1 is correct for unmodified AirSim output.
     float scale{1.0F};
 };
@@ -40,7 +40,7 @@ struct AirSimEmulationDepthObstacleDetectorConfig {
 // Purpose: validate VD kernel math against known GT geometry without ONNX.
 //
 // Pipeline per frame:
-//   AirSimDepthFrame::depth_m → invert to depth_relative (scale/depth_m)
+//   AirSimDepthFrame::depth_m → invert to inverse_depth (scale/depth_m)
 //     → project_depth_to_device_evidence()
 //     → [optional] fit_surface_patches_device()    (landable-surface evaluation)
 //     → [optional] detect_thin_structures_device() (thin-obstacle evaluation)

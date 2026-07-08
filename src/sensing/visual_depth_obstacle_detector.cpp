@@ -136,11 +136,11 @@ std::vector<ObstacleEvidence> project_from_inferred(
 #ifdef DEDALUS_CUDA_ENABLED
     const bool cdebug = (std::getenv("DEDALUS_MISSION_DEBUG") != nullptr);
     if (cdebug) { std::fprintf(stderr, "[CudaDepth] project...\n"); std::fflush(stderr); }
-    cuda_dispatch().project(inferred.depth_relative.data(), params, buf.data(), count);
+    cuda_dispatch().project(inferred.inverse_depth.data(), params, buf.data(), count);
     if (cdebug) { std::fprintf(stderr, "[CudaDepth] project done (%u ev)\n", count); std::fflush(stderr); }
 #else
     project_depth_to_device_evidence(
-        inferred.depth_relative.data(), params, buf.data(), count);
+        inferred.inverse_depth.data(), params, buf.data(), count);
 #endif
 
     if (cfg.detect_surface_patches && count > 0U) {
@@ -165,11 +165,11 @@ std::vector<ObstacleEvidence> project_from_inferred(
 #ifdef DEDALUS_CUDA_ENABLED
         if (cdebug) { std::fprintf(stderr, "[CudaDepth] detect_thin...\n"); std::fflush(stderr); }
         cuda_dispatch().detect_thin(
-            inferred.depth_relative.data(), params, thin.data(), thin_count);
+            inferred.inverse_depth.data(), params, thin.data(), thin_count);
         if (cdebug) { std::fprintf(stderr, "[CudaDepth] detect_thin done (%u thin)\n", thin_count); std::fflush(stderr); }
 #else
         detect_thin_structures_device(
-            inferred.depth_relative.data(), params, thin.data(), thin_count);
+            inferred.inverse_depth.data(), params, thin.data(), thin_count);
 #endif
         for (std::uint32_t i = 0U; i < thin_count && count < cfg.max_evidence; ++i) {
             buf[count++] = thin[i];
@@ -231,7 +231,7 @@ void VisualDepthObstacleDetector::write_debug_frame(
     const ProjectionParams&     params,
     float                       pitch_down_deg) {
 
-    if (inferred.width <= 0 || inferred.height <= 0 || inferred.depth_relative.empty()) return;
+    if (inferred.width <= 0 || inferred.height <= 0 || inferred.inverse_depth.empty()) return;
 
     const int      W = inferred.width;
     const int      H = inferred.height;
@@ -251,8 +251,8 @@ void VisualDepthObstacleDetector::write_debug_frame(
         if (debug_pipe_ == nullptr) return;
     }
 
-    // depth_relative = raw model output = calibrated inverse depth (1/m, high=close).
-    // depth_m = scale / depth_relative = physical metres.
+    // inverse_depth = 1/depth_m (inverse depth, stored by engine).
+    // depth_m = scale / inverse_depth = physical metres.
     //
     // Display scale: 30 m anchor with log compression.
     // Linear 60 m compresses everything < 10 m into the top 17% of the range,
@@ -267,7 +267,7 @@ void VisualDepthObstacleDetector::write_debug_frame(
     const float display_max_m = 30.0f;
     const float log_denom     = std::log1p(display_max_m);  // log(1 + 30) ≈ 3.43
 
-    // Grayscale helper: depth_relative → luminance.
+    // Grayscale helper: inverse_depth → luminance.
     // white (255) = close (0 m), black (0) = far (display_max_m).
     // Identical mapping for both panels so left/right are directly comparable.
     auto grey_lum = [&](float dr) -> std::uint8_t {
@@ -285,7 +285,7 @@ void VisualDepthObstacleDetector::write_debug_frame(
     for (int y = 0; y < H; ++y) {
         for (int x = 0; x < W; ++x) {
             const std::size_t pi = static_cast<std::size_t>(y * W + x);
-            const float       dr = inferred.depth_relative[pi];
+            const float       dr = inferred.inverse_depth[pi];
 
             // LEFT panel: raw ONNX output — white (close) → black (far) grayscale.
             // Fixed metric scale so intensity is directly comparable across frames.
@@ -355,7 +355,7 @@ std::vector<ObstacleEvidence> VisualDepthObstacleDetector::detect(
     const EgoSensingFrame& ego_frame) {
     const VisualDepthFrame vdf = make_visual_depth_frame(ego_frame);
     const DepthInferenceResult inferred = engine_->infer(vdf);
-    if (!inferred.valid || inferred.depth_relative.empty()) return {};
+    if (!inferred.valid || inferred.inverse_depth.empty()) return {};
 
     // Camera pitch: NED convention, forward_axis_local.z > 0 means looking downward.
     const float fwd_z = static_cast<float>(ego_frame.sensing_volume.forward_axis_local.z);
@@ -368,7 +368,7 @@ std::vector<ObstacleEvidence> VisualDepthObstacleDetector::detect(
         const int npix = inferred.width * inferred.height;
         int b0 = 0, b1 = 0, b2 = 0, b3 = 0, b4 = 0, b5 = 0;
         for (int pi = 0; pi < npix; ++pi) {
-            const float dr = inferred.depth_relative[pi];
+            const float dr = inferred.inverse_depth[pi];
             float dm = 120.0f;
             if (std::isfinite(dr) && dr > 1e-6f) dm = scale_.scale / dr;
             if      (dm <  0.5f) ++b0;
@@ -408,7 +408,7 @@ std::vector<ObstacleEvidence> VisualDepthObstacleDetector::detect(
         const int npix = inferred.width * inferred.height;
         int close_count = 0;
         for (int pi = 0; pi < npix; ++pi) {
-            const float dr = inferred.depth_relative[pi];
+            const float dr = inferred.inverse_depth[pi];
             if (std::isfinite(dr) && dr > 1e-6f
                     && (scale_.scale / dr) < config_.min_depth_m) {
                 ++close_count;
@@ -483,7 +483,7 @@ std::vector<ObstacleEvidence> VisualDepthObstacleDetector::detect(
             };
 
             write_npy_f32(base + "_depth.npy",
-                          inferred.depth_relative.data(),
+                          inferred.inverse_depth.data(),
                           inferred.height, inferred.width);
             write_npy_u8(base + "_rgb.npy",
                          vdf.bytes.data(),
@@ -511,7 +511,7 @@ std::vector<ObstacleEvidence> detect_visual_depth_obstacles(
 
     const VisualDepthFrame vdf = make_visual_depth_frame(ego_frame);
     const DepthInferenceResult inferred = engine.infer(vdf);
-    if (!inferred.valid || inferred.depth_relative.empty()) return {};
+    if (!inferred.valid || inferred.inverse_depth.empty()) return {};
     return project_from_inferred(ego_frame, inferred, scale, cfg);
 }
 
