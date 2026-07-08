@@ -521,11 +521,12 @@ run_and_log "Install flight Python dependencies" python -m pip install \
 
 run_and_log "Verify PX4 Python build dependencies" python -c "import em, yaml, jinja2, toml, jsonschema, genmsg, packaging, menuconfig, kconfiglib; assert hasattr(em, 'RAW_OPT') and hasattr(em, 'BUFFERED_OPT')"
 
-run_and_log "Install perception ML dependencies (depth export)" python -m pip install \
+run_and_log "Install perception ML dependencies (depth export + diagnostics)" python -m pip install \
   torch \
   transformers \
   onnx \
   onnxscript \
+  matplotlib \
   "${ORT_GPU_PKG}"
 
 run_and_log "Verify perception ML dependencies" python -c "
