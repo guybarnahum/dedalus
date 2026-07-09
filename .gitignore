@@ -10,6 +10,8 @@ bin/
 lib/
 lib64/
 tmp/
+debug/
+debug-*/
 
 # CMake and native build artifacts
 CMakeCache.txt
