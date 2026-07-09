@@ -547,9 +547,10 @@ esac
 mkdir -p "$OUTPUT_DIR" "$CAMERA_FRAMES_DIR" "$PROFILE_DIR" "$(dirname "$MISSION_OBSTACLE_MAP_ARTIFACT_PATH")" "$(dirname "$SITE_OBSTACLE_MAP_PATH")" "$(dirname "$SITE_OBSTACLE_MAP_SQLITE_PATH")"
 
 
-if [[ -n "$SOURCE_FRAME_RATE_HZ" || "$WITH_FRAME_PRODUCER_TIMING" -eq 1 || "$WITH_PIPELINE_TIMING" -eq 1 ]]; then
+_DEPTH_EVAL_NEEDS_SIDECAR="${DEDALUS_DEPTH_EVAL:-}"
+if [[ -n "$SOURCE_FRAME_RATE_HZ" || "$WITH_FRAME_PRODUCER_TIMING" -eq 1 || "$WITH_PIPELINE_TIMING" -eq 1 || "$_DEPTH_EVAL_NEEDS_SIDECAR" == "airsim_gt_detector" ]]; then
     EFFECTIVE_CONFIG_PATH="$OUTPUT_DIR/effective_core_stack_${TIMESTAMP}.yaml"
-    python3 - "$CONFIG_PATH" "$EFFECTIVE_CONFIG_PATH" "$SOURCE_FRAME_RATE_HZ" "$WITH_FRAME_PRODUCER_TIMING" "$FRAME_PRODUCER_TIMING_PATH" "$WITH_PIPELINE_TIMING" "$PIPELINE_TIMING_PATH" <<'PY'
+    python3 - "$CONFIG_PATH" "$EFFECTIVE_CONFIG_PATH" "$SOURCE_FRAME_RATE_HZ" "$WITH_FRAME_PRODUCER_TIMING" "$FRAME_PRODUCER_TIMING_PATH" "$WITH_PIPELINE_TIMING" "$PIPELINE_TIMING_PATH" "${DEDALUS_DEPTH_EVAL:-}" <<'PY'
 from __future__ import annotations
 import shlex
 import sys
@@ -562,6 +563,7 @@ with_frame_timing = sys.argv[4] == "1"
 frame_timing_path = sys.argv[5]
 with_pipeline_timing = sys.argv[6] == "1"
 pipeline_timing_path = sys.argv[7]
+depth_eval = sys.argv[8] if len(sys.argv) > 8 else ""
 
 lines = src.read_text(encoding="utf-8").splitlines()
 out: list[str] = []
@@ -584,6 +586,8 @@ for line in lines:
             parts = set_option(parts, "--rate-hz", frame_rate)
         if with_frame_timing:
             parts = set_option(parts, "--timing-jsonl", frame_timing_path)
+        if depth_eval == "airsim_gt_detector" and "--include-depth" not in parts:
+            parts.append("--include-depth")
         line = "bridge_command: " + shlex.join(parts)
     # Strip keys that run_mission.sh consumes itself and are unknown to the C++ binary.
     _shell_only = (
