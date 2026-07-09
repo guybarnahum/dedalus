@@ -382,6 +382,33 @@ bool CoreStackRunner::run_once() {
                 const float agreement = compute_depth_agreement(slot_a_evidence, slot_b_evidence, kVoxelSizeM);
                 timing_writer_->record_stage("depth.voxel_overlap_ppt",
                     static_cast<std::int64_t>(agreement * 1000.0F));
+
+                // Median range (|center_local|) per slot → ratio ≈ slot_b_scale / slot_a_scale.
+                // For ONNX (A) + airsim_gt (B): ratio ≈ GT_metres / ONNX_metres → scale error factor.
+                const auto median_range = [](const std::vector<ObstacleEvidence>& ev) -> float {
+                    if (ev.empty()) return 0.0F;
+                    std::vector<float> ranges;
+                    ranges.reserve(ev.size());
+                    for (const auto& e : ev) {
+                        const auto dx = static_cast<float>(e.center_local.x);
+                        const auto dy = static_cast<float>(e.center_local.y);
+                        const auto dz = static_cast<float>(e.center_local.z);
+                        ranges.push_back(std::sqrt(dx*dx + dy*dy + dz*dz));
+                    }
+                    const auto mid = ranges.begin() + static_cast<std::ptrdiff_t>(ranges.size() / 2);
+                    std::nth_element(ranges.begin(), mid, ranges.end());
+                    return *mid;
+                };
+                const float range_a = median_range(slot_a_evidence);
+                const float range_b = median_range(slot_b_evidence);
+                timing_writer_->record_stage("depth.median_range_a_m",
+                    static_cast<std::int64_t>(range_a * 1000.0F));
+                timing_writer_->record_stage("depth.median_range_b_m",
+                    static_cast<std::int64_t>(range_b * 1000.0F));
+                if (range_a > 0.01F) {
+                    timing_writer_->record_stage("depth.scale_ratio",
+                        static_cast<std::int64_t>((range_b / range_a) * 1000.0F));
+                }
             }
         }
     } else if (timing_writer_) {

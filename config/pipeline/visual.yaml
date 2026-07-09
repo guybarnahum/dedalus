@@ -3,9 +3,9 @@
 #   ego:   VisualOdometryProvider — FAST-9 + LK optical flow + FoE RANSAC +
 #          VL2 metric scale from L2 map, VL3 fallback to frame_hint.
 #   depth: DepthAnything V2 Small Metric — ONNX inference on RGB, CUDA accelerated.
-#          metric_depth: true → raw ONNX output is calibrated INVERSE DEPTH in 1/m
-#          (HIGH=CLOSE).  Engine stores depth_relative = raw directly.
-#          Projection: depth_m = scale / depth_relative = 1.0 / raw  (scale=1.0).
+#          metric_depth: true → raw ONNX output is DIRECT METRIC DEPTH in metres
+#          (HIGH=FAR, LOW=CLOSE).  Engine stores inverse_depth = 1/raw; raw<1cm
+#          (sky/OOD) stored as 0 (invalid).  Projection: depth_m = 1/inverse_depth.
 #
 # Requires:
 #   - Build with -DDEDALUS_ENABLE_ONNX_DEPTH=ON (auto when ORT SDK present)
@@ -24,6 +24,7 @@
 
 ego_provider: visual_odometry
 depth: visual_onnx
+# depth_eval: airsim_gt_detector   # slot B: GT runs in parallel, logs scale ratio. Override: DEDALUS_DEPTH_EVAL=airsim_gt_detector
 detector: null
 camera_stabilizer: null
 tracker: simple_centroid

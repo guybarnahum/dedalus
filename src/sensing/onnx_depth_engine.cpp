@@ -206,8 +206,15 @@ DepthInferenceResult ONNXDepthEngine::infer(const VisualDepthFrame& frame) {
         // Convert to inverse depth so the downstream formula
         //   depth_m = scale / inverse_depth
         // recovers metres.  With scale=1.0: depth_m = 1/(1/raw) = raw.
+        //
+        // Sky / background pixels where the model outputs raw ≈ 0 (OOD / Sigmoid
+        // saturated low) are stored as 0.0 so the downstream dr<=1e-6 guard marks
+        // them INVALID (dark grey in the debug view), not as "too close" (red).
+        // 1 cm is the floor — no real in-FOV obstacle can be within 1 cm of the
+        // lens.  Arm/prop pixels land at raw ≈ 0.025–0.5 m, well above this cutoff.
+        static constexpr float kMinValidRaw = 0.01F;
         for (std::size_t i = 0; i < n; ++i) {
-            result.inverse_depth[i] = 1.0F / std::max(raw[i], 1e-3F);
+            result.inverse_depth[i] = (raw[i] >= kMinValidRaw) ? (1.0F / raw[i]) : 0.0F;
         }
     } else {
         // Relative model (DepthAnythingV2 default): normalise by per-frame max so
