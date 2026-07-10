@@ -198,23 +198,23 @@ DepthInferenceResult ONNXDepthEngine::infer(const VisualDepthFrame& frame) {
     result.inverse_depth.resize(n);
 
     if (impl_->config.metric_depth) {
-        // Metric model (e.g. DepthAnythingV2-Metric-Outdoor) outputs DIRECT METRIC
-        // DEPTH in metres: Sigmoid(features) × max_depth (80 m for outdoor VKITTI).
-        //   HIGH raw value = FAR   object   (e.g. raw=18.0 → depth_m = 18.0 m)
-        //   LOW  raw value = CLOSE object   (e.g. raw=1.5  → depth_m = 1.5 m)
+        // DepthAnythingV2-Metric outputs INVERSE DEPTH (1/m): HIGH=CLOSE, LOW=FAR.
+        // This matches the relative-model convention; both share the same downstream
+        // formula:  depth_m = scale / inverse_depth.
         //
-        // Convert to inverse depth so the downstream formula
-        //   depth_m = scale / inverse_depth
-        // recovers metres.  With scale=1.0: depth_m = 1/(1/raw) = raw.
+        //   HIGH raw value = CLOSE object   (e.g. raw=3.33 → depth_m = 0.30 m)
+        //   LOW  raw value = FAR   object   (e.g. raw=0.20 → depth_m = 5.0  m)
         //
-        // Sky / background pixels where the model outputs raw ≈ 0 (OOD / Sigmoid
-        // saturated low) are stored as 0.0 so the downstream dr<=1e-6 guard marks
-        // them INVALID (dark grey in the debug view), not as "too close" (red).
-        // 1 cm is the floor — no real in-FOV obstacle can be within 1 cm of the
-        // lens.  Arm/prop pixels land at raw ≈ 0.025–0.5 m, well above this cutoff.
-        static constexpr float kMinValidRaw = 0.01F;
+        // Store raw directly — do NOT invert (1/raw).  That double-inverts and
+        // makes far objects appear at depth_m ≈ 0, causing them to be rejected
+        // by the min_depth filter as "too close" (confirmed by depth_debug.mp4:
+        // ONNX and GT panels were brightness-inverted relative to each other).
+        //
+        // Pixels at raw < 1e-4 (depth > 10 km) are stored as 0.0 so the
+        // dr <= 1e-6 guard marks them INVALID rather than "too close".
+        static constexpr float kMinValidRaw = 1e-4F;
         for (std::size_t i = 0; i < n; ++i) {
-            result.inverse_depth[i] = (raw[i] >= kMinValidRaw) ? (1.0F / raw[i]) : 0.0F;
+            result.inverse_depth[i] = (raw[i] >= kMinValidRaw) ? raw[i] : 0.0F;
         }
     } else {
         // Relative model (DepthAnythingV2 default): normalise by per-frame max so
@@ -238,13 +238,13 @@ DepthInferenceResult ONNXDepthEngine::infer(const VisualDepthFrame& frame) {
 
     // Log first inference — confirms which EP is executing and verifies model encoding.
     //
-    // Metric model (metric_depth=true): raw = direct metric depth in metres (HIGH=FAR).
-    //   Sigmoid(features) × 80 m (outdoor VKITTI).  Stored as inverse_depth = 1/raw.
-    //   Expected at drone altitude (5-30 m AGL):
-    //     raw range roughly 1..80 m,  mean raw ~ 5..20 m
+    // Metric model (metric_depth=true): raw = inverse depth in 1/m (HIGH=CLOSE).
+    //   Stored directly as inverse_depth; depth_m = scale / raw.
+    //   Expected at drone altitude (5-30 m AGL, arms in FOV):
+    //     raw range roughly 0.05..10 (depth 0.1..20 m),  mean raw ~ 0.5..5
     //   BAD signs:
-    //     mean raw < 0.5  → OOD or all-black input (check frame pipeline)
-    //     mean raw > 75   → saturated at max_depth (check model / EP)
+    //     mean raw < 0.01 → everything far / model OOD (check input pipeline)
+    //     mean raw > 20   → everything within 5 cm (check camera mounting)
     //     max ≈ min       → model load / EP failure
     //
     // Relative model (metric_depth=false): raw is arbitrary disparity, HIGH=CLOSE.

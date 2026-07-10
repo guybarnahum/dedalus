@@ -35,6 +35,10 @@ struct ProjectionParams {
     float max_depth_m{80.0F};
 
     // Metric scale:  depth_m = scale / inverse_depth
+    // inverse_depth stores disparity (1/m): high = close, low = far.
+    // Both model paths (metric and relative) store values in this convention;
+    // see ONNXDepthEngine::infer() for the per-path encoding details.
+    // scale ≈ 1.0; tune via visual_onnx.scale to correct systematic bias.
     float scale{1.0F};
 
     // Voxel grid resolution used to deduplicate evidence

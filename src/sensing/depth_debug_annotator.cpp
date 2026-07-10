@@ -110,7 +110,8 @@ void DepthDebugAnnotator::annotate(
     const float display_max_m = config_.display_max_m;
     const float log_denom     = std::log1p(display_max_m);
 
-    // Raw lum from ONNX inverse_depth (uses onnx_params.scale).
+    // ONNX inverse_depth stores disparity (1/m): high = close, low = far.
+    // depth_m = scale / dr;  white (255) = close (0 m), black (0) = display_max_m.
     auto onnx_lum = [&](float dr) -> std::uint8_t {
         if (!std::isfinite(dr) || dr <= 1e-6f) return 0U;
         return depth_to_lum(onnx_params.scale / dr, display_max_m, log_denom);
