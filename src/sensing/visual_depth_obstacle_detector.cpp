@@ -1,9 +1,11 @@
 #include "dedalus/sensing/visual_depth_obstacle_detector.hpp"
 
 #include <algorithm>
+#include <cerrno>
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
+#include <cstring>
 #include <string>
 #include <vector>
 
@@ -218,7 +220,11 @@ VisualDepthObstacleDetector::VisualDepthObstacleDetector(
 
 VisualDepthObstacleDetector::~VisualDepthObstacleDetector() {
     if (debug_pipe_ != nullptr) {
-        pclose(debug_pipe_);
+        const int rc = pclose(debug_pipe_);
+        if (rc != 0) {
+            std::fprintf(stderr, "[DepthDebug] depth_mp4 ffmpeg exited with code %d\n", rc);
+        }
+        debug_pipe_ = nullptr;
     }
 }
 
@@ -247,8 +253,13 @@ void VisualDepthObstacleDetector::write_debug_frame(
             " -movflags frag_keyframe+empty_moov+default_base_moof"
             " -y " + config_.debug_depth_mp4 +
             " 2>/dev/null";
+        std::fprintf(stderr, "[DepthDebug] opening depth_mp4 pipe: %s\n", cmd.c_str());
         debug_pipe_ = popen(cmd.c_str(), "w");
-        if (debug_pipe_ == nullptr) return;
+        if (debug_pipe_ == nullptr) {
+            std::fprintf(stderr, "[DepthDebug] ERROR: popen failed (errno=%d: %s) — depth MP4 disabled\n",
+                         errno, std::strerror(errno));
+            return;
+        }
     }
 
     // inverse_depth = 1/depth_m (inverse depth, stored by engine).
@@ -347,7 +358,16 @@ void VisualDepthObstacleDetector::write_debug_frame(
         }
     }
 
-    std::fwrite(frame_rgb.data(), 1U, frame_rgb.size(), debug_pipe_);
+    const std::size_t written = std::fwrite(frame_rgb.data(), 1U, frame_rgb.size(), debug_pipe_);
+    if (written != frame_rgb.size()) {
+        // ffmpeg pipe broken (bad path/extension, codec error, etc.) — close and
+        // disable to avoid SIGPIPE killing the mission on the next write.
+        std::fclose(debug_pipe_);
+        debug_pipe_ = nullptr;
+        std::fprintf(stderr, "[DepthDebug] depth_mp4 pipe broken after %zu/%zu bytes — disabling\n",
+                     written, frame_rgb.size());
+        return;
+    }
     std::fflush(debug_pipe_);
 }
 

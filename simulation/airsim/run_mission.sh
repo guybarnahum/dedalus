@@ -362,7 +362,17 @@ while [[ $# -gt 0 ]]; do
     case "$1" in
         --session) SESSION_NAME="$2"; shift 2 ;;
         --build-dir) BUILD_DIR="$(abs_path "$2")"; shift 2 ;;
-        --config) CONFIG_PATH="$(abs_path "$2")"; shift 2 ;;
+        --config)
+            if [[ -n "$CONFIG_PATH" && "$CONFIG_PATH" != "$REPO_ROOT_ABS/config/runs/airsim_circle_airsim_gt.yaml" ]]; then
+                echo "ERROR: --config passed more than once ('$CONFIG_PATH' then '$2')." >&2
+                echo "       run_mission.sh takes a single composed config. Use 'include:' directives" >&2
+                echo "       inside the config file to compose multiple configs, e.g.:" >&2
+                echo "         include: config/drone/px4_front_center_depth.yaml" >&2
+                echo "         include: config/pipeline/visual.yaml" >&2
+                echo "       See config/runs/ for reference examples." >&2
+                exit 1
+            fi
+            CONFIG_PATH="$(abs_path "$2")"; shift 2 ;;
         --sim-config) SIM_CONFIG_PATH="$(abs_path "$2")"; shift 2 ;;
         --output-dir) OUTPUT_DIR="$(creatable_abs_path "$2")"; OUTPUT_DIR_EXPLICIT=1; shift 2 ;;
         --stream-host) STREAM_HOST="$2"; shift 2 ;;
