@@ -34,11 +34,6 @@ struct VisualDepthObstacleDetectorConfig {
 
     // Enable Sobel + NMS + CC thin structure detection (is_thin_structure_hint).
     bool detect_thin_structures{true};
-
-    // When non-empty, pipe each depth frame as Jet-colorized raw RGB into ffmpeg,
-    // writing a live H.264 MP4 at this path.  Set via visual_onnx.debug_depth_mp4.
-    // ffmpeg must be on PATH.  The file is finalized when the detector is destroyed.
-    std::string debug_depth_mp4;
 };
 
 // Visual depth obstacle detector.
@@ -55,6 +50,8 @@ struct VisualDepthObstacleDetectorConfig {
 //     → inflate() → ObstacleEvidence[]
 //
 // Thread ownership: single-threaded tick. detect() is not reentrant.
+// After each detect() call, last_inferred() / last_params() / last_pitch_deg()
+// expose the inference result so DepthDebugAnnotator can render the 4-panel MP4.
 class VisualDepthObstacleDetector final : public ObstacleEvidenceProvider {
 public:
     VisualDepthObstacleDetector(
@@ -62,7 +59,7 @@ public:
         MetricScaleEstimate                   scale,
         VisualDepthObstacleDetectorConfig     config = {});
 
-    ~VisualDepthObstacleDetector() override;
+    ~VisualDepthObstacleDetector() override = default;
 
     VisualDepthObstacleDetector(const VisualDepthObstacleDetector&)            = delete;
     VisualDepthObstacleDetector& operator=(const VisualDepthObstacleDetector&) = delete;
@@ -71,17 +68,26 @@ public:
 
     // Extracts VisualDepthFrame from EgoSensingFrame::frame.image, runs the
     // full pipeline, and returns inflated ObstacleEvidence.
+    // After returning, last_inferred() / last_params() / last_pitch_deg() are valid.
     [[nodiscard]] std::vector<ObstacleEvidence> detect(const EgoSensingFrame& frame) override;
 
-private:
-    void write_debug_frame(const DepthInferenceResult& inferred,
-                           const ProjectionParams&     params,
-                           float                       pitch_down_deg);
+    // Read-only access to the last inference result, valid after each detect() call.
+    // Pointers remain valid until the next detect() call.
+    [[nodiscard]] const DepthInferenceResult& last_inferred()   const { return last_inferred_; }
+    [[nodiscard]] const ProjectionParams&     last_params()     const { return last_params_;   }
+    [[nodiscard]] float                       last_pitch_deg()  const { return last_pitch_deg_; }
+    [[nodiscard]] bool                        has_last_result() const { return last_has_result_; }
 
+private:
     std::unique_ptr<DepthEngineInterface> engine_;
     MetricScaleEstimate                   scale_;
     VisualDepthObstacleDetectorConfig     config_;
-    FILE*                                 debug_pipe_{nullptr};  // ffmpeg pipe; null when disabled
+
+    // Cache populated by each detect() call; consumed by DepthDebugAnnotator.
+    DepthInferenceResult last_inferred_;
+    ProjectionParams     last_params_;
+    float                last_pitch_deg_{0.0f};
+    bool                 last_has_result_{false};
 };
 
 // Free-function variant for testing without a class instance.

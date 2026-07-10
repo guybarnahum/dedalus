@@ -365,6 +365,19 @@ bool CoreStackRunner::run_once() {
             slot_a_evidence.begin(),
             slot_a_evidence.end());
 
+        // 4-panel debug MP4: ONNX on top, GT eval on bottom.
+        // Runs only when the annotator is configured and slot A is a VisualDepthObstacleDetector.
+        if (depth_annotator_ && depth_slot_a_visual_ && depth_slot_a_visual_->has_last_result()) {
+            const AirSimDepthFrame* gt = depth_slot_b_airsim_
+                ? depth_slot_b_airsim_->last_depth_frame()
+                : nullptr;
+            depth_annotator_->annotate(
+                depth_slot_a_visual_->last_inferred(),
+                depth_slot_a_visual_->last_params(),
+                depth_slot_a_visual_->last_pitch_deg(),
+                gt);
+        }
+
         if (timing_writer_) {
             timing_writer_->record_stage("depth_slot_a.sensing_volumes",
                 static_cast<std::int64_t>(coverage.camera_volumes.size()));

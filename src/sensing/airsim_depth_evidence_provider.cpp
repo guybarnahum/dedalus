@@ -24,6 +24,8 @@ std::vector<ObstacleEvidence> AirSimDepthEvidenceProvider::detect(
         return {};
     }
 
+    last_frame_       = df;
+    last_frame_valid_ = true;
     return detector_.detect(df, to_obstacle_sensing_volume(sv));
 }
 

@@ -27,9 +27,12 @@
 #include "dedalus/runtime/evaluation_slot.hpp"
 #include "dedalus/runtime/pipeline_profiler.hpp"
 #include "dedalus/runtime/provider_registry.hpp"
+#include "dedalus/sensing/airsim_depth_evidence_provider.hpp"
 #include "dedalus/sensing/airsim_depth_obstacle_detector.hpp"
+#include "dedalus/sensing/depth_debug_annotator.hpp"
 #include "dedalus/sensing/obstacle_evidence_provider.hpp"
 #include "dedalus/sensing/sensing_coverage.hpp"
+#include "dedalus/sensing/visual_depth_obstacle_detector.hpp"
 #include "dedalus/world_model/world_snapshot.hpp"
 #include "dedalus/world_model/world_snapshot_publisher.hpp"
 
@@ -55,6 +58,11 @@ struct CoreStackRunnerConfig {
     // Config for the visual_onnx depth provider.
     // Populated by config_loader when depth: visual_onnx (or depth_eval: visual_onnx).
     VisualONNXDepthConfig visual_onnx_depth;
+
+    // Optional: 4-panel debug MP4 (ONNX top, GT eval bottom).
+    // Empty output_path disables the annotator entirely (zero overhead).
+    // Set via visual_onnx.debug_depth_mp4 in config.
+    DepthDebugAnnotatorConfig debug_depth_annotator;
 
     // Two-slot depth provider injection.
     //
@@ -130,6 +138,15 @@ private:
     // Slot B: reference depth provider (delta-log only; null = inactive).
     std::unique_ptr<ObstacleEvidenceProvider> depth_slot_a_;
     std::unique_ptr<ObstacleEvidenceProvider> depth_slot_b_;
+
+    // Non-owning, construction-time typed pointers — set via dynamic_cast once.
+    // Used by the annotator call site in run_once() to access last-frame caches.
+    // Null when the corresponding slot holds a different concrete type.
+    VisualDepthObstacleDetector*  depth_slot_a_visual_{nullptr};  // observing ptr into depth_slot_a_
+    AirSimDepthEvidenceProvider*  depth_slot_b_airsim_{nullptr};  // observing ptr into depth_slot_b_
+
+    // Optional 4-panel debug MP4 annotator; null when output_path is empty.
+    std::unique_ptr<DepthDebugAnnotator> depth_annotator_;
 
     // Reference slots (slot B) for the five perception pipeline stages.
     // Slot A for each stage lives in providers_.  Null = inactive.

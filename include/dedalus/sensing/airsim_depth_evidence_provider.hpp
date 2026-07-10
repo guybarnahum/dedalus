@@ -21,8 +21,17 @@ public:
     [[nodiscard]] std::vector<ObstacleEvidence> detect(
         const EgoSensingFrame& frame) override;
 
+    // Returns the AirSimDepthFrame used by the most recent detect() call.
+    // nullptr if detect() has never been called or no depth frame was present.
+    // Pointer is valid until the next detect() call.
+    [[nodiscard]] const AirSimDepthFrame* last_depth_frame() const {
+        return last_frame_valid_ ? &last_frame_ : nullptr;
+    }
+
 private:
     AirSimDepthObstacleDetector detector_;
+    AirSimDepthFrame            last_frame_;
+    bool                        last_frame_valid_{false};
 };
 
 }  // namespace dedalus

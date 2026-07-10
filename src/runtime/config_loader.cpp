@@ -195,7 +195,6 @@ std::unique_ptr<ObstacleEvidenceProvider> make_depth_provider(
         detector_cfg.max_evidence           = visual_onnx_config.max_evidence;
         detector_cfg.detect_surface_patches     = visual_onnx_config.detect_surface_patches;
         detector_cfg.detect_thin_structures     = visual_onnx_config.detect_thin_structures;
-        detector_cfg.debug_depth_mp4            = visual_onnx_config.debug_depth_mp4;
         MetricScaleEstimate scale;
         scale.scale      = visual_onnx_config.scale;
         scale.confidence = 1.0F;  // fixed at startup (VD7 will couple to VIO)
@@ -225,6 +224,12 @@ void build_depth_slots(CoreStackConfig& config) {
     config.runner.depth_slot_b =
         make_depth_provider(depth_eval_name, config.runner.airsim_depth_obstacle_detector,
                             config.runner.visual_onnx_depth);
+
+    // Wire debug_depth_mp4 into the annotator config (separated from detector).
+    if (!config.runner.visual_onnx_depth.debug_depth_mp4.empty()) {
+        config.runner.debug_depth_annotator.output_path =
+            config.runner.visual_onnx_depth.debug_depth_mp4;
+    }
 }
 
 // Apply env var overrides for primary and eval provider names.

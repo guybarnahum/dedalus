@@ -56,6 +56,7 @@ add_library(dedalus_core
     sensing/airsim_depth_obstacle_detector_impl.cpp
     sensing/airsim_depth_evidence_provider.cpp
     sensing/airsim_emulation_depth_obstacle_detector.cpp
+    sensing/depth_debug_annotator.cpp
     sensing/depth_projection_kernel.cpp
     sensing/visual_depth_obstacle_detector.cpp
     perception/ghost_targets.cpp

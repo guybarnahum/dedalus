@@ -1,11 +1,9 @@
 #include "dedalus/sensing/visual_depth_obstacle_detector.hpp"
 
 #include <algorithm>
-#include <cerrno>
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
-#include <cstring>
 #include <string>
 #include <vector>
 
@@ -218,171 +216,27 @@ VisualDepthObstacleDetector::VisualDepthObstacleDetector(
     , scale_(scale)
     , config_(config) {}
 
-VisualDepthObstacleDetector::~VisualDepthObstacleDetector() {
-    if (debug_pipe_ != nullptr) {
-        const int rc = pclose(debug_pipe_);
-        if (rc != 0) {
-            std::fprintf(stderr, "[DepthDebug] depth_mp4 ffmpeg exited with code %d\n", rc);
-        }
-        debug_pipe_ = nullptr;
-    }
-}
-
-std::string VisualDepthObstacleDetector::provider_name() const {
-    return "visual_depth_obstacle_detector";
-}
-
-void VisualDepthObstacleDetector::write_debug_frame(
-    const DepthInferenceResult& inferred,
-    const ProjectionParams&     params,
-    float                       pitch_down_deg) {
-
-    if (inferred.width <= 0 || inferred.height <= 0 || inferred.inverse_depth.empty()) return;
-
-    const int      W = inferred.width;
-    const int      H = inferred.height;
-
-    // Side-by-side: left panel = raw model output, right panel = evidence filter view.
-    // ffmpeg output width is 2*W.
-    if (debug_pipe_ == nullptr) {
-        const std::string cmd =
-            "ffmpeg -f rawvideo -pixel_format rgb24"
-            " -video_size " + std::to_string(2 * W) + "x" + std::to_string(H) +
-            " -framerate 5 -i pipe:0"
-            " -vcodec libx264 -crf 23 -pix_fmt yuv420p"
-            " -movflags frag_keyframe+empty_moov+default_base_moof"
-            " -y " + config_.debug_depth_mp4 +
-            " 2>/dev/null";
-        std::fprintf(stderr, "[DepthDebug] opening depth_mp4 pipe: %s\n", cmd.c_str());
-        debug_pipe_ = popen(cmd.c_str(), "w");
-        if (debug_pipe_ == nullptr) {
-            std::fprintf(stderr, "[DepthDebug] ERROR: popen failed (errno=%d: %s) — depth MP4 disabled\n",
-                         errno, std::strerror(errno));
-            return;
-        }
-    }
-
-    // inverse_depth = 1/depth_m (inverse depth, stored by engine).
-    // depth_m = scale / inverse_depth = physical metres.
-    //
-    // Display scale: 30 m anchor with log compression.
-    // Linear 60 m compresses everything < 10 m into the top 17% of the range,
-    // making the whole scene look uniformly white.  Log scale gives perceptually
-    // uniform contrast across the 0.1–30 m obstacle-avoidance range:
-    //   0.1 m (props)  → lum ≈ 252  (nearly white)
-    //   2 m            → lum ≈ 178  (light grey)
-    //   5 m            → lum ≈ 127  (medium grey)
-    //   10 m           → lum ≈  80  (medium dark)
-    //   20 m           → lum ≈  33  (dark)
-    //   30 m+          → lum =   0  (black)
-    const float display_max_m = 30.0f;
-    const float log_denom     = std::log1p(display_max_m);  // log(1 + 30) ≈ 3.43
-
-    // Grayscale helper: inverse_depth → luminance.
-    // white (255) = close (0 m), black (0) = far (display_max_m).
-    // Identical mapping for both panels so left/right are directly comparable.
-    auto grey_lum = [&](float dr) -> std::uint8_t {
-        float depth_m = display_max_m;
-        if (std::isfinite(dr) && dr > 1e-6f) {
-            depth_m = std::min(params.scale / dr, display_max_m);
-        }
-        const float t = 1.0f - std::log1p(depth_m) / log_denom;  // 1=close/white, 0=far/black
-        return static_cast<std::uint8_t>(std::clamp(t * 255.0f, 0.0f, 255.0f));
-    };
-
-    // Output: (2W)×H row-major RGB
-    std::vector<std::uint8_t> frame_rgb(static_cast<std::size_t>(2 * W * H) * 3U, 0U);
-
-    for (int y = 0; y < H; ++y) {
-        for (int x = 0; x < W; ++x) {
-            const std::size_t pi = static_cast<std::size_t>(y * W + x);
-            const float       dr = inferred.inverse_depth[pi];
-
-            // LEFT panel: raw ONNX output — white (close) → black (far) grayscale.
-            // Fixed metric scale so intensity is directly comparable across frames.
-            const std::uint8_t lum = grey_lum(dr);
-            const std::size_t  li  = static_cast<std::size_t>(y * 2 * W + x) * 3U;
-            frame_rgb[li + 0U] = lum;
-            frame_rgb[li + 1U] = lum;
-            frame_rgb[li + 2U] = lum;
-
-            // RIGHT panel: evidence filter view.
-            //   Dark grey  — invalid model output (dr ≤ 0)
-            //   Dark navy  — too far   (depth_m > max_depth_m)
-            //   Red/Orange/Yellow — filtered (depth_m < min_depth_m), colored by gimbal pitch:
-            //       pitch > 15° → red (OOD — nothing should be this close when looking down)
-            //       pitch <  5° → yellow (expected — props/arms in field of view)
-            //       between     → orange (ambiguous)
-            //   Grey gradient — valid depth, not stride-sampled
-            //   Cyan dot   — stride-sampled pixel that passes the depth filter → evidence
-            const std::size_t ri = static_cast<std::size_t>(y * 2 * W + W + x) * 3U;
-            if (!std::isfinite(dr) || dr <= 1e-6f) {
-                // Invalid model output — dark grey
-                frame_rgb[ri + 0U] = 30U;
-                frame_rgb[ri + 1U] = 30U;
-                frame_rgb[ri + 2U] = 30U;
-            } else {
-                const float depth_m = params.scale / dr;
-                if (depth_m > params.max_depth_m) {
-                    // Too far — dark navy
-                    frame_rgb[ri + 0U] = 10U;
-                    frame_rgb[ri + 1U] = 10U;
-                    frame_rgb[ri + 2U] = 50U;
-                } else if (depth_m >= params.min_depth_m
-                           && x % params.stride == 0
-                           && y % params.stride == 0) {
-                    // Valid range, stride-sampled — cyan evidence dot
-                    frame_rgb[ri + 0U] = 0U;
-                    frame_rgb[ri + 1U] = 220U;
-                    frame_rgb[ri + 2U] = 220U;
-                } else if (depth_m < params.min_depth_m) {
-                    // Filtered (too close): color by gimbal pitch to distinguish
-                    // OOD noise (camera looking down) from expected close readings (props).
-                    //   pitch > 15° (looking down)  → RED   — OOD noise, nothing should be this close
-                    //   pitch <  5° (near level)     → YELLOW — expected (arms / props in view)
-                    //   between                      → ORANGE — ambiguous
-                    if (pitch_down_deg > 15.0f) {
-                        frame_rgb[ri + 0U] = 220U; frame_rgb[ri + 1U] =  40U; frame_rgb[ri + 2U] =  40U;
-                    } else if (pitch_down_deg < 5.0f) {
-                        frame_rgb[ri + 0U] = 220U; frame_rgb[ri + 1U] = 220U; frame_rgb[ri + 2U] =   0U;
-                    } else {
-                        frame_rgb[ri + 0U] = 220U; frame_rgb[ri + 1U] = 130U; frame_rgb[ri + 2U] =   0U;
-                    }
-                } else {
-                    // Valid depth, not stride-sampled — grey gradient
-                    frame_rgb[ri + 0U] = lum;
-                    frame_rgb[ri + 1U] = lum;
-                    frame_rgb[ri + 2U] = lum;
-                }
-            }
-        }
-    }
-
-    const std::size_t written = std::fwrite(frame_rgb.data(), 1U, frame_rgb.size(), debug_pipe_);
-    if (written != frame_rgb.size()) {
-        // ffmpeg pipe broken (bad path/extension, codec error, etc.) — close and
-        // disable to avoid SIGPIPE killing the mission on the next write.
-        std::fclose(debug_pipe_);
-        debug_pipe_ = nullptr;
-        std::fprintf(stderr, "[DepthDebug] depth_mp4 pipe broken after %zu/%zu bytes — disabling\n",
-                     written, frame_rgb.size());
-        return;
-    }
-    std::fflush(debug_pipe_);
-}
-
 std::vector<ObstacleEvidence> VisualDepthObstacleDetector::detect(
     const EgoSensingFrame& ego_frame) {
     const VisualDepthFrame vdf = make_visual_depth_frame(ego_frame);
     const DepthInferenceResult inferred = engine_->infer(vdf);
-    if (!inferred.valid || inferred.inverse_depth.empty()) return {};
+    if (!inferred.valid || inferred.inverse_depth.empty()) {
+        last_has_result_ = false;
+        return {};
+    }
 
     // Camera pitch: NED convention, forward_axis_local.z > 0 means looking downward.
     const float fwd_z = static_cast<float>(ego_frame.sensing_volume.forward_axis_local.z);
     const float pitch_down_deg = std::asin(std::clamp(fwd_z, -1.0f, 1.0f))
                                  * (180.0f / 3.14159265f);
 
-    // Depth histogram — always active (every 30 frames), regardless of debug MP4.
+    // Cache for DepthDebugAnnotator (read via last_inferred / last_params / last_pitch_deg).
+    last_inferred_    = inferred;
+    last_params_      = make_projection_params(ego_frame, inferred, scale_, config_);
+    last_pitch_deg_   = pitch_down_deg;
+    last_has_result_  = true;
+
+    // Depth histogram — every 30 frames.
     static int diag_frame_count = 0;
     if (++diag_frame_count % 30 == 1) {
         const int npix = inferred.width * inferred.height;
@@ -407,12 +261,6 @@ std::vector<ObstacleEvidence> VisualDepthObstacleDetector::detect(
             diag_frame_count, pitch_down_deg,
             b0 * pct, b1 * pct, b2 * pct, b3 * pct, b4 * pct, b5 * pct,
             config_.min_depth_m, config_.max_depth_m);
-    }
-
-    if (!config_.debug_depth_mp4.empty()) {
-        const ProjectionParams dbg_params = make_projection_params(
-            ego_frame, inferred, scale_, config_);
-        write_debug_frame(inferred, dbg_params, pitch_down_deg);
     }
 
     // Gimbal-gated range-error frame capture.
@@ -516,7 +364,7 @@ std::vector<ObstacleEvidence> VisualDepthObstacleDetector::detect(
         }
     }
 
-    return project_from_inferred(ego_frame, inferred, scale_, config_);
+    return project_from_inferred(ego_frame, last_inferred_, scale_, config_);
 }
 
 // ---------------------------------------------------------------------------
