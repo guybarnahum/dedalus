@@ -216,6 +216,12 @@ VisualDepthObstacleDetector::VisualDepthObstacleDetector(
     , scale_(scale)
     , config_(config) {}
 
+VisualDepthObstacleDetector::~VisualDepthObstacleDetector() = default;
+
+std::string VisualDepthObstacleDetector::provider_name() const {
+    return "visual_depth_obstacle_detector";
+}
+
 std::vector<ObstacleEvidence> VisualDepthObstacleDetector::detect(
     const EgoSensingFrame& ego_frame) {
     const VisualDepthFrame vdf = make_visual_depth_frame(ego_frame);

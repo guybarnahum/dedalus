@@ -59,7 +59,7 @@ public:
         MetricScaleEstimate                   scale,
         VisualDepthObstacleDetectorConfig     config = {});
 
-    ~VisualDepthObstacleDetector() override = default;
+    ~VisualDepthObstacleDetector() override;  // defined out-of-line to anchor vtable
 
     VisualDepthObstacleDetector(const VisualDepthObstacleDetector&)            = delete;
     VisualDepthObstacleDetector& operator=(const VisualDepthObstacleDetector&) = delete;
