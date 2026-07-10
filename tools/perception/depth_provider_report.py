@@ -604,19 +604,39 @@ def render_html(frames: list[dict], summary: dict, source_path: Path, output_pat
 # CLI
 # ---------------------------------------------------------------------------
 
+def _resolve_profiler_path(arg: Path) -> Path:
+    """Accept a direct .jsonl path or a directory.
+
+    Directory resolution order:
+      1. profiler_log.jsonl   (legacy name)
+      2. pipeline_*.jsonl     (current name) — picks the most recent by mtime
+    """
+    if arg.is_file():
+        return arg
+    if not arg.is_dir():
+        print(f"ERROR: path not found: {arg}", file=sys.stderr)
+        sys.exit(1)
+    legacy = arg / "profiler_log.jsonl"
+    if legacy.exists():
+        return legacy
+    candidates = sorted(arg.glob("pipeline_*.jsonl"), key=lambda p: p.stat().st_mtime)
+    if candidates:
+        return candidates[-1]   # most recent
+    print(f"ERROR: no pipeline_*.jsonl or profiler_log.jsonl found in {arg}", file=sys.stderr)
+    sys.exit(1)
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("mission_dir", help="Mission output directory containing profiler_log.jsonl")
+    parser.add_argument("mission_dir",
+                        help="Mission output directory (or direct path to a pipeline_*.jsonl file)")
     parser.add_argument("-o", "--output", default=None,
-                        help="Output HTML path (default: <mission_dir>/depth_provider_report.html)")
+                        help="Output HTML path (default: <dir>/depth_provider_report.html)")
     args = parser.parse_args()
 
-    mission_dir   = Path(args.mission_dir)
-    profiler_path = mission_dir / "profiler_log.jsonl"
-
-    if not profiler_path.exists():
-        print(f"ERROR: profiler log not found: {profiler_path}", file=sys.stderr)
-        sys.exit(1)
+    arg_path      = Path(args.mission_dir)
+    profiler_path = _resolve_profiler_path(arg_path)
+    mission_dir   = profiler_path.parent
 
     output_path = Path(args.output) if args.output else (mission_dir / "depth_provider_report.html")
 
