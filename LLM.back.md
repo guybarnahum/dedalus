@@ -260,3 +260,59 @@ Training and inference operate on raw fisheye frames. Distortion is absorbed int
 VD2–VD3: `VisualDepthObstacleDetector` and `AirSimDepthObstacleDetector` run in parallel. Delta between their `ObstacleEvidence` outputs is logged. Gate: major obstacles match within ±1 voxel on ≥90% of frames before GT is disabled at VD4.
 
 VD4+: `DEDALUS_AIRSIM_ENABLE_DEPTH_OBSTACLES` is permanently off in `CoreStackRunner`.
+
+### H19.13 Metric Model Output Convention (locked, d750ceb)
+
+DepthAnythingV2-Metric-Outdoor graph tail is `Sigmoid → Mul(×80)`. Output is **linear metric depth in metres, HIGH=FAR** in [0, 80m].
+
+The pipeline convention is **inverse_depth, HIGH=CLOSE** (disparity). All engines convert at inference time:
+```
+inverse_depth = scale / raw        (scale=1.0 → 1/raw)
+depth_m = ProjectionParams.scale / inverse_depth = raw  ✓
+```
+
+`scale ≈ 1.0` kept in engine. Calibrated per-scene scale lives in `MetricScaleEstimate` (YAML: `visual_onnx.scale`).
+
+TRT path had a silent bug (raw metres stored directly as inverse_depth). Fixed in d750ceb by adding `metric_depth{true}` + `scale{1.0}` fields to `TensorRTDepthEngineConfig` and implementing the same conversion as the ONNX engine. This was a production bug (Jetson uses TRT, dev uses ONNX Runtime).
+
+Sky pixels saturate at ~80m → stored as `inverse_depth ≈ 0.0125` → raw < 1cm threshold → stored as 0 (invalid). They are filtered by `max_depth_m=60.0` in the projection step.
+
+### H19.14 N×M Block-Minimum Grid Sampling (locked, b7233a6)
+
+**Problem:** stride=4 on 518×518 gives ~0.30m sample spacing at 30m. With `voxel_size_m=1.5m`, adjacent samples collapsed into the same voxel → only 10–50 unique evidence from 16,900 sampled pixels. GT ran on a 640×360 map pre-filled at stride=16 → 40×22=880 samples → no dedup problem.
+
+**Solution:** Replace `pixel_stride` with `depth_grid_cols` × `depth_grid_rows`. Divide the depth map into N×M cells; project the pixel with the highest inverse_depth (= closest obstacle) in each cell. One evidence point per cell — no cross-cell voxel deduplication.
+
+**Chosen values: N=40, M=22** (16:9). Matches AirSim bridge stride=16 on 640×360 exactly — each 16×16 block has exactly one GT sample → both providers produce 40×22=880 evidence with identical FOV coverage. `voxel_size_m` returned to 0.5m (the workaround coarsening to 1.5m is no longer needed). `max_evidence` raised to 1024 (880 + patches + thin headroom).
+
+**GT equalization:** `airsim_gt_vd` was constructed with no config (always C++ defaults). Now receives config mirrored from `visual_onnx_config` in `make_depth_provider()` — grid, depth range, voxel size, max_evidence, surface/thin flags — so both providers are always in lockstep.
+
+**Future:** to increase to 80×45, change the AirSim bridge `--depth-stride` from 16 → 8 and update `visual_onnx.depth_grid_cols/rows` in YAML. No C++ changes required.
+
+### H19.15 GPU Projection Delegates to CPU (locked, b7233a6)
+
+`CudaDepthDispatcher::project()` now calls `project_depth_to_device_evidence()` on the CPU rather than launching the `project_depth_kernel` CUDA kernel.
+
+**Why:**
+
+1. **Kernel architecture mismatch.** The old kernel did one thread per strided pixel (independent writes). Block-minimum requires a reduction across a pixel block before writing output — fundamentally different kernel shape (shared-memory reduction per block). Adapting the existing kernel would mean a rewrite, not a tweak.
+
+2. **Workload is trivially small.** Old: 16,900 strided pixels. New: 880 cells × ~130 pixels each = ~114,400 multiply-adds. CPU does this in < 1ms; PCIe round-trip alone would exceed that.
+
+3. **GPU stream is better used elsewhere.** `detect_thin` (Sobel on full 518×518) and `fit_patches` (RANSAC) are the legitimate GPU workloads — dense parallel operations that justify the transfer. Keeping `project()` on CPU avoids serialization stalls on the single CUDA stream.
+
+**Reopen if:** grid grows beyond ~80×45 (3,600 cells) or multi-scale grids are added. At that point, write a proper reduction kernel — one thread block per grid cell, shared-memory min-depth reduction. Until then, CPU projection is faster end-to-end.
+
+### H19.16 Surface Normals Deferred from L0 (decision)
+
+`ObstacleEvidence` already carries `has_surface_normal` / `surface_normal_local`, populated by:
+- `fit_surface_patches_device` → RANSAC plane normal (unit vector toward camera)
+- `detect_thin_structures_device` → unit direction vector along the structure axis
+
+`inflate()` wires these through faithfully. All three providers (`airsim_gt_detector`, `airsim_gt_vd`, `visual_onnx`) produce evidence with populated normals when the relevant detection stages are enabled.
+
+**L0 does not currently aggregate or store normals.** Evidence is ingested into occupancy/risk bins (az×el spherical bins, polar sectors); the normal field is consumed downstream only by L1/L2 surface-hint logic.
+
+**Rationale for deferral:** L0 is the reflexive tick-rate avoidance layer, rebuilt every frame. Adding per-cell normals would require extending `LocalFlightMapSnapshot` data structures, an aggregation pass during ingest, and a reflex policy that acts on orientation — a non-trivial scope addition.
+
+**Future trigger:** when the reflex maneuver policy needs an optimal exit vector on emergency close-range obstacles (e.g., "fly perpendicular to the wall surface to maximise clearance gain rate"). At that point, L0 cells or az×el risk bins can be extended with a dominant-normal field. The normal is already in the evidence; only the L0 aggregation and policy layer need adding.

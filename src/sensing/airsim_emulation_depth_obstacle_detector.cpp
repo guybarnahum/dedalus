@@ -97,6 +97,9 @@ std::vector<ObstacleEvidence> AirSimEmulationDepthObstacleDetector::detect(
         return {};
     }
 
+    last_frame_       = df;
+    last_frame_valid_ = true;
+
     const std::vector<float> inverse_depth = invert_gt_depth(df, config_.scale);
     if (inverse_depth.empty()) return {};
 

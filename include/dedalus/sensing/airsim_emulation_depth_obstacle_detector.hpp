@@ -5,6 +5,7 @@
 #include <vector>
 
 #include "dedalus/occupancy/occupancy_types.hpp"
+#include "dedalus/sensing/airsim_depth_obstacle_detector.hpp"
 #include "dedalus/sensing/obstacle_evidence_provider.hpp"
 
 namespace dedalus {
@@ -63,8 +64,17 @@ public:
 
     [[nodiscard]] std::vector<ObstacleEvidence> detect(const EgoSensingFrame& frame) override;
 
+    // Returns the AirSimDepthFrame from the most recent detect() call.
+    // nullptr if detect() has never been called or no depth frame was present.
+    // Pointer is valid until the next detect() call.
+    [[nodiscard]] const AirSimDepthFrame* last_depth_frame() const {
+        return last_frame_valid_ ? &last_frame_ : nullptr;
+    }
+
 private:
     AirSimEmulationDepthObstacleDetectorConfig config_;
+    AirSimDepthFrame last_frame_;
+    bool             last_frame_valid_{false};
 };
 
 }  // namespace dedalus

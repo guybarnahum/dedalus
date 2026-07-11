@@ -27,8 +27,7 @@
 #include "dedalus/runtime/evaluation_slot.hpp"
 #include "dedalus/runtime/pipeline_profiler.hpp"
 #include "dedalus/runtime/provider_registry.hpp"
-#include "dedalus/sensing/airsim_depth_evidence_provider.hpp"
-#include "dedalus/sensing/airsim_depth_obstacle_detector.hpp"
+#include "dedalus/sensing/airsim_emulation_depth_obstacle_detector.hpp"
 #include "dedalus/sensing/depth_debug_annotator.hpp"
 #include "dedalus/sensing/obstacle_evidence_provider.hpp"
 #include "dedalus/sensing/sensing_coverage.hpp"
@@ -51,10 +50,6 @@ struct CoreStackRunnerConfig {
     // Subscribers subscribed to snapshot_publisher at construction time.
     // CoreStackRunner retains these shared_ptrs (the publisher holds weak refs).
     std::vector<std::shared_ptr<WorldSnapshotSubscriber>> snapshot_subscribers;
-    // Legacy config — used as the slot-A fallback when depth_slot_a is null.
-    // Config loaders populate this; callers that inject providers directly can leave it default.
-    AirSimDepthObstacleDetectorConfig airsim_depth_obstacle_detector;
-
     // Config for the visual_onnx depth provider.
     // Populated by config_loader when depth: visual_onnx (or depth_eval: visual_onnx).
     VisualONNXDepthConfig visual_onnx_depth;
@@ -69,8 +64,6 @@ struct CoreStackRunnerConfig {
     // Slot A (primary): evidence feeds L1/L2 map.
     // Slot B (reference): evidence delta-logged only; not fed to the map.
     //
-    // If depth_slot_a is null the runner auto-builds AirSimDepthEvidenceProvider
-    // from airsim_depth_obstacle_detector above (backward-compat fallback).
     // If depth_slot_b is null slot B is inactive.
     std::unique_ptr<ObstacleEvidenceProvider> depth_slot_a;
     std::unique_ptr<ObstacleEvidenceProvider> depth_slot_b;
@@ -143,7 +136,7 @@ private:
     // Used by the annotator call site in run_once() to access last-frame caches.
     // Null when the corresponding slot holds a different concrete type.
     VisualDepthObstacleDetector*  depth_slot_a_visual_{nullptr};  // observing ptr into depth_slot_a_
-    AirSimDepthEvidenceProvider*  depth_slot_b_airsim_{nullptr};  // observing ptr into depth_slot_b_
+    AirSimEmulationDepthObstacleDetector* depth_slot_b_emulation_{nullptr};  // observing ptr into depth_slot_b_
 
     // Optional 4-panel debug MP4 annotator; null when output_path is empty.
     std::unique_ptr<DepthDebugAnnotator> depth_annotator_;

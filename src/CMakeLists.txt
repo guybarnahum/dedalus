@@ -52,9 +52,6 @@ add_library(dedalus_core
     sensors/synthetic_frame_source.cpp
     sensors/synthetic_mission_frame_source.cpp
     sensing/sensing_coverage.cpp
-    sensing/airsim_depth_obstacle_detector.cpp
-    sensing/airsim_depth_obstacle_detector_impl.cpp
-    sensing/airsim_depth_evidence_provider.cpp
     sensing/airsim_emulation_depth_obstacle_detector.cpp
     sensing/depth_debug_annotator.cpp
     sensing/depth_projection_kernel.cpp

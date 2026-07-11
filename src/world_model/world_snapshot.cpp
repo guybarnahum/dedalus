@@ -145,7 +145,7 @@ const char* to_string(OccupancyCellState value) {
 
 const char* to_string(OccupancySourceKind value) {
     switch (value) {
-        case OccupancySourceKind::AirSimGroundTruth: return "airsim_gt_detector";
+        case OccupancySourceKind::AirSimGroundTruth: return "airsim_gt";
         case OccupancySourceKind::AirSimGroundTruthVisualEmulation: return "airsim_gt_vd";
         case OccupancySourceKind::VisualObstacleDetector: return "visual_obstacle_detector";
         case OccupancySourceKind::DepthProvider: return "depth_provider";

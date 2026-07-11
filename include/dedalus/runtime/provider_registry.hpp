@@ -78,7 +78,7 @@ struct CoreStackProviderConfig {
     //
     // depth: name of the primary depth provider (slot A).  Required when
     //   obstacle_sensing cameras are configured.
-    //   Valid: "airsim_gt_detector" (AirSim DepthPlanar → legacy detector),
+    
     //          "airsim_gt_vd"       (AirSim DepthPlanar → VD kernels),
     //          "visual_onnx"        (RGB camera → ONNX model → VD kernels;
     //                                requires DEDALUS_ENABLE_ONNX_DEPTH=ON).

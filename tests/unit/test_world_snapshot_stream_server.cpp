@@ -185,7 +185,7 @@ dedalus::MissionEvent make_target_selected_event() {
 dedalus::MissionObstacleMapDeltaFrame make_delta_frame() {
     return dedalus::MissionObstacleMapDeltaFrame{
         .timestamp_ns = 900,
-        .json = "{\"schema\":\"dedalus.mission_obstacle_map_delta_batch.v2\",\"time_unit\":\"unix_ns\",\"site_id\":\"stream_site\",\"site_frame_id\":\"airsim_world\",\"mission_id\":\"stream_mission\",\"mission_map_frame_id\":\"airsim_world\",\"mission_start_unix_ns\":100,\"batch_unix_ns\":900,\"update_count\":4,\"previous_snapshot_timestamp_ns\":500,\"changed_cell_count\":1,\"cells\":[{\"center_mission\":{\"x\":1,\"y\":2,\"z\":3},\"occupied_score\":0.9,\"free_score\":0.1,\"confidence\":0.8,\"first_seen_unix_ns\":100,\"last_seen_unix_ns\":900,\"source_kind\":\"depth_provider\",\"source_provider\":\"airsim_depth_obstacle_detector\"}]}\n"};
+        .json = "{\"schema\":\"dedalus.mission_obstacle_map_delta_batch.v2\",\"time_unit\":\"unix_ns\",\"site_id\":\"stream_site\",\"site_frame_id\":\"airsim_world\",\"mission_id\":\"stream_mission\",\"mission_map_frame_id\":\"airsim_world\",\"mission_start_unix_ns\":100,\"batch_unix_ns\":900,\"update_count\":4,\"previous_snapshot_timestamp_ns\":500,\"changed_cell_count\":1,\"cells\":[{\"center_mission\":{\"x\":1,\"y\":2,\"z\":3},\"occupied_score\":0.9,\"free_score\":0.1,\"confidence\":0.8,\"first_seen_unix_ns\":100,\"last_seen_unix_ns\":900,\"source_kind\":\"airsim_gt_vd\",\"source_provider\":\"airsim_gt_vd\"}]}\n"};
 }
 
 void streams_jsonl_runtime_events_to_client() {
@@ -238,7 +238,7 @@ void streams_jsonl_runtime_events_to_client() {
     require(received.find("track_b") != std::string::npos, "stream missing second world track");
     require(received.find("map_stream_test") != std::string::npos, "stream missing map frame");
     require(received.find("dedalus.mission_obstacle_map_delta_batch.v2") != std::string::npos, "stream missing delta schema");
-    require(received.find("airsim_depth_obstacle_detector") != std::string::npos, "stream missing delta source provider");
+    require(received.find("airsim_gt_vd") != std::string::npos, "stream missing delta source provider");
     require(sse_received.find("HTTP/1.1 200 OK") != std::string::npos, "SSE stream missing 200 response");
     require(sse_received.find("Content-Type: text/event-stream") != std::string::npos, "SSE stream missing content type");
     require(sse_received.find("event: mission_obstacle_map_delta") != std::string::npos, "SSE stream missing mission obstacle delta event name");

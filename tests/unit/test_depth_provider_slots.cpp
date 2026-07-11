@@ -1,14 +1,13 @@
 // VD4: Two-slot depth provider architecture tests.
 //
 // Tests:
-//   1. AirSimDepthEvidenceProvider: sensor-name filter blocks mismatched frames.
-//   2. AirSimDepthEvidenceProvider: produces evidence when sensor names match.
+//   1. AirSimEmulationDepthObstacleDetector: sensor-name filter blocks mismatched frames.
+//   2. AirSimEmulationDepthObstacleDetector: produces evidence when sensor names match.
 //   3. AirSimEmulationDepthObstacleDetector: GT depth → VD kernels →
 //      AirSimGroundTruthVisualEmulation source_kind.
 //   4. AirSimEmulationDepthObstacleDetector: evaluates surface patches + thin
 //      structures (also evaluates thin obstacles and landable surfaces).
-//   5. CoreStackRunnerConfig: backward-compat auto-builds slot A when
-//      depth_slot_a is null.
+//   5. provider_name() returns "airsim_gt_vd".
 
 #include <cassert>
 #include <cstdio>
@@ -17,7 +16,6 @@
 #include <vector>
 
 #include "dedalus/occupancy/occupancy_types.hpp"
-#include "dedalus/sensing/airsim_depth_evidence_provider.hpp"
 #include "dedalus/sensing/airsim_emulation_depth_obstacle_detector.hpp"
 #include "dedalus/sensing/obstacle_evidence_provider.hpp"
 
@@ -74,8 +72,9 @@ dedalus::EgoSensingFrame make_ego_frame(
 
 // Test 1: sensor-name mismatch → empty output.
 void test_sensor_name_filter_blocks() {
-    dedalus::AirSimDepthEvidenceProvider provider;
-    auto esf = make_ego_frame("camera_front", "camera_rear", 16, 16);
+    dedalus::AirSimEmulationDepthObstacleDetector provider;
+    // 80×44: BW = 80/40 = 2, BH = 44/22 = 2 — block-min kernel produces evidence.
+    auto esf = make_ego_frame("camera_front", "camera_rear", 80, 44);
     const auto ev = provider.detect(esf);
     require(ev.empty(), "sensor-name mismatch should produce no evidence");
     std::puts("PASS test_sensor_name_filter_blocks");
@@ -83,8 +82,9 @@ void test_sensor_name_filter_blocks() {
 
 // Test 2: matching sensor names → evidence produced.
 void test_sensor_name_match_produces_evidence() {
-    dedalus::AirSimDepthEvidenceProvider provider;
-    auto esf = make_ego_frame("camera_front", "camera_front", 16, 16, /*depth*/ 5.0F);
+    dedalus::AirSimEmulationDepthObstacleDetector provider;
+    // 80×44: 40×22 grid, each cell 2×2 pixels — all filled at depth=5 m → non-empty.
+    auto esf = make_ego_frame("camera_front", "camera_front", 80, 44, /*depth*/ 5.0F);
     const auto ev = provider.detect(esf);
     require(!ev.empty(), "matching sensor name should produce evidence");
     std::puts("PASS test_sensor_name_match_produces_evidence");
@@ -93,7 +93,8 @@ void test_sensor_name_match_produces_evidence() {
 // Test 3: emulation detector stamps AirSimGroundTruthVisualEmulation.
 void test_emulation_source_kind() {
     dedalus::AirSimEmulationDepthObstacleDetectorConfig cfg;
-    cfg.pixel_stride = 1U;
+    cfg.depth_grid_cols = 16U;  // 16×16 grid on 16×16 frame → 1 px per cell (dense)
+    cfg.depth_grid_rows = 16U;
     cfg.detect_surface_patches  = false;
     cfg.detect_thin_structures  = false;
     dedalus::AirSimEmulationDepthObstacleDetector detector{cfg};
@@ -117,7 +118,8 @@ void test_emulation_source_kind() {
 // produces some evidence (evaluates thin obstacles and landable surfaces).
 void test_emulation_evaluates_surfaces_and_thin() {
     dedalus::AirSimEmulationDepthObstacleDetectorConfig cfg;
-    cfg.pixel_stride = 1U;
+    cfg.depth_grid_cols = 16U;  // 16×16 grid on 16×16 frame → 1 px per cell (dense)
+    cfg.depth_grid_rows = 16U;
     cfg.detect_surface_patches = true;
     cfg.detect_thin_structures = true;
     dedalus::AirSimEmulationDepthObstacleDetector detector{cfg};
@@ -135,15 +137,11 @@ void test_emulation_evaluates_surfaces_and_thin() {
     std::puts("PASS test_emulation_evaluates_surfaces_and_thin");
 }
 
-// Test 5: provider_name() returns the expected string.
+// Test 5: provider_name() returns "airsim_gt_vd".
 void test_provider_names() {
-    dedalus::AirSimDepthEvidenceProvider adapter;
-    require(adapter.provider_name() == "airsim_gt_detector",
-        "adapter provider_name mismatch");
-
-    dedalus::AirSimEmulationDepthObstacleDetector emulator;
-    require(emulator.provider_name() == "airsim_gt_vd",
-        "emulator provider_name mismatch");
+    dedalus::AirSimEmulationDepthObstacleDetector provider;
+    require(provider.provider_name() == "airsim_gt_vd",
+        "provider_name should be airsim_gt_vd");
     std::puts("PASS test_provider_names");
 }
 

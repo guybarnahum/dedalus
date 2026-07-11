@@ -146,7 +146,7 @@ int main() {
         obstacle.source_frame_id = ctx.frame.frame_id;
         obstacle.has_source_frame = true;
         obstacle.sensor_name = "front_center";
-        obstacle.source_provider = "airsim_depth_obstacle_detector";
+        obstacle.source_provider = "airsim_gt_vd";
         obstacle.source_kind = dedalus::OccupancySourceKind::DepthProvider;
         obstacle.state = dedalus::ObstacleEvidenceState::Occupied;
         obstacle.shape = dedalus::ObstacleEvidenceShape::SurfacePatch;

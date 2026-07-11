@@ -1,5 +1,7 @@
 # ── Pipeline: Visual primary + AirSim GT eval (A/B comparison) ────────────────
-# Visual pipeline as slot A (primary); AirSim GT depth runs as slot B (eval).
+# Visual pipeline as slot A (primary); AirSim GT depth runs as slot B (eval)
+# via the same VD kernel path (airsim_gt_vd) so grid dimensions and projection
+# logic are identical — a fair apples-to-apples comparison.
 # Ego uses AirSim frame_hint (NOT visual odometry) — this pipeline evaluates
 # visual depth detection only; ego accuracy is not the variable under test.
 # Agreement metric logged per-frame to profiler JSONL:
@@ -13,7 +15,6 @@ include: config/pipeline/visual.yaml
 # correctly while visual depth detection is evaluated against GT.
 ego_provider: frame_hint
 
-depth_eval: airsim_gt_detector
-airsim_depth_obstacle_detector.voxel_size_m: 1.5
-airsim_depth_obstacle_detector.max_evidence: 256
-airsim_depth_obstacle_detector.max_depth_m: 60.0
+# Slot B: GT projected through VD kernels, same 40×22 grid as visual_onnx.
+# Grid/filter params inherited from visual_onnx.* keys set by visual.yaml.
+depth_eval: airsim_gt_vd

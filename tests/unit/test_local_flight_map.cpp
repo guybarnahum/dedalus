@@ -27,7 +27,7 @@ ObstacleEvidence occupied_depth_evidence(const Vec3& center, const float range_m
     evidence.timestamp = at_ms(0);
     evidence.has_source_frame = true;
     evidence.source_frame_id = FrameId{"frame_0001"};
-    evidence.source_provider = "airsim_depth_obstacle_detector";
+    evidence.source_provider = "airsim_gt_vd";
     evidence.source_kind = OccupancySourceKind::DepthProvider;
     evidence.state = ObstacleEvidenceState::Occupied;
     evidence.shape = ObstacleEvidenceShape::SurfacePatch;

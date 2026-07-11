@@ -23,7 +23,6 @@
    extern char** environ;    // POSIX — declared at file scope, not in any namespace
 #endif
 
-#include "dedalus/sensing/airsim_depth_evidence_provider.hpp"
 #include "dedalus/sensing/airsim_emulation_depth_obstacle_detector.hpp"
 #ifdef DEDALUS_ONNX_DEPTH_ENABLED
 #include "dedalus/sensing/metric_scale_estimate.hpp"
@@ -164,11 +163,8 @@ void warn_unknown_dedalus_vars() {
 // Returns nullptr if name is empty (slot inactive).
 std::unique_ptr<ObstacleEvidenceProvider> make_depth_provider(
     const std::string& name,
-    const AirSimDepthObstacleDetectorConfig& airsim_gt_config,
     const VisualONNXDepthConfig& visual_onnx_config) {
     if (name.empty()) return nullptr;
-    if (name == "airsim_gt_detector")
-        return std::make_unique<AirSimDepthEvidenceProvider>(airsim_gt_config);
     if (name == "airsim_gt_vd") {
         // Mirror ONNX grid/filter params so GT and ONNX produce equal cell counts.
         AirSimEmulationDepthObstacleDetectorConfig gt_cfg;
@@ -231,11 +227,9 @@ void build_depth_slots(CoreStackConfig& config) {
         env_str_or(config.providers.depth_eval, "DEDALUS_DEPTH_EVAL");
 
     config.runner.depth_slot_a =
-        make_depth_provider(depth_name, config.runner.airsim_depth_obstacle_detector,
-                            config.runner.visual_onnx_depth);
+        make_depth_provider(depth_name, config.runner.visual_onnx_depth);
     config.runner.depth_slot_b =
-        make_depth_provider(depth_eval_name, config.runner.airsim_depth_obstacle_detector,
-                            config.runner.visual_onnx_depth);
+        make_depth_provider(depth_eval_name, config.runner.visual_onnx_depth);
 
     // Wire debug_depth_mp4 into the annotator config (separated from detector).
     if (!config.runner.visual_onnx_depth.debug_depth_mp4.empty()) {
@@ -473,42 +467,9 @@ bool parse_visual_onnx_key(
     return true;
 }
 
-bool parse_airsim_depth_obstacle_detector_key(
-    CoreStackRunnerConfig& config,
-    const std::string& key,
-    const std::string& value) {
-    const std::string prefix = "airsim_depth_obstacle_detector.";
-    if (key.rfind(prefix, 0U) != 0U) return false;
-
-    const auto field = key.substr(prefix.size());
-    auto& detector = config.airsim_depth_obstacle_detector;
-
-    if (field == "pixel_stride") {
-        detector.pixel_stride = static_cast<std::size_t>(std::stoul(value));
-    } else if (field == "min_depth_m") {
-        detector.min_depth_m = std::stof(value);
-    } else if (field == "max_depth_m") {
-        detector.max_depth_m = std::stof(value);
-    } else if (field == "voxel_size_m") {
-        detector.voxel_size_m = std::stof(value);
-    } else if (field == "confidence") {
-        detector.confidence = std::stof(value);
-    } else if (field == "max_evidence") {
-        detector.max_evidence = static_cast<std::size_t>(std::stoul(value));
-    } else if (field == "normal_confidence") {
-        detector.normal_confidence = std::stof(value);
-    } else if (field == "derive_surface_normals_from_depth") {
-        detector.derive_surface_normals_from_depth = parse_bool(value);
-    } else {
-        throw std::invalid_argument("unknown AirSim depth obstacle detector field: " + key);
-    }
-
-    return true;
-}
 
 void apply_config_value(CoreStackConfig& config, const std::string& key, const std::string& value) {
     if (parse_visual_onnx_key(config.runner, key, value)) return;
-    if (parse_airsim_depth_obstacle_detector_key(config.runner, key, value)) return;
     if (parse_airsim_object_binding_key(config.providers, key, value)) return;
     if (parse_airsim_pattern_binding_key(config.providers, key, value)) return;
     if (key == "frame_source") config.providers.frame_source = value;
@@ -603,7 +564,7 @@ void validate_obstacle_sensing_cameras(const MissionOptions& options) {
 
 void validate_depth_provider_name(const std::string& name, const char* field) {
     if (name.empty()) return;
-    if (name != "airsim_gt_detector" && name != "airsim_gt_vd" && name != "visual_onnx")
+    if (name != "airsim_gt_vd" && name != "visual_onnx")
         throw std::invalid_argument(std::string(field) + ": unknown depth provider: " + name);
 }
 

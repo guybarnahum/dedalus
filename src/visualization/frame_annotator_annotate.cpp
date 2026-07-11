@@ -47,7 +47,7 @@ std::string occupancy_state_to_string(const OccupancyCellState state) {
 
 std::string occupancy_source_to_string(const OccupancySourceKind source) {
     switch (source) {
-        case OccupancySourceKind::AirSimGroundTruth: return "airsim_gt_detector";
+        case OccupancySourceKind::AirSimGroundTruth: return "airsim_gt";
         case OccupancySourceKind::VisualObstacleDetector: return "visual_det";
         case OccupancySourceKind::DepthProvider: return "depth";
         case OccupancySourceKind::Fused: return "fused";
@@ -377,7 +377,7 @@ const char* obstacle_shape_to_string(const ObstacleEvidenceShape shape) {
 // Returns true for SurfacePatch evidence from any depth provider (GT or VD).
 bool is_depth_surface_patch(const ObstacleEvidence& evidence) {
     return evidence.shape == ObstacleEvidenceShape::SurfacePatch &&
-           (evidence.source_provider == "airsim_depth_obstacle_detector" ||
+           (evidence.source_provider == "airsim_gt_vd" ||
             evidence.source_provider == "visual_depth_obstacle_detector");
 }
 
@@ -389,7 +389,7 @@ bool is_visual_depth_evidence(const ObstacleEvidence& evidence) {
 //   Magenta diamond  — SurfacePatch (any depth provider)
 //   Red              — ThinStructureRisk
 //   Cyan             — visual_depth_obstacle_detector voxels
-//   Orange           — airsim_depth_obstacle_detector voxels / other
+//   Orange           — airsim_gt_vd voxels / other
 RgbColor obstacle_evidence_color(const ObstacleEvidence& evidence) {
     if (is_depth_surface_patch(evidence)) {
         return RgbColor{255U, 0U, 255U};    // magenta

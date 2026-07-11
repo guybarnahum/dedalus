@@ -1,0 +1,38 @@
+# ── Pipeline: AirSim GT ego + depth via VD kernels ────────────────────────────
+# AirSim ground-truth depth (DepthPlanar) projected through the same VD kernel
+# path (block-minimum N×M grid sampling) as the ONNX visual pipeline.
+#
+# Use this config to:
+#   - validate the airsim_gt_vd provider in isolation (no ONNX model needed)
+#   - generate a reference evidence trace that is structurally equivalent to
+#     the visual_onnx trace (same grid, same filter params, same projection path)
+#   - baseline obstacle-map quality before switching to visual_onnx
+#
+# NOTE: airsim_gt_vd mirrors its config from visual_onnx_config in the
+# config_loader (see make_depth_provider). The visual_onnx.* keys below
+# therefore control the grid and filter params for the GT VD path even though
+# no ONNX model is loaded.
+#
+# Requires: drone/px4_front_center_depth.yaml (bridge must stream depth frames).
+#
+# Override at runtime (verified from config_loader.cpp):
+
+#   DEDALUS_DEPTH=visual_onnx           — switch to ONNX model
+
+ego_provider: frame_hint
+depth: airsim_gt_vd
+detector: null
+camera_stabilizer: null
+tracker: simple_centroid
+identity_resolver: appearance_only
+projector: flat_ground
+world_model: in_memory
+
+# Grid and filter params — mirrors visual.yaml so both providers are comparable.
+# airsim_gt_vd reads these from visual_onnx_config (see config_loader.cpp).
+visual_onnx.depth_grid_cols: 40
+visual_onnx.depth_grid_rows: 22
+visual_onnx.min_depth_m: 0.5
+visual_onnx.max_depth_m: 60.0
+visual_onnx.voxel_size_m: 0.5
+visual_onnx.max_evidence: 1024

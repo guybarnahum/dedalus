@@ -43,13 +43,13 @@ CoreStackRunner::CoreStackRunner(CoreStackProviders providers, CoreStackRunnerCo
     // Cache typed observing pointers so the annotator call site in run_once()
     // can access last-frame data without runtime RTTI per tick.
     depth_slot_a_visual_ = dynamic_cast<VisualDepthObstacleDetector*>(depth_slot_a_.get());
-    depth_slot_b_airsim_ = dynamic_cast<AirSimDepthEvidenceProvider*>(depth_slot_b_.get());
+    depth_slot_b_emulation_ = dynamic_cast<AirSimEmulationDepthObstacleDetector*>(depth_slot_b_.get());
 
     // Build the debug annotator when an output path is configured.
-    // four_panel is true only when slot B is an AirSimDepthEvidenceProvider,
+    // four_panel is true only when slot B is an AirSimEmulationDepthObstacleDetector,
     // so the pipe opens at the correct geometry (2W×H vs 2W×2H).
     if (!config.debug_depth_annotator.output_path.empty()) {
-        config.debug_depth_annotator.four_panel = (depth_slot_b_airsim_ != nullptr);
+        config.debug_depth_annotator.four_panel = (depth_slot_b_emulation_ != nullptr);
         depth_annotator_ = std::make_unique<DepthDebugAnnotator>(
             std::move(config.debug_depth_annotator));
     }

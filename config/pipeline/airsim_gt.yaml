@@ -1,16 +1,18 @@
-# ── Pipeline: AirSim ground-truth ego + depth ──────────────────────────────────
-# Uses AirSim-provided telemetry for ego (frame_hint) and AirSim DepthPlanar
-# for obstacle depth (airsim_gt_detector).  This is the known-good baseline:
-# validate mission wiring here before switching to the visual pipeline.
+# ── Pipeline: AirSim ground-truth ego + depth via VD kernels ──────────────────
+# Sole GT depth pipeline — uses AirSim DepthPlanar projected through the VD
+# block-minimum kernel (airsim_gt_vd).  This is the known-good baseline:
+# validate mission wiring here before switching to the visual_onnx pipeline.
+# Grid params are set via visual_onnx.* keys because airsim_gt_vd mirrors
+# visual_onnx_config (see make_depth_provider in config_loader.cpp).
 #
 # Requires: drone/px4_front_center_depth.yaml (bridge must stream depth frames).
 #
-# Eval overrides at runtime:
-#   DEDALUS_PIPELINE_EGO_EVAL=visual_odometry    — compare visual ego vs GT
-#   DEDALUS_PIPELINE_DEPTH_EVAL=visual_onnx       — compare visual depth vs GT
+# Override at runtime (verified from config_loader.cpp):
+#   DEDALUS_EGO_PROVIDER=visual_odometry    — compare visual ego vs GT
+#   DEDALUS_DEPTH_EVAL=visual_onnx           — compare visual depth vs GT
 
 ego_provider: frame_hint
-depth: airsim_gt_detector
+depth: airsim_gt_vd
 detector: null
 camera_stabilizer: null
 tracker: simple_centroid
@@ -18,7 +20,10 @@ identity_resolver: appearance_only
 projector: flat_ground
 world_model: in_memory
 
-airsim_depth_obstacle_detector.pixel_stride: 4
-airsim_depth_obstacle_detector.voxel_size_m: 1.5
-airsim_depth_obstacle_detector.max_evidence: 256
-airsim_depth_obstacle_detector.max_depth_m: 60.0
+# Grid and filter params — same values as visual.yaml for direct comparison.
+visual_onnx.depth_grid_cols: 40
+visual_onnx.depth_grid_rows: 22
+visual_onnx.min_depth_m: 0.5
+visual_onnx.max_depth_m: 60.0
+visual_onnx.voxel_size_m: 0.5
+visual_onnx.max_evidence: 1024
