@@ -251,8 +251,9 @@ def main() -> None:
             print()
             print("Pipeline config for metric model (high=FAR):")
             print("  visual_onnx.metric_depth: true")
-            print("  visual_onnx.scale: 1.0")
-            print("  ONNXDepthEngine must NOT apply 1/raw — store raw directly.")
+            print("  visual_onnx.scale: 1.0  (calibrate per scene; engine uses scale/raw)")
+            print("  ONNXDepthEngine converts: inverse_depth = scale/raw (1/metres)")
+            print("  Kernel recovers: depth_m = scale/inverse_depth = raw ✓")
         else:
             print()
             print("Pipeline config for inverse-depth model (high=CLOSE):")

@@ -23,13 +23,18 @@ struct ONNXDepthEngineConfig {
     float std_b{0.225F};
 
     bool use_coreml{false};        // enable CoreML EP on macOS (MPS acceleration)
-    // When true the model outputs calibrated INVERSE DEPTH in 1/m — same
-    // convention as the relative model (HIGH = CLOSE), but absolute across frames.
-    // (e.g. DepthAnythingV2-Metric-Outdoor: raw ~ 0.06..7.5, high=close)
-    // The engine stores inverse_depth = raw directly.  Downstream formula:
-    //   depth_m = scale / inverse_depth = 1.0 / raw = physical metres  (scale=1.0)
+    // When true the model outputs LINEAR METRIC DEPTH in metres (HIGH=FAR):
+    //   e.g. DepthAnythingV2-Metric-Outdoor: graph tail Sigmoid → Mul(×80),
+    //   raw ∈ [0, 80] m, sky pixels near 80 m, close objects near 0.3–2 m.
+    // The engine converts to pipeline convention (inverse_depth, HIGH=CLOSE):
+    //   inverse_depth = scale / raw   (with scale=1.0 → 1/raw)
+    //   depth_m = ProjectionParams.scale / inverse_depth = raw ✓
     // When false the engine normalises by per-frame max (relative mode, HIGH=CLOSE).
     bool metric_depth{true};
+    // Engine-internal scale used in inverse_depth = scale / raw.
+    // Keep at 1.0 — the calibrated per-scene scale lives in MetricScaleEstimate
+    // (visual_onnx.scale YAML key) and is applied in the projection kernel.
+    float scale{1.0F};
 
     // CUDA EP — requires onnxruntime-gpu package and DEDALUS_CUDA_ENABLED.
     // On L4 this is the fastest path when TensorRT is not available.

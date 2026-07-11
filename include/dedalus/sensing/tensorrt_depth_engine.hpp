@@ -45,6 +45,15 @@ struct TensorRTDepthEngineConfig {
     // TRT builder workspace — limits VRAM used during engine build (not at inference).
     // 512 MiB is sufficient for DepthAnythingV2-Small; AirSim uses ~3 GiB separately.
     std::size_t builder_workspace_bytes{512ULL * 1024 * 1024};
+
+    // When true the model outputs LINEAR METRIC DEPTH in metres (HIGH=FAR):
+    //   e.g. DepthAnythingV2-Metric-Outdoor: Sigmoid → Mul(×80), raw ∈ [0, 80] m.
+    // The engine converts to pipeline convention: inverse_depth = scale / raw.
+    // When false the engine clamps raw values as already valid inverse_depth (HIGH=CLOSE).
+    bool metric_depth{true};
+    // Engine-internal scale for inverse_depth = scale / raw conversion.
+    // Keep at 1.0 — calibrated scene scale lives in MetricScaleEstimate / ProjectionParams.
+    float scale{1.0F};
 };
 
 class TensorRTDepthEngine final : public DepthEngineInterface {

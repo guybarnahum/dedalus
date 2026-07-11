@@ -24,7 +24,7 @@ std::uint8_t depth_to_lum(float depth_m, float display_max_m, float log_denom) {
 //
 //   dark grey (30,30,30)       — invalid (NaN / ≤ 0)
 //   dark navy (10,10,50)       — too far (> max_depth_m)
-//   red (220,40,40)            — too close + gimbal > 15° down (OOD noise)
+//   red (220,40,0)             — too close + gimbal > 15° down (OOD noise)
 //   orange (220,130,0)         — too close + gimbal 5–15° (ambiguous)
 //   yellow (220,220,0)         — too close + gimbal < 5° (expected: props/arms)
 //   background grey (90,90,90) — unsampled area (GT only)

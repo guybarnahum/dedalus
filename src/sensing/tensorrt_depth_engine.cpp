@@ -236,9 +236,22 @@ struct TensorRTDepthEngine::Impl {
                         cudaMemcpyDeviceToHost, stream);
         cudaStreamSynchronize(stream);
 
-        // Clamp to valid disparity range (model may produce near-zero on sky pixels)
-        for (float& v : result.inverse_depth) {
-            if (v <= 0.0F || !std::isfinite(v)) v = 1.0e-4F;
+        if (impl_->config.metric_depth) {
+            // DepthAnythingV2-Metric-Outdoor outputs LINEAR METRIC DEPTH in metres
+            // (HIGH=FAR, graph: Sigmoid → Mul(×80), values in [0, 80] m).
+            // Convert to pipeline inverse_depth convention (HIGH=CLOSE):
+            //   inverse_depth = scale / raw   (scale=1.0 → 1/raw)
+            //   depth_m = ProjectionParams.scale / inverse_depth = raw ✓
+            static constexpr float kMinValidRaw = 0.01F;  // < 1 cm = sigmoid saturation
+            const float scale = impl_->config.scale > 0.0F ? impl_->config.scale : 1.0F;
+            for (float& v : result.inverse_depth) {
+                v = (v >= kMinValidRaw) ? (scale / v) : 0.0F;
+            }
+        } else {
+            // Relative model: clamp near-zero disparity values (sky pixels).
+            for (float& v : result.inverse_depth) {
+                if (v <= 0.0F || !std::isfinite(v)) v = 1.0e-4F;
+            }
         }
 
         const auto t1 = std::chrono::steady_clock::now();
