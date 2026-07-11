@@ -91,9 +91,10 @@ ProjectionParams make_projection_params(
     p.k2 = static_cast<float>(ego_frame.frame.intrinsics.distortion_k2);
 
     // Depth map dimensions (may differ from image if model rescales)
-    p.width  = inferred.width;
-    p.height = inferred.height;
-    p.stride = static_cast<int>(cfg.pixel_stride);
+    p.width     = inferred.width;
+    p.height    = inferred.height;
+    p.grid_cols = static_cast<int>(cfg.depth_grid_cols);
+    p.grid_rows = static_cast<int>(cfg.depth_grid_rows);
 
     p.min_depth_m  = cfg.min_depth_m;
     p.max_depth_m  = cfg.max_depth_m;

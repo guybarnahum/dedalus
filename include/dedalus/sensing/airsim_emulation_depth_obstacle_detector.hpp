@@ -12,8 +12,10 @@ namespace dedalus {
 // Config mirrors VisualDepthObstacleDetectorConfig.
 // No engine fields — this provider uses AirSim GT metric depth directly.
 struct AirSimEmulationDepthObstacleDetectorConfig {
-    // Pixel stride over the GT depth map.
-    std::size_t pixel_stride{4U};
+    // N×M grid over the GT depth map — mirrors VisualDepthObstacleDetectorConfig.
+    // Default 40×22 matches the AirSim bridge stride=16 on 640×360 (one GT sample per cell).
+    std::size_t depth_grid_cols{40U};
+    std::size_t depth_grid_rows{22U};
 
     float min_depth_m{0.2F};
     float max_depth_m{80.0F};

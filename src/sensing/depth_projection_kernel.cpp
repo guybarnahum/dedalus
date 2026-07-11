@@ -5,7 +5,6 @@
 #include <cstdint>
 #include <queue>
 #include <random>
-#include <unordered_set>
 #include <vector>
 
 namespace dedalus {
@@ -14,13 +13,6 @@ namespace {
 // ---------------------------------------------------------------------------
 // Shared helpers
 // ---------------------------------------------------------------------------
-
-std::uint64_t pack_voxel(std::int32_t ix, std::int32_t iy, std::int32_t iz) {
-    const std::uint64_t ux = static_cast<std::uint64_t>(ix + 1048576) & 0x1FFFFFU;
-    const std::uint64_t uy = static_cast<std::uint64_t>(iy + 1048576) & 0x1FFFFFU;
-    const std::uint64_t uz = static_cast<std::uint64_t>(iz + 1048576) & 0x1FFFFFU;
-    return (ux << 42U) | (uy << 21U) | uz;
-}
 
 void undistort_k1k2(float xn, float yn, float k1, float k2, float& xd, float& yd) {
     const float r2     = xn * xn + yn * yn;
@@ -196,27 +188,46 @@ void project_depth_to_device_evidence(
 
     count_out = 0;
     if (params.fx <= 0.0F || params.fy <= 0.0F || params.scale <= 0.0F) return;
+    if (params.grid_cols <= 0 || params.grid_rows <= 0) return;
 
     const float inv_fx = 1.0F / params.fx;
     const float inv_fy = 1.0F / params.fy;
 
-    std::unordered_set<std::uint64_t> seen;
-    seen.reserve(static_cast<std::size_t>(params.max_evidence));
+    // Block-minimum sampling: divide the depth map into grid_cols × grid_rows cells.
+    // For each cell, project the closest valid pixel (max inverse_depth = min depth_m).
+    // One evidence point per cell — no cross-cell voxel deduplication.
+    const int BW = params.width  / params.grid_cols;  // block width in pixels
+    const int BH = params.height / params.grid_rows;  // block height in pixels
+    if (BW <= 0 || BH <= 0) return;
 
-    for (int v = 0; v < params.height; v += params.stride) {
-        for (int u = 0; u < params.width; u += params.stride) {
-            if (count_out >= params.max_evidence) goto done;
+    for (int gr = 0; gr < params.grid_rows && count_out < params.max_evidence; ++gr) {
+        const int v0 = gr * BH;
+        const int v1 = std::min(v0 + BH, params.height);
 
-            const float dr = inverse_depth[
-                static_cast<std::size_t>(v) * static_cast<std::size_t>(params.width) +
-                static_cast<std::size_t>(u)];
-            if (!std::isfinite(dr) || dr <= 0.0F) continue;
+        for (int gc = 0; gc < params.grid_cols && count_out < params.max_evidence; ++gc) {
+            const int u0 = gc * BW;
+            const int u1 = std::min(u0 + BW, params.width);
 
-            const float depth_m = params.scale / dr;
-            if (depth_m < params.min_depth_m || depth_m > params.max_depth_m) continue;
+            // Find the pixel in this cell with the highest inverse_depth (= closest obstacle).
+            float best_id = 0.0F;
+            int   best_u  = -1;
+            int   best_v  = -1;
+            for (int v = v0; v < v1; ++v) {
+                for (int u = u0; u < u1; ++u) {
+                    const float id = inverse_depth[
+                        static_cast<std::size_t>(v) * static_cast<std::size_t>(params.width) +
+                        static_cast<std::size_t>(u)];
+                    if (!std::isfinite(id) || id <= 0.0F) continue;
+                    const float dm = params.scale / id;
+                    if (dm < params.min_depth_m || dm > params.max_depth_m) continue;
+                    if (id > best_id) { best_id = id; best_u = u; best_v = v; }
+                }
+            }
+            if (best_u < 0) continue;  // no valid pixel in this cell
 
-            float xn = (static_cast<float>(u) - params.cx) * inv_fx;
-            float yn = (static_cast<float>(v) - params.cy) * inv_fy;
+            const float depth_m = params.scale / best_id;
+            float xn = (static_cast<float>(best_u) - params.cx) * inv_fx;
+            float yn = (static_cast<float>(best_v) - params.cy) * inv_fy;
             if (params.k1 != 0.0F || params.k2 != 0.0F) {
                 undistort_k1k2(xn, yn, params.k1, params.k2, xn, yn);
             }
@@ -232,8 +243,6 @@ void project_depth_to_device_evidence(
             const auto iy = static_cast<std::int32_t>(std::floor(ly / params.voxel_size_m));
             const auto iz = static_cast<std::int32_t>(std::floor(lz / params.voxel_size_m));
 
-            if (!seen.insert(pack_voxel(ix, iy, iz)).second) continue;
-
             const float half = 0.5F * params.voxel_size_m;
             DeviceObstacleEvidence& ev = out[count_out++];
             ev.center_x = (static_cast<float>(ix) + 0.5F) * params.voxel_size_m;
@@ -244,12 +253,11 @@ void project_depth_to_device_evidence(
             ev.confidence             = 0.75F;
             ev.range_m                = depth_m;
             ev.state                  = 2U;  // Occupied
-            ev.shape                  = 3U;  // SurfacePatch — renders as normal-oriented diamond in overlay
+            ev.shape                  = 3U;  // SurfacePatch
             ev.is_thin_structure_hint = 0U;
             ev.is_surface_hint        = 1U;
         }
     }
-done:;
 }
 
 // ---------------------------------------------------------------------------

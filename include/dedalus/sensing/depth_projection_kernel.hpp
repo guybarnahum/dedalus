@@ -25,10 +25,13 @@ struct ProjectionParams {
     float k1{0.0F};
     float k2{0.0F};
 
-    // Frame dimensions and sampling
+    // Frame dimensions and grid sampling
     int width{0};
     int height{0};
-    int stride{4};            // pixel step; default 4 → 1/16 density
+    int grid_cols{40};  // N: depth grid columns — each column covers width/N pixels
+    int grid_rows{22};  // M: depth grid rows    — each row    covers height/M pixels
+                        // One evidence point per grid cell (closest pixel in block).
+                        // Replaces pixel stride; set grid_cols=W, grid_rows=H for 1-per-pixel.
 
     // Depth range filter
     float min_depth_m{0.2F};
@@ -110,7 +113,9 @@ static_assert(sizeof(DeviceObstacleEvidence) == 48,
 // CUDA equivalents added at VD6 (same signatures, different TU).
 // ---------------------------------------------------------------------------
 
-// Back-project every stride-th depth sample into local-frame voxels.
+// Block-minimum grid projection: divides the depth map into grid_cols × grid_rows cells,
+// selects the closest valid pixel per cell, and back-projects it into a local-frame voxel.
+// Produces at most grid_cols × grid_rows evidence points (one per cell, minus empty cells).
 // Writes at most params.max_evidence entries into out[]; actual count in count_out.
 void project_depth_to_device_evidence(
     const float*              inverse_depth,  // H × W, row-major

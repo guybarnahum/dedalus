@@ -169,8 +169,19 @@ std::unique_ptr<ObstacleEvidenceProvider> make_depth_provider(
     if (name.empty()) return nullptr;
     if (name == "airsim_gt_detector")
         return std::make_unique<AirSimDepthEvidenceProvider>(airsim_gt_config);
-    if (name == "airsim_gt_vd")
-        return std::make_unique<AirSimEmulationDepthObstacleDetector>();
+    if (name == "airsim_gt_vd") {
+        // Mirror ONNX grid/filter params so GT and ONNX produce equal cell counts.
+        AirSimEmulationDepthObstacleDetectorConfig gt_cfg;
+        gt_cfg.depth_grid_cols        = visual_onnx_config.depth_grid_cols;
+        gt_cfg.depth_grid_rows        = visual_onnx_config.depth_grid_rows;
+        gt_cfg.min_depth_m            = visual_onnx_config.min_depth_m;
+        gt_cfg.max_depth_m            = visual_onnx_config.max_depth_m;
+        gt_cfg.voxel_size_m           = visual_onnx_config.voxel_size_m;
+        gt_cfg.max_evidence           = visual_onnx_config.max_evidence;
+        gt_cfg.detect_surface_patches = visual_onnx_config.detect_surface_patches;
+        gt_cfg.detect_thin_structures = visual_onnx_config.detect_thin_structures;
+        return std::make_unique<AirSimEmulationDepthObstacleDetector>(gt_cfg);
+    }
     if (name == "visual_onnx") {
 #ifdef DEDALUS_ONNX_DEPTH_ENABLED
         if (visual_onnx_config.model_path.empty())
@@ -187,7 +198,8 @@ std::unique_ptr<ObstacleEvidenceProvider> make_depth_provider(
         engine_cfg.use_coreml           = visual_onnx_config.use_coreml;
         engine_cfg.metric_depth         = visual_onnx_config.metric_depth;
         VisualDepthObstacleDetectorConfig detector_cfg;
-        detector_cfg.pixel_stride           = visual_onnx_config.pixel_stride;
+        detector_cfg.depth_grid_cols        = visual_onnx_config.depth_grid_cols;
+        detector_cfg.depth_grid_rows        = visual_onnx_config.depth_grid_rows;
         detector_cfg.min_depth_m            = visual_onnx_config.min_depth_m;
         detector_cfg.max_depth_m            = visual_onnx_config.max_depth_m;
         detector_cfg.voxel_size_m           = visual_onnx_config.voxel_size_m;
@@ -447,7 +459,8 @@ bool parse_visual_onnx_key(
     }
     else if (field == "use_coreml")           { cfg.use_coreml = parse_bool(value); }
     else if (field == "metric_depth")         { cfg.metric_depth = parse_bool(value); }
-    else if (field == "pixel_stride")         { cfg.pixel_stride = static_cast<std::size_t>(std::stoul(value)); }
+    else if (field == "depth_grid_cols")      { cfg.depth_grid_cols = static_cast<std::size_t>(std::stoul(value)); }
+    else if (field == "depth_grid_rows")      { cfg.depth_grid_rows = static_cast<std::size_t>(std::stoul(value)); }
     else if (field == "min_depth_m")          { cfg.min_depth_m = std::stof(value); }
     else if (field == "max_depth_m")          { cfg.max_depth_m = std::stof(value); }
     else if (field == "voxel_size_m")         { cfg.voxel_size_m = std::stof(value); }

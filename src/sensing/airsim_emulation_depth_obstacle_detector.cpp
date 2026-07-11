@@ -25,9 +25,10 @@ ProjectionParams make_params(
     p.k1 = static_cast<float>(ego_frame.frame.intrinsics.distortion_k1);
     p.k2 = static_cast<float>(ego_frame.frame.intrinsics.distortion_k2);
 
-    p.width  = df.width;
-    p.height = df.height;
-    p.stride = static_cast<int>(cfg.pixel_stride);
+    p.width     = df.width;
+    p.height    = df.height;
+    p.grid_cols = static_cast<int>(cfg.depth_grid_cols);
+    p.grid_rows = static_cast<int>(cfg.depth_grid_rows);
 
     p.min_depth_m  = cfg.min_depth_m;
     p.max_depth_m  = cfg.max_depth_m;

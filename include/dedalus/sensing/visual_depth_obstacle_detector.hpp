@@ -12,9 +12,11 @@
 namespace dedalus {
 
 struct VisualDepthObstacleDetectorConfig {
-    // Pixel stride over the depth map produced by the depth engine.
-    // stride=4 gives 1/16 density relative to the full H×W output.
-    std::size_t pixel_stride{4U};
+    // N×M grid over the depth map: divide into depth_grid_cols × depth_grid_rows cells,
+    // project the closest valid pixel per cell. Produces at most N×M evidence points.
+    // Set depth_grid_cols=W, depth_grid_rows=H for 1-per-pixel (stride-1 equivalent).
+    std::size_t depth_grid_cols{40U};
+    std::size_t depth_grid_rows{22U};
 
     float min_depth_m{0.2F};
     float max_depth_m{80.0F};

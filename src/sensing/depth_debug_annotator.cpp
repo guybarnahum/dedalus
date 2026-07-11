@@ -129,6 +129,12 @@ void DepthDebugAnnotator::annotate(
         frame_rgb[i + 2U] = c.b;
     };
 
+    // Block widths for the N×M grid — used to mark the center pixel of each cell as cyan.
+    const int bw = (onnx_params.grid_cols > 0 && W > 0)
+                   ? (W / onnx_params.grid_cols) : 0;
+    const int bh = (onnx_params.grid_rows > 0 && H > 0)
+                   ? (H / onnx_params.grid_rows) : 0;
+
     // ── TOP ROW: ONNX panels ─────────────────────────────────────────────────
     for (int y = 0; y < H; ++y) {
         for (int x = 0; x < W; ++x) {
@@ -138,14 +144,15 @@ void DepthDebugAnnotator::annotate(
             // Top-left: raw greyscale
             set_px(y, x, {lum, lum, lum});
 
-            // Top-right: filter view
+            // Top-right: filter view — mark center pixel of each grid cell as evidence (cyan).
             const bool  valid_px = std::isfinite(dr) && dr > 1e-6f;
             const float depth_m  = valid_px ? (onnx_params.scale / dr) : 0.0f;
             const bool  evidence = valid_px
                                  && depth_m >= onnx_params.min_depth_m
                                  && depth_m <= onnx_params.max_depth_m
-                                 && (x % onnx_params.stride == 0)
-                                 && (y % onnx_params.stride == 0);
+                                 && bw > 0 && bh > 0
+                                 && (x % bw == bw / 2)
+                                 && (y % bh == bh / 2);
             const Rgb fc = filter_color(depth_m, valid_px, evidence,
                                         pitch_down_deg,
                                         onnx_params.min_depth_m,

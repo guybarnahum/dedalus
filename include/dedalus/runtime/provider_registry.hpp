@@ -41,8 +41,9 @@ struct VisualONNXDepthConfig {
     // MetricScaleEstimate
     float  scale{1.0F};                              // metres / (1/relative_depth)
 
-    // VisualDepthObstacleDetector params
-    std::size_t pixel_stride{4U};
+    // VisualDepthObstacleDetector params — N×M grid sampling
+    std::size_t depth_grid_cols{40U};
+    std::size_t depth_grid_rows{22U};
     float  min_depth_m{0.2F};
     float  max_depth_m{80.0F};
     float  voxel_size_m{0.5F};

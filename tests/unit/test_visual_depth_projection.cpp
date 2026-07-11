@@ -105,7 +105,8 @@ static bool test_single_forward_obstacle() {
     scale.confidence = 1.0F;
 
     dedalus::VisualDepthObstacleDetectorConfig cfg;
-    cfg.pixel_stride           = 1;
+    cfg.depth_grid_cols        = static_cast<std::size_t>(W);  // 1 pixel per cell
+    cfg.depth_grid_rows        = static_cast<std::size_t>(H);
     cfg.min_depth_m            = 0.5F;
     cfg.max_depth_m            = 80.0F;
     cfg.voxel_size_m           = VOXEL;
@@ -120,8 +121,8 @@ static bool test_single_forward_obstacle() {
     const auto ego = make_ego_frame(W, H);
     const auto evidence = detector.detect(ego);
 
-    // All non-centre pixels have inverse_depth=1e-6 → depth_m=1e9 > max_depth_m → filtered.
-    // Only the centre pixel should produce evidence.
+    // Grid W×H (1 pixel per cell): all non-centre cells have invalid depth → filtered.
+    // Only the centre cell (containing the 10m pixel) produces evidence.
     if (evidence.size() != 1U) {
         std::cerr << "FAIL test_single_forward_obstacle: expected 1 evidence, got "
                   << evidence.size() << "\n";
@@ -210,7 +211,8 @@ static bool test_depth_range_filter() {
     scale.scale = SCALE;
 
     dedalus::VisualDepthObstacleDetectorConfig cfg;
-    cfg.pixel_stride           = 1;
+    cfg.depth_grid_cols        = static_cast<std::size_t>(W);
+    cfg.depth_grid_rows        = static_cast<std::size_t>(H);
     cfg.min_depth_m            = 0.5F;
     cfg.max_depth_m            = 80.0F;
     cfg.voxel_size_m           = VOXEL;
@@ -231,17 +233,18 @@ static bool test_depth_range_filter() {
     return true;
 }
 
-// Test 3: Voxel deduplication — dense plane all at the same depth should
-// collapse to far fewer voxels than pixels.
-static bool test_voxel_deduplication() {
-    const int W = 21;
-    const int H = 21;
-    const float SCALE  = 1000.0F;
-    const float DEPTH  = 5.0F;    // all pixels at 5 m
-    const float VOXEL  = 0.5F;
-    const std::size_t N = static_cast<std::size_t>(W * H);
+// Test 3: Grid sampling — N×M grid produces exactly N×M evidence points
+// (one per cell) when all pixels are valid.
+static bool test_grid_sampling() {
+    const int W = 8;
+    const int H = 8;
+    const std::size_t GC = 4U;  // 4 columns → 2px per cell
+    const std::size_t GR = 4U;  // 4 rows    → 2px per cell
+    const float SCALE = 1000.0F;
+    const float DEPTH = 5.0F;
 
-    std::vector<float> depth_rel(N, SCALE / DEPTH);
+    // All pixels valid at 5 m.
+    std::vector<float> depth_rel(static_cast<std::size_t>(W * H), SCALE / DEPTH);
 
     auto engine = std::make_unique<MockDepthEngine>();
     engine->out_width      = W;
@@ -252,28 +255,25 @@ static bool test_voxel_deduplication() {
     scale.scale = SCALE;
 
     dedalus::VisualDepthObstacleDetectorConfig cfg;
-    cfg.pixel_stride           = 1;
+    cfg.depth_grid_cols        = GC;
+    cfg.depth_grid_rows        = GR;
     cfg.min_depth_m            = 0.5F;
     cfg.max_depth_m            = 80.0F;
-    cfg.voxel_size_m           = VOXEL;
+    cfg.voxel_size_m           = 0.5F;
+    cfg.max_evidence           = 512U;
     cfg.detect_surface_patches = false;
     cfg.detect_thin_structures = false;
 
-    dedalus::VisualDepthObstacleDetector detector(
-        std::move(engine), scale, cfg);
+    dedalus::VisualDepthObstacleDetector detector(std::move(engine), scale, cfg);
 
     const auto ego      = make_ego_frame(W, H);
     const auto evidence = detector.detect(ego);
 
-    // With 21×21=441 pixels all projecting to positions within a few metres
-    // of each other, deduplication must reduce to well under 441 voxels.
-    if (evidence.size() >= N) {
-        std::cerr << "FAIL test_voxel_deduplication: no deduplication occurred ("
-                  << evidence.size() << " == " << N << ")\n";
-        return false;
-    }
-    if (evidence.empty()) {
-        std::cerr << "FAIL test_voxel_deduplication: all evidence filtered\n";
+    // 4×4 grid, all cells valid → exactly 16 evidence points.
+    const std::size_t expected = GC * GR;
+    if (evidence.size() != expected) {
+        std::cerr << "FAIL test_grid_sampling: expected " << expected
+                  << " evidence, got " << evidence.size() << "\n";
         return false;
     }
     return true;
@@ -347,8 +347,8 @@ static dedalus::ProjectionParams make_params(int W, int H, float scale, float vo
     p.fx = p.fy = 100.0F;
     p.cx = static_cast<float>(W - 1) / 2.0F;
     p.cy = static_cast<float>(H - 1) / 2.0F;
-    p.width  = W;  p.height = H;
-    p.stride = 1;
+    p.width     = W;  p.height    = H;
+    p.grid_cols = W;  p.grid_rows = H;  // 1 pixel per cell (stride-1 equivalent)
     p.min_depth_m = 0.5F;  p.max_depth_m = 80.0F;
     p.scale       = scale;
     p.voxel_size_m = voxel;
@@ -507,7 +507,7 @@ int main() {
 
     run("test_single_forward_obstacle", test_single_forward_obstacle);
     run("test_depth_range_filter",      test_depth_range_filter);
-    run("test_voxel_deduplication",     test_voxel_deduplication);
+    run("test_grid_sampling",           test_grid_sampling);
     run("test_inflate_direct",          test_inflate_direct);
     run("test_surface_patch_wall",      test_surface_patch_wall);
     run("test_thin_structure_pole",     test_thin_structure_pole);

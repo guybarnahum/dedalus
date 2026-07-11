@@ -17,7 +17,6 @@
 #include <cmath>
 #include <cstdint>
 #include <queue>
-#include <unordered_set>
 #include <vector>
 
 #include <cstdio>
@@ -313,73 +312,12 @@ void CudaDepthDispatcher::project(
 {
     count_out = 0u;
     if (p.fx <= 0.0F || p.fy <= 0.0F || p.scale <= 0.0F
-        || p.width <= 0 || p.height <= 0) return;
+        || p.width <= 0 || p.height <= 0
+        || p.grid_cols <= 0 || p.grid_rows <= 0) return;
 
-    const std::size_t npix = static_cast<std::size_t>(p.width) *
-                             static_cast<std::size_t>(p.height);
-    impl_->ensure_depth(npix);
-    impl_->ensure_evidence(static_cast<std::size_t>(p.max_evidence));
-
-    cudaMemcpyAsync(impl_->d_depth, inverse_depth, npix * sizeof(float),
-                    cudaMemcpyHostToDevice, impl_->stream);
-
-    const unsigned int zero = 0u;
-    cudaMemcpyAsync(impl_->d_count, &zero, sizeof(unsigned int),
-                    cudaMemcpyHostToDevice, impl_->stream);
-
-    // Grid covers the sampled pixel set: (W/stride) × (H/stride) threads
-    const int sw = (p.width  + p.stride - 1) / p.stride;
-    const int sh = (p.height + p.stride - 1) / p.stride;
-    const dim3 block(16, 16);
-    const dim3 grid(static_cast<unsigned int>((sw + 15) / 16),
-                    static_cast<unsigned int>((sh + 15) / 16));
-
-    project_depth_kernel<<<grid, block, 0, impl_->stream>>>(
-        impl_->d_depth,
-        p.width, p.height, p.stride,
-        1.0F/p.fx, 1.0F/p.fy, p.cx, p.cy, p.k1, p.k2,
-        p.scale, p.min_depth_m, p.max_depth_m,
-        p.origin_x, p.origin_y, p.origin_z,
-        p.forward_x, p.forward_y, p.forward_z,
-        p.right_x,   p.right_y,   p.right_z,
-        p.up_x,      p.up_y,      p.up_z,
-        p.voxel_size_m,
-        impl_->d_evidence, impl_->d_count, p.max_evidence);
-
-    // Async readback count; synchronize before touching host_out
-    cudaMemcpyAsync(impl_->h_count, impl_->d_count, sizeof(unsigned int),
-                    cudaMemcpyDeviceToHost, impl_->stream);
-    cudaStreamSynchronize(impl_->stream);
-
-    const unsigned int n = std::min(*impl_->h_count, p.max_evidence);
-    count_out = static_cast<std::uint32_t>(n);
-    if (n > 0u) {
-        cudaMemcpy(host_out, impl_->d_evidence,
-                   n * sizeof(DeviceObstacleEvidence), cudaMemcpyDeviceToHost);
-    }
-
-    // Deduplicate by voxel index — matches CPU project_depth_to_device_evidence behaviour.
-    // Centers are already snapped: center = (floor(w/vox)+0.5)*vox, so recovering
-    // the index via floor(center/vox) is exact.
-    if (count_out > 1u) {
-        const float inv_vox = 1.0F / p.voxel_size_m;
-        std::unordered_set<std::uint64_t> seen;
-        seen.reserve(count_out);
-        std::uint32_t out = 0u;
-        for (std::uint32_t i = 0u; i < count_out; ++i) {
-            const int ix = static_cast<int>(std::floor(host_out[i].center_x * inv_vox));
-            const int iy = static_cast<int>(std::floor(host_out[i].center_y * inv_vox));
-            const int iz = static_cast<int>(std::floor(host_out[i].center_z * inv_vox));
-            const std::uint64_t key =
-                (static_cast<std::uint64_t>(static_cast<std::uint16_t>(ix)) << 32u)
-              | (static_cast<std::uint64_t>(static_cast<std::uint16_t>(iy)) << 16u)
-              |  static_cast<std::uint64_t>(static_cast<std::uint16_t>(iz));
-            if (seen.insert(key).second) {
-                host_out[out++] = host_out[i];
-            }
-        }
-        count_out = out;
-    }
+    // Block-minimum grid sampling runs on CPU (grid_cols × grid_rows ≈ 880 points).
+    // The CUDA stream is dedicated to detect_thin (Sobel) and fit_patches (RANSAC).
+    project_depth_to_device_evidence(inverse_depth, p, host_out, count_out);
 }
 
 void CudaDepthDispatcher::fit_patches(
