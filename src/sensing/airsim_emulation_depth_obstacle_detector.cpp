@@ -104,6 +104,7 @@ std::vector<ObstacleEvidence> AirSimEmulationDepthObstacleDetector::detect(
     if (inverse_depth.empty()) return {};
 
     const ProjectionParams params = make_params(ego_frame, df, config_);
+    last_params_ = params;
 
     std::vector<DeviceObstacleEvidence> buf(config_.max_evidence);
     std::uint32_t count = 0U;

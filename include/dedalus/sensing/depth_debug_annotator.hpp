@@ -3,8 +3,6 @@
 #include <cstdio>
 #include <string>
 
-#include "dedalus/sensing/airsim_depth_obstacle_detector.hpp"
-#include "dedalus/sensing/depth_engine.hpp"
 #include "dedalus/sensing/depth_projection_kernel.hpp"
 
 namespace dedalus {
@@ -16,27 +14,36 @@ struct DepthDebugAnnotatorConfig {
     // Log-scale depth anchor: depth_m >= display_max_m → black.
     // white (255) = 0 m, black (0) = display_max_m.
     float display_max_m{30.0f};
-
-    // When true: 2W×2H frame — ONNX panels on top, GT eval panels on bottom.
-    // When false: 2W×H frame — original left-right ONNX-only layout.
-    // Set automatically from whether slot B (GT) is wired at CoreStackRunner construction.
-    bool four_panel{false};
 };
 
-// Renders a 4-panel 2W×2H H.264 debug MP4 via an ffmpeg pipe.
+// Generic depth panel — one per slot (primary + optional eval).
 //
-// Frame layout (all panels share the same log-luminance depth scale):
+// Exactly one of inverse_depth / depth_m_data must be non-null:
+//   inverse_depth : disparity convention; depth_m = params.scale / id
+//   depth_m_data  : metric depth in metres (AirSim GT)
+//
+// params carries scale, min/max_depth_m, grid_cols/rows for the filter view.
+// source_name is rendered as a label in the frame header strip.
+struct DepthDebugPanel {
+    const float* inverse_depth{nullptr};
+    const float* depth_m_data{nullptr};
+    int          width{0};
+    int          height{0};
+    ProjectionParams params;
+    std::string  source_name;
+    float        pitch_down_deg{0.0f};
+};
+
+// Renders a 2W×H (primary only) or 2W×2H (primary + eval) H.264 debug MP4
+// via an ffmpeg pipe.
+//
+// Frame layout (per row — top = primary, bottom = eval if present):
 //
 //   ┌──────────────────────┬──────────────────────┐
-//   │  ONNX raw depth      │  ONNX filter view    │
+//   │  raw depth           │  filter view         │
 //   │  white=near          │  cyan  = evidence    │
-//   │  black=far (30 m)    │  red   = OOD-close   │
-//   │                      │  navy  = too-far     │
-//   ├──────────────────────┼──────────────────────┤
-//   │  GT raw depth        │  GT filter view      │
-//   │  (same scale)        │  (same color coding) │
-//   │  filled from sparse  │  background = mid    │
-//   │  stride samples      │  grey (unsampled)    │
+//   │  black=far           │  red   = OOD-close   │
+//   │  [source label]      │  navy  = too-far     │
 //   └──────────────────────┴──────────────────────┘
 //
 // Thread ownership: single-threaded. annotate() is not reentrant.
@@ -48,12 +55,9 @@ public:
     DepthDebugAnnotator(const DepthDebugAnnotator&)            = delete;
     DepthDebugAnnotator& operator=(const DepthDebugAnnotator&) = delete;
 
-    // Render one debug frame.
-    // gt may be nullptr when slot B is inactive or returned no depth frame.
-    void annotate(const DepthInferenceResult& onnx_inferred,
-                  const ProjectionParams&     onnx_params,
-                  float                       pitch_down_deg,
-                  const AirSimDepthFrame*     gt = nullptr);
+    // Render one debug frame from primary (required) and optional eval panel.
+    void annotate(const DepthDebugPanel& primary,
+                  const DepthDebugPanel* eval = nullptr);
 
 private:
     void open_pipe(int frame_w, int frame_h);

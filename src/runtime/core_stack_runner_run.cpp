@@ -1,5 +1,7 @@
 #include "dedalus/runtime/core_stack_runner.hpp"
 
+#include "dedalus/sensing/depth_debug_annotator.hpp"
+
 #include "dedalus/avoidance/local_esdf_map.hpp"
 #include "dedalus/avoidance/local_esdf_map_publisher.hpp"
 #include "dedalus/avoidance/local_flight_map.hpp"
@@ -365,17 +367,51 @@ bool CoreStackRunner::run_once() {
             slot_a_evidence.begin(),
             slot_a_evidence.end());
 
-        // 4-panel debug MP4: ONNX on top, GT eval on bottom.
-        // Runs only when the annotator is configured and slot A is a VisualDepthObstacleDetector.
-        if (depth_annotator_ && depth_slot_a_visual_ && depth_slot_a_visual_->has_last_result()) {
-            const AirSimDepthFrame* gt = depth_slot_b_emulation_
-                ? depth_slot_b_emulation_->last_depth_frame()
-                : nullptr;
-            depth_annotator_->annotate(
-                depth_slot_a_visual_->last_inferred(),
-                depth_slot_a_visual_->last_params(),
-                depth_slot_a_visual_->last_pitch_deg(),
-                gt);
+        // Debug MP4: primary panel on top, optional eval panel on bottom.
+        // Works for any combination of visual_onnx / airsim_gt_vd in either slot.
+        if (depth_annotator_) {
+            DepthDebugPanel primary;
+            bool primary_ok = false;
+
+            if (depth_slot_a_visual_ && depth_slot_a_visual_->has_last_result()) {
+                const auto& inf = depth_slot_a_visual_->last_inferred();
+                primary.inverse_depth = inf.inverse_depth.data();
+                primary.width         = inf.width;
+                primary.height        = inf.height;
+                primary.params        = depth_slot_a_visual_->last_params();
+                primary.source_name   = depth_slot_a_ ? depth_slot_a_->provider_name() : "visual_onnx";
+                primary.pitch_down_deg = depth_slot_a_visual_->last_pitch_deg();
+                primary_ok = true;
+            } else if (depth_slot_a_emulation_) {
+                const AirSimDepthFrame* af = depth_slot_a_emulation_->last_depth_frame();
+                if (af && af->width > 0 && !af->depth_m.empty()) {
+                    primary.depth_m_data  = af->depth_m.data();
+                    primary.width         = af->width;
+                    primary.height        = af->height;
+                    primary.params        = depth_slot_a_emulation_->last_params();
+                    primary.source_name   = depth_slot_a_ ? depth_slot_a_->provider_name() : "airsim_gt_vd";
+                    primary_ok = true;
+                }
+            }
+
+            if (primary_ok) {
+                DepthDebugPanel eval_panel;
+                const DepthDebugPanel* eval_ptr = nullptr;
+
+                if (depth_slot_b_emulation_) {
+                    const AirSimDepthFrame* bf = depth_slot_b_emulation_->last_depth_frame();
+                    if (bf && bf->width > 0 && !bf->depth_m.empty()) {
+                        eval_panel.depth_m_data  = bf->depth_m.data();
+                        eval_panel.width         = bf->width;
+                        eval_panel.height        = bf->height;
+                        eval_panel.params        = depth_slot_b_emulation_->last_params();
+                        eval_panel.source_name   = depth_slot_b_ ? depth_slot_b_->provider_name() : "airsim_gt_vd";
+                        eval_ptr = &eval_panel;
+                    }
+                }
+
+                depth_annotator_->annotate(primary, eval_ptr);
+            }
         }
 
         if (timing_writer_) {
