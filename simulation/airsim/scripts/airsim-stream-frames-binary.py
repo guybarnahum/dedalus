@@ -193,16 +193,36 @@ def rgb_bytes_from_response(response: object) -> bytes:
     )
 
 
-def downsample_depth_response(response: object, stride: int) -> dict[str, object]:
+def sample_depth_grid(response: object, cols: int, rows: int) -> dict[str, object]:
+    """Sample AirSim DepthPlanar into a cols×rows block-minimum grid.
+
+    Each cell (gc, gr) covers pixels x∈[gc*BW, (gc+1)*BW) × y∈[gr*BH, (gr+1)*BH).
+    The minimum positive finite depth (= closest obstacle) is selected per cell,
+    matching the block-minimum logic in the C++ project_depth_to_device_evidence()
+    kernel.  depth_width==cols and depth_height==rows in the output, so the C++
+    detector receives an N×M frame that aligns exactly with its configured grid.
+    """
     width = int(getattr(response, "width", 0))
     height = int(getattr(response, "height", 0))
-    stride = max(1, int(stride))
     raw = list(getattr(response, "image_data_float", []) or [])
     if width <= 0 or height <= 0 or len(raw) < width * height:
         return {
             "depth_width": 0,
             "depth_height": 0,
-            "depth_stride": stride,
+            "depth_m": [],
+            "depth_valid_count": 0,
+            "depth_min_m": 0.0,
+            "depth_max_m": 0.0,
+        }
+
+    BW = width // cols
+    BH = height // rows
+    if BW <= 0 or BH <= 0:
+        # Source resolution is smaller than the requested grid — configuration mismatch.
+        # Return empty so the C++ detector logs a warning rather than crashing.
+        return {
+            "depth_width": 0,
+            "depth_height": 0,
             "depth_m": [],
             "depth_valid_count": 0,
             "depth_min_m": 0.0,
@@ -210,33 +230,29 @@ def downsample_depth_response(response: object, stride: int) -> dict[str, object
         }
 
     sampled: list[float] = []
-    sampled_width = 0
-    sampled_height = 0
-    for y in range(0, height, stride):
-        row_count = 0
-        for x in range(0, width, stride):
-            value = float(raw[y * width + x])
-            if not math.isfinite(value) or value <= 0.0 or value >= 60000.0:
-                # Keep the sidecar strict JSON and parser-friendly. The C++
-                # detector rejects non-positive depth, so 0.0 represents
-                # invalid/no-return depth without JSON Infinity/NaN. AirSim
-                # commonly uses very large finite values, e.g. 65504m, as a
-                # far/no-return sentinel; those are not obstacle geometry.
-                value = 0.0
-            sampled.append(value)
-            row_count += 1
-        sampled_width = max(sampled_width, row_count)
-        sampled_height += 1
+    for gr in range(rows):
+        y0 = gr * BH
+        for gc in range(cols):
+            x0 = gc * BW
+            # Block minimum: closest positive finite depth in the cell.
+            # 0.0 represents invalid / no-return (same as C++ sentinel).
+            best = 0.0
+            for y in range(y0, y0 + BH):
+                for x in range(x0, x0 + BW):
+                    v = float(raw[y * width + x])
+                    if math.isfinite(v) and 0.0 < v < 60000.0:
+                        if best == 0.0 or v < best:
+                            best = v
+            sampled.append(best)
 
-    valid = [value for value in sampled if math.isfinite(value) and value > 0.0]
-    usable_0_5m = [value for value in valid if value <= 5.0]
-    usable_5_20m = [value for value in valid if 5.0 < value <= 20.0]
-    usable_20_80m = [value for value in valid if 20.0 < value <= 80.0]
-    far_over_80m = [value for value in valid if value > 80.0]
+    valid = [v for v in sampled if v > 0.0]
+    usable_0_5m = [v for v in valid if v <= 5.0]
+    usable_5_20m = [v for v in valid if 5.0 < v <= 20.0]
+    usable_20_80m = [v for v in valid if 20.0 < v <= 80.0]
+    far_over_80m = [v for v in valid if v > 80.0]
     return {
-        "depth_width": sampled_width,
-        "depth_height": sampled_height,
-        "depth_stride": stride,
+        "depth_width": cols,
+        "depth_height": rows,
         "depth_m": sampled,
         "depth_valid_count": len(valid),
         "depth_0_5m_count": len(usable_0_5m),
@@ -344,8 +360,9 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--mavlink-armed-endpoints", default=os.environ.get("DEDALUS_MAVLINK_ARMED_ENDPOINTS", ""), help="Deprecated alias for --mavlink-ego-endpoints.")
     parser.add_argument("--mavlink-ego-endpoints", default=os.environ.get("DEDALUS_MAVLINK_EGO_ENDPOINTS", ""), help="Comma-separated pymavlink endpoints used to derive ego telemetry from HEARTBEAT and LOCAL_POSITION_NED.")
     parser.add_argument("--timing-jsonl", default="", help="Optional path for bridge-internal timing JSONL records.")
-    parser.add_argument("--include-depth", action="store_true", help="Append a downsampled AirSim DepthPlanar grid to the sidecar JSON.")
-    parser.add_argument("--depth-stride", type=int, default=16, help="Depth pixel stride used when --include-depth is enabled.")
+    parser.add_argument("--include-depth", action="store_true", help="Append an N×M block-minimum AirSim DepthPlanar grid to the sidecar JSON.")
+    parser.add_argument("--depth-grid-cols", type=int, default=40, help="Grid columns for --include-depth block-minimum sampling. Must match visual_onnx.depth_grid_cols in the C++ pipeline config.")
+    parser.add_argument("--depth-grid-rows", type=int, default=22, help="Grid rows for --include-depth block-minimum sampling. Must match visual_onnx.depth_grid_rows in the C++ pipeline config.")
     return parser.parse_args()
 
 
@@ -387,7 +404,7 @@ def main() -> int:
 
             response_index = 1
             depth_payload = (
-                downsample_depth_response(responses[response_index], args.depth_stride)
+                sample_depth_grid(responses[response_index], args.depth_grid_cols, args.depth_grid_rows)
                 if args.include_depth and len(responses) > response_index
                 else None
             )
@@ -432,7 +449,8 @@ def main() -> int:
                     "ego_bytes": len(ego_payload),
                     "include_ego": bool(args.include_ego),
                     "include_depth": bool(args.include_depth),
-                    "depth_stride": int(args.depth_stride),
+                    "depth_grid_cols": int(args.depth_grid_cols),
+                    "depth_grid_rows": int(args.depth_grid_rows),
                     "depth_width": int(depth_payload.get("depth_width", 0)) if depth_payload else 0,
                     "depth_height": int(depth_payload.get("depth_height", 0)) if depth_payload else 0,
                     "depth_valid_count": int(depth_payload.get("depth_valid_count", 0)) if depth_payload else 0,

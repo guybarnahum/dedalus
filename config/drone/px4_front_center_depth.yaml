@@ -1,11 +1,16 @@
 # ── Drone: PX4 · front-center camera (RGB + AirSim depth) ─────────────────────
-# Adds --include-depth --depth-stride 16 to the bridge command so that the
-# AirSim ground-truth depth slot (airsim_gt_detector) receives DepthPlanar
-# frames in-band with the RGB stream.
+# Adds --include-depth to the bridge command so that the airsim_gt_vd slot
+# receives DepthPlanar frames in-band with the RGB stream.
+#
+# --depth-grid-cols / --depth-grid-rows must match visual_onnx.depth_grid_cols
+# and visual_onnx.depth_grid_rows in the pipeline config (default 40×22).
+# The bridge samples a block-minimum N×M grid from full-resolution AirSim
+# DepthPlanar; the C++ detector receives exactly N×M values, which aligns
+# BW=1/BH=1 in project_depth_to_device_evidence().
 #
 # Not needed for visual_onnx — that slot infers depth from RGB.
 
 include: config/drone/px4_front_center.yaml
 
 # Override bridge_command from the base drone config to add depth streaming.
-bridge_command: python3 simulation/airsim/scripts/airsim-stream-frames-binary.py --include-ego --include-depth --depth-stride 16 --rate-hz 10 --mavlink-armed-endpoints udpin:127.0.0.1:14540
+bridge_command: python3 simulation/airsim/scripts/airsim-stream-frames-binary.py --include-ego --include-depth --depth-grid-cols 40 --depth-grid-rows 22 --rate-hz 10 --mavlink-armed-endpoints udpin:127.0.0.1:14540
