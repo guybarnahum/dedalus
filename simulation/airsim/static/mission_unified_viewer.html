@@ -283,6 +283,8 @@ const MAX_TRAV_DISPLAY       = 8000;   // cap on aggregated occupied voxels befo
 const TRAV_LOD_LEVELS        = [32, 16, 8, 4, 2, 1, 0.5]; // metres, index 2 = default 8m
 const MAX_GHOST_AGE_S        = 15;
 const MAX_TRAJ_POINTS        = 6000;
+const TRAJ_MAX_GAP_M         = 5.0;   // skip segments with spatial jumps > 5 m (latency / discontinuity)
+const TRAJ_MAX_GAP_MS        = 3000;  // skip if time between consecutive trajectory points > 3 s
 const MAX_MISSION_LOG        = 200;
 
 const HEIGHT_COLOR_MIN_M = 0.0;
@@ -1899,25 +1901,33 @@ function drawPerchCandidates() {
 
 function drawTrajectory() {
   if (!state.showTrajectory||state.trajectory.length<2) return;
-  const now=Date.now();
   ctx.save();
-  for (let i=1; i<state.trajectory.length; ++i) {
-    const a=state.trajectory[i-1], b=state.trajectory[i];
-    if (!a||!b) continue;
-    if (a.live_seen_ms||b.live_seen_ms) continue;
-    drawLine(a, b, "rgba(150,120,35,0.35)", 1.5);
-  }
 
-  // Live aging segments
+  // All trajectory points carry live_seen_ms; render them with a full
+  // index-based color gradient: oldest = dark red-orange, newest = bright yellow.
+  // t=0 (oldest) → rgba(255,0,0,0.18)  t=1 (newest) → rgba(255,255,0,0.95)
   const liveTraj=state.trajectory.filter(p=>p&&p.live_seen_ms);
-  for (let i=1; i<liveTraj.length; ++i) {
-    const a=project(liveTraj[i-1]), b=project(liveTraj[i]);
+  const n=liveTraj.length;
+  for (let i=1; i<n; ++i) {
+    const pa=liveTraj[i-1], pb=liveTraj[i];
+
+    // Skip discontinuous jumps (latency spikes, teleports).
+    const dx=pb.x-pa.x, dy=pb.y-pa.y, dz=pb.z-pa.z;
+    if (Math.hypot(dx,dy,dz) > TRAJ_MAX_GAP_M) continue;
+    const dtMs=Number(pb.live_seen_ms)-Number(pa.live_seen_ms);
+    if (dtMs > TRAJ_MAX_GAP_MS) continue;
+
+    const a=project(pa), b=project(pb);
     if (!a||!b||!Number.isFinite(a.x)||!Number.isFinite(b.x)) continue;
-    const level=liveDecay(liveTraj[i].live_seen_ms, LIVE_TRACK_DIM)??LIVE_TRACK_DIM;
-    const gb=Math.round(255*level);
+
+    // t: 0=oldest segment end, 1=newest — drives color, opacity, and width.
+    const t=i/n;
+    const g=Math.round(255*t);              // red (old) → yellow (new)
+    const alpha=(0.18+0.77*t).toFixed(2);  // faint old trail → opaque new
+    const lw=(0.8+2.2*t)*devicePixelRatio; // thin old → thick new
     ctx.beginPath(); ctx.moveTo(a.x,a.y); ctx.lineTo(b.x,b.y);
-    ctx.strokeStyle=`rgba(255,${gb},0,0.9)`;
-    ctx.lineWidth=Math.max(1.5, 4*level)*devicePixelRatio;
+    ctx.strokeStyle=`rgba(255,${g},0,${alpha})`;
+    ctx.lineWidth=lw;
     ctx.stroke();
   }
   if (state.ego) drawPoint(state.ego, "rgba(255,255,64,1.0)", 6.5);
