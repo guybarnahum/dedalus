@@ -146,12 +146,13 @@ void test_provider_names() {
 }
 
 // Test 6: FoV-driven intrinsics — production scenario.
-// make_params() computes intrinsics directly from the sensing volume FoV +
-// depth frame dimensions.  For a 90°×60° camera with a 40×22 depth frame:
-//   fx = (40/2) / tan(45°) = 20.0,  cx = 20.0
-//   fy = (22/2) / tan(30°) ≈ 19.05, cy = 11.0
-// Columns [0,39] then span ±45° horizontally, so roughly half the cells
-// should project to the left of center and half to the right.
+// make_params() uses the OpenCV center convention: pixel u ∈ [0,W-1] sits at
+// image coordinate u, so cx=(W-1)/2 and fx=cx/tan(hfov/2).
+// For a 90°×60° camera with a 40×22 depth frame:
+//   cx = (40-1)/2 = 19.5,  fx = 19.5/tan(45°) = 19.5
+//   cy = (22-1)/2 = 10.5,  fy = 10.5/tan(30°) ≈ 18.19
+// Columns [0,39] span exactly ±45° horizontally; rows [0,21] span ±30°
+// vertically — symmetric about centre, half the cells projected each side.
 // Before this change (image.width-based scaling), any code path that delivers
 // an EgoSensingFrame without a populated RGB image (image.width=0) would
 // trigger the fallback s_y=1.0, leaving cy=180 >> max row 21, making every

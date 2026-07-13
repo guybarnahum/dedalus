@@ -249,13 +249,52 @@ void project_depth_to_device_evidence(
             ev.center_y = (static_cast<float>(iy) + 0.5F) * params.voxel_size_m;
             ev.center_z = (static_cast<float>(iz) + 0.5F) * params.voxel_size_m;
             ev.size_x = ev.size_y = ev.size_z = half * 2.0F;
-            ev.normal_x = ev.normal_y = ev.normal_z = 0.0F;
             ev.confidence             = 0.75F;
             ev.range_m                = depth_m;
             ev.state                  = 2U;  // Occupied
             ev.shape                  = 3U;  // SurfacePatch
             ev.is_thin_structure_hint = 0U;
             ev.is_surface_hint        = 1U;
+
+            // Per-voxel surface normal via finite differences.
+            // Unproject the right (u+1) and down (v+1) neighbors and form the
+            // cross product of the two tangent vectors.  Falls back to zero
+            // (has_surface_normal=false in inflate()) if a neighbor is invalid.
+            {
+                float rx, ry, rz, bx, by, bz;
+                bool has_r = false, has_b = false;
+                if (best_u + 1 < params.width) {
+                    const float id_r = inverse_depth[
+                        static_cast<std::size_t>(best_v) * static_cast<std::size_t>(params.width) +
+                        static_cast<std::size_t>(best_u + 1)];
+                    has_r = unproject(best_u + 1, best_v, id_r, params, rx, ry, rz);
+                }
+                if (best_v + 1 < params.height) {
+                    const float id_b = inverse_depth[
+                        static_cast<std::size_t>(best_v + 1) * static_cast<std::size_t>(params.width) +
+                        static_cast<std::size_t>(best_u)];
+                    has_b = unproject(best_u, best_v + 1, id_b, params, bx, by, bz);
+                }
+                ev.normal_x = ev.normal_y = ev.normal_z = 0.0F;
+                if (has_r && has_b) {
+                    const float tx = rx - lx, ty = ry - ly, tz = rz - lz;
+                    const float dx = bx - lx, dy = by - ly, dz = bz - lz;
+                    float nx = ty*dz - tz*dy;
+                    float ny = tz*dx - tx*dz;
+                    float nz = tx*dy - ty*dx;
+                    const float len = std::sqrt(nx*nx + ny*ny + nz*nz);
+                    if (len > 1e-6F) {
+                        nx /= len; ny /= len; nz /= len;
+                        // Orient toward camera (dot with vector from point to origin).
+                        if (nx*(params.origin_x - lx) +
+                            ny*(params.origin_y - ly) +
+                            nz*(params.origin_z - lz) < 0.0F) {
+                            nx = -nx; ny = -ny; nz = -nz;
+                        }
+                        ev.normal_x = nx; ev.normal_y = ny; ev.normal_z = nz;
+                    }
+                }
+            }
         }
     }
 }

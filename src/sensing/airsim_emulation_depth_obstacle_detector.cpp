@@ -25,14 +25,21 @@ ProjectionParams make_params(
     // the bridge sidecar.  No dependency on ego_frame.frame.image.width/height,
     // which may be 0 in code paths that don't attach a full RGB image.
     //
+    // Principal-point convention: pixel u ∈ [0, W-1] is at image coordinate u
+    // (OpenCV center convention).  For a symmetric camera the principal point
+    // sits at (W-1)/2, (H-1)/2, and the outermost pixels (u=0, u=W-1) subtend
+    // exactly ±hfov/2.  Using W/2 instead causes a half-pixel asymmetry that
+    // biases evidence toward positive elevation (top row further from centre
+    // than bottom row) and inflates the apparent horizontal spread.
+    //
     // For the front-center AirSim camera at 640×360 with FOV_Degrees=84 and
-    // an N×M grid of 40×22, this gives: fx = fy ≈ 22.2, cx=20, cy=11.
+    // an N×M grid of 40×22: fx ≈ 21.66, cx=19.5, fy ≈ 20.73, cy=10.5.
     const float hfov = static_cast<float>(sv.horizontal_fov_rad);
     const float vfov = static_cast<float>(sv.vertical_fov_rad);
-    p.fx = (static_cast<float>(df.width)  * 0.5F) / std::tan(hfov * 0.5F);
-    p.fy = (static_cast<float>(df.height) * 0.5F) / std::tan(vfov * 0.5F);
-    p.cx = static_cast<float>(df.width)  * 0.5F;
-    p.cy = static_cast<float>(df.height) * 0.5F;
+    p.cx = (static_cast<float>(df.width)  - 1.0F) * 0.5F;
+    p.cy = (static_cast<float>(df.height) - 1.0F) * 0.5F;
+    p.fx = p.cx / std::tan(hfov * 0.5F);
+    p.fy = p.cy / std::tan(vfov * 0.5F);
     p.k1 = static_cast<float>(ego_frame.frame.intrinsics.distortion_k1);
     p.k2 = static_cast<float>(ego_frame.frame.intrinsics.distortion_k2);
 
