@@ -37,6 +37,27 @@
     ]
   },
 
+  // NED ORIGIN vs TERRAIN NOTE
+  // AirSim sets NED Z=0 at the Unreal PlayerStart actor.  If PlayerStart is
+  // placed above the terrain mesh in the Unreal level, the visual floor will
+  // appear at some positive NED Z (= terrain_offset_m below PlayerStart).
+  // All L0 obstacle evidence is correctly positioned in NED — obstacle
+  // avoidance is unaffected.  The only symptom is visual: evidence that
+  // correctly sits on the floor appears to "float" above the AirSim rendered
+  // ground when the viewer draws a ground plane at NED Z=0.
+  //
+  // Fix option A (preferred): open the Unreal project, select PlayerStart in
+  // the World Outliner, press End to snap it to the terrain surface, save.
+  //
+  // Fix option B (settings.json): set the vehicle spawn Z to the terrain
+  // offset so the drone spawns at NED Z = terrain_offset_m (at terrain level).
+  // Measure terrain_offset_m by arming the drone and reading
+  // local_T_body.position.z from the world_snapshot SSE stream while sitting
+  // on the ground; that value IS terrain_offset_m.  Then set Z below.
+  // (AirSim NED: positive Z = down; 8.0 = 8 m below PlayerStart.)
+  //
+  "Z": 8.0,   // <-- set to measured terrain_offset_m 
+
   "Vehicles": {
     "PX4": {
       "VehicleType": "PX4Multirotor",

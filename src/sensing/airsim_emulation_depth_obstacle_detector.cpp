@@ -18,24 +18,21 @@ ProjectionParams make_params(
     const auto& sv = ego_frame.sensing_volume;
     ProjectionParams p;
 
-    // Scale intrinsics from the RGB camera resolution to the depth frame
-    // resolution.  The ego_frame intrinsics (fx, cx, …) are calibrated for
-    // the full-resolution RGB image; the GT depth frame arrives at df.width ×
-    // df.height (the N×M grid sent by the bridge).  Without this scaling
-    // best_u ∈ [0, df.width) is compared against cx computed for the full-res
-    // image, producing large systematic offsets and compression of all evidence.
-    // This mirrors the identical scale applied in VisualDepthObstacleDetector.
-    const float rgb_w = static_cast<float>(ego_frame.frame.image.width);
-    const float rgb_h = static_cast<float>(ego_frame.frame.image.height);
-    const float s_x = (rgb_w > 0.0F && df.width  > 0)
-                      ? static_cast<float>(df.width)  / rgb_w : 1.0F;
-    const float s_y = (rgb_h > 0.0F && df.height > 0)
-                      ? static_cast<float>(df.height) / rgb_h : 1.0F;
-
-    p.fx = static_cast<float>(ego_frame.frame.intrinsics.fx) * s_x;
-    p.fy = static_cast<float>(ego_frame.frame.intrinsics.fy) * s_y;
-    p.cx = static_cast<float>(ego_frame.frame.intrinsics.cx) * s_x;
-    p.cy = static_cast<float>(ego_frame.frame.intrinsics.cy) * s_y;
+    // Compute intrinsics directly from the sensing volume FoV + depth frame
+    // dimensions.  This is the ground-truth path: the sensing volume always
+    // carries the correct angular coverage (validated by
+    // validate_obstacle_sensing_cameras()), and the depth frame dims come from
+    // the bridge sidecar.  No dependency on ego_frame.frame.image.width/height,
+    // which may be 0 in code paths that don't attach a full RGB image.
+    //
+    // For the front-center AirSim camera at 640×360 with FOV_Degrees=84 and
+    // an N×M grid of 40×22, this gives: fx = fy ≈ 22.2, cx=20, cy=11.
+    const float hfov = static_cast<float>(sv.horizontal_fov_rad);
+    const float vfov = static_cast<float>(sv.vertical_fov_rad);
+    p.fx = (static_cast<float>(df.width)  * 0.5F) / std::tan(hfov * 0.5F);
+    p.fy = (static_cast<float>(df.height) * 0.5F) / std::tan(vfov * 0.5F);
+    p.cx = static_cast<float>(df.width)  * 0.5F;
+    p.cy = static_cast<float>(df.height) * 0.5F;
     p.k1 = static_cast<float>(ego_frame.frame.intrinsics.distortion_k1);
     p.k2 = static_cast<float>(ego_frame.frame.intrinsics.distortion_k2);
 
