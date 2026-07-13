@@ -303,9 +303,13 @@ void DepthDebugAnnotator::annotate(const DepthDebugPanel& primary,
                                    const DepthDebugPanel* eval) {
     if (config_.output_path.empty()) return;
 
-    // Derive frame size from primary panel dimensions.
-    const int W = (primary.width  > 0) ? primary.width  : 640;
-    const int H = (primary.height > 0) ? primary.height : 360;
+    // Output panel dimensions — scale up small source depth maps (e.g. the
+    // 40×22 N×M grid from AirSim GT) to a watchable resolution. Render uses
+    // nearest-neighbour scaling; we just ensure the pipe opens wide enough.
+    static constexpr int kMinW = 320;
+    static constexpr int kMinH = 180;
+    const int W = std::max(primary.width  > 0 ? primary.width  : kMinW, kMinW);
+    const int H = std::max(primary.height > 0 ? primary.height : kMinH, kMinH);
 
     // Layout: 2W wide (raw | filter), H per panel row.
     const int frame_w = 2 * W;
