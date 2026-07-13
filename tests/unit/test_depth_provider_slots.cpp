@@ -145,16 +145,18 @@ void test_provider_names() {
     std::puts("PASS test_provider_names");
 }
 
-// Test 6: intrinsic scaling — production scenario.
-// The RGB image is 256×144 (intrinsics calibrated for that resolution).
-// The depth frame arrives at 40×22 (N×M grid, as sent by the bridge).
-// make_params() must scale fx/cx by (40/256, 22/144) so that
-// best_u ∈ [0,39] maps to the correct ray angles.
-// Without the scaling, every (best_u - cx) = (best_u - 128) is large-negative
-// → all evidence would be projected far to the left (the reported regression).
+// Test 6: FoV-driven intrinsics — production scenario.
+// make_params() computes intrinsics directly from the sensing volume FoV +
+// depth frame dimensions.  For a 90°×60° camera with a 40×22 depth frame:
+//   fx = (40/2) / tan(45°) = 20.0,  cx = 20.0
+//   fy = (22/2) / tan(30°) ≈ 19.05, cy = 11.0
+// Columns [0,39] then span ±45° horizontally, so roughly half the cells
+// should project to the left of center and half to the right.
+// Before this change (image.width-based scaling), any code path that delivers
+// an EgoSensingFrame without a populated RGB image (image.width=0) would
+// trigger the fallback s_y=1.0, leaving cy=180 >> max row 21, making every
+// yn negative and projecting ALL evidence above the camera.
 void test_intrinsic_scaling_production_scenario() {
-    // Simulate the binary stream provider output: RGB at 256×144, depth at 40×22.
-    const int rgb_w = 256, rgb_h = 144;
     const int depth_w = 40, depth_h = 22;
 
     dedalus::AirSimDepthFrame df;
@@ -164,13 +166,11 @@ void test_intrinsic_scaling_production_scenario() {
 
     dedalus::FramePacket fp;
     fp.depth_frame = df;
-    // Intrinsics calibrated for the full-res RGB camera (as set by binary stream provider).
-    fp.image.width  = rgb_w;
-    fp.image.height = rgb_h;
-    fp.intrinsics.fx = static_cast<double>(rgb_w);      // fx for 256-pixel-wide image
-    fp.intrinsics.fy = static_cast<double>(rgb_w);
-    fp.intrinsics.cx = static_cast<double>(rgb_w) * 0.5;  // cx = 128
-    fp.intrinsics.cy = static_cast<double>(rgb_h) * 0.5;
+    // image.width/height intentionally NOT set — FoV path must not need them.
+    fp.intrinsics.fx = 999.0;  // deliberately wrong to confirm they're unused
+    fp.intrinsics.fy = 999.0;
+    fp.intrinsics.cx = 999.0;
+    fp.intrinsics.cy = 999.0;
 
     dedalus::CameraSensingVolume csv;
     csv.horizontal_fov_rad   = 1.5708;
@@ -197,20 +197,30 @@ void test_intrinsic_scaling_production_scenario() {
     const auto ev = detector.detect(esf);
     require(!ev.empty(), "production intrinsic scaling: evidence must be produced");
 
-    // All obstacles are straight ahead (x>0) — none should be severely left-shifted.
-    // Without scaling, best_u ∈ [0,39] vs cx=128 → xn always large-negative → x < 0.
+    // Flat wall 5 m ahead: columns span ±45° → half project left (ly<0), half right (ly>0).
     int leftward_count  = 0;
     int rightward_count = 0;
     for (const auto& e : ev) {
-        if (e.center_local.x < 0.0F) ++leftward_count;
-        else                         ++rightward_count;
+        if (e.center_local.y < 0.0) ++leftward_count;
+        else                        ++rightward_count;
     }
-    // A flat wall ahead: roughly half the columns should project left, half right.
-    // The critical check: NOT all evidence to the left (regression symptom).
     require(rightward_count > 0,
-        "production intrinsic scaling: some evidence must project right of center");
-    require(leftward_count < static_cast<int>(ev.size()),
-        "production intrinsic scaling: not all evidence may be left of center");
+        "FoV intrinsics: some evidence must project right of center");
+    require(leftward_count  > 0,
+        "FoV intrinsics: some evidence must project left of center");
+
+    // Vertical: top rows look above horizon (center_local.z < origin_z = 0),
+    // bottom rows look below (center_local.z > 0).  NOT all above.
+    int above_count = 0;
+    int below_count = 0;
+    for (const auto& e : ev) {
+        if (e.center_local.z < 0.0) ++above_count;
+        else                        ++below_count;
+    }
+    require(below_count > 0,
+        "FoV intrinsics: some evidence must project below camera (vertical coverage)");
+    require(above_count < static_cast<int>(ev.size()),
+        "FoV intrinsics: not all evidence may be above camera (regression: cy=180)");
     std::puts("PASS test_intrinsic_scaling_production_scenario");
 }
 
