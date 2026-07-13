@@ -198,7 +198,10 @@ int LocalFlightMapAccumulator::footprint_radius_cells(const float radius_m) cons
 }
 
 bool LocalFlightMapAccumulator::evidence_is_usable(const ObstacleEvidence& evidence) const noexcept {
-    if (evidence.source_kind != OccupancySourceKind::DepthProvider) {
+    const auto k = evidence.source_kind;
+    if (k != OccupancySourceKind::DepthProvider &&
+        k != OccupancySourceKind::AirSimGroundTruthVisualEmulation &&
+        k != OccupancySourceKind::VisualObstacleDetector) {
         return false;
     }
     if (evidence.range_m > config_.max_evidence_range_m && is_finite_positive(evidence.range_m)) {
