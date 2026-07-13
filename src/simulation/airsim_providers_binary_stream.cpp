@@ -142,10 +142,9 @@ FramePacket frame_from_image(const AirSimProviderConfig& config, ImageView image
     frame.timestamp = timestamp;
     frame.camera_id = CameraId{config.camera_name};
     frame.image = std::move(image);
-    frame.intrinsics.fx = 420.0;
-    frame.intrinsics.fy = 420.0;
-    frame.intrinsics.cx = static_cast<double>(frame.image.width) * 0.5;
-    frame.intrinsics.cy = static_cast<double>(frame.image.height) * 0.5;
+    frame.intrinsics = camera_intrinsics_from_fov(
+        frame.image.width, frame.image.height,
+        config.camera_hfov_rad, config.camera_vfov_rad);
 
     AppearanceCondition appearance;
     appearance.timestamp = frame.timestamp;

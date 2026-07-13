@@ -15,10 +15,12 @@ bridge_mode: stream_binary_ego
 bridge_command: python3 simulation/airsim/scripts/airsim-stream-frames-binary.py --include-ego --rate-hz 10 --mavlink-armed-endpoints udpin:127.0.0.1:14540
 
 # Front-center camera sensing geometry (body_T_camera = identity at neutral pitch).
+# FOV from simulation/airsim/settings.json: FOV_Degrees=84, 640×360.
+# VFOV = 2·atan(tan(42°)·(360/640)) ≈ 53.72°  fx = fy ≈ 355.4 px.
 mission_options.obstacle_sensing.cameras.0.name: front_center
 mission_options.obstacle_sensing.cameras.0.role: visual_obstacle_detector
-mission_options.obstacle_sensing.cameras.0.horizontal_fov_deg: 90
-mission_options.obstacle_sensing.cameras.0.vertical_fov_deg: 60
+mission_options.obstacle_sensing.cameras.0.horizontal_fov_deg: 84
+mission_options.obstacle_sensing.cameras.0.vertical_fov_deg: 53.72
 mission_options.obstacle_sensing.cameras.0.near_range_m: 0.5
 mission_options.obstacle_sensing.cameras.0.far_range_m: 80
 mission_options.obstacle_sensing.cameras.0.min_reliable_range_m: 1

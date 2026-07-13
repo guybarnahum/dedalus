@@ -182,16 +182,9 @@ FramePacket frame_from_image(const AirSimProviderConfig& config, ImageView image
     frame.timestamp = timestamp;
     frame.camera_id = CameraId{config.camera_name};
     frame.image = std::move(image);
-    // Compute focal lengths from configured FOV when available; fall back to legacy constant.
-    if (config.camera_hfov_rad > 0.0 && config.camera_vfov_rad > 0.0) {
-        frame.intrinsics.fx = (frame.image.width  * 0.5) / std::tan(config.camera_hfov_rad * 0.5);
-        frame.intrinsics.fy = (frame.image.height * 0.5) / std::tan(config.camera_vfov_rad * 0.5);
-    } else {
-        frame.intrinsics.fx = 420.0;
-        frame.intrinsics.fy = 420.0;
-    }
-    frame.intrinsics.cx = static_cast<double>(frame.image.width) * 0.5;
-    frame.intrinsics.cy = static_cast<double>(frame.image.height) * 0.5;
+    frame.intrinsics = camera_intrinsics_from_fov(
+        frame.image.width, frame.image.height,
+        config.camera_hfov_rad, config.camera_vfov_rad);
 
     AppearanceCondition appearance;
     appearance.timestamp = frame.timestamp;

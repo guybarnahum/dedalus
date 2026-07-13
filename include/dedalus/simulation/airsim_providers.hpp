@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cmath>
 #include <memory>
 #include <string>
 #include <vector>
@@ -10,6 +11,30 @@
 #include "dedalus/simulation/bridge_transport.hpp"
 
 namespace dedalus {
+
+// Compute pinhole camera intrinsics from image dimensions and FoV.
+// Both airsim_providers.cpp and airsim_providers_binary_stream.cpp call this;
+// having it here guarantees both TUs stay in sync with no duplication.
+//
+//   fx = (width/2)  / tan(hfov_rad/2)
+//   fy = (height/2) / tan(vfov_rad/2)
+//   cx = width/2,  cy = height/2
+//
+// hfov_rad and vfov_rad must be positive — derive them from the drone YAML
+// (horizontal_fov_deg / vertical_fov_deg) which flows through the obstacle
+// sensing camera config.  validate_obstacle_sensing_cameras() enforces > 0
+// before any provider is constructed.
+// For the front-center 640×360 camera at 84° HFOV: fx = fy ≈ 355.4.
+inline CameraIntrinsics camera_intrinsics_from_fov(
+    int width, int height, double hfov_rad, double vfov_rad)
+{
+    CameraIntrinsics k;
+    k.fx = (width  * 0.5) / std::tan(hfov_rad * 0.5);
+    k.fy = (height * 0.5) / std::tan(vfov_rad * 0.5);
+    k.cx = width  * 0.5;
+    k.cy = height * 0.5;
+    return k;
+}
 
 // Minimal object binding used by AirSimGroundTruthDetector.  Mirrors the
 // relevant fields of AirSimGhostObjectBinding without pulling in ghost_targets.hpp.
@@ -36,8 +61,9 @@ struct AirSimProviderConfig {
     std::vector<AirSimDetectorObjectBinding> detector_objects;
 
     // Camera FOV derived from obstacle_sensing_cameras config.
-    // When both are > 0, frame_from_image() computes correct focal lengths.
-    // Defaults to 0 (falls back to legacy fx=fy=420).
+    // Must be > 0 — validate_obstacle_sensing_cameras() enforces this before
+    // providers are constructed.  frame_from_image() calls
+    // camera_intrinsics_from_fov(); no hardcoded fallback.
     double camera_hfov_rad{0.0};
     double camera_vfov_rad{0.0};
 };
