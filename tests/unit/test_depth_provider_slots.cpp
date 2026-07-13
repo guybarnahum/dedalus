@@ -202,8 +202,8 @@ void test_intrinsic_scaling_production_scenario() {
     int leftward_count  = 0;
     int rightward_count = 0;
     for (const auto& e : ev) {
-        if (e.center_x < 0.0F) ++leftward_count;
-        else                   ++rightward_count;
+        if (e.center_local.x < 0.0F) ++leftward_count;
+        else                         ++rightward_count;
     }
     // A flat wall ahead: roughly half the columns should project left, half right.
     // The critical check: NOT all evidence to the left (regression symptom).
