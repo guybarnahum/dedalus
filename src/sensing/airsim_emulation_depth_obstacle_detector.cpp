@@ -18,10 +18,24 @@ ProjectionParams make_params(
     const auto& sv = ego_frame.sensing_volume;
     ProjectionParams p;
 
-    p.fx = static_cast<float>(ego_frame.frame.intrinsics.fx);
-    p.fy = static_cast<float>(ego_frame.frame.intrinsics.fy);
-    p.cx = static_cast<float>(ego_frame.frame.intrinsics.cx);
-    p.cy = static_cast<float>(ego_frame.frame.intrinsics.cy);
+    // Scale intrinsics from the RGB camera resolution to the depth frame
+    // resolution.  The ego_frame intrinsics (fx, cx, …) are calibrated for
+    // the full-resolution RGB image; the GT depth frame arrives at df.width ×
+    // df.height (the N×M grid sent by the bridge).  Without this scaling
+    // best_u ∈ [0, df.width) is compared against cx computed for the full-res
+    // image, producing large systematic offsets and compression of all evidence.
+    // This mirrors the identical scale applied in VisualDepthObstacleDetector.
+    const float rgb_w = static_cast<float>(ego_frame.frame.image.width);
+    const float rgb_h = static_cast<float>(ego_frame.frame.image.height);
+    const float s_x = (rgb_w > 0.0F && df.width  > 0)
+                      ? static_cast<float>(df.width)  / rgb_w : 1.0F;
+    const float s_y = (rgb_h > 0.0F && df.height > 0)
+                      ? static_cast<float>(df.height) / rgb_h : 1.0F;
+
+    p.fx = static_cast<float>(ego_frame.frame.intrinsics.fx) * s_x;
+    p.fy = static_cast<float>(ego_frame.frame.intrinsics.fy) * s_y;
+    p.cx = static_cast<float>(ego_frame.frame.intrinsics.cx) * s_x;
+    p.cy = static_cast<float>(ego_frame.frame.intrinsics.cy) * s_y;
     p.k1 = static_cast<float>(ego_frame.frame.intrinsics.distortion_k1);
     p.k2 = static_cast<float>(ego_frame.frame.intrinsics.distortion_k2);
 

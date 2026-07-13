@@ -145,6 +145,75 @@ void test_provider_names() {
     std::puts("PASS test_provider_names");
 }
 
+// Test 6: intrinsic scaling — production scenario.
+// The RGB image is 256×144 (intrinsics calibrated for that resolution).
+// The depth frame arrives at 40×22 (N×M grid, as sent by the bridge).
+// make_params() must scale fx/cx by (40/256, 22/144) so that
+// best_u ∈ [0,39] maps to the correct ray angles.
+// Without the scaling, every (best_u - cx) = (best_u - 128) is large-negative
+// → all evidence would be projected far to the left (the reported regression).
+void test_intrinsic_scaling_production_scenario() {
+    // Simulate the binary stream provider output: RGB at 256×144, depth at 40×22.
+    const int rgb_w = 256, rgb_h = 144;
+    const int depth_w = 40, depth_h = 22;
+
+    dedalus::AirSimDepthFrame df;
+    df.width  = depth_w;
+    df.height = depth_h;
+    df.depth_m.assign(static_cast<std::size_t>(depth_w * depth_h), 5.0F);
+
+    dedalus::FramePacket fp;
+    fp.depth_frame = df;
+    // Intrinsics calibrated for the full-res RGB camera (as set by binary stream provider).
+    fp.image.width  = rgb_w;
+    fp.image.height = rgb_h;
+    fp.intrinsics.fx = static_cast<double>(rgb_w);      // fx for 256-pixel-wide image
+    fp.intrinsics.fy = static_cast<double>(rgb_w);
+    fp.intrinsics.cx = static_cast<double>(rgb_w) * 0.5;  // cx = 128
+    fp.intrinsics.cy = static_cast<double>(rgb_h) * 0.5;
+
+    dedalus::CameraSensingVolume csv;
+    csv.horizontal_fov_rad   = 1.5708;
+    csv.vertical_fov_rad     = 1.0472;
+    csv.near_range_m         = 0.5;
+    csv.far_range_m          = 80.0;
+    csv.min_reliable_range_m = 1.0;
+    csv.max_reliable_range_m = 60.0;
+    csv.forward_axis_local   = dedalus::Vec3{1.0, 0.0, 0.0};
+    csv.right_axis_local     = dedalus::Vec3{0.0, 1.0, 0.0};
+    csv.up_axis_local        = dedalus::Vec3{0.0, 0.0,-1.0};
+
+    dedalus::EgoSensingFrame esf;
+    esf.frame          = fp;
+    esf.sensing_volume = csv;
+
+    dedalus::AirSimEmulationDepthObstacleDetectorConfig cfg;
+    cfg.depth_grid_cols = static_cast<std::size_t>(depth_w);
+    cfg.depth_grid_rows = static_cast<std::size_t>(depth_h);
+    cfg.detect_surface_patches = false;
+    cfg.detect_thin_structures = false;
+    dedalus::AirSimEmulationDepthObstacleDetector detector{cfg};
+
+    const auto ev = detector.detect(esf);
+    require(!ev.empty(), "production intrinsic scaling: evidence must be produced");
+
+    // All obstacles are straight ahead (x>0) — none should be severely left-shifted.
+    // Without scaling, best_u ∈ [0,39] vs cx=128 → xn always large-negative → x < 0.
+    int leftward_count  = 0;
+    int rightward_count = 0;
+    for (const auto& e : ev) {
+        if (e.center_x < 0.0F) ++leftward_count;
+        else                   ++rightward_count;
+    }
+    // A flat wall ahead: roughly half the columns should project left, half right.
+    // The critical check: NOT all evidence to the left (regression symptom).
+    require(rightward_count > 0,
+        "production intrinsic scaling: some evidence must project right of center");
+    require(leftward_count < static_cast<int>(ev.size()),
+        "production intrinsic scaling: not all evidence may be left of center");
+    std::puts("PASS test_intrinsic_scaling_production_scenario");
+}
+
 }  // namespace
 
 int main() {
@@ -153,6 +222,7 @@ int main() {
     test_emulation_source_kind();
     test_emulation_evaluates_surfaces_and_thin();
     test_provider_names();
+    test_intrinsic_scaling_production_scenario();
     std::puts("All depth_provider_slots tests passed.");
     return 0;
 }
