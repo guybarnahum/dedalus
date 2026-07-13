@@ -283,7 +283,7 @@ const MAX_TRAV_DISPLAY       = 8000;   // cap on aggregated occupied voxels befo
 const TRAV_LOD_LEVELS        = [32, 16, 8, 4, 2, 1, 0.5]; // metres, index 2 = default 8m
 const MAX_GHOST_AGE_S        = 15;
 const MAX_TRAJ_POINTS        = 6000;
-const TRAJ_MAX_GAP_M         = 5.0;   // skip segments with spatial jumps > 5 m (latency / discontinuity)
+const TRAJ_MAX_GAP_M         = 1.0;   // skip segments with spatial jumps > 1 m (latency / discontinuity)
 const TRAJ_MAX_GAP_MS        = 3000;  // skip if time between consecutive trajectory points > 3 s
 const MAX_MISSION_LOG        = 200;
 

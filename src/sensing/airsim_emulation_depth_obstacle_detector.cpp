@@ -153,10 +153,19 @@ std::vector<ObstacleEvidence> AirSimEmulationDepthObstacleDetector::detect(
         ego_frame.ego.map_frame_id,
         ego_frame.frame.timestamp);
 
-    // Override source_kind: inflate() stamps VisualObstacleDetector; this path
-    // is AirSim GT geometry flowing through the VD kernels for calibration.
+    // Compute body-frame bearing and elevation from projected local positions.
+    // inflate() leaves bearing_rad/elevation_rad at 0; fill them here so that
+    // collect_l0_sensor_observations() can populate the sensor cone scope inset.
     for (auto& ev : evidence) {
-        ev.source_kind = OccupancySourceKind::AirSimGroundTruthVisualEmulation;
+        const double dx    = ev.center_local.x - sv.origin_local.x;
+        const double dy    = ev.center_local.y - sv.origin_local.y;
+        const double dz    = ev.center_local.z - sv.origin_local.z;
+        const double fwd   = dx*sv.forward_axis_local.x + dy*sv.forward_axis_local.y + dz*sv.forward_axis_local.z;
+        const double right = dx*sv.right_axis_local.x   + dy*sv.right_axis_local.y   + dz*sv.right_axis_local.z;
+        const double up    = dx*sv.up_axis_local.x      + dy*sv.up_axis_local.y      + dz*sv.up_axis_local.z;
+        ev.bearing_rad   = static_cast<float>(std::atan2(right, fwd));
+        ev.elevation_rad = static_cast<float>(std::atan2(up, std::hypot(fwd, right)));
+        ev.source_kind   = OccupancySourceKind::AirSimGroundTruthVisualEmulation;
     }
 
     return evidence;
