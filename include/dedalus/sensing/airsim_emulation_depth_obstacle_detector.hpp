@@ -39,16 +39,11 @@ struct AirSimEmulationDepthObstacleDetectorConfig {
     float scale{1.0F};
 };
 
-// AirSim GT depth path threaded through the VD projection/surface/thin kernels.
+// AirSim GT depth path threaded through the shared VD processing pipeline.
 //
-// Purpose: validate VD kernel math against known GT geometry without ONNX.
-//
-// Pipeline per frame:
-//   AirSimDepthFrame::depth_m → invert to inverse_depth (scale/depth_m)
-//     → project_depth_to_device_evidence()
-//     → [optional] fit_surface_patches_device()    (landable-surface evaluation)
-//     → [optional] detect_thin_structures_device() (thin-obstacle evaluation)
-//     → inflate() → patch source_kind = AirSimGroundTruthVisualEmulation
+// Provider responsibility: sensor name filter + metric→inverse_depth conversion
+// + FoV-based intrinsics computation. Everything downstream (kernels, inflate,
+// bearing/elevation, source_kind) is handled by run_depth_pipeline().
 //
 // Loaded into slot A or B via config — never hard-disabled.
 class AirSimEmulationDepthObstacleDetector final : public ObstacleEvidenceProvider {
@@ -65,22 +60,23 @@ public:
 
     [[nodiscard]] std::vector<ObstacleEvidence> detect(const EgoSensingFrame& frame) override;
 
-    // Returns the AirSimDepthFrame from the most recent detect() call.
-    // nullptr if detect() has never been called or no depth frame was present.
-    // Pointer is valid until the next detect() call.
-    [[nodiscard]] const AirSimDepthFrame*  last_depth_frame() const {
-        return last_frame_valid_ ? &last_frame_ : nullptr;
+    // ── Introspection (base class overrides) ───────────────────────────────
+    [[nodiscard]] const float*     last_inverse_depth() const override {
+        return last_has_result_ ? last_input_.inverse_depth.data() : nullptr;
     }
-
-    // Returns the ProjectionParams built during the most recent detect() call.
-    // Valid when last_depth_frame() is non-null.
-    [[nodiscard]] const ProjectionParams& last_params() const { return last_params_; }
+    [[nodiscard]] int              last_depth_width()   const override {
+        return last_has_result_ ? last_input_.width : 0;
+    }
+    [[nodiscard]] int              last_depth_height()  const override {
+        return last_has_result_ ? last_input_.height : 0;
+    }
+    [[nodiscard]] ProjectionParams last_params()        const override { return last_params_; }
 
 private:
     AirSimEmulationDepthObstacleDetectorConfig config_;
-    AirSimDepthFrame last_frame_;
-    bool             last_frame_valid_{false};
-    ProjectionParams last_params_;
+    DepthPipelineInput last_input_;
+    ProjectionParams   last_params_;
+    bool               last_has_result_{false};
 };
 
 }  // namespace dedalus

@@ -368,48 +368,27 @@ bool CoreStackRunner::run_once() {
             slot_a_evidence.end());
 
         // Debug MP4: primary panel on top, optional eval panel on bottom.
-        // Works for any combination of visual_onnx / airsim_gt_vd in either slot.
+        // Works for any provider type via the uniform base-class introspection API.
         if (depth_annotator_) {
+            auto fill_panel = [](DepthDebugPanel& panel,
+                                 ObstacleEvidenceProvider* slot) -> bool {
+                if (!slot) return false;
+                panel.inverse_depth  = slot->last_inverse_depth();
+                panel.width          = slot->last_depth_width();
+                panel.height         = slot->last_depth_height();
+                panel.params         = slot->last_params();
+                panel.source_name    = slot->provider_name();
+                panel.pitch_down_deg = slot->last_pitch_deg();
+                return panel.inverse_depth != nullptr;
+            };
+
             DepthDebugPanel primary;
-            bool primary_ok = false;
-
-            if (depth_slot_a_visual_ && depth_slot_a_visual_->has_last_result()) {
-                const auto& inf = depth_slot_a_visual_->last_inferred();
-                primary.inverse_depth = inf.inverse_depth.data();
-                primary.width         = inf.width;
-                primary.height        = inf.height;
-                primary.params        = depth_slot_a_visual_->last_params();
-                primary.source_name   = depth_slot_a_ ? depth_slot_a_->provider_name() : "visual_onnx";
-                primary.pitch_down_deg = depth_slot_a_visual_->last_pitch_deg();
-                primary_ok = true;
-            } else if (depth_slot_a_emulation_) {
-                const AirSimDepthFrame* af = depth_slot_a_emulation_->last_depth_frame();
-                if (af && af->width > 0 && !af->depth_m.empty()) {
-                    primary.depth_m_data  = af->depth_m.data();
-                    primary.width         = af->width;
-                    primary.height        = af->height;
-                    primary.params        = depth_slot_a_emulation_->last_params();
-                    primary.source_name   = depth_slot_a_ ? depth_slot_a_->provider_name() : "airsim_gt_vd";
-                    primary_ok = true;
-                }
-            }
-
-            if (primary_ok) {
+            if (fill_panel(primary, depth_slot_a_.get())) {
                 DepthDebugPanel eval_panel;
                 const DepthDebugPanel* eval_ptr = nullptr;
-
-                if (depth_slot_b_emulation_) {
-                    const AirSimDepthFrame* bf = depth_slot_b_emulation_->last_depth_frame();
-                    if (bf && bf->width > 0 && !bf->depth_m.empty()) {
-                        eval_panel.depth_m_data  = bf->depth_m.data();
-                        eval_panel.width         = bf->width;
-                        eval_panel.height        = bf->height;
-                        eval_panel.params        = depth_slot_b_emulation_->last_params();
-                        eval_panel.source_name   = depth_slot_b_ ? depth_slot_b_->provider_name() : "airsim_gt_vd";
-                        eval_ptr = &eval_panel;
-                    }
+                if (fill_panel(eval_panel, depth_slot_b_.get())) {
+                    eval_ptr = &eval_panel;
                 }
-
                 depth_annotator_->annotate(primary, eval_ptr);
             }
         }
@@ -815,6 +794,22 @@ bool CoreStackRunner::run_once() {
             snapshot_for_annotation.local_flight_map,
             snapshot_for_annotation.obstacle_evidence,
             vel_body);
+
+        // Stamp authoritative sensor FOV + grid dims so the viewer cone scope panel
+        // can size itself correctly without estimating from observation spread.
+        auto& lfm = snapshot_for_annotation.local_flight_map;
+        if (!coverage.camera_volumes.empty()) {
+            const auto& csv = coverage.camera_volumes.front();
+            lfm.sensor_az_half_rad = static_cast<float>(csv.horizontal_fov_rad) * 0.5F;
+            lfm.sensor_el_half_rad = static_cast<float>(csv.vertical_fov_rad)   * 0.5F;
+        }
+        if (depth_slot_a_) {
+            const ProjectionParams p = depth_slot_a_->last_params();
+            if (p.grid_cols > 0) {
+                lfm.sensor_grid_cols = p.grid_cols;
+                lfm.sensor_grid_rows = p.grid_rows;
+            }
+        }
     }
 
     start = SteadyClock::now();

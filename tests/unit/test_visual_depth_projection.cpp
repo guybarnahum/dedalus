@@ -299,6 +299,7 @@ static bool test_inflate_direct() {
         &dev, 1U,
         "test_sensor",
         "test_provider",
+        dedalus::OccupancySourceKind::VisualObstacleDetector,
         dedalus::MapFrameId{"map_inflate"},
         dedalus::TimePoint{42});
 
@@ -472,7 +473,9 @@ static bool test_thin_structure_pole() {
 
     // Verify inflate sets endpoints correctly for LineSegment shape
     const auto inflated = dedalus::inflate(
-        &t0, 1U, "test", "test", dedalus::MapFrameId{"m"}, dedalus::TimePoint{0});
+        &t0, 1U, "test", "test",
+        dedalus::OccupancySourceKind::VisualObstacleDetector,
+        dedalus::MapFrameId{"m"}, dedalus::TimePoint{0});
     if (inflated.size() != 1U) {
         std::cerr << "FAIL test_thin_structure_pole: inflate returned wrong count\n";
         return false;

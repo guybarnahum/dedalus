@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cstddef>
 #include <cstdint>
 #include <string>
 #include <vector>
@@ -8,6 +9,51 @@
 #include "dedalus/occupancy/occupancy_types.hpp"
 
 namespace dedalus {
+
+// Forward declaration — full definition in sensing_coverage.hpp.
+// Required only by run_depth_pipeline(); providers already include that header.
+struct EgoSensingFrame;
+
+// ---------------------------------------------------------------------------
+// DepthPipelineInput — per-frame input contract from any depth provider.
+//
+// The provider computes intrinsics (fx/fy/cx/cy) and converts its native
+// depth to the disparity convention (depth_m = scale / inverse_depth[i]).
+// run_depth_pipeline() uses these values as-is — no provider-type branching.
+// ---------------------------------------------------------------------------
+struct DepthPipelineInput {
+    std::vector<float>   inverse_depth;    // H×W, disparity convention
+    int                  width{0};
+    int                  height{0};
+    float                scale{1.0F};      // depth_m = scale / inverse_depth[i]
+
+    // Intrinsics fully resolved by the provider — always valid on entry.
+    // AirSim: cx=(W-1)/2, fx=cx/tan(hfov/2).
+    // ONNX  : calibrated fx/fy/cx/cy scaled by ONNX resize ratio.
+    float fx{0.F}, fy{0.F}, cx{0.F}, cy{0.F};
+    float k1{0.F}, k2{0.F};
+
+    // Evidence provenance — stamped into ObstacleEvidence by run_depth_pipeline().
+    OccupancySourceKind  source_kind{OccupancySourceKind::VisualObstacleDetector};
+    std::string          sensor_name;      // physical sensor name
+    std::string          source_provider;  // provider_name() string
+};
+
+// ---------------------------------------------------------------------------
+// DepthPipelineConfig — shared processing parameters (grid, depth range, etc.)
+// Matches the fields in both AirSimEmulationDepthObstacleDetectorConfig and
+// VisualDepthObstacleDetectorConfig (they are field-identical).
+// ---------------------------------------------------------------------------
+struct DepthPipelineConfig {
+    int         grid_cols{40};
+    int         grid_rows{22};
+    float       min_depth_m{0.2F};
+    float       max_depth_m{80.0F};
+    float       voxel_size_m{0.5F};
+    std::size_t max_evidence{512U};
+    bool        detect_surface_patches{true};
+    bool        detect_thin_structures{true};
+};
 
 // All-POD input to the projection kernel.
 //
@@ -148,7 +194,33 @@ void detect_thin_structures_device(
     std::uint32_t                 count,
     const std::string&            sensor_name,
     const std::string&            source_provider,
+    OccupancySourceKind           source_kind,
     const MapFrameId&             map_frame_id,
     TimePoint                     timestamp);
+
+// ---------------------------------------------------------------------------
+// Shared pipeline helpers — called by providers after building DepthPipelineInput.
+// ---------------------------------------------------------------------------
+
+// Convert metric depth (metres) to disparity-convention inverse_depth.
+// depth_m = scale / inverse_depth  ↔  inverse_depth = scale / depth_m.
+// Returns empty if depth_m is empty or n == 0.
+[[nodiscard]] std::vector<float> metric_to_inverse_depth(
+    const float* depth_m, std::size_t n, float scale = 1.0F);
+
+// Run the full depth processing pipeline from a provider-supplied DepthPipelineInput.
+//
+// Builds ProjectionParams from input intrinsics + EgoSensingFrame sensing volume axes,
+// runs block-min projection + optional surface-patch + thin-structure kernels
+// (with CUDA dispatch when DEDALUS_CUDA_ENABLED), calls inflate() with the
+// source_kind from input, then computes bearing/elevation for each evidence item.
+//
+// If params_out is non-null, the computed ProjectionParams are written there so
+// the provider can cache them for the debug annotator.
+[[nodiscard]] std::vector<ObstacleEvidence> run_depth_pipeline(
+    const DepthPipelineInput&  input,
+    const EgoSensingFrame&     ego_frame,
+    const DepthPipelineConfig& cfg,
+    ProjectionParams*          params_out = nullptr);
 
 }  // namespace dedalus

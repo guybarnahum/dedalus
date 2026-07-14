@@ -10,21 +10,8 @@
 #include "dedalus/sensing/depth_projection_kernel.hpp"
 #include "dedalus/sensing/visual_depth_frame.hpp"
 
-#ifdef DEDALUS_CUDA_ENABLED
-#include "dedalus/sensing/cuda_depth_kernels.hpp"
-#endif
-
 namespace dedalus {
 namespace {
-
-#ifdef DEDALUS_CUDA_ENABLED
-// File-static singleton dispatcher — one CudaDepthDispatcher per process.
-// Safe: VisualDepthObstacleDetector is single-threaded (see class comment).
-CudaDepthDispatcher& cuda_dispatch() {
-    static CudaDepthDispatcher s;
-    return s;
-}
-#endif
 
 // Extract VisualDepthFrame from EgoSensingFrame.
 // Copies image bytes — avoids lifetime coupling to the source frame.
@@ -50,159 +37,6 @@ VisualDepthFrame make_visual_depth_frame(const EgoSensingFrame& ego_frame) {
     return vdf;
 }
 
-// Build ProjectionParams from EgoSensingFrame fields + detector config.
-ProjectionParams make_projection_params(
-    const EgoSensingFrame&                   ego_frame,
-    const DepthInferenceResult&              inferred,
-    const MetricScaleEstimate&               scale,
-    const VisualDepthObstacleDetectorConfig& cfg) {
-
-    const auto& sv = ego_frame.sensing_volume;
-    ProjectionParams p;
-
-    // Intrinsics from the source frame, scaled to the ONNX output resolution.
-    //
-    // The ONNX model resizes the input (e.g. 640×360) to its native square
-    // input (518×518) before inference, producing a 518×518 depth map.  The
-    // resize is non-uniform (different scale factors in x and y) because the
-    // camera aspect ratio ≠ 1.  Back-projecting with the original intrinsics
-    // on the resized depth map gives wrong 3D positions: the principal point
-    // is off-centre and the focal lengths are wrong for the output resolution.
-    //
-    // Scaling fx/fy/cx/cy by the per-axis resize ratio corrects this: a squash
-    // of the horizontal axis by s_x means apparent horizontal angles shrink by
-    // s_x, so fx must shrink by the same factor for tan(θ) = (u-cx)/fx to
-    // recover the original bearing.
-    const float s_x = (ego_frame.frame.image.width  > 0 && inferred.width  > 0)
-        ? static_cast<float>(inferred.width)  / static_cast<float>(ego_frame.frame.image.width)
-        : 1.0F;
-    const float s_y = (ego_frame.frame.image.height > 0 && inferred.height > 0)
-        ? static_cast<float>(inferred.height) / static_cast<float>(ego_frame.frame.image.height)
-        : 1.0F;
-
-    p.fx = static_cast<float>(ego_frame.frame.intrinsics.fx) * s_x;
-    p.fy = static_cast<float>(ego_frame.frame.intrinsics.fy) * s_y;
-    p.cx = static_cast<float>(ego_frame.frame.intrinsics.cx) * s_x;
-    p.cy = static_cast<float>(ego_frame.frame.intrinsics.cy) * s_y;
-    // Distortion coefficients were measured in the original pixel space; they
-    // apply to normalised coordinates (u-cx)/fx and are dimensionless, so they
-    // do not need rescaling.
-    p.k1 = static_cast<float>(ego_frame.frame.intrinsics.distortion_k1);
-    p.k2 = static_cast<float>(ego_frame.frame.intrinsics.distortion_k2);
-
-    // Depth map dimensions (may differ from image if model rescales)
-    p.width     = inferred.width;
-    p.height    = inferred.height;
-    p.grid_cols = static_cast<int>(cfg.depth_grid_cols);
-    p.grid_rows = static_cast<int>(cfg.depth_grid_rows);
-
-    p.min_depth_m  = cfg.min_depth_m;
-    p.max_depth_m  = cfg.max_depth_m;
-    p.scale        = scale.scale;
-    p.voxel_size_m = cfg.voxel_size_m;
-    p.max_evidence = static_cast<std::uint32_t>(cfg.max_evidence);
-
-    // Gimbal-corrected sensing volume axes (encoder reading at frame timestamp)
-    p.origin_x  = static_cast<float>(sv.origin_local.x);
-    p.origin_y  = static_cast<float>(sv.origin_local.y);
-    p.origin_z  = static_cast<float>(sv.origin_local.z);
-    p.forward_x = static_cast<float>(sv.forward_axis_local.x);
-    p.forward_y = static_cast<float>(sv.forward_axis_local.y);
-    p.forward_z = static_cast<float>(sv.forward_axis_local.z);
-    p.right_x   = static_cast<float>(sv.right_axis_local.x);
-    p.right_y   = static_cast<float>(sv.right_axis_local.y);
-    p.right_z   = static_cast<float>(sv.right_axis_local.z);
-    p.up_x      = static_cast<float>(sv.up_axis_local.x);
-    p.up_y      = static_cast<float>(sv.up_axis_local.y);
-    p.up_z      = static_cast<float>(sv.up_axis_local.z);
-
-    return p;
-}
-
-// Project a validated DepthInferenceResult to ObstacleEvidence.
-// Shared between the class method (which also taps the result for debug) and
-// the free function (test path, no debug pipe).
-std::vector<ObstacleEvidence> project_from_inferred(
-    const EgoSensingFrame&                   ego_frame,
-    const DepthInferenceResult&              inferred,
-    const MetricScaleEstimate&               scale,
-    const VisualDepthObstacleDetectorConfig& cfg) {
-
-    const ProjectionParams params = make_projection_params(ego_frame, inferred, scale, cfg);
-
-    // Allocate evidence buffer (shared across projection + surface + thin)
-    std::vector<DeviceObstacleEvidence> buf(cfg.max_evidence);
-    std::uint32_t count = 0U;
-
-#ifdef DEDALUS_CUDA_ENABLED
-    const bool cdebug = (std::getenv("DEDALUS_MISSION_DEBUG") != nullptr);
-    if (cdebug) { std::fprintf(stderr, "[CudaDepth] project...\n"); std::fflush(stderr); }
-    cuda_dispatch().project(inferred.inverse_depth.data(), params, buf.data(), count);
-    if (cdebug) { std::fprintf(stderr, "[CudaDepth] project done (%u ev)\n", count); std::fflush(stderr); }
-#else
-    project_depth_to_device_evidence(
-        inferred.inverse_depth.data(), params, buf.data(), count);
-#endif
-
-    if (cfg.detect_surface_patches && count > 0U) {
-        std::vector<DeviceObstacleEvidence> patches(64U);
-        std::uint32_t patch_count = 0U;
-#ifdef DEDALUS_CUDA_ENABLED
-        if (cdebug) { std::fprintf(stderr, "[CudaDepth] fit_patches...\n"); std::fflush(stderr); }
-        cuda_dispatch().fit_patches(buf.data(), count, params, patches.data(), patch_count);
-        if (cdebug) { std::fprintf(stderr, "[CudaDepth] fit_patches done (%u patches)\n", patch_count); std::fflush(stderr); }
-#else
-        fit_surface_patches_device(
-            buf.data(), count, params, patches.data(), patch_count);
-#endif
-        for (std::uint32_t i = 0U; i < patch_count && count < cfg.max_evidence; ++i) {
-            buf[count++] = patches[i];
-        }
-    }
-
-    if (cfg.detect_thin_structures) {
-        std::vector<DeviceObstacleEvidence> thin(64U);
-        std::uint32_t thin_count = 0U;
-#ifdef DEDALUS_CUDA_ENABLED
-        if (cdebug) { std::fprintf(stderr, "[CudaDepth] detect_thin...\n"); std::fflush(stderr); }
-        cuda_dispatch().detect_thin(
-            inferred.inverse_depth.data(), params, thin.data(), thin_count);
-        if (cdebug) { std::fprintf(stderr, "[CudaDepth] detect_thin done (%u thin)\n", thin_count); std::fflush(stderr); }
-#else
-        detect_thin_structures_device(
-            inferred.inverse_depth.data(), params, thin.data(), thin_count);
-#endif
-        for (std::uint32_t i = 0U; i < thin_count && count < cfg.max_evidence; ++i) {
-            buf[count++] = thin[i];
-        }
-    }
-
-    auto result = inflate(
-        buf.data(),
-        count,
-        ego_frame.sensing_volume.camera_name,
-        "visual_depth_obstacle_detector",
-        ego_frame.ego.map_frame_id,
-        ego_frame.frame.timestamp);
-
-    // Compute body-frame bearing and elevation from projected local positions.
-    // Uses the sensing volume axes (forward/right/up in local frame) — the same
-    // geometry the AirSim GT path uses — so L0 sensor observations are populated.
-    const auto& sv = ego_frame.sensing_volume;
-    for (auto& ev : result) {
-        const double dx = ev.center_local.x - sv.origin_local.x;
-        const double dy = ev.center_local.y - sv.origin_local.y;
-        const double dz = ev.center_local.z - sv.origin_local.z;
-        const double fwd   = dx*sv.forward_axis_local.x + dy*sv.forward_axis_local.y + dz*sv.forward_axis_local.z;
-        const double right = dx*sv.right_axis_local.x   + dy*sv.right_axis_local.y   + dz*sv.right_axis_local.z;
-        const double up    = dx*sv.up_axis_local.x      + dy*sv.up_axis_local.y      + dz*sv.up_axis_local.z;
-        ev.bearing_rad   = static_cast<float>(std::atan2(right, fwd));
-        ev.elevation_rad = static_cast<float>(std::atan2(up, std::hypot(fwd, right)));
-    }
-
-    return result;
-}
-
 }  // namespace
 
 // ---------------------------------------------------------------------------
@@ -225,6 +59,7 @@ std::string VisualDepthObstacleDetector::provider_name() const {
 
 std::vector<ObstacleEvidence> VisualDepthObstacleDetector::detect(
     const EgoSensingFrame& ego_frame) {
+
     const VisualDepthFrame vdf = make_visual_depth_frame(ego_frame);
     const DepthInferenceResult inferred = engine_->infer(vdf);
     if (!inferred.valid || inferred.inverse_depth.empty()) {
@@ -237,11 +72,45 @@ std::vector<ObstacleEvidence> VisualDepthObstacleDetector::detect(
     const float pitch_down_deg = std::asin(std::clamp(fwd_z, -1.0f, 1.0f))
                                  * (180.0f / 3.14159265f);
 
-    // Cache for DepthDebugAnnotator (read via last_inferred / last_params / last_pitch_deg).
-    last_inferred_    = inferred;
-    last_params_      = make_projection_params(ego_frame, inferred, scale_, config_);
+    // ── Build DepthPipelineInput ──────────────────────────────────────────
+    DepthPipelineInput input;
+    input.inverse_depth = inferred.inverse_depth;  // already disparity convention
+    input.width  = inferred.width;
+    input.height = inferred.height;
+    input.scale  = scale_.scale;
+
+    // Calibrated intrinsics scaled to the ONNX output resolution.
+    //
+    // The ONNX model resizes the input (e.g. 640×360) to its native square
+    // input (518×518), producing a non-uniform horizontal/vertical squeeze.
+    // Scaling fx/fy/cx/cy by the per-axis resize ratio corrects the principal
+    // point and focal lengths so that tan(θ) = (u-cx)/fx recovers the original
+    // bearing in the ONNX output coordinate frame.
+    //
+    // Distortion coefficients are measured in normalized coordinates and are
+    // dimensionless — they do not need rescaling.
+    const float s_x = (ego_frame.frame.image.width  > 0 && inferred.width  > 0)
+        ? static_cast<float>(inferred.width)  / static_cast<float>(ego_frame.frame.image.width)
+        : 1.0F;
+    const float s_y = (ego_frame.frame.image.height > 0 && inferred.height > 0)
+        ? static_cast<float>(inferred.height) / static_cast<float>(ego_frame.frame.image.height)
+        : 1.0F;
+    input.fx = static_cast<float>(ego_frame.frame.intrinsics.fx) * s_x;
+    input.fy = static_cast<float>(ego_frame.frame.intrinsics.fy) * s_y;
+    input.cx = static_cast<float>(ego_frame.frame.intrinsics.cx) * s_x;
+    input.cy = static_cast<float>(ego_frame.frame.intrinsics.cy) * s_y;
+    input.k1 = static_cast<float>(ego_frame.frame.intrinsics.distortion_k1);
+    input.k2 = static_cast<float>(ego_frame.frame.intrinsics.distortion_k2);
+
+    input.source_kind     = OccupancySourceKind::VisualObstacleDetector;
+    input.sensor_name     = ego_frame.sensing_volume.camera_name;
+    input.source_provider = provider_name();
+
+    last_input_       = input;
     last_pitch_deg_   = pitch_down_deg;
     last_has_result_  = true;
+
+    // ── Provider-side diagnostics ─────────────────────────────────────────
 
     // Depth histogram — every 30 frames.
     static int diag_frame_count = 0;
@@ -371,11 +240,23 @@ std::vector<ObstacleEvidence> VisualDepthObstacleDetector::detect(
         }
     }
 
-    return project_from_inferred(ego_frame, last_inferred_, scale_, config_);
+    // ── Delegate all downstream processing to the shared pipeline ─────────
+    const DepthPipelineConfig cfg{
+        static_cast<int>(config_.depth_grid_cols),
+        static_cast<int>(config_.depth_grid_rows),
+        config_.min_depth_m,
+        config_.max_depth_m,
+        config_.voxel_size_m,
+        config_.max_evidence,
+        config_.detect_surface_patches,
+        config_.detect_thin_structures,
+    };
+
+    return run_depth_pipeline(input, ego_frame, cfg, &last_params_);
 }
 
 // ---------------------------------------------------------------------------
-// Free-function implementation (shared by class and test code)
+// Free-function variant (test path — no class instance required).
 // ---------------------------------------------------------------------------
 
 std::vector<ObstacleEvidence> detect_visual_depth_obstacles(
@@ -384,10 +265,45 @@ std::vector<ObstacleEvidence> detect_visual_depth_obstacles(
     const MetricScaleEstimate&               scale,
     const VisualDepthObstacleDetectorConfig& cfg) {
 
-    const VisualDepthFrame vdf = make_visual_depth_frame(ego_frame);
+    VisualDepthFrame vdf = make_visual_depth_frame(ego_frame);
     const DepthInferenceResult inferred = engine.infer(vdf);
     if (!inferred.valid || inferred.inverse_depth.empty()) return {};
-    return project_from_inferred(ego_frame, inferred, scale, cfg);
+
+    DepthPipelineInput input;
+    input.inverse_depth = inferred.inverse_depth;
+    input.width  = inferred.width;
+    input.height = inferred.height;
+    input.scale  = scale.scale;
+
+    const float s_x = (ego_frame.frame.image.width  > 0 && inferred.width  > 0)
+        ? static_cast<float>(inferred.width)  / static_cast<float>(ego_frame.frame.image.width)
+        : 1.0F;
+    const float s_y = (ego_frame.frame.image.height > 0 && inferred.height > 0)
+        ? static_cast<float>(inferred.height) / static_cast<float>(ego_frame.frame.image.height)
+        : 1.0F;
+    input.fx = static_cast<float>(ego_frame.frame.intrinsics.fx) * s_x;
+    input.fy = static_cast<float>(ego_frame.frame.intrinsics.fy) * s_y;
+    input.cx = static_cast<float>(ego_frame.frame.intrinsics.cx) * s_x;
+    input.cy = static_cast<float>(ego_frame.frame.intrinsics.cy) * s_y;
+    input.k1 = static_cast<float>(ego_frame.frame.intrinsics.distortion_k1);
+    input.k2 = static_cast<float>(ego_frame.frame.intrinsics.distortion_k2);
+
+    input.source_kind     = OccupancySourceKind::VisualObstacleDetector;
+    input.sensor_name     = ego_frame.sensing_volume.camera_name;
+    input.source_provider = "visual_depth_obstacle_detector";
+
+    const DepthPipelineConfig pcfg{
+        static_cast<int>(cfg.depth_grid_cols),
+        static_cast<int>(cfg.depth_grid_rows),
+        cfg.min_depth_m,
+        cfg.max_depth_m,
+        cfg.voxel_size_m,
+        cfg.max_evidence,
+        cfg.detect_surface_patches,
+        cfg.detect_thin_structures,
+    };
+
+    return run_depth_pipeline(input, ego_frame, pcfg);
 }
 
 }  // namespace dedalus

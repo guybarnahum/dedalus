@@ -3,12 +3,31 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
+#include <cstdio>
+#include <cstdlib>
 #include <queue>
 #include <random>
 #include <vector>
 
+#include "dedalus/sensing/sensing_coverage.hpp"
+
+#ifdef DEDALUS_CUDA_ENABLED
+#include "dedalus/sensing/cuda_depth_kernels.hpp"
+#endif
+
 namespace dedalus {
 namespace {
+
+// ---------------------------------------------------------------------------
+// CUDA dispatcher singleton — one per process (used by run_depth_pipeline).
+// Active only when DEDALUS_CUDA_ENABLED is defined.
+// ---------------------------------------------------------------------------
+#ifdef DEDALUS_CUDA_ENABLED
+CudaDepthDispatcher& cuda_dispatch() {
+    static CudaDepthDispatcher s;
+    return s;
+}
+#endif
 
 // ---------------------------------------------------------------------------
 // Shared helpers
@@ -537,6 +556,7 @@ std::vector<ObstacleEvidence> inflate(
     std::uint32_t                 count,
     const std::string&            sensor_name,
     const std::string&            source_provider,
+    OccupancySourceKind           source_kind,
     const MapFrameId&             map_frame_id,
     TimePoint                     timestamp) {
 
@@ -550,7 +570,7 @@ std::vector<ObstacleEvidence> inflate(
         ev.timestamp       = timestamp;
         ev.sensor_name     = sensor_name;
         ev.source_provider = source_provider;
-        ev.source_kind     = OccupancySourceKind::VisualObstacleDetector;
+        ev.source_kind     = source_kind;
         ev.map_frame_id    = map_frame_id;
 
         ev.state = static_cast<ObstacleEvidenceState>(src.state);
@@ -603,6 +623,159 @@ std::vector<ObstacleEvidence> inflate(
         ev.inside_sensing_volume  = true;
 
         result.push_back(std::move(ev));
+    }
+
+    return result;
+}
+
+// ---------------------------------------------------------------------------
+// metric_to_inverse_depth — shared helper for metric-depth providers.
+// ---------------------------------------------------------------------------
+
+std::vector<float> metric_to_inverse_depth(
+    const float* depth_m, std::size_t n, float scale) {
+    if (n == 0U || depth_m == nullptr) return {};
+    static constexpr float kEpsilon = 1e-6F;
+    std::vector<float> out(n);
+    for (std::size_t i = 0U; i < n; ++i) {
+        const float dm = depth_m[i];
+        out[i] = (dm > kEpsilon) ? (scale / dm) : (scale / kEpsilon);
+    }
+    return out;
+}
+
+// ---------------------------------------------------------------------------
+// run_depth_pipeline — shared processing pipeline for all depth providers.
+// ---------------------------------------------------------------------------
+
+std::vector<ObstacleEvidence> run_depth_pipeline(
+    const DepthPipelineInput&  input,
+    const EgoSensingFrame&     ego_frame,
+    const DepthPipelineConfig& cfg,
+    ProjectionParams*          params_out) {
+
+    if (input.inverse_depth.empty() || input.width <= 0 || input.height <= 0) return {};
+    if (input.fx <= 0.0F || input.fy <= 0.0F || input.scale <= 0.0F) return {};
+
+    // Build ProjectionParams from the provider-resolved intrinsics + sensing volume axes.
+    // No provider-type branching: fx/fy/cx/cy are always set by the provider.
+    ProjectionParams params;
+    params.fx = input.fx;   params.fy = input.fy;
+    params.cx = input.cx;   params.cy = input.cy;
+    params.k1 = input.k1;   params.k2 = input.k2;
+    params.width     = input.width;
+    params.height    = input.height;
+    params.grid_cols = cfg.grid_cols;
+    params.grid_rows = cfg.grid_rows;
+    params.min_depth_m  = cfg.min_depth_m;
+    params.max_depth_m  = cfg.max_depth_m;
+    params.scale        = input.scale;
+    params.voxel_size_m = cfg.voxel_size_m;
+    params.max_evidence = static_cast<std::uint32_t>(cfg.max_evidence);
+
+    const auto& sv = ego_frame.sensing_volume;
+    params.origin_x  = static_cast<float>(sv.origin_local.x);
+    params.origin_y  = static_cast<float>(sv.origin_local.y);
+    params.origin_z  = static_cast<float>(sv.origin_local.z);
+    params.forward_x = static_cast<float>(sv.forward_axis_local.x);
+    params.forward_y = static_cast<float>(sv.forward_axis_local.y);
+    params.forward_z = static_cast<float>(sv.forward_axis_local.z);
+    params.right_x   = static_cast<float>(sv.right_axis_local.x);
+    params.right_y   = static_cast<float>(sv.right_axis_local.y);
+    params.right_z   = static_cast<float>(sv.right_axis_local.z);
+    params.up_x      = static_cast<float>(sv.up_axis_local.x);
+    params.up_y      = static_cast<float>(sv.up_axis_local.y);
+    params.up_z      = static_cast<float>(sv.up_axis_local.z);
+
+    if (params_out) { *params_out = params; }
+
+    std::vector<DeviceObstacleEvidence> buf(cfg.max_evidence);
+    std::uint32_t count = 0U;
+
+#ifdef DEDALUS_CUDA_ENABLED
+    const bool cdebug = (std::getenv("DEDALUS_MISSION_DEBUG") != nullptr);
+    if (cdebug) { std::fprintf(stderr, "[CudaDepth] project...\n"); std::fflush(stderr); }
+    cuda_dispatch().project(input.inverse_depth.data(), params, buf.data(), count);
+    if (cdebug) {
+        std::fprintf(stderr, "[CudaDepth] project done (%u ev)\n", count);
+        std::fflush(stderr);
+    }
+#else
+    project_depth_to_device_evidence(
+        input.inverse_depth.data(), params, buf.data(), count);
+#endif
+
+    if (cfg.detect_surface_patches && count > 0U) {
+        std::vector<DeviceObstacleEvidence> patches(64U);
+        std::uint32_t patch_count = 0U;
+#ifdef DEDALUS_CUDA_ENABLED
+        if (cdebug) {
+            std::fprintf(stderr, "[CudaDepth] fit_patches...\n"); std::fflush(stderr);
+        }
+        cuda_dispatch().fit_patches(buf.data(), count, params, patches.data(), patch_count);
+        if (cdebug) {
+            std::fprintf(stderr, "[CudaDepth] fit_patches done (%u patches)\n", patch_count);
+            std::fflush(stderr);
+        }
+#else
+        fit_surface_patches_device(
+            buf.data(), count, params, patches.data(), patch_count);
+#endif
+        for (std::uint32_t i = 0U;
+             i < patch_count && count < static_cast<std::uint32_t>(cfg.max_evidence); ++i) {
+            buf[count++] = patches[i];
+        }
+    }
+
+    if (cfg.detect_thin_structures) {
+        std::vector<DeviceObstacleEvidence> thin(64U);
+        std::uint32_t thin_count = 0U;
+#ifdef DEDALUS_CUDA_ENABLED
+        if (cdebug) {
+            std::fprintf(stderr, "[CudaDepth] detect_thin...\n"); std::fflush(stderr);
+        }
+        cuda_dispatch().detect_thin(
+            input.inverse_depth.data(), params, thin.data(), thin_count);
+        if (cdebug) {
+            std::fprintf(stderr, "[CudaDepth] detect_thin done (%u thin)\n", thin_count);
+            std::fflush(stderr);
+        }
+#else
+        detect_thin_structures_device(
+            input.inverse_depth.data(), params, thin.data(), thin_count);
+#endif
+        for (std::uint32_t i = 0U;
+             i < thin_count && count < static_cast<std::uint32_t>(cfg.max_evidence); ++i) {
+            buf[count++] = thin[i];
+        }
+    }
+
+    auto result = inflate(
+        buf.data(), count,
+        input.sensor_name,
+        input.source_provider,
+        input.source_kind,
+        ego_frame.ego.map_frame_id,
+        ego_frame.frame.timestamp);
+
+    // Compute body-frame bearing and elevation from projected local positions.
+    // Uses sensing volume axes (forward/right/up in local frame) — same geometry
+    // for all providers; collect_l0_sensor_observations() reads these fields.
+    for (auto& ev : result) {
+        const double dx    = ev.center_local.x - sv.origin_local.x;
+        const double dy    = ev.center_local.y - sv.origin_local.y;
+        const double dz    = ev.center_local.z - sv.origin_local.z;
+        const double fwd   = dx*sv.forward_axis_local.x
+                           + dy*sv.forward_axis_local.y
+                           + dz*sv.forward_axis_local.z;
+        const double right = dx*sv.right_axis_local.x
+                           + dy*sv.right_axis_local.y
+                           + dz*sv.right_axis_local.z;
+        const double up    = dx*sv.up_axis_local.x
+                           + dy*sv.up_axis_local.y
+                           + dz*sv.up_axis_local.z;
+        ev.bearing_rad   = static_cast<float>(std::atan2(right, fwd));
+        ev.elevation_rad = static_cast<float>(std::atan2(up, std::hypot(fwd, right)));
     }
 
     return result;

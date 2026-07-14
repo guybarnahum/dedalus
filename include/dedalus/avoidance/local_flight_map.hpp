@@ -171,6 +171,14 @@ struct LocalFlightMapSnapshot {
     std::vector<L0SphericalRiskBin> spherical_risk_bins;
     int spherical_num_az{0};  // number of azimuth bins used
     int spherical_num_el{0};  // number of elevation bins used
+
+    // Authoritative sensor scope metadata — emitted by the depth-slot detector,
+    // stamped by the runner after the depth-detect loop, and forwarded in the SSE
+    // stream so the viewer cone scope panel requires no estimation.
+    float sensor_az_half_rad{0.0F};  // half-width of the sensor's horizontal FOV (rad)
+    float sensor_el_half_rad{0.0F};  // half-height of the sensor's vertical FOV (rad)
+    int   sensor_grid_cols{0};       // depth grid column count (az sampling resolution)
+    int   sensor_grid_rows{0};       // depth grid row count   (el sampling resolution)
 };
 
 struct LocalFlightMapIndex {

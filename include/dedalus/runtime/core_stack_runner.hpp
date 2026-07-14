@@ -132,13 +132,6 @@ private:
     std::unique_ptr<ObstacleEvidenceProvider> depth_slot_a_;
     std::unique_ptr<ObstacleEvidenceProvider> depth_slot_b_;
 
-    // Non-owning, construction-time typed pointers — set via dynamic_cast once.
-    // Used by the annotator call site in run_once() to access last-frame caches.
-    // Null when the corresponding slot holds a different concrete type.
-    VisualDepthObstacleDetector*          depth_slot_a_visual_{nullptr};     // observing ptr into depth_slot_a_
-    AirSimEmulationDepthObstacleDetector* depth_slot_a_emulation_{nullptr};  // observing ptr into depth_slot_a_
-    AirSimEmulationDepthObstacleDetector* depth_slot_b_emulation_{nullptr};  // observing ptr into depth_slot_b_
-
     // Optional debug MP4 annotator; null when output_path is empty.
     std::unique_ptr<DepthDebugAnnotator> depth_annotator_;
 

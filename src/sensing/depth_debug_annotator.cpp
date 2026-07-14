@@ -173,19 +173,11 @@ void fill_band(std::vector<uint8_t>& rgb, int frame_w, int frame_h,
 // ── Panel rendering ────────────────────────────────────────────────────────────
 
 // Get metric depth for pixel index i from a panel.
-float panel_depth_m(const DepthDebugPanel& p, int idx, float log_denom) {
-    (void)log_denom;
-    if (p.inverse_depth) {
-        const float id = p.inverse_depth[static_cast<std::size_t>(idx)];
-        if (!std::isfinite(id) || id <= 1e-6f) return -1.0f;  // invalid
-        return p.params.scale / id;
-    }
-    if (p.depth_m_data) {
-        const float dm = p.depth_m_data[static_cast<std::size_t>(idx)];
-        if (!std::isfinite(dm) || dm <= 0.0f) return -1.0f;
-        return dm;
-    }
-    return -1.0f;
+float panel_depth_m(const DepthDebugPanel& p, int idx, float /*log_denom*/) {
+    if (!p.inverse_depth) return -1.0f;
+    const float id = p.inverse_depth[static_cast<std::size_t>(idx)];
+    if (!std::isfinite(id) || id <= 1e-6f) return -1.0f;  // invalid
+    return p.params.scale / id;
 }
 
 // Render one panel row (raw + filter halves) into the frame buffer.
@@ -198,7 +190,7 @@ void render_panel_row(std::vector<uint8_t>& rgb, int frame_w, int frame_h,
                       float display_max_m, float log_denom) {
 
     const bool valid_panel = (p.width > 0) && (p.height > 0) &&
-                             (p.inverse_depth != nullptr || p.depth_m_data != nullptr);
+                             (p.inverse_depth != nullptr);
 
     // Header strip (background + label).
     const Rgb hdr_color = source_color(p.source_name);

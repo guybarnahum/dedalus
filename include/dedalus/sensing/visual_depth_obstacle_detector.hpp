@@ -40,20 +40,12 @@ struct VisualDepthObstacleDetectorConfig {
 
 // Visual depth obstacle detector.
 //
-// Replaces AirSimDepthObstacleDetector as the primary slot-A provider.
-// AirSim DepthPlanar (GT) remains available as a plug-in provider for
-// training and calibration via AirSimDepthEvidenceProvider (slot A or B).
-//
-// Pipeline per frame:
-//   VisualDepthFrame → DepthEngineInterface::infer()
-//     → project_depth_to_device_evidence()
-//     → [optional] fit_surface_patches_device()
-//     → [optional] detect_thin_structures_device()
-//     → inflate() → ObstacleEvidence[]
+// Provider responsibility: ONNX inference + scale estimation + diagnostic
+// logging (depth histogram, OOD frame capture) + calibrated intrinsics
+// scaling. Everything downstream (kernels, inflate, bearing/elevation,
+// source_kind) is handled by run_depth_pipeline().
 //
 // Thread ownership: single-threaded tick. detect() is not reentrant.
-// After each detect() call, last_inferred() / last_params() / last_pitch_deg()
-// expose the inference result so DepthDebugAnnotator can render the 4-panel MP4.
 class VisualDepthObstacleDetector final : public ObstacleEvidenceProvider {
 public:
     VisualDepthObstacleDetector(
@@ -68,28 +60,32 @@ public:
 
     [[nodiscard]] std::string provider_name() const override;
 
-    // Extracts VisualDepthFrame from EgoSensingFrame::frame.image, runs the
-    // full pipeline, and returns inflated ObstacleEvidence.
-    // After returning, last_inferred() / last_params() / last_pitch_deg() are valid.
     [[nodiscard]] std::vector<ObstacleEvidence> detect(const EgoSensingFrame& frame) override;
 
-    // Read-only access to the last inference result, valid after each detect() call.
-    // Pointers remain valid until the next detect() call.
-    [[nodiscard]] const DepthInferenceResult& last_inferred()   const { return last_inferred_; }
-    [[nodiscard]] const ProjectionParams&     last_params()     const { return last_params_;   }
-    [[nodiscard]] float                       last_pitch_deg()  const { return last_pitch_deg_; }
-    [[nodiscard]] bool                        has_last_result() const { return last_has_result_; }
+    // ── Introspection (base class overrides) ───────────────────────────────
+    [[nodiscard]] const float*     last_inverse_depth() const override {
+        return last_has_result_ ? last_input_.inverse_depth.data() : nullptr;
+    }
+    [[nodiscard]] int              last_depth_width()   const override {
+        return last_has_result_ ? last_input_.width : 0;
+    }
+    [[nodiscard]] int              last_depth_height()  const override {
+        return last_has_result_ ? last_input_.height : 0;
+    }
+    [[nodiscard]] ProjectionParams last_params()        const override { return last_params_; }
+    [[nodiscard]] float            last_pitch_deg()     const override { return last_pitch_deg_; }
+    [[nodiscard]] bool             has_last_result()    const { return last_has_result_; }
 
 private:
     std::unique_ptr<DepthEngineInterface> engine_;
     MetricScaleEstimate                   scale_;
     VisualDepthObstacleDetectorConfig     config_;
 
-    // Cache populated by each detect() call; consumed by DepthDebugAnnotator.
-    DepthInferenceResult last_inferred_;
-    ProjectionParams     last_params_;
-    float                last_pitch_deg_{0.0f};
-    bool                 last_has_result_{false};
+    // Cache populated by each detect() call.
+    DepthPipelineInput last_input_;
+    ProjectionParams   last_params_;
+    float              last_pitch_deg_{0.0f};
+    bool               last_has_result_{false};
 };
 
 // Free-function variant for testing without a class instance.

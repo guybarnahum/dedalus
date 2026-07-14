@@ -40,12 +40,6 @@ CoreStackRunner::CoreStackRunner(CoreStackProviders providers, CoreStackRunnerCo
           MissionTraversabilityMapArtifactWriter::from_environment()),
       perch_candidate_evaluator_(config.perch_candidate_evaluator),
       planning_map_persistence_path_(std::move(config.planning_map_persistence_path)) {
-    // Cache typed observing pointers so the annotator call site in run_once()
-    // can access last-frame data without runtime RTTI per tick.
-    depth_slot_a_visual_    = dynamic_cast<VisualDepthObstacleDetector*>(depth_slot_a_.get());
-    depth_slot_a_emulation_ = dynamic_cast<AirSimEmulationDepthObstacleDetector*>(depth_slot_a_.get());
-    depth_slot_b_emulation_ = dynamic_cast<AirSimEmulationDepthObstacleDetector*>(depth_slot_b_.get());
-
     // Build the debug annotator when an output path is configured.
     // Frame geometry (2W×H or 2W×2H) is determined at pipe-open time from the panel count.
     if (!config.debug_depth_annotator.output_path.empty()) {

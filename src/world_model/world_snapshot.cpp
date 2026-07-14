@@ -466,6 +466,12 @@ void write_local_flight_map(std::ostringstream& out, const LocalFlightMapSnapsho
     }
     out << "],\n";
 
+    // ── Authoritative sensor scope metadata ──────────────────────────────────
+    out << "    \"sensor_az_half_rad\": " << map.sensor_az_half_rad << ",\n";
+    out << "    \"sensor_el_half_rad\": " << map.sensor_el_half_rad << ",\n";
+    out << "    \"sensor_grid_cols\": "   << map.sensor_grid_cols   << ",\n";
+    out << "    \"sensor_grid_rows\": "   << map.sensor_grid_rows   << ",\n";
+
     // ── Per-sensor observations (source-tagged, body-frame spherical) ─────────
     out << "    \"sensor_observations\": [";
     for (std::size_t i = 0; i < map.sensor_observations.size(); ++i) {

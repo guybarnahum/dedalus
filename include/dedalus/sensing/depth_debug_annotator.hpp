@@ -18,15 +18,14 @@ struct DepthDebugAnnotatorConfig {
 
 // Generic depth panel — one per slot (primary + optional eval).
 //
-// Exactly one of inverse_depth / depth_m_data must be non-null:
-//   inverse_depth : disparity convention; depth_m = params.scale / id
-//   depth_m_data  : metric depth in metres (AirSim GT)
+// inverse_depth carries the disparity-convention buffer from the provider
+// (depth_m = params.scale / inverse_depth[i]).  Both AirSim and ONNX providers
+// now store this convention after the refactor; depth_m_data is gone.
 //
 // params carries scale, min/max_depth_m, grid_cols/rows for the filter view.
 // source_name is rendered as a label in the frame header strip.
 struct DepthDebugPanel {
     const float* inverse_depth{nullptr};
-    const float* depth_m_data{nullptr};
     int          width{0};
     int          height{0};
     ProjectionParams params;
