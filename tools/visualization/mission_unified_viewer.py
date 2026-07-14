@@ -640,7 +640,7 @@ function project(p) {
   const dpr   = devicePixelRatio;
   return {
     x: 0.5*canvas.width  + MAP_NUDGE_X_CSS*dpr + x1*scale,
-    y: 0.5*canvas.height + MAP_NUDGE_Y_CSS*dpr - z2*scale,
+    y: 0.80*canvas.height + MAP_NUDGE_Y_CSS*dpr - z2*scale,
     depth: y2,
     scale,
   };
@@ -2022,10 +2022,21 @@ function recomputeBounds() {
     state.bounds={min_x:-10,max_x:10,min_y:-10,max_y:10,min_z:-5,max_z:5};
     return;
   }
+  // Trimmed-extent: ignore the outer 10% of points on each axis so a single
+  // far-away outlier (one maximal cell) cannot pull the view center off-scene.
+  function trimmedRange(arr) {
+    arr.sort((a,b)=>a-b);
+    const cut = Math.max(0, Math.floor(arr.length * 0.10));
+    const sl = arr.length - 2*cut > 0 ? arr.slice(cut, arr.length - cut) : arr;
+    return {lo: sl[0], hi: sl[sl.length-1]};
+  }
+  const rx = trimmedRange(pts.map(p=>p.x));
+  const ry = trimmedRange(pts.map(p=>p.y));
+  const rz = trimmedRange(pts.map(p=>p.z));
   state.bounds={
-    min_x:Math.min(...pts.map(p=>p.x)), max_x:Math.max(...pts.map(p=>p.x)),
-    min_y:Math.min(...pts.map(p=>p.y)), max_y:Math.max(...pts.map(p=>p.y)),
-    min_z:Math.min(...pts.map(p=>p.z)), max_z:Math.max(...pts.map(p=>p.z)),
+    min_x:rx.lo, max_x:rx.hi,
+    min_y:ry.lo, max_y:ry.hi,
+    min_z:rz.lo, max_z:rz.hi,
   };
 }
 

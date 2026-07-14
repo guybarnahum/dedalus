@@ -452,7 +452,16 @@ def obstacle_evidence_from_snapshot(snapshot: dict[str, Any] | None, max_evidenc
             seen.add(key)
             thinned.append(item)
         evidence = thinned
-    return evidence[: max(0, max_evidence)]
+    # Stride-subsample so markers spread across the full elevation range rather
+    # than truncating to the upper rows.  Same-priority evidence (e.g. all
+    # occupied/confidence=0.75 depth cells) retains source row-major order after
+    # the sort above, so a plain head-slice would show only positive-elevation
+    # markers.  Picking every K-th item distributes selection evenly.
+    n = max(0, max_evidence)
+    if len(evidence) <= n:
+        return evidence
+    stride = max(1, len(evidence) // n)
+    return evidence[::stride][:n]
 
 
 def occupancy_cells_from_snapshot(snapshot: dict[str, Any] | None, max_cells: int) -> list[dict[str, Any]]:
