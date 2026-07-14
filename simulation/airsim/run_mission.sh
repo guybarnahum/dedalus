@@ -70,7 +70,8 @@ WITH_CAMERA=1
 WITH_OVERLAY=1
 WITH_OCCUPANCY_OVERLAY=0
 WITH_SWEPT_VOLUME_OVERLAY=0
-WITH_SENSING_EVIDENCE_OVERLAY=1
+WITH_SENSING_VOLUMES_OVERLAY=0      # camera FOV cone frustums
+WITH_OBSTACLE_EVIDENCE_OVERLAY=1   # depth-projected evidence tiles
 WITH_OVERLAY_DEBUG=0
 WITH_VALIDATION=1
 OVERLAY_RATE_HZ="5"
@@ -333,8 +334,10 @@ apply_sim_config() {
     [[ "$v" != "false" ]] || WITH_OCCUPANCY_OVERLAY=0; [[ "$v" != "true" ]] || WITH_OCCUPANCY_OVERLAY=1
     v=$(sim_cfg with_swept_volume_overlay "$f")
     [[ "$v" != "false" ]] || WITH_SWEPT_VOLUME_OVERLAY=0; [[ "$v" != "true" ]] || WITH_SWEPT_VOLUME_OVERLAY=1
-    v=$(sim_cfg with_sensing_evidence_overlay "$f")
-    [[ "$v" != "false" ]] || WITH_SENSING_EVIDENCE_OVERLAY=0; [[ "$v" != "true" ]] || WITH_SENSING_EVIDENCE_OVERLAY=1
+    v=$(sim_cfg with_sensing_volumes_overlay "$f")
+    [[ "$v" != "false" ]] || WITH_SENSING_VOLUMES_OVERLAY=0; [[ "$v" != "true" ]] || WITH_SENSING_VOLUMES_OVERLAY=1
+    v=$(sim_cfg with_obstacle_evidence_overlay "$f")
+    [[ "$v" != "false" ]] || WITH_OBSTACLE_EVIDENCE_OVERLAY=0; [[ "$v" != "true" ]] || WITH_OBSTACLE_EVIDENCE_OVERLAY=1
     v=$(sim_cfg scene_id "$f");                     [[ -z "$v" ]] || SCENE_ID="$v"
     v=$(sim_cfg validation_timeout_s "$f");          [[ -z "$v" ]] || VALIDATION_TIMEOUT_S="$v"
     v=$(sim_cfg validation_min_orbits "$f");         [[ -z "$v" ]] || VALIDATION_MIN_ORBITS="$v"
@@ -421,8 +424,12 @@ while [[ $# -gt 0 ]]; do
         --occupancy-overlay) WITH_OCCUPANCY_OVERLAY=1; shift ;;
         --no-swept-volume-overlay) WITH_SWEPT_VOLUME_OVERLAY=0; shift ;;
         --swept-volume-overlay) WITH_SWEPT_VOLUME_OVERLAY=1; shift ;;
-        --no-sensing-evidence-overlay) WITH_SENSING_EVIDENCE_OVERLAY=0; shift ;;
-        --sensing-evidence-overlay) WITH_SENSING_EVIDENCE_OVERLAY=1; shift ;;
+        --no-sensing-volumes-overlay) WITH_SENSING_VOLUMES_OVERLAY=0; shift ;;
+        --sensing-volumes-overlay)    WITH_SENSING_VOLUMES_OVERLAY=1; shift ;;
+        --no-obstacle-evidence-overlay) WITH_OBSTACLE_EVIDENCE_OVERLAY=0; shift ;;
+        --obstacle-evidence-overlay)  WITH_OBSTACLE_EVIDENCE_OVERLAY=1; shift ;;
+        --no-sensing-evidence-overlay) WITH_SENSING_VOLUMES_OVERLAY=0; WITH_OBSTACLE_EVIDENCE_OVERLAY=0; shift ;;
+        --sensing-evidence-overlay)   WITH_SENSING_VOLUMES_OVERLAY=1; WITH_OBSTACLE_EVIDENCE_OVERLAY=1; shift ;;
         --max-occupancy-cells) OVERLAY_MAX_OCCUPANCY_CELLS="$2"; shift 2 ;;
         --no-validation) WITH_VALIDATION=0; shift ;;
         --overlay-rate-hz) OVERLAY_RATE_HZ="$2"; shift 2 ;;
@@ -694,11 +701,12 @@ if [[ "$WITH_OCCUPANCY_OVERLAY" -eq 1 ]]; then
     OVERLAY_CMD+=(--show-occupancy-summary --show-occupancy-cells --max-occupancy-cells "$OVERLAY_MAX_OCCUPANCY_CELLS")
 fi
 if [[ "$WITH_SWEPT_VOLUME_OVERLAY" -eq 1 ]]; then OVERLAY_CMD+=(--show-swept-volume); fi
-if [[ "$WITH_SENSING_EVIDENCE_OVERLAY" -eq 1 ]]; then
+if [[ "$WITH_SENSING_VOLUMES_OVERLAY" -eq 1 ]]; then
+    OVERLAY_CMD+=(--show-sensing-volumes --no-sensing-volume-labels)
+fi
+if [[ "$WITH_OBSTACLE_EVIDENCE_OVERLAY" -eq 1 ]]; then
     OVERLAY_CMD+=(
-        --show-sensing-volumes
         --show-obstacle-evidence
-        --no-sensing-volume-labels
         --obstacle-evidence-display-voxel-m 0.50
         --max-obstacle-evidence 160
     )

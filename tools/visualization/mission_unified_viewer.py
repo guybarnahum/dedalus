@@ -3180,9 +3180,24 @@ canvas.addEventListener("mousedown", e=>{
 window.addEventListener("mouseup", ()=>{ dragging=false; });
 window.addEventListener("mousemove", e=>{
   if (!dragging) return;
-  yaw   += (e.clientX-lastX)*0.006;
-  pitch += (e.clientY-lastY)*0.006;
-  lastX=e.clientX; lastY=e.clientY;
+  if (e.shiftKey) {
+    // Shift+drag → rotate (yaw / pitch)
+    yaw   += (e.clientX - lastX) * 0.006;
+    pitch += (e.clientY - lastY) * 0.006;
+  } else {
+    // Plain drag → translate (pan viewCenter in view-aligned world space)
+    const scale = (0.78 * Math.min(canvas.width, canvas.height) * zoom) / sceneRadius();
+    const dpr   = devicePixelRatio;
+    const dpx   = (e.clientX - lastX) * dpr / scale;
+    const dpy   = (e.clientY - lastY) * dpr / scale;
+    const vc    = currentViewCenter();
+    viewCenter  = {
+      x: vc.x - Math.cos(yaw) * dpx,
+      y: vc.y - Math.sin(yaw) * dpx,
+      z: vc.z - dpy,
+    };
+  }
+  lastX = e.clientX; lastY = e.clientY;
   draw();
 });
 canvas.addEventListener("wheel", e=>{
