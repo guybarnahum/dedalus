@@ -2003,6 +2003,9 @@ function drawTrajectory() {
 function recomputeBounds() {
   const pts=[];
   for (const cell of obsCellsByKey.values()) { if (cell.center) pts.push(cell.center); }
+  // Include raw L1 trav cell centers (0.5 m resolution, LOD-independent) so the scene
+  // auto-sizes to the traversal area.  Face corners are NOT used — they depend on LOD.
+  for (const cell of travCellsByKey.values()) { if (cell.center) pts.push(cell.center); }
   // Include L2 bounding box corners so DB-only mode sizes the scene correctly.
   if (planBounds) {
     pts.push({x:planBounds.min_x,y:planBounds.min_y,z:planBounds.min_z});
@@ -2664,7 +2667,7 @@ function applyTravSnapshot(trav, {deferRender=false}={}) {
 
   buildTravFaces();
 
-  if (!deferRender) { updateMetrics(); scheduleDraw(); }
+  if (!deferRender) { recomputeBounds(); updateMetrics(); scheduleDraw(); }
   return true;
 }
 
@@ -2740,7 +2743,7 @@ function applyTravDelta(trav, {deferRender=false}={}) {
 
   buildTravFaces();
 
-  if (!deferRender) { updateMetrics(); scheduleDraw(); }
+  if (!deferRender) { recomputeBounds(); updateMetrics(); scheduleDraw(); }
   return true;
 }
 

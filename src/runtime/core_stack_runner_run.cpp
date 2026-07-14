@@ -790,10 +790,15 @@ bool CoreStackRunner::run_once() {
             0.0
         };
         compute_l0_polar_risk(snapshot_for_annotation.local_flight_map, vel_body);
+        // Pass the full evidence list — evidence is already bounded by the
+        // detector's max_evidence (≤1024).  The default max_obs=256 only covers
+        // the first ~6 grid rows (top of image = positive elevation only),
+        // leaving the lower half of the sensing cone empty in the viewer.
         collect_l0_sensor_observations(
             snapshot_for_annotation.local_flight_map,
             snapshot_for_annotation.obstacle_evidence,
-            vel_body);
+            vel_body,
+            snapshot_for_annotation.obstacle_evidence.size());
 
         // Stamp authoritative sensor FOV + grid dims so the viewer cone scope panel
         // can size itself correctly without estimating from observation spread.
