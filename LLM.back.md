@@ -316,3 +316,47 @@ Sky pixels saturate at ~80m → stored as `inverse_depth ≈ 0.0125` → raw < 1
 **Rationale for deferral:** L0 is the reflexive tick-rate avoidance layer, rebuilt every frame. Adding per-cell normals would require extending `LocalFlightMapSnapshot` data structures, an aggregation pass during ingest, and a reflex policy that acts on orientation — a non-trivial scope addition.
 
 **Future trigger:** when the reflex maneuver policy needs an optimal exit vector on emergency close-range obstacles (e.g., "fly perpendicular to the wall surface to maximise clearance gain rate"). At that point, L0 cells or az×el risk bins can be extended with a dominant-normal field. The normal is already in the evidence; only the L0 aggregation and policy layer need adding.
+
+---
+
+### H19.20 Depth Provider Contract Refactor (post-VD4)
+
+Implemented after VD4 was marked complete. Eliminated 9 architectural asymmetries between
+`AirSimEmulationDepthObstacleDetector` and `VisualDepthObstacleDetector`.
+
+**Core decision:** Provider responsibility is strictly "provide N×M depth estimates in ego
+(+gimbal) coordinates — nothing else." All downstream logic moved to `run_depth_pipeline()`
+in `depth_projection_kernel.cpp`.
+
+Key decisions locked:
+
+- **Provider resolves intrinsics — no pipeline branching.** AirSim provider computes
+  FoV-based intrinsics (`cx/tan(hfov/2)`). Visual provider computes scaled calibrated
+  intrinsics (`fx_cal * resize_ratio`). The pipeline uses them unconditionally.
+  The rejected alternative was a conditional `if (input.fx > 0)` fallback in the shared
+  pipeline — rejected because the provider knows best and the downstream should not be
+  aware of which provider is active.
+
+- **`DepthPipelineInput` carries `source_kind`** so `inflate()` stamps the correct
+  `OccupancySourceKind` without any provider-type switch. `inflate()` was previously
+  hardcoded to `VisualObstacleDetector`.
+
+- **CUDA dispatcher singleton moved to kernel TU.** Was private to visual provider;
+  now in `depth_projection_kernel.cpp` — both providers get CUDA dispatch automatically.
+
+- **Uniform introspection on `ObstacleEvidenceProvider` base.**
+  `last_inverse_depth() / last_depth_width() / last_depth_height() / last_params() / last_pitch_deg()`
+  as default-impl virtuals. Runner `fill_panel` lambda uses base-class accessors only;
+  the typed observing pointers (`depth_slot_a_visual_`, `depth_slot_a_emulation_`,
+  `depth_slot_b_emulation_`) and their `dynamic_cast` initialization block were removed.
+
+- **`DepthDebugPanel.depth_m_data` removed.** Both providers now emit only `inverse_depth`.
+  `panel_depth_m()` converts via `params.scale / id` unconditionally.
+
+- **`metric_to_inverse_depth()`** is the shared helper replacing private `invert_gt_depth()`
+  in the AirSim provider.
+
+Files changed (13): `depth_projection_kernel.hpp/cpp`, `obstacle_evidence_provider.hpp`,
+`airsim_emulation_depth_obstacle_detector.hpp/cpp`, `visual_depth_obstacle_detector.hpp/cpp`,
+`depth_debug_annotator.hpp/cpp`, `core_stack_runner.hpp`, `core_stack_runner.cpp`,
+`core_stack_runner_run.cpp`, `test_visual_depth_projection.cpp`.

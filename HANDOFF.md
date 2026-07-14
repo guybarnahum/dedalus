@@ -112,11 +112,13 @@ VD3  Surface patch + thin structure (CPU)
        detect_thin_structures_device() — Sobel + NMS + CC. No OpenCV.
        Milestone: wall → SurfacePatch; pole → ThinStructureRisk LineSegment.
 
-VD4  CoreStackRunner integration, GT removal
-       Wire VisualDepthObstacleDetector into CoreStackRunner.
-       Disable AirSim GT depth path permanently.
-       Gimbal-aware ProjectionParams from ObstacleSensingVolume.
-       Milestone: full AirSim mission, visual depth only, L1/L2/L3 build, viewer renders.
+VD4  Provider contract + shared pipeline (IMPLEMENTED)
+       Provider responsibility: resolve intrinsics + build DepthPipelineInput.
+       run_depth_pipeline() owns all downstream: kernels + CUDA + inflate(source_kind) + bearing/elevation.
+       Uniform ObstacleEvidenceProvider base: last_inverse_depth/last_params/last_pitch_deg.
+       Runner: fill_panel lambda with base-class accessors; no typed casts.
+       AirSim GT kept as validation oracle; not disabled — switchable via slot A/B config.
+       Milestone: Slot A + Slot B running simultaneously. Agreement logged per frame.
 
 VD5  PerchCandidateEvaluator
        Non-realtime. L1 SurfacePatch + L2 clearance + stability scoring.
@@ -146,15 +148,23 @@ include/dedalus/sensing/
   visual_depth_frame.hpp       VisualDepthFrame, CameraIntrinsics, LensDistortion
   metric_scale_estimate.hpp    MetricScaleEstimate (scale, confidence, age_s)
   depth_engine.hpp             DepthEngineInterface, DepthInferenceResult
-  depth_projection_kernel.hpp  ProjectionParams (POD), DeviceObstacleEvidence (POD)
-  visual_depth_obstacle_detector.hpp  VisualDepthObstacleDetectorConfig, VisualDepthObstacleDetector
+  depth_projection_kernel.hpp  ProjectionParams (POD), DeviceObstacleEvidence (POD),
+                               DepthPipelineInput, DepthPipelineConfig,
+                               run_depth_pipeline(), metric_to_inverse_depth()
+  obstacle_evidence_provider.hpp       ObstacleEvidenceProvider base: detect(EgoSensingFrame) +
+                                        uniform introspection (last_inverse_depth/last_params/last_pitch_deg)
+  visual_depth_obstacle_detector.hpp    VisualDepthObstacleDetectorConfig, VisualDepthObstacleDetector
+  airsim_emulation_depth_obstacle_detector.hpp  AirSimEmulationDepthObstacleDetectorConfig,
+                                        AirSimEmulationDepthObstacleDetector
 
 src/sensing/
   onnx_depth_engine.cpp        ONNXDepthEngine (ONNX Runtime, CPU/MPS)
-  depth_projection_kernel.cpp  project_depth_to_device_evidence() CPU fallback
-                               fit_surface_patches_device() CPU path
-                               detect_thin_structures_device() CPU path
-  visual_depth_obstacle_detector.cpp
+  depth_projection_kernel.cpp  project_depth_to_device_evidence(), fit_surface_patches_device(),
+                               detect_thin_structures_device() (CPU paths);
+                               run_depth_pipeline(), metric_to_inverse_depth() (shared pipeline);
+                               CudaDepthDispatcher singleton (CUDA dispatch for both providers)
+  visual_depth_obstacle_detector.cpp  provider-only: ONNX inference + scaled calibrated intrinsics
+  airsim_emulation_depth_obstacle_detector.cpp  provider-only: GT metric depth + FoV-based intrinsics
   depth_projection_kernel.cu   CUDA kernel (VD6, Jetson only)
   thin_structure_kernel.cu     CUDA kernel (VD6, Jetson only)
   surface_patch_kernel.cu      CUDA kernel (VD6, Jetson only)
@@ -166,8 +176,9 @@ tools/perception/
 ```
 
 Key type constraints:
+- `DepthPipelineInput` — provider-filled struct: inverse_depth buffer + fully-resolved fx/fy/cx/cy + source_kind; no provider-type branching downstream
 - `DeviceObstacleEvidence` — 48-byte POD, GPU-side only; inflated to `ObstacleEvidence` host-side
-- `ProjectionParams` — all POD, populated fresh each frame from `ObstacleSensingVolume`
+- `ProjectionParams` — all POD, built by run_depth_pipeline() from provider-resolved intrinsics + ObstacleSensingVolume
 - Depth buffer (`depth_relative[]`) — device ptr only; CPU never reads it
 - Model files — never committed; generated on target hardware via `export_depth_anything.py` + `compile_depth_engine.sh`
 

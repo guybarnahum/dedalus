@@ -105,16 +105,20 @@ AirSim live RGB frame + ego sidecar
   -> CoreStackRunner
        -> GhostTargetProvider -> GhostDetectionsPublisher
        -> SensingCoverageProvider (gimbal-aware) -> ObstacleSensingVolume (per tick)
-       -> VisualDepthObstacleDetector            [replaces AirSimDepthObstacleDetector]
-            -> DepthEngineInterface (ONNXDepthEngine / TensorRTDepthEngine)
-                 infer_device() -> depth_relative[] (device ptr, never host-copied)
-            -> project_depth_to_device_evidence() (CUDA kernel / CPU fallback)
-                 ProjectionParams from ObstacleSensingVolume (gimbal-corrected R, T)
+       -> ObstacleEvidenceProvider (slot A primary / slot B reference)
+            VisualDepthObstacleDetector — ONNX inference + scaled calibrated intrinsics
+                 -> DepthEngineInterface (ONNXDepthEngine / TensorRTDepthEngine)
+                      infer_device() -> depth_relative[] (device ptr, never host-copied)
+            AirSimEmulationDepthObstacleDetector — GT metric depth + FoV-based intrinsics
+            Each provider → DepthPipelineInput (fully-resolved fx/fy/cx/cy + inverse_depth)
+            → run_depth_pipeline() [depth_projection_kernel.cpp]
+                 ProjectionParams from provider-resolved intrinsics + ObstacleSensingVolume axes
                  MetricScaleEstimate (fixed AirSim scale V0; VIO-coupled V1)
-                 -> DeviceObstacleEvidence[] (POD, unified/pinned memory)
-            -> fit_surface_patches_device()   -> SurfacePatch evidence (is_surface_hint)
-            -> detect_thin_structures_device() -> LineSegment evidence (is_thin_structure_hint)
-            -> inflate() -> ObstacleEvidence[]  (host-side string fields stamped in)
+                 -> project_depth_to_device_evidence() (CPU path; full CUDA pending VD6)
+                      -> DeviceObstacleEvidence[] (POD, unified/pinned memory)
+                 -> fit_surface_patches_device()   -> SurfacePatch evidence (is_surface_hint)
+                 -> detect_thin_structures_device() -> LineSegment evidence (is_thin_structure_hint)
+                 -> inflate(source_kind) -> ObstacleEvidence[]  (host-side string fields stamped in)
        -> PerceptionPipelineOutput.obstacle_evidence
   -> MissionLocalObstacleMap (raw evidence, per-tick)
   -> MissionMapAssimilator
@@ -217,17 +221,38 @@ No OpenCV dependency anywhere in the production path.
 **Milestone:** AirSim scene containing a flat wall + a vertical pole → SurfacePatch evidence
 emitted with upward-ish normal for wall; ThinStructureRisk LineSegment evidence emitted for pole.
 
-#### VD4 — Two-slot depth provider architecture (IMPLEMENTED)
-`ObstacleEvidenceProvider` interface — all depth providers implement `detect(EgoSensingFrame)`.
-`AirSimDepthEvidenceProvider` — adapter wrapping existing `AirSimDepthObstacleDetector`.
-`AirSimEmulationDepthObstacleDetector` — GT metric depth → `depth_relative` inversion →
-VD projection / surface patch / thin structure kernels. Evaluates thin obstacles and
-landable surfaces. `source_kind = AirSimGroundTruthVisualEmulation`.
-AirSim GT depth path is **NOT disabled** — kept as a plug-in provider for training,
-calibration, and architecture purity validation. Switch via config injection into slot A or B.
+#### VD4 — Provider contract + shared pipeline (IMPLEMENTED)
+
+Provider responsibility is strictly: acquire depth data, resolve camera intrinsics, build
+`DepthPipelineInput`, call `run_depth_pipeline()`. No provider-type branching downstream.
+
+`ObstacleEvidenceProvider` base — `detect(EgoSensingFrame)` + uniform introspection:
+  `last_inverse_depth() / last_depth_width() / last_depth_height() / last_params() / last_pitch_deg()`
+  Runner uses base-class accessors; no typed casts or `dynamic_cast` in run loop.
+
+`VisualDepthObstacleDetector`:
+  ONNX inference → scaled calibrated intrinsics (`fx_cal * inferred.width / image.width`).
+  `DepthPipelineInput.source_kind = VisualObstacleDetector`. Diagnostics kept in detect().
+
+`AirSimEmulationDepthObstacleDetector`:
+  GT metric depth → `metric_to_inverse_depth()` → FoV-based intrinsics (`cx / tan(hfov/2)`).
+  `DepthPipelineInput.source_kind = AirSimGroundTruthVisualEmulation`.
+  Not disabled — kept as validation oracle; switchable via slot A/B config.
+
+`DepthPipelineInput` — provider-filled struct:
+  `inverse_depth[]` (disparity convention, HIGH=CLOSE), `width/height`, `scale`,
+  `fx/fy/cx/cy`, `k1/k2`, `source_kind`, `sensor_name`, `source_provider`.
+
+`run_depth_pipeline()` [depth_projection_kernel.cpp] — shared downstream for both providers:
+  Builds `ProjectionParams` from provider-resolved intrinsics + sensing volume axes.
+  CUDA dispatch (both providers now covered) for all 3 kernels.
+  `inflate(source_kind)` → bearing/elevation loop → `ObstacleEvidence[]`.
+
+`metric_to_inverse_depth()` — shared helper replacing private `invert_gt_depth()`.
+`inflate()` takes `OccupancySourceKind` explicitly (was hardcoded `VisualObstacleDetector`).
+
 `CoreStackRunner` two-slot: `depth_slot_a_` (primary → L1/L2), `depth_slot_b_` (reference,
-delta-log only). Backward compat: if no slot A injected, auto-builds `AirSimDepthEvidenceProvider`
-from `airsim_depth_obstacle_detector` config.
+delta-log only). Annotator block: `fill_panel` lambda via base-class accessors only.
 Agreement metric: fraction of slot-A voxels with slot-B voxel within ±1 voxel.
 Logged as `depth_slot.agreement_ppt` (parts per thousand) via `timing_writer_`.
 `tools/perception/depth_provider_report.py` — HTML report: time-series, histogram, IoU distribution.
@@ -415,8 +440,12 @@ Overlay                    subscriber/renderer only
 L0                         reflexive avoidance — no planner coupling
 L3                         planning primitive — no flight command coupling until Stage 7 scoped
 DepthEngineInterface       platform-transparent depth inference (ONNX/TensorRT)
+DepthPipelineInput         provider-filled struct: inverse_depth + fully-resolved fx/fy/cx/cy + source_kind; no provider branching downstream
+DepthPipelineConfig        shared grid/depth/voxel config consumed by run_depth_pipeline()
+run_depth_pipeline()       shared downstream owned by depth_projection_kernel.cpp: kernels + CUDA + inflate(source_kind) + bearing/elevation
+metric_to_inverse_depth()  shared helper: metric metres → disparity inverse_depth (HIGH=CLOSE)
 DeviceObstacleEvidence     GPU-side POD intermediate; never a stored type; inflated to ObstacleEvidence
-ProjectionParams           kernel input — all POD, no host ptrs; populated from ObstacleSensingVolume
+ProjectionParams           kernel input — all POD, no host ptrs; built by run_depth_pipeline() from provider-resolved intrinsics
 MetricScaleEstimate        single global scale factor (V0: fixed from AirSim config; V1: VIO-coupled)
 PerchCandidateEvaluator    non-realtime; reads L1 + queries L2; outputs to WorldSnapshot
 ```

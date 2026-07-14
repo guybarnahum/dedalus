@@ -313,6 +313,21 @@ const MAX_TRAV_DISPLAY       = 8000;   // cap on aggregated occupied voxels befo
 const TRAV_LOD_LEVELS        = [32, 16, 8, 4, 2, 1, 0.5]; // metres, index 2 = default 8m
 const MAX_GHOST_AGE_S        = 15;
 const MAX_TRAJ_POINTS        = 6000;
+const TRAJ_MAX_GAP_M         = 1.0;   // skip segments with spatial jumps > 1 m (latency / discontinuity)
+const TRAJ_MAX_GAP_MS        = 3000;  // skip if time between consecutive trajectory points > 3 s
+
+// Sensor cone scope: camera FOV and depth-grid dimensions.
+// Must match config/drone/px4_front_center.yaml + emulation detector config.
+const CONE_AZ_HALF_DEG = 42;      // 84° hfov / 2
+const CONE_EL_HALF_DEG = 26.86;   // 53.72° vfov / 2
+const CONE_GRID_COLS   = 40;      // depth_grid_cols — az sample count
+const CONE_GRID_ROWS   = 22;      // depth_grid_rows — el sample count
+
+// Map-view nudge: shift the rendered scene center right + down so the
+// top-left cone scope panel occludes less of the map content.
+// Tuned to ~25 % of the panel's expected CSS dimensions (480 × 285 px).
+const MAP_NUDGE_X_CSS = 110;   // rightward shift in CSS pixels
+const MAP_NUDGE_Y_CSS =  75;   // downward  shift in CSS pixels
 const MAX_MISSION_LOG        = 200;
 
 const HEIGHT_COLOR_MIN_M = 0.0;
@@ -379,6 +394,11 @@ let lfmSphericalBins = [];        // [{az,el,ttc,vr,nr,sm}] occupied bins only (
 let lfmSphNumAz      = 36;
 let lfmSphNumEl      = 9;
 let lfmSensorObs     = [];        // [{az,el,r,vr,ttc,src}] raw sensor observations
+// Authoritative sensor scope from C++ — FOV half-angles and depth grid dims.
+let lfmSensorAzHalfRad = 0;
+let lfmSensorElHalfRad = 0;
+let lfmSensorGridCols  = 0;
+let lfmSensorGridRows  = 0;
 
 // ── Debug mode (?debug in URL) ────────────────────────────────────────────────
 const DEBUG = new URLSearchParams(window.location.search).has("debug");
@@ -617,9 +637,10 @@ function project(p) {
   const z2 = sp*y1 + cp*z;
 
   const scale = (0.78 * Math.min(canvas.width, canvas.height) * zoom) / sceneRadius();
+  const dpr   = devicePixelRatio;
   return {
-    x: 0.5*canvas.width  + x1*scale,
-    y: 0.5*canvas.height - z2*scale,
+    x: 0.5*canvas.width  + MAP_NUDGE_X_CSS*dpr + x1*scale,
+    y: 0.5*canvas.height + MAP_NUDGE_Y_CSS*dpr - z2*scale,
     depth: y2,
     scale,
   };
@@ -966,16 +987,28 @@ function drawL0ConeScope() {
   const MARGIN   = 24 * dpr;
   const PAD      = { l: 32*dpr, r: 10*dpr, t: 20*dpr, b: 24*dpr };
   const W        = Math.min(480 * dpr, INSET_R * 2 + MARGIN);  // cap width
-  const H        = 148 * dpr;
+  const PW       = W - PAD.l - PAD.r;
+
+  // Authoritative sensor scope from C++ — no estimation.
+  // C++ stamps sensor_az_half_rad/el/grid_cols/rows in the SSE stream after each
+  // depth-slot detect; fall back to config constants only before the first frame arrives.
+  const azHalf  = lfmSensorAzHalfRad > 0
+    ? lfmSensorAzHalfRad * (180 / Math.PI) : CONE_AZ_HALF_DEG;
+  const elHalf  = lfmSensorElHalfRad > 0
+    ? lfmSensorElHalfRad * (180 / Math.PI) : CONE_EL_HALF_DEG;
+  const estCols = lfmSensorGridCols > 0 ? lfmSensorGridCols : CONE_GRID_COLS;
+  const estRows = lfmSensorGridRows > 0 ? lfmSensorGridRows : CONE_GRID_ROWS;
+
+  const CELL     = PW / estCols;        // px per az sample
+  const PH       = CELL * estRows;      // square-cell plot height
+  const H        = PH + PAD.t + PAD.b;
   const panX     = MARGIN;
   const panY     = MARGIN;
   const X0       = panX + PAD.l;
   const Y0       = panY + PAD.t;
-  const PW       = W - PAD.l - PAD.r;
-  const PH       = H - PAD.t - PAD.b;
 
-  const AZ_MIN = -75, AZ_MAX = 75;   // degrees — match sensor FOV
-  const EL_MIN = -45, EL_MAX = 45;
+  const AZ_MIN = -azHalf, AZ_MAX = azHalf;
+  const EL_MIN = -elHalf, EL_MAX = elHalf;
 
   function azPx(az_rad) {
     const deg = az_rad * (180 / Math.PI);
@@ -1013,11 +1046,11 @@ function drawL0ConeScope() {
   // Grid
   ctx.setLineDash([2*dpr, 4*dpr]);
   ctx.strokeStyle = 'rgba(55,80,160,0.16)'; ctx.lineWidth = 0.5 * dpr;
-  for (const az of [-60,-30,0,30,60]) {
+  for (const az of [-azHalf, -azHalf/2, 0, azHalf/2, azHalf]) {
     const x = azDegPx(az);
     ctx.beginPath(); ctx.moveTo(x, Y0); ctx.lineTo(x, Y0 + PH); ctx.stroke();
   }
-  for (const el of [-30,0,30]) {
+  for (const el of [-elHalf, 0, elHalf]) {
     const y = elDegPx(el);
     ctx.beginPath(); ctx.moveTo(X0, y); ctx.lineTo(X0 + PW, y); ctx.stroke();
   }
@@ -1047,14 +1080,14 @@ function drawL0ConeScope() {
     const py = elPx(o.el);
     const ttc = o.ttc;
     const [r, g, b] = isMoving ? _l0RiskColor(ttc) : _l0DistColor(o.r);
-    // Outer TTC halo
-    ctx.beginPath(); ctx.arc(px, py, 7 * dpr, 0, Math.PI * 2);
+    // Outer TTC halo — CELL-sized so adjacent samples tile without overlap
+    ctx.beginPath(); ctx.arc(px, py, CELL * 0.46, 0, Math.PI * 2);
     ctx.fillStyle = `rgba(${r},${g},${b},0.22)`; ctx.fill();
     // Inner source dot
-    ctx.beginPath(); ctx.arc(px, py, 4 * dpr, 0, Math.PI * 2);
+    ctx.beginPath(); ctx.arc(px, py, CELL * 0.28, 0, Math.PI * 2);
     ctx.fillStyle = srcColor(1 << (o.src & 0x03)); ctx.fill();
     // TTC ring stroke
-    ctx.beginPath(); ctx.arc(px, py, 7 * dpr, 0, Math.PI * 2);
+    ctx.beginPath(); ctx.arc(px, py, CELL * 0.46, 0, Math.PI * 2);
     ctx.strokeStyle = `rgba(${r},${g},${b},0.75)`; ctx.lineWidth = 1.5 * dpr; ctx.stroke();
   }
 
@@ -1068,12 +1101,15 @@ function drawL0ConeScope() {
   ctx.fillText('Sensor cone  az × el', panX + W / 2, panY + 2 * dpr);
 
   ctx.textBaseline = 'top';
-  for (const az of [-60, 0, 60]) {
-    ctx.fillText(`${az}°`, azDegPx(az), panY + H - PAD.b + 2 * dpr);
+  for (const az of [-azHalf, 0, azHalf]) {
+    ctx.fillText(`${Math.round(az)}°`, azDegPx(az), panY + H - PAD.b + 2 * dpr);
   }
   ctx.textAlign = 'right'; ctx.textBaseline = 'middle';
-  for (const el of [-30, 0, 30]) {
-    ctx.fillText(`${el}°`, panX + PAD.l - 3 * dpr, elDegPx(el));
+  for (const [el_val, el_lbl] of [
+      [-elHalf, `${Math.round(-elHalf)}°`],
+      [0,        '0°'],
+      [elHalf,  `${Math.round(elHalf)}°`]]) {
+    ctx.fillText(el_lbl, panX + PAD.l - 3 * dpr, elDegPx(el_val));
   }
 
   // Source legend (compact, below panel)
@@ -1929,25 +1965,33 @@ function drawPerchCandidates() {
 
 function drawTrajectory() {
   if (!state.showTrajectory||state.trajectory.length<2) return;
-  const now=Date.now();
   ctx.save();
-  for (let i=1; i<state.trajectory.length; ++i) {
-    const a=state.trajectory[i-1], b=state.trajectory[i];
-    if (!a||!b) continue;
-    if (a.live_seen_ms||b.live_seen_ms) continue;
-    drawLine(a, b, "rgba(150,120,35,0.35)", 1.5);
-  }
 
-  // Live aging segments
+  // All trajectory points carry live_seen_ms; render them with a full
+  // index-based color gradient: oldest = dark red-orange, newest = bright yellow.
+  // t=0 (oldest) → rgba(255,0,0,0.18)  t=1 (newest) → rgba(255,255,0,0.95)
   const liveTraj=state.trajectory.filter(p=>p&&p.live_seen_ms);
-  for (let i=1; i<liveTraj.length; ++i) {
-    const a=project(liveTraj[i-1]), b=project(liveTraj[i]);
+  const n=liveTraj.length;
+  for (let i=1; i<n; ++i) {
+    const pa=liveTraj[i-1], pb=liveTraj[i];
+
+    // Skip discontinuous jumps (latency spikes, teleports).
+    const dx=pb.x-pa.x, dy=pb.y-pa.y, dz=pb.z-pa.z;
+    if (Math.hypot(dx,dy,dz) > TRAJ_MAX_GAP_M) continue;
+    const dtMs=Number(pb.live_seen_ms)-Number(pa.live_seen_ms);
+    if (dtMs > TRAJ_MAX_GAP_MS) continue;
+
+    const a=project(pa), b=project(pb);
     if (!a||!b||!Number.isFinite(a.x)||!Number.isFinite(b.x)) continue;
-    const level=liveDecay(liveTraj[i].live_seen_ms, LIVE_TRACK_DIM)??LIVE_TRACK_DIM;
-    const gb=Math.round(255*level);
+
+    // t: 0=oldest segment end, 1=newest — drives color, opacity, and width.
+    const t=i/n;
+    const g=Math.round(255*t);              // red (old) → yellow (new)
+    const alpha=(0.18+0.77*t).toFixed(2);  // faint old trail → opaque new
+    const lw=(0.8+2.2*t)*devicePixelRatio; // thin old → thick new
     ctx.beginPath(); ctx.moveTo(a.x,a.y); ctx.lineTo(b.x,b.y);
-    ctx.strokeStyle=`rgba(255,${gb},0,0.9)`;
-    ctx.lineWidth=Math.max(1.5, 4*level)*devicePixelRatio;
+    ctx.strokeStyle=`rgba(255,${g},0,${alpha})`;
+    ctx.lineWidth=lw;
     ctx.stroke();
   }
   if (state.ego) drawPoint(state.ego, "rgba(255,255,64,1.0)", 6.5);
@@ -2209,107 +2253,12 @@ function updateStatusBar() {
 
 function fmt(v) { const n=Number(v); return Number.isFinite(n)?Number.isInteger(n)?String(n):n.toFixed(2):"—"; }
 
-// ── UI state persistence (localStorage) ───────────────────────────────────────
-// Key: "dedalus_viewer_ui".  Persists layer toggles, color mode, slider values,
-// and panel collapse state across page reloads.  All reads/writes are wrapped in
-// try/catch so a corrupt or missing entry never breaks the viewer.
-
-const UI_STORAGE_KEY = "dedalus_viewer_ui";
-
-function saveUIState() {
-  try {
-    localStorage.setItem(UI_STORAGE_KEY, JSON.stringify({
-      showL0:          state.showL0,
-      showPlanning:    state.showPlanning,
-      showTrav:        state.showTrav,
-      showObstacles:   state.showObstacles,
-      showGhosts:      state.showGhosts,
-      showSensing:     state.showSensing,
-      showTrajectory:  state.showTrajectory,
-      showEsdf:        state.showEsdf,
-      showEsdfCells:   state.showEsdfCells,
-      travColorByType: state.travColorByType,
-      travLodIdx:      Number(el("trav-lod")?.value ?? 2),
-      esdfSmoothR:     esdfSmoothR,
-      esdfVelMode:     el("esdf-vel-mode")?.checked ?? false,
-      pipelineOpen:    el("pipeline-body")?.style.display !== "none",
-    }));
-  } catch(_) {}
-}
-
-function loadUIState() {
-  let ui;
-  try { ui = JSON.parse(localStorage.getItem(UI_STORAGE_KEY) || "null"); }
-  catch(_) { ui = null; }
-  if (!ui) return;
-
-  // Layer toggle flags + button active class
-  for (const [id, key] of [
-    ["toggle-l0",         "showL0"],
-    ["toggle-planning",   "showPlanning"],
-    ["toggle-trav",       "showTrav"],
-    ["toggle-obstacles",  "showObstacles"],
-    ["toggle-ghosts",     "showGhosts"],
-    ["toggle-sensing",    "showSensing"],
-    ["toggle-trajectory", "showTrajectory"],
-    ["toggle-esdf",       "showEsdf"],
-  ]) {
-    if (key in ui) { state[key] = !!ui[key]; el(id)?.classList.toggle("active", state[key]); }
-  }
-
-  // ESDF cells checkbox (state + DOM)
-  if ("showEsdfCells" in ui) {
-    state.showEsdfCells = !!ui.showEsdfCells;
-    const cb = el("esdf-show-cells"); if (cb) cb.checked = state.showEsdfCells;
-  }
-
-  // Trav color mode
-  if ("travColorByType" in ui) {
-    state.travColorByType = !!ui.travColorByType;
-    const tag = el("trav-color-tag");
-    if (tag) tag.textContent = state.travColorByType ? "Type" : "Height";
-    const lh = el("trav-legend-height"), lt = el("trav-legend-type");
-    if (lh) lh.style.visibility = state.travColorByType ? "hidden" : "visible";
-    if (lt) lt.style.visibility = state.travColorByType ? "visible" : "hidden";
-  }
-
-  // Trav LOD slider
-  if ("travLodIdx" in ui) {
-    const s = el("trav-lod");
-    if (s) {
-      s.value = ui.travLodIdx;
-      travDisplayLevelM = TRAV_LOD_LEVELS[ui.travLodIdx] ?? travDisplayLevelM;
-      const v = el("trav-lod-val"); if (v) v.textContent = travDisplayLevelM + "m";
-    }
-  }
-
-  // ESDF smooth-R slider
-  if ("esdfSmoothR" in ui) {
-    esdfSmoothR = ui.esdfSmoothR;
-    const s = el("esdf-r-slider"); if (s) s.value = esdfSmoothR;
-    const m = el("m-esdf-r");      if (m) m.textContent = esdfSmoothR.toFixed(1) + "m";
-  }
-
-  // ESDF vel-mode checkbox
-  if ("esdfVelMode" in ui) { const cb = el("esdf-vel-mode"); if (cb) cb.checked = !!ui.esdfVelMode; }
-
-  // Pipeline metrics panel
-  if ("pipelineOpen" in ui) {
-    const body = el("pipeline-body"), caret = el("pipeline-caret");
-    if (body && caret) {
-      body.style.display = ui.pipelineOpen ? "" : "none";
-      caret.textContent  = ui.pipelineOpen ? "▼" : "▶";
-    }
-  }
-}
-
 function togglePipelineMetrics() {
   const body = el("pipeline-body");
   const caret = el("pipeline-caret");
   const open = body.style.display !== "none";
   body.style.display = open ? "none" : "";
   caret.textContent = open ? "▶" : "▼";
-  saveUIState();
 }
 el("pipeline-body").style.display = "none";  // collapsed by default
 
@@ -2490,8 +2439,12 @@ function applyWorldSnapshot(snap, seq, {deferRender=false}={}) {
           obs: s.obs === true,
         }))
       : [];
-    lfmSphNumAz     = fin(lfm.spherical_num_az, 36) || 36;
-    lfmSphNumEl     = fin(lfm.spherical_num_el, 9)  || 9;
+    lfmSphNumAz        = fin(lfm.spherical_num_az, 36) || 36;
+    lfmSphNumEl        = fin(lfm.spherical_num_el, 9)  || 9;
+    lfmSensorAzHalfRad = fin(lfm.sensor_az_half_rad, 0);
+    lfmSensorElHalfRad = fin(lfm.sensor_el_half_rad, 0);
+    lfmSensorGridCols  = (lfm.sensor_grid_cols | 0);
+    lfmSensorGridRows  = (lfm.sensor_grid_rows | 0);
     lfmSphericalBins = Array.isArray(lfm.spherical_risk_bins)
       ? lfm.spherical_risk_bins.map(b => ({
           az:  fin(b.az,  0),
@@ -2522,6 +2475,10 @@ function applyWorldSnapshot(snap, seq, {deferRender=false}={}) {
     lfmPolarSectors     = [];
     lfmSphericalBins    = [];
     lfmSensorObs        = [];
+    lfmSensorAzHalfRad  = 0;
+    lfmSensorElHalfRad  = 0;
+    lfmSensorGridCols   = 0;
+    lfmSensorGridRows   = 0;
   }
 
   // Region ID — first uncertain_region from the world model.
@@ -2993,13 +2950,11 @@ function onEsdfRSlider(val) {
   el("m-esdf-r").textContent = esdfSmoothR.toFixed(1) + "m";
   buildESDFArrows();
   scheduleDraw();
-  saveUIState();
 }
 
 function onEsdfShowCells(checked) {
   state.showEsdfCells = checked;
   scheduleDraw();
-  saveUIState();
 }
 
 // ── view controls + interaction ────────────────────────────────────────────────
@@ -3049,7 +3004,6 @@ function installViewControls() {
       buildTravFaces();      // L1 only: aggregates 0.5 m cells at new LOD
       // L2 is not re-built here — it renders at its own native 1m cell size
       scheduleDraw();
-      saveUIState();
     });
   }
 
@@ -3075,7 +3029,6 @@ function installViewControls() {
       if (stateKey==="showPlanning") buildPlanningFaces();
       if (stateKey==="showEsdf")    { buildESDFFaces(); buildESDFArrows(); }
       scheduleDraw();
-      saveUIState();
     });
   }
 
@@ -3091,15 +3044,7 @@ function installViewControls() {
     // L2 face colors depend on mode; rebuild geometry cache.
     buildPlanningFaces();
     scheduleDraw();
-    saveUIState();
   });
-
-  // esdf-vel-mode has an inline onchange handler; add saveUIState as a second listener.
-  el("esdf-vel-mode")?.addEventListener("change", saveUIState);
-
-  // Restore persisted UI state.  Must run after all handlers are wired so that
-  // button active classes and state flags are in sync before the first draw.
-  loadUIState();
 }
 
 // Canvas mouse interaction
