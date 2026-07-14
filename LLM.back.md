@@ -319,6 +319,75 @@ Sky pixels saturate at ~80m → stored as `inverse_depth ≈ 0.0125` → raw < 1
 
 ---
 
+### H19.21 Viewer + Overlay + Cone Fixes (post-VD4 contract refactor)
+
+#### H19.21a — L0 sensor-obs cone truncation (fixed)
+
+`collect_l0_sensor_observations()` has a `max_obs=256` default. Evidence from
+`project_depth_to_device_evidence()` is stored row-major (grid row 0 = top of image =
+positive elevation). So `max_obs=256` on a 40×22=880-entry grid covered only ~6 top
+rows — the lower half of the sensing cone was entirely missing in the viewer.
+
+Fix: pass `evidence.size()` explicitly at the call site in `core_stack_runner_run.cpp`.
+The function signature default is intentionally left unchanged; the caller now always
+controls the cap.
+
+#### H19.21b — AirSim overlay elevation bias (fixed)
+
+`obstacle_evidence_from_snapshot()` in `airsim-world-overlay.py` used `evidence[:n]`
+(head-slice). Same row-major ordering → only top-elevation markers reached AirSim,
+mirroring the L0 cone bug above.
+
+Fix: stride-subsample `evidence[::stride][:n]` where `stride = len(evidence) // n`.
+This distributes markers evenly across the full elevation range.
+
+#### H19.21c — AirSim overlay flags split (run_mission.sh)
+
+`WITH_SENSING_EVIDENCE_OVERLAY` split into two independent flags:
+
+```
+WITH_SENSING_VOLUMES_OVERLAY=0      # camera FOV cone frustums (--show-sensing-volumes)
+WITH_OBSTACLE_EVIDENCE_OVERLAY=1   # depth-projected evidence tiles (--show-obstacle-evidence)
+```
+
+New CLI flags: `--[no-]sensing-volumes-overlay`, `--[no-]obstacle-evidence-overlay`.
+Old `--[no-]sensing-evidence-overlay` kept as alias (sets both flags simultaneously).
+YAML config keys: `with_sensing_volumes_overlay`, `with_obstacle_evidence_overlay`.
+
+#### H19.21d — Viewer interaction (drag → pan, shift+drag → rotate)
+
+Plain mouse drag translates the `viewCenter` in view-aligned NED world space:
+```
+viewCenter.x -= cos(yaw) * dpx
+viewCenter.y -= sin(yaw) * dpx
+viewCenter.z -= dpy
+```
+Shift+drag rotates (yaw / pitch). The scale factor uses the same `sceneRadius()` that
+`draw()` uses so pan speed is proportional to scene size.
+
+#### H19.21e — Viewer layout: y-origin + trimmed-mean bounds
+
+`project()` y-origin changed from `0.5*canvas.height` to `0.80*canvas.height`,
+pushing main content down ~30% of canvas height to better use vertical space.
+
+`recomputeBounds()` now uses a trimmed-mean range (10% outlier cut per axis).
+Prevents sparse outlier evidence from blowing up the scene scale.
+
+#### H19.21f — L1 LOD slider scene scaling bug (fixed)
+
+Changing `travDisplayLevelM` aggregates L1 trav cells into coarser display voxels but
+must not change the scene scale. Two bugs caused it to do so:
+
+1. `recomputeBounds()` did not include L1 trav cell centers — so the scene was sized
+   only from obstacle cells + trajectory, which changed as LOD changed the visible set.
+2. `applyTravSnapshot()` and `applyTravDelta()` did not call `recomputeBounds()` —
+   so trav data never affected bounds at all, even after fixing (1).
+
+Fix: trav cell centers added to the `pts[]` array in `recomputeBounds()`; both handlers
+now call `recomputeBounds()` after updating `travCellsByKey`.
+
+---
+
 ### H19.20 Depth Provider Contract Refactor (post-VD4)
 
 Implemented after VD4 was marked complete. Eliminated 9 architectural asymmetries between

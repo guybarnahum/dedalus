@@ -136,7 +136,9 @@ AirSim live RGB frame + ego sidecar
        -> RuntimeEventStreamServer (TCP JSONL + HTTP/SSE)
   -> LatestWorldSnapshot
        -> compute_l0_polar_risk(snap.local_flight_map, vel_body)
-       -> collect_l0_sensor_observations(snap.local_flight_map, snap.obstacle_evidence, vel_body)
+       -> collect_l0_sensor_observations(snap.local_flight_map, snap.obstacle_evidence, vel_body,
+                                         snap.obstacle_evidence.size())
+          (max_obs must be explicit — default 256 covers only top ~6 grid rows of row-major evidence)
   -> MissionRuntime -> ObjectBehaviorMissionController
        -> BehaviorSpec sequence runtime (approach → circle steps)
        -> VelocityCommand / CameraPointingCommand
@@ -154,10 +156,13 @@ RuntimeEventStreamServer TCP JSONL (port 7788 / --world-snapshot-stream-port)
        L2 DB loaded on connect; static cache burst replayed to new SSE clients.
   -> tools/visualization/mission_unified_viewer.py -> build/viewer.html
        Pure SPA; all state from /events SSE stream.
-       Renders: L0 TTC radar + cone scope, L1 trav surface, L2 planning cells,
-                L3 ESDF arrows + net repulsion, obstacle evidence, ghost detections,
-                trajectory, sensing volumes, mission event log, orientation gizmo,
-                takeoff marker.
+       Renders: L0 TTC radar + cone scope, L1 trav surface (LOD slider — display-only,
+                does not rescale scene), L2 planning cells, L3 ESDF arrows + net repulsion,
+                obstacle evidence, ghost detections, trajectory, sensing volumes, mission
+                event log, orientation gizmo, takeoff marker.
+       Interaction: drag → pan (translates viewCenter in view-aligned NED space);
+                    shift+drag → rotate (yaw/pitch).
+       Bounds: trimmed-mean (10% outlier cut per axis); y-origin at 0.80×canvas height.
   -> tools/validation/validate-mission-unified-viewer.py (0 violations gate)
 ```
 

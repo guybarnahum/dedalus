@@ -84,18 +84,17 @@ The Virtual Proving Ground (`simulation/` directory) provides a complete high-fi
    ```bash
    cd ~/dedalus/simulation/airsim && ./run.sh AirSimNH
    ```
-3. **Test Flight:** Execute autonomous flight sequences with:
-   ```bash
-   python test-flight.py --control px4 --trajectory trajectories/circle_figure8.json
-   ```
-4. **Mission with obstacle memory** (provide config + region, everything else auto-derives):
+3. **Mission with obstacle memory** (provide config + region, everything else auto-derives):
    ```bash
    # Set once per site — geo-anchor for the persistent L2 obstacle map.
    export DEDALUS_SITE_ID=airsim_47.641N_122.140W
 
-   # Launch mission (output-dir, mission-id, L2 DB path all auto-derived).
+   # Launch mission. --output-dir, mission-id, and L2 DB path all auto-derive.
    simulation/airsim/run_mission.sh \
-     --config config/ci/core_stack_object_behavior_airsim_existing_object_circle.yaml
+     --config config/runs/airsim_circle_airsim_gt.yaml \
+     --output-dir out/circle_airsim_gt \
+     --pipeline-timing \
+     --tail
 
    # Open viewer in another terminal (same DEDALUS_SITE_ID picks up L2 map).
    DEDALUS_SITE_ID=airsim_47.641N_122.140W \
@@ -103,7 +102,7 @@ The Virtual Proving Ground (`simulation/` directory) provides a complete high-fi
      --host 127.0.0.1 --port 47770 \
      --http-port 8090 --static-root build-staging
    ```
-   Output lands in `out/<slug>/<timestamp>/`. L2 obstacle map accumulates in `maps/$DEDALUS_SITE_ID/l2_map.db`.
+   Output lands in `out/<output-dir>/`. L2 obstacle map accumulates in `maps/$DEDALUS_SITE_ID/l2_map.db`.
 
 ### Trajectory-Based Flight Testing
 
@@ -170,123 +169,22 @@ See [simulation/README.md](simulation/README.md) for complete CLI reference and 
 
 ### Using AirSim Providers with the Core Stack
 
-The core stack uses config-driven provider composition. Provider configs live under `config/` and are loaded by the C++ debug apps:
+The core stack uses config-driven provider composition. Provider configs live under `config/`. The active build directory is `build-staging/`.
+
+The CI-safe synthetic provider path:
 
 ```bash
-cmake -S . -B build-validation \
-  -DDEDALUS_BUILD_APPS=ON \
-  -DDEDALUS_BUILD_TESTS=ON
-cmake --build build-validation -j$(nproc)
-```
-
-The CI-safe synthetic provider path is:
-
-```bash
-./build-validation/apps/dedalus_core_stack \
+cmake --build build-staging -j$(sysctl -n hw.logicalcpu)
+./build-staging/apps/dedalus_core_stack \
   --config config/ci/core_stack_ci.yaml
 ```
 
-The CI-safe recorded-frame path is:
+The CI-safe recorded-frame path (reads fixture manifest in `tests/fixtures/recorded_frames/`; no AirSim/media codecs required):
 
 ```bash
-./build-validation/apps/dedalus_core_stack \
+./build-staging/apps/dedalus_core_stack \
   --config config/ci/core_stack_recorded_ci.yaml
 ```
-
-That recorded config reads the tiny fixture manifest in `tests/fixtures/recorded_frames/` through `RecordedFrameSource`. It does not require AirSim, OpenCV, GStreamer, FFmpeg, or media codecs.
-
-#### Export AirSim Frames into the Recorded-Frame Provider
-
-The current practical AirSim integration path is a Python bridge that exports AirSim camera frames into the same recorded-frame manifest format consumed by the C++ core stack.
-
-Start the simulation first:
-
-```bash
-cd ~/dedalus/simulation
-./run.sh
-```
-
-In another terminal, export one or more AirSim frames:
-
-```bash
-cd ~/dedalus
-source ~/dedalus/venv/bin/activate
-python simulation/airsim/scripts/export-airsim-frames.py \
-  --host 127.0.0.1 \
-  --rpc-port 41451 \
-  --vehicle-name PX4 \
-  --camera-name front_center \
-  --count 5 \
-  --output out/airsim_frames
-```
-
-The exporter writes:
-
-```text
-out/airsim_frames/*.ppm
-out/airsim_frames/manifest.txt
-out/airsim_frames/metadata.json
-out/airsim_frames/core_stack_airsim_recorded.yaml
-```
-
-Then run the C++ core stack on those exported AirSim frames:
-
-```bash
-./build-validation/apps/dedalus_core_stack \
-  --config out/airsim_frames/core_stack_airsim_recorded.yaml
-```
-
-This executes:
-
-```text
-RecordedFrameSource
-  -> NoTelemetryEgoProvider
-  -> ScriptedDetector
-  -> SimpleCentroidTracker
-  -> AppearanceOnlyIdentityResolver
-  -> FlatGroundProjector
-  -> InMemoryWorldModel
-  -> WorldSnapshot JSON
-```
-
-This path is the preferred AirSim workflow right now because it exercises real simulation imagery while keeping the C++ core stack dependency-free and reproducible.
-
-#### Direct AirSim Provider Names
-
-The following provider names are already reserved and registered for direct AirSim integration:
-
-```yaml
-frame_source: airsim
-ego_provider: airsim
-detector: airsim_ground_truth
-projector: airsim_depth
-```
-
-The example config is:
-
-```bash
-config/ci/core_stack_airsim_example.yaml
-```
-
-It includes:
-
-```yaml
-frame_source: airsim
-ego_provider: airsim
-detector: airsim_ground_truth
-tracker: simple_centroid
-identity_resolver: appearance_only
-projector: airsim_depth
-world_model: in_memory
-fallback_map_frame_id: map_airsim_0001
-
-airsim_host: 127.0.0.1
-airsim_rpc_port: 41451
-airsim_vehicle_name: PX4
-airsim_camera_name: front_center
-```
-
-In the current dependency-free build, these direct AirSim providers are explicit stubs. Running this config will fail with a clear integration-provider unavailable error. That is intentional: it protects CI and unit tests from accidentally depending on AirSim/PX4/media libraries while preserving the exact provider names and config shape for the future direct backend.
 
 #### AirSim Bridge Latency Profiler
 

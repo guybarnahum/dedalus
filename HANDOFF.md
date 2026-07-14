@@ -62,6 +62,34 @@ L3 lattice: R-spaced Z layers, alternating (R/2, R/2) XY offset on odd layers.
 DB/live ESDF merge: DB baseline preserved through live full snapshots (map_seq=0 gate).
 Contract validator: 0 violations.
 
+Interaction: plain drag → pan (translates viewCenter in view-aligned NED world space);
+shift+drag → rotate (yaw/pitch). y-origin at 0.80*canvas.height. Bounds use trimmed-mean
+(10% outlier cut per axis). L1 LOD slider changes display resolution only — does not rescale
+the scene (trav cells are included in recomputeBounds; both snapshot and delta handlers call it).
+
+### Recent fixes (post-VD4 contract refactor)
+
+```
+H19.21a  L0 sensor-obs cone truncation — FIXED
+         collect_l0_sensor_observations() called with default max_obs=256. Evidence is stored
+         row-major (top elevation → bottom), so 256 entries covered only the top ~6 grid rows
+         (positive elevation only), leaving the lower half of the cone empty in the viewer.
+         Fix: pass evidence.size() at the call site in core_stack_runner_run.cpp.
+
+H19.21b  AirSim overlay elevation bias — FIXED
+         obstacle_evidence_from_snapshot() used evidence[:n] (head-slice). Same row-major
+         order → only upper-elevation markers injected into the AirSim scene.
+         Fix: stride-subsample (evidence[::stride][:n]) in airsim-world-overlay.py.
+
+H19.21c  AirSim overlay flags split
+         WITH_SENSING_EVIDENCE_OVERLAY split into two independent vars in run_mission.sh:
+           WITH_SENSING_VOLUMES_OVERLAY=0   (camera FOV cone frustums)
+           WITH_OBSTACLE_EVIDENCE_OVERLAY=1 (depth-projected evidence tiles)
+         New CLI flags: --[no-]sensing-volumes-overlay, --[no-]obstacle-evidence-overlay
+         Old --[no-]sensing-evidence-overlay kept as backward-compatible alias (sets both).
+         YAML config keys: with_sensing_volumes_overlay, with_obstacle_evidence_overlay
+```
+
 ### Deferred planning work
 
 ```
