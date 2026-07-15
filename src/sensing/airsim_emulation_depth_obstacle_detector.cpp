@@ -1,7 +1,10 @@
 #include "dedalus/sensing/airsim_emulation_depth_obstacle_detector.hpp"
 
+#include <cstdio>
 #include <cmath>
 #include <cstdint>
+#include <fstream>
+#include <string>
 #include <vector>
 
 #include "dedalus/sensing/depth_projection_kernel.hpp"
@@ -69,6 +72,34 @@ std::vector<ObstacleEvidence> AirSimEmulationDepthObstacleDetector::detect(
 
     last_input_      = input;
     last_has_result_ = true;
+
+    // Dump first GT depth frame as float32 NPY for offline comparison with
+    // the ONNX depth map (/tmp/dedalus_frame0_depth.npy from ONNXDepthEngine).
+    // Load both in Python:
+    //   gt   = np.load("/tmp/dedalus_gt_frame0_depth.npy")   # metres, 0=invalid
+    //   onnx = np.load("/tmp/dedalus_frame0_depth.npy")      # raw model output
+    //   # Compare: plt.imshow(gt);  plt.imshow(1/onnx)
+    static bool s_frame0_dumped = false;
+    if (!s_frame0_dumped) {
+        s_frame0_dumped = true;
+        const std::string path = "/tmp/dedalus_gt_frame0_depth.npy";
+        std::string hdr = "{'descr': '<f4', 'fortran_order': False, 'shape': (";
+        hdr += std::to_string(df.height) + ", " + std::to_string(df.width) + "), }";
+        while ((hdr.size() + 1U + 10U) % 64U != 0U) hdr += ' ';
+        hdr += '\n';
+        const auto hl = static_cast<std::uint16_t>(hdr.size());
+        if (std::ofstream f{path, std::ios::binary}) {
+            f.write("\x93NUMPY", 6);
+            f.put('\x01'); f.put('\x00');
+            f.put(static_cast<char>(hl & 0xFFU));
+            f.put(static_cast<char>((hl >> 8U) & 0xFFU));
+            f.write(hdr.c_str(), static_cast<std::streamsize>(hdr.size()));
+            f.write(reinterpret_cast<const char*>(df.depth_m.data()),
+                    static_cast<std::streamsize>(df.width * df.height) * sizeof(float));
+            std::fprintf(stderr, "[AirSimGT] frame0 depth → %s  (%d×%d)\n",
+                         path.c_str(), df.width, df.height);
+        }
+    }
 
     // ── Delegate all downstream processing to the shared pipeline ─────────
     const DepthPipelineConfig cfg{

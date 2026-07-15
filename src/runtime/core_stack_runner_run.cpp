@@ -578,6 +578,28 @@ bool CoreStackRunner::run_once() {
                     timing_writer_->record_stage("depth.scale_ratio",
                         static_cast<std::int64_t>((range_b / range_a) * 1000.0F));
                 }
+
+                // Per-slot range histogram — 4 buckets, logged as raw counts.
+                // Reveals whether ONNX concentrates evidence in the same depth bands
+                // as GT.  If ONNX shows heavy 0–5 m population where GT shows 30 m+,
+                // the model is assigning close depth to far/background pixels.
+                const auto log_range_hist = [&](const std::vector<ObstacleEvidence>& ev,
+                                                const std::string& prefix) {
+                    std::int64_t c0 = 0, c1 = 0, c2 = 0, c3 = 0;
+                    for (const auto& e : ev) {
+                        const float r = e.range_m;
+                        if      (r <  5.0F) ++c0;
+                        else if (r < 15.0F) ++c1;
+                        else if (r < 30.0F) ++c2;
+                        else                ++c3;
+                    }
+                    timing_writer_->record_stage(prefix + ".range_0_5m",    c0);
+                    timing_writer_->record_stage(prefix + ".range_5_15m",   c1);
+                    timing_writer_->record_stage(prefix + ".range_15_30m",  c2);
+                    timing_writer_->record_stage(prefix + ".range_30m_plus", c3);
+                };
+                log_range_hist(slot_a_evidence, "depth.slot_a");
+                log_range_hist(slot_b_evidence, "depth.slot_b");
             }
         }
     } else if (timing_writer_) {
