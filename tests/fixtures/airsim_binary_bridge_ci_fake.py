@@ -8,8 +8,8 @@ import struct
 import sys
 
 MAGIC = b"DEDFRM1\0"
-HEADER_SIZE = 56
-VERSION = 1
+HEADER_SIZE = 60
+VERSION = 3
 PIXEL_FORMAT_RGB8 = 1
 
 
@@ -21,7 +21,7 @@ def write_frame(sequence: int, timestamp_ns: int) -> None:
         b"\xff\xff\xff"
     )
     header = struct.pack(
-        "<8sIIQqIIIIII",
+        "<8sIIQqIIIIIII",
         MAGIC,
         HEADER_SIZE,
         VERSION,
@@ -33,6 +33,7 @@ def write_frame(sequence: int, timestamp_ns: int) -> None:
         PIXEL_FORMAT_RGB8,
         len(payload),
         0,
+        0,  # depth_size
     )
     sys.stdout.buffer.write(header)
     sys.stdout.buffer.write(payload)
