@@ -79,26 +79,17 @@ std::vector<ObstacleEvidence> VisualDepthObstacleDetector::detect(
     input.height = inferred.height;
     input.scale  = scale_.scale;
 
-    // Calibrated intrinsics scaled to the ONNX output resolution.
-    //
-    // The ONNX model resizes the input (e.g. 640×360) to its native square
-    // input (518×518), producing a non-uniform horizontal/vertical squeeze.
-    // Scaling fx/fy/cx/cy by the per-axis resize ratio corrects the principal
-    // point and focal lengths so that tan(θ) = (u-cx)/fx recovers the original
-    // bearing in the ONNX output coordinate frame.
-    //
-    // Distortion coefficients are measured in normalized coordinates and are
-    // dimensionless — they do not need rescaling.
-    const float s_x = (ego_frame.frame.image.width  > 0 && inferred.width  > 0)
-        ? static_cast<float>(inferred.width)  / static_cast<float>(ego_frame.frame.image.width)
-        : 1.0F;
-    const float s_y = (ego_frame.frame.image.height > 0 && inferred.height > 0)
-        ? static_cast<float>(inferred.height) / static_cast<float>(ego_frame.frame.image.height)
-        : 1.0F;
-    input.fx = static_cast<float>(ego_frame.frame.intrinsics.fx) * s_x;
-    input.fy = static_cast<float>(ego_frame.frame.intrinsics.fy) * s_y;
-    input.cx = static_cast<float>(ego_frame.frame.intrinsics.cx) * s_x;
-    input.cy = static_cast<float>(ego_frame.frame.intrinsics.cy) * s_y;
+    // FoV-based intrinsics, matching the GT provider convention:
+    //   cx = (W-1)/2, fx = cx / tan(hfov/2)
+    // Uses the ONNX output dimensions and sensing volume FoV directly so that
+    // the pixel-to-bearing mapping agrees with airsim_gt_vd regardless of the
+    // ONNX resize ratio or frame.intrinsics source.
+    const float hfov = static_cast<float>(ego_frame.sensing_volume.horizontal_fov_rad);
+    const float vfov = static_cast<float>(ego_frame.sensing_volume.vertical_fov_rad);
+    input.cx = (static_cast<float>(inferred.width)  - 1.0F) * 0.5F;
+    input.cy = (static_cast<float>(inferred.height) - 1.0F) * 0.5F;
+    input.fx = input.cx / std::tan(hfov * 0.5F);
+    input.fy = input.cy / std::tan(vfov * 0.5F);
     input.k1 = static_cast<float>(ego_frame.frame.intrinsics.distortion_k1);
     input.k2 = static_cast<float>(ego_frame.frame.intrinsics.distortion_k2);
 
@@ -275,16 +266,12 @@ std::vector<ObstacleEvidence> detect_visual_depth_obstacles(
     input.height = inferred.height;
     input.scale  = scale.scale;
 
-    const float s_x = (ego_frame.frame.image.width  > 0 && inferred.width  > 0)
-        ? static_cast<float>(inferred.width)  / static_cast<float>(ego_frame.frame.image.width)
-        : 1.0F;
-    const float s_y = (ego_frame.frame.image.height > 0 && inferred.height > 0)
-        ? static_cast<float>(inferred.height) / static_cast<float>(ego_frame.frame.image.height)
-        : 1.0F;
-    input.fx = static_cast<float>(ego_frame.frame.intrinsics.fx) * s_x;
-    input.fy = static_cast<float>(ego_frame.frame.intrinsics.fy) * s_y;
-    input.cx = static_cast<float>(ego_frame.frame.intrinsics.cx) * s_x;
-    input.cy = static_cast<float>(ego_frame.frame.intrinsics.cy) * s_y;
+    const float hfov = static_cast<float>(ego_frame.sensing_volume.horizontal_fov_rad);
+    const float vfov = static_cast<float>(ego_frame.sensing_volume.vertical_fov_rad);
+    input.cx = (static_cast<float>(inferred.width)  - 1.0F) * 0.5F;
+    input.cy = (static_cast<float>(inferred.height) - 1.0F) * 0.5F;
+    input.fx = input.cx / std::tan(hfov * 0.5F);
+    input.fy = input.cy / std::tan(vfov * 0.5F);
     input.k1 = static_cast<float>(ego_frame.frame.intrinsics.distortion_k1);
     input.k2 = static_cast<float>(ego_frame.frame.intrinsics.distortion_k2);
 
