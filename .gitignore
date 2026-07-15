@@ -82,6 +82,8 @@ nosetests.xml
 # Notebook
 .ipynb_checkpoints/
 *.html
+# Viewer source files are HTML but must be tracked
+!simulation/airsim/static/*.html
 
 # Keep lockfiles ignored by default for app-style repos
 Pipfile.lock
