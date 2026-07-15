@@ -1652,9 +1652,14 @@ function buildTravFaces() {
     const isEdge = s === "unknown"  || s === "stale";
     if (!isOcc && !isEdge) continue; // explicit free → not rendered
 
-    const cx = Math.round(cell.center.x / levelM) * levelM;
-    const cy = Math.round(cell.center.y / levelM) * levelM;
-    const cz = Math.round(cell.center.z / levelM) * levelM;
+    // Floor-based snapping matches C++ map key→center convention:
+    // center = (floor(pos / cell_size) + 0.5) * cell_size.
+    // Math.round inflates the cloud at coarser LODs (boundary cells snap
+    // outward), so going from 1 m → 0.5 m appeared to "scale down" because
+    // the inflation suddenly disappeared at native resolution.
+    const cx = (Math.floor(cell.center.x / levelM) + 0.5) * levelM;
+    const cy = (Math.floor(cell.center.y / levelM) + 0.5) * levelM;
+    const cz = (Math.floor(cell.center.z / levelM) + 0.5) * levelM;
     const k  = `${cx},${cy},${cz}`;
     let e = coarseGrid.get(k);
     if (!e) { e = {cx, cy, cz, occ:0, edge:0, conf:0}; coarseGrid.set(k, e); }
