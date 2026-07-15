@@ -93,59 +93,8 @@ std::optional<int> parse_json_int_optional(const std::string& json, const std::s
     return std::stoi(token);
 }
 
-std::optional<std::vector<float>> parse_json_float_array_optional(const std::string& json, const std::string& key) {
-    const std::string marker = "\"" + key + "\":";
-    const auto marker_pos = json.find(marker);
-    if (marker_pos == std::string::npos) {
-        return std::nullopt;
-    }
-    const auto open_pos = json.find('[', marker_pos + marker.size());
-    const auto close_pos = json.find(']', open_pos);
-    if (open_pos == std::string::npos || close_pos == std::string::npos || close_pos <= open_pos) {
-        return std::nullopt;
-    }
-
-    std::string body = json.substr(open_pos + 1U, close_pos - open_pos - 1U);
-    std::replace(body.begin(), body.end(), ',', ' ');
-    std::istringstream input{body};
-    std::vector<float> values;
-    float value = 0.0F;
-    while (input >> value) {
-        values.push_back(value);
-    }
-    return values;
-}
-
-
 }  // namespace
 
-std::optional<AirSimDepthFrame> parse_depth_frame_optional(
-    const std::string& json,
-    const FramePacket& frame,
-    const MapFrameId& map_frame_id) {
-    const auto width = parse_json_int_optional(json, "depth_width");
-    const auto height = parse_json_int_optional(json, "depth_height");
-    const auto depth = parse_json_float_array_optional(json, "depth_m");
-    if (!width.has_value() || !height.has_value() || !depth.has_value()) {
-        return std::nullopt;
-    }
-    if (*width <= 0 || *height <= 0 ||
-        depth->size() < static_cast<std::size_t>(*width) * static_cast<std::size_t>(*height)) {
-        return std::nullopt;
-    }
-    std::vector<float> normal_values;
-
-    AirSimDepthFrame depth_frame;
-    depth_frame.timestamp = frame.timestamp;
-    depth_frame.source_frame_id = frame.frame_id;
-    depth_frame.has_source_frame = true;
-    depth_frame.sensor_name = frame.camera_id.value;
-    depth_frame.map_frame_id = map_frame_id;
-    depth_frame.width = *width;
-    depth_frame.height = *height;
-    depth_frame.depth_m = *depth;
-    return depth_frame;
-}
 
 std::optional<AirSimDepthFrame> parse_depth_frame_from_binary(
     const std::string& json,

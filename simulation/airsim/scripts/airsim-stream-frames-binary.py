@@ -1,32 +1,31 @@
 #!/usr/bin/env python3
 """Stream AirSim scene frames using a compact binary protocol.
 
-Frame protocol, little-endian:
+Frame protocol, little-endian (single version):
 
     magic[8]        = b'DEDFRM1\0'
-    header_size     uint32  — 56 for v1/v2, 60 for v3
-    version         uint32  — 1 RGB-only, 2 RGB+ego JSON, 3 RGB+ego JSON+binary depth
+    header_size     uint32  = 60
+    version         uint32  = 3
     sequence        uint64
     timestamp_ns    int64
     width           uint32
     height          uint32
-    channels        uint32, currently 3
-    pixel_format    uint32, currently 1 for RGB8
+    channels        uint32  = 3
+    pixel_format    uint32  = 1 (RGB8)
     payload_size    uint32
-    ego_json_size   uint32  — 0 for v1
-    depth_size      uint32  — v3 only: byte count of binary depth chunk (float32 LE)
+    ego_json_size   uint32  (0 when --include-ego not set)
+    depth_size      uint32  (0 when --include-depth not set)
 
-    payload         raw RGB bytes  (payload_size bytes)
-    ego_json        UTF-8 JSON     (ego_json_size bytes, v2/v3 only)
-    depth_binary    float32 LE     (depth_size bytes, v3 only)
+    payload         raw RGB bytes    (payload_size bytes)
+    ego_json        UTF-8 JSON       (ego_json_size bytes)
+    depth_binary    float32 LE       (depth_size bytes)
 
-Version 3 binary depth:
+Binary depth:
   - Full-resolution AirSim DepthPlanar — no downsampling.
   - The C++ airsim_gt_vd provider receives full-res data and runs the same
-    block-minimum grid as visual_onnx, making both providers pipeline-identical.
+    block-minimum grid as visual_onnx — both providers pipeline-identical.
   - Encoding: raw float32 little-endian, row-major.  0.0 = invalid/no-return.
-  - Dimensions and encoding metadata come from the ego_json sidecar:
-      depth_width  (int), depth_height (int)
+  - Dimensions come from the ego_json sidecar: depth_width (int), depth_height (int).
 """
 
 from __future__ import annotations
@@ -45,11 +44,8 @@ from typing import TextIO
 import airsim
 
 MAGIC = b"DEDFRM1\0"
-VERSION_RGB_ONLY = 1
-VERSION_RGB_EGO = 2
-VERSION_RGB_EGO_DEPTH = 3
-HEADER_SIZE = 56      # v1 / v2
-HEADER_SIZE_V3 = 60   # v3 (adds depth_size field)
+VERSION = 3
+HEADER_SIZE = 60
 PIXEL_FORMAT_RGB8 = 1
 MAVLINK_SAFETY_ARMED_FLAG = 128
 
@@ -295,37 +291,14 @@ def write_frame(
     ego_payload: bytes = b"",
     depth_bytes: bytes = b"",
 ) -> bool:
-    """Write one binary frame to stdout.
-
-    Selects protocol version automatically:
-      v1 — RGB only
-      v2 — RGB + ego JSON sidecar
-      v3 — RGB + ego JSON sidecar + binary depth (float32 LE)
-    """
-    if depth_bytes:
-        header = struct.pack(
-            "<8sIIQqIIIIIII",
-            MAGIC, HEADER_SIZE_V3, VERSION_RGB_EGO_DEPTH,
-            sequence, timestamp_ns, width, height,
-            3, PIXEL_FORMAT_RGB8,
-            len(payload), len(ego_payload), len(depth_bytes),
-        )
-    elif ego_payload:
-        header = struct.pack(
-            "<8sIIQqIIIIII",
-            MAGIC, HEADER_SIZE, VERSION_RGB_EGO,
-            sequence, timestamp_ns, width, height,
-            3, PIXEL_FORMAT_RGB8,
-            len(payload), len(ego_payload),
-        )
-    else:
-        header = struct.pack(
-            "<8sIIQqIIIIII",
-            MAGIC, HEADER_SIZE, VERSION_RGB_ONLY,
-            sequence, timestamp_ns, width, height,
-            3, PIXEL_FORMAT_RGB8,
-            len(payload), 0,
-        )
+    """Write one binary frame to stdout (always protocol version 3)."""
+    header = struct.pack(
+        "<8sIIQqIIIIIII",
+        MAGIC, HEADER_SIZE, VERSION,
+        sequence, timestamp_ns, width, height,
+        3, PIXEL_FORMAT_RGB8,
+        len(payload), len(ego_payload), len(depth_bytes),
+    )
     try:
         sys.stdout.buffer.write(header)
         sys.stdout.buffer.write(payload)

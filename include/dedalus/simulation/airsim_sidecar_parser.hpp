@@ -12,14 +12,8 @@ namespace dedalus {
 
 EgoState parse_ego_json(const std::string& json, const MapFrameId& map_frame_id, TimePoint frame_timestamp);
 
-// v2 path: decode depth_m float array from JSON sidecar.
-std::optional<AirSimDepthFrame> parse_depth_frame_optional(
-    const std::string& json,
-    const FramePacket& frame,
-    const MapFrameId& map_frame_id);
-
-// v3 path: depth_width / depth_height come from JSON sidecar; float data from
-// the binary depth chunk (already decoded to float32 by the caller).
+// depth_width / depth_height come from JSON sidecar; float data from the
+// binary depth chunk (already decoded to float32 by the caller).
 std::optional<AirSimDepthFrame> parse_depth_frame_from_binary(
     const std::string& json,
     std::vector<float> depth_m,
