@@ -4,8 +4,9 @@
 # logic are identical — a fair apples-to-apples comparison.
 # Ego uses AirSim frame_hint (NOT visual odometry) — this pipeline evaluates
 # visual depth detection only; ego accuracy is not the variable under test.
-# Agreement metric logged per-frame to profiler JSONL:
-#   depth_slot_b.evidence_count     depth.voxel_overlap_ppt
+# GT-centric metrics logged per-frame to profiler JSONL:
+#   depth.voxel_precision_ppt  depth.voxel_recall_ppt  depth.voxel_f1_ppt
+#   depth.false_positive_count depth.false_negative_count  depth.scale_ratio
 #
 # Requires: drone/px4_front_center_depth.yaml (eval slot needs depth frames).
 

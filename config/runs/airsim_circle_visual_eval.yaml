@@ -1,12 +1,24 @@
 # ── Run: AirSim  ·  circle person  ·  Visual primary + AirSim GT eval ────────
-# Visual depth as slot A; AirSim GT depth as eval slot B.
-# Agreement logged per-frame: depth_slot_b.evidence_count  depth.voxel_overlap_ppt
+# visual_onnx as slot A (primary → L1/L2); airsim_gt_vd as slot B (GT, logged only).
+# Both slots use the same 40×22 block-minimum grid and run_depth_pipeline() path.
+# GT-centric metrics logged per frame to profiler JSONL:
+#   depth.voxel_precision_ppt  — fraction of ONNX evidence confirmed by GT
+#   depth.voxel_recall_ppt     — fraction of GT confirmed by ONNX (SAFETY METRIC)
+#   depth.voxel_f1_ppt         — harmonic mean of precision and recall
+#   depth.false_positive_count — ONNX-only voxels (phantom obstacles)
+#   depth.false_negative_count — GT-only voxels (missed obstacles, safety-critical)
+#   depth.scale_ratio          — GT_range / ONNX_range (calibration error)
+#
+# Report:
+#   python3 tools/mission/ab-depth-report.py out/circle_visual_eval/profile/pipeline_*.jsonl
+#   python3 tools/mission/ab-depth-report.py --tsv .../*.jsonl > ab.tsv
 #
 # Usage:
 #   simulation/airsim/run_mission.sh \
 #     --config config/runs/airsim_circle_visual_eval.yaml \
 #     --output-dir out/circle_visual_eval \
-#     --pipeline-timing
+#     --pipeline-timing \
+#     --obstacle-evidence-overlay
 
 include: config/world-env/airsim.yaml
 include: config/drone/px4_front_center_depth.yaml

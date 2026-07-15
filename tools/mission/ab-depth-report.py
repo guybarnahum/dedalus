@@ -2,18 +2,25 @@
 """A/B depth provider comparison report.
 
 Reads a pipeline profiler JSONL (one frame per line, stages in a nested object)
-and prints a summary of the two-slot depth eval metrics:
+and prints a GT-centric summary of the two-slot depth eval metrics.
 
-  depth_slot_a.evidence_count   — ONNX obstacle evidence per frame
-  depth_slot_b.evidence_count   — GT (AirSim) obstacle evidence per frame
-  depth.voxel_overlap_ppt       — voxel agreement ‰ between A and B
-  depth.median_range_a_m        — ONNX median obstacle range × 1000 (÷1000 → m)
-  depth.median_range_b_m        — GT   median obstacle range × 1000 (÷1000 → m)
-  depth.scale_ratio             — (GT_range / ONNX_range) × 1000
+Slot B (eval) is always treated as ground truth (e.g. airsim_gt_vd).
+Slot A (primary) is evaluated against it (e.g. visual_onnx).
+
+  depth_slot_a.evidence_count   — primary obstacle evidence per frame
+  depth_slot_b.evidence_count   — GT (eval) obstacle evidence per frame
+  depth.voxel_precision_ppt     — fraction of slot-A confirmed by GT within ±0.5 m
+  depth.voxel_recall_ppt        — fraction of GT confirmed by slot-A (SAFETY METRIC)
+  depth.voxel_f1_ppt            — harmonic mean of precision and recall
+  depth.false_positive_count    — slot-A voxels with no GT neighbor (phantom obstacles)
+  depth.false_negative_count    — GT voxels missed by slot-A (missed obstacles)
+  depth.median_range_a_m        — primary median obstacle range × 1000 (÷1000 → m)
+  depth.median_range_b_m        — GT median obstacle range × 1000 (÷1000 → m)
+  depth.scale_ratio             — (GT_range / primary_range) × 1000
 
 Usage:
-  python3 tools/mission/ab-depth-report.py out/seq_b_visual/profile/pipeline_*.jsonl
-  python3 tools/mission/ab-depth-report.py --tsv out/.../pipeline_*.jsonl > scale.tsv
+  python3 tools/mission/ab-depth-report.py out/circle_visual_eval/profile/pipeline_*.jsonl
+  python3 tools/mission/ab-depth-report.py --tsv out/.../pipeline_*.jsonl > ab.tsv
 """
 from __future__ import annotations
 
@@ -24,16 +31,9 @@ import sys
 from pathlib import Path
 
 
-def pct(p: float, data: list[float]) -> float:
-    if not data:
-        return 0.0
-    idx = max(0, min(len(data) - 1, int(len(data) * p)))
-    return sorted(data)[idx]
-
-
 def stats_line(label: str, values: list[float], unit: str = "", scale: float = 1.0) -> str:
     if not values:
-        return f"  {label:<38} NO DATA"
+        return f"  {label:<42} NO DATA"
     vs = [v * scale for v in values]
     sv = sorted(vs)
     n = len(sv)
@@ -42,7 +42,7 @@ def stats_line(label: str, values: list[float], unit: str = "", scale: float = 1
     p25 = sv[n // 4]
     p75 = sv[min(n - 1, 3 * n // 4)]
     p95 = sv[min(n - 1, int(n * 0.95))]
-    return (f"  {label:<38} n={n:<5d}  "
+    return (f"  {label:<42} n={n:<5d}  "
             f"mean={mean:7.2f}{unit}  p25={p25:6.2f}  p50={med:6.2f}  "
             f"p75={p75:6.2f}  p95={p95:6.2f}{unit}")
 
@@ -77,8 +77,21 @@ def extract(frames: list[dict], key: str) -> list[float]:
     return out
 
 
+def extract_pair(frames: list[dict], key_a: str, key_b: str) -> list[tuple[float, float]]:
+    """Extract pairs of values that are both present in the same frame."""
+    out = []
+    for f in frames:
+        s = f.get("stages", {})
+        va = s.get(key_a)
+        vb = s.get(key_b)
+        if va is not None and vb is not None:
+            out.append((float(va), float(vb)))
+    return out
+
+
 def main() -> None:
-    ap = argparse.ArgumentParser(description=__doc__)
+    ap = argparse.ArgumentParser(description=__doc__,
+                                 formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("jsonl", nargs="+", type=Path, help="pipeline profiler JSONL file(s)")
     ap.add_argument("--tsv", action="store_true",
                     help="emit frame-level TSV instead of summary (for plotting)")
@@ -103,7 +116,8 @@ def main() -> None:
             "frame_idx", "timestamp_ns",
             "ev_a", "ev_b",
             "range_a_m", "range_b_m", "scale_ratio",
-            "overlap_ppt",
+            "precision_pct", "recall_pct", "f1_pct",
+            "fp_count", "fn_count",
         ]
         print("\t".join(cols))
         for i, f in enumerate(frames):
@@ -113,9 +127,18 @@ def main() -> None:
             range_a   = (s["depth.median_range_a_m"] / 1000) if "depth.median_range_a_m" in s else ""
             range_b   = (s["depth.median_range_b_m"] / 1000) if "depth.median_range_b_m" in s else ""
             ratio     = (s["depth.scale_ratio"] / 1000)      if "depth.scale_ratio"       in s else ""
-            overlap   = s.get("depth.voxel_overlap_ppt", "")
+            # Prefer new keys; fall back to legacy depth.voxel_overlap_ppt for old JSONLs.
+            prec      = (s.get("depth.voxel_precision_ppt", s.get("depth.voxel_overlap_ppt", None)))
+            prec_pct  = (prec / 10.0) if prec is not None else ""
+            rec_raw   = s.get("depth.voxel_recall_ppt")
+            rec_pct   = (rec_raw / 10.0) if rec_raw is not None else ""
+            f1_raw    = s.get("depth.voxel_f1_ppt")
+            f1_pct    = (f1_raw / 10.0)  if f1_raw  is not None else ""
+            fp        = s.get("depth.false_positive_count", "")
+            fn        = s.get("depth.false_negative_count", "")
             ts        = f.get("timestamp_ns", "")
-            print(f"{i}\t{ts}\t{ev_a}\t{ev_b}\t{range_a}\t{range_b}\t{ratio}\t{overlap}")
+            print(f"{i}\t{ts}\t{ev_a}\t{ev_b}\t{range_a}\t{range_b}\t{ratio}"
+                  f"\t{prec_pct}\t{rec_pct}\t{f1_pct}\t{fp}\t{fn}")
         return
 
     # ── Summary mode ──────────────────────────────────────────────────────────
@@ -126,32 +149,32 @@ def main() -> None:
 
     depth_stages = sorted(s for s in all_stages if "depth" in s)
 
-    print(f"\n{'='*70}")
-    print(f"  A/B Depth Eval Report")
+    print(f"\n{'='*72}")
+    print(f"  A/B Depth Eval Report  (slot B = ground truth)")
     print(f"  frames: {total}   files: {len(paths)}")
-    print(f"{'='*70}")
+    print(f"{'='*72}")
 
     # ── Stage presence check ──────────────────────────────────────────────────
-    expected = {
-        "depth_slot_a.evidence_count",
-        "depth_slot_b.evidence_count",
-        "depth.voxel_overlap_ppt",
-        "depth.median_range_a_m",
-        "depth.median_range_b_m",
-        "depth.scale_ratio",
+    new_keys = {
+        "depth.voxel_precision_ppt", "depth.voxel_recall_ppt",
+        "depth.voxel_f1_ppt", "depth.false_positive_count", "depth.false_negative_count",
     }
-    missing = expected - all_stages
-    if missing:
-        print(f"\n  ⚠️  MISSING STAGES (stale build or slot B inactive):")
-        for s in sorted(missing):
-            print(f"     - {s}")
+    legacy_key = "depth.voxel_overlap_ppt"
+    has_new    = bool(new_keys & all_stages)
+    has_legacy = legacy_key in all_stages
+    has_slot_b = "depth_slot_b.evidence_count" in all_stages
+
+    if not has_slot_b:
+        print(f"\n  ⚠️  Slot B has NO data. Likely causes:")
+        print(f"     1. Binary is stale — rebuild: cmake --build build-staging -j$(nproc)")
+        print(f"     2. Config missing  depth_eval: airsim_gt_vd")
+        print(f"     3. Env var         DEDALUS_DEPTH_EVAL=airsim_gt_vd  not set")
         print()
-        if "depth_slot_b.evidence_count" not in all_stages:
-            print("  → depth_slot_b has NO data. Likely causes:")
-            print("    1. EC2 build is stale — rebuild with: cmake --build build-staging -j$(nproc)")
-            print("    2. DEDALUS_DEPTH_EVAL=airsim_gt_detector not set")
-            print("    3. Config missing 'depth_eval: airsim_gt_detector'")
-            print()
+
+    if has_legacy and not has_new:
+        print(f"\n  ℹ  Legacy JSONL (depth.voxel_overlap_ppt only = precision).")
+        print(f"     Rebuild and re-run for recall, F1, FP/FN metrics.")
+        print()
 
     # ── Evidence counts ───────────────────────────────────────────────────────
     ev_a = extract(frames, "depth_slot_a.evidence_count")
@@ -159,31 +182,72 @@ def main() -> None:
     ev_b_nonzero = [v for v in ev_b if v > 0]
 
     print(f"\n  Evidence counts (obstacles per frame)")
-    print(f"  {'─'*65}")
-    print(stats_line("slot A  (ONNX primary)", ev_a, " obs"))
-    print(stats_line("slot B  (GT eval)", ev_b, " obs"))
+    print(f"  {'─'*68}")
+    print(stats_line("slot A  (primary, e.g. visual_onnx)", ev_a, " obs"))
+    print(stats_line("slot B  (GT eval, e.g. airsim_gt_vd)", ev_b, " obs"))
     if ev_b:
         nonzero_pct = 100.0 * len(ev_b_nonzero) / len(ev_b)
-        print(f"  {'slot B non-zero frames':<38} {len(ev_b_nonzero)}/{len(ev_b)}  ({nonzero_pct:.1f}%)")
+        print(f"  {'slot B non-zero frames':<42} {len(ev_b_nonzero)}/{len(ev_b)}  ({nonzero_pct:.1f}%)")
         if len(ev_b_nonzero) < args.min_frames:
             print(f"\n  ⚠️  Slot B produced evidence in fewer than {args.min_frames} frames.")
-            print("     Check that --include-depth is in the bridge command")
-            print("     (use config/drone/px4_front_center_depth.yaml).")
+            print(f"     Check that --include-depth is in the bridge command.")
+
+    # ── Precision / Recall / F1 ───────────────────────────────────────────────
+    # Accept new keys; fall back to legacy for old JSONLs (precision only).
+    raw_prec = extract(frames, "depth.voxel_precision_ppt") or extract(frames, "depth.voxel_overlap_ppt")
+    raw_rec  = extract(frames, "depth.voxel_recall_ppt")
+    raw_f1   = extract(frames, "depth.voxel_f1_ppt")
+
+    prec_pct = [v / 10.0 for v in raw_prec]
+    rec_pct  = [v / 10.0 for v in raw_rec]
+    f1_pct   = [v / 10.0 for v in raw_f1]
+
+    print(f"\n  GT-centric detection quality  (slot B = ground truth)")
+    print(f"  {'─'*68}")
+    print(stats_line("Precision  (A confirmed by GT)", prec_pct, "%"))
+    print(stats_line("Recall     (GT confirmed by A) ← SAFETY", rec_pct, "%"))
+    print(stats_line("F1         (harmonic mean)", f1_pct, "%"))
+
+    if prec_pct and rec_pct:
+        mean_p = statistics.mean(prec_pct)
+        mean_r = statistics.mean(rec_pct)
+        print()
+        if mean_r < 70.0:
+            print(f"  ⚠️  LOW RECALL ({mean_r:.1f}%): ONNX misses ~{100-mean_r:.0f}% of GT obstacles on average.")
+            print(f"     Safety risk: real obstacles not detected. Check scale calibration and model quality.")
+        elif mean_r < 85.0:
+            print(f"  △  Recall {mean_r:.1f}%: acceptable but improve before disabling GT eval.")
+        else:
+            print(f"  ✓  Recall {mean_r:.1f}%: ONNX detects most GT obstacles.")
+
+        if mean_p < 50.0:
+            print(f"  ℹ  Low precision ({mean_p:.1f}%): ONNX reports many false-alarm obstacles.")
+            print(f"     Not a safety issue but may cause unnecessary avoidance maneuvers.")
+
+    # ── FP / FN counts ────────────────────────────────────────────────────────
+    fp_counts = extract(frames, "depth.false_positive_count")
+    fn_counts = extract(frames, "depth.false_negative_count")
+
+    if fp_counts or fn_counts:
+        print(f"\n  Per-frame error counts")
+        print(f"  {'─'*68}")
+        print(stats_line("False positives / frame (phantom obs)", fp_counts, " vox"))
+        print(stats_line("False negatives / frame (missed obs)  ← SAFETY", fn_counts, " vox"))
 
     # ── Range comparison ──────────────────────────────────────────────────────
     range_a = [v / 1000.0 for v in extract(frames, "depth.median_range_a_m") if v > 0]
     range_b = [v / 1000.0 for v in extract(frames, "depth.median_range_b_m") if v > 0]
 
     print(f"\n  Median obstacle range per frame (metres)")
-    print(f"  {'─'*65}")
-    print(stats_line("slot A  range (ONNX)", range_a, " m"))
-    print(stats_line("slot B  range (GT)",   range_b, " m"))
+    print(f"  {'─'*68}")
+    print(stats_line("slot A  (primary)", range_a, " m"))
+    print(stats_line("slot B  (GT)",      range_b, " m"))
 
     # ── Scale ratio ───────────────────────────────────────────────────────────
     ratios = [v / 1000.0 for v in extract(frames, "depth.scale_ratio") if v > 0]
 
-    print(f"\n  Scale ratio  (GT_range / ONNX_range) — 1.0 = perfect")
-    print(f"  {'─'*65}")
+    print(f"\n  Scale ratio  (GT_range / primary_range)  — 1.0 = perfect calibration")
+    print(f"  {'─'*68}")
     if ratios:
         sv = sorted(ratios)
         n = len(sv)
@@ -192,40 +256,65 @@ def main() -> None:
         p25  = sv[n // 4]
         p75  = sv[min(n - 1, 3 * n // 4)]
         p95  = sv[min(n - 1, int(n * 0.95))]
-        print(f"  {'ratio':<38} n={n:<5d}  mean={mean:6.2f}x  "
-              f"p25={p25:.2f}x  p50={med:.2f}x  p75={p75:.2f}x  p95={p95:.2f}x")
+        print(f"  {'ratio':<42} n={n:<5d}  mean={mean:6.3f}x  "
+              f"p25={p25:.3f}x  p50={med:.3f}x  p75={p75:.3f}x  p95={p95:.3f}x")
         print()
-        if med > 1.5:
+        if med > 1.15:
             suggested = round(med, 2)
-            print(f"  → ONNX reads ~{1/med:.2f}× the GT distance (ONNX under-estimates range).")
-            print(f"    To correct: set  visual_onnx.scale: {suggested}  in config/pipeline/visual.yaml")
-            print(f"    (current value is 1.0 — multiply raw ONNX output by {suggested})")
-        elif med < 0.67:
-            print(f"  → ONNX over-estimates range vs GT (ratio {med:.2f}×).")
-            print(f"    Set  visual_onnx.scale: {round(med, 2)}  to compensate.")
+            print(f"  → ONNX under-estimates range by ~{(1-1/med)*100:.0f}% relative to GT.")
+            print(f"    Set  visual_onnx.scale: {suggested}  in config/pipeline/visual.yaml")
+        elif med < 0.87:
+            print(f"  → ONNX over-estimates range by ~{(1/med - 1)*100:.0f}% relative to GT.")
+            print(f"    Set  visual_onnx.scale: {round(med, 2)}  in config/pipeline/visual.yaml")
         else:
-            print(f"  → Scale error within ±50% of GT — reasonably calibrated.")
-    else:
-        print(f"  {'scale_ratio':<38} NO DATA")
+            print(f"  ✓  Scale within ±15% of GT — well calibrated.")
 
-    # ── Voxel overlap ─────────────────────────────────────────────────────────
-    overlap = [v / 10.0 for v in extract(frames, "depth.voxel_overlap_ppt")]  # ‰ → %
-    print(f"\n  Voxel overlap agreement (A vs B within ±0.5 m voxel)")
-    print(f"  {'─'*65}")
-    print(stats_line("overlap", overlap, "%"))
+    # ── Precision vs range correlation ────────────────────────────────────────
+    # Use per-frame pairs: (median_range_a_m, recall_ppt) to show how recall
+    # degrades with distance.  Bin into 0-5m, 5-15m, 15-30m, 30m+ buckets.
+    prec_range_pairs = extract_pair(frames, "depth.median_range_a_m", "depth.voxel_recall_ppt")
+    if prec_range_pairs:
+        buckets: dict[str, list[float]] = {
+            "0–5 m":  [],
+            "5–15 m": [],
+            "15–30 m":[],
+            "30 m+":  [],
+        }
+        for range_mm, recall_ppt in prec_range_pairs:
+            r_m = range_mm / 1000.0
+            pct_val = recall_ppt / 10.0
+            if r_m < 5.0:
+                buckets["0–5 m"].append(pct_val)
+            elif r_m < 15.0:
+                buckets["5–15 m"].append(pct_val)
+            elif r_m < 30.0:
+                buckets["15–30 m"].append(pct_val)
+            else:
+                buckets["30 m+"].append(pct_val)
+
+        if any(buckets.values()):
+            print(f"\n  Recall by range bucket  (frames binned by median obstacle range)")
+            print(f"  {'─'*68}")
+            for label, vals in buckets.items():
+                if vals:
+                    med_r = sorted(vals)[len(vals) // 2]
+                    print(f"  {label:<12}  n={len(vals):<5d}  median recall={med_r:.1f}%"
+                          + ("  ← SAFETY" if med_r < 70 else ""))
+                else:
+                    print(f"  {label:<12}  (no frames)")
 
     # ── All depth stages present in file ─────────────────────────────────────
-    print(f"\n  All depth-related stages in this JSONL:")
-    print(f"  {'─'*65}")
+    print(f"\n  Depth-related stages in JSONL:")
+    print(f"  {'─'*68}")
     if depth_stages:
         for s in depth_stages:
             vals = extract(frames, s)
             if vals:
-                print(f"    {s:<45} n={len(vals)}")
+                print(f"    {s:<50} n={len(vals)}")
     else:
-        print("  (none found — likely a stale build missing depth metrics)")
+        print("  (none — stale build or slot B inactive)")
 
-    print(f"\n{'='*70}\n")
+    print(f"\n{'='*72}\n")
 
 
 if __name__ == "__main__":

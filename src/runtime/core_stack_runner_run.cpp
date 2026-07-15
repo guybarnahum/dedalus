@@ -404,12 +404,40 @@ bool CoreStackRunner::run_once() {
                 timing_writer_->record_stage("depth_slot_b.evidence_count",
                     static_cast<std::int64_t>(slot_b_evidence.size()));
 
-                // Fraction of primary-slot voxels confirmed by eval-slot within ±1 voxel.
-                // Logged as parts-per-thousand (0–1000).
+                // GT-centric A/B evaluation.  Slot B (eval) is treated as ground truth.
+                // All metrics logged as parts-per-thousand (0–1000).
+                //
+                // Precision: fraction of slot-A (primary) voxels confirmed by slot-B (GT).
+                //   Low precision → ONNX hallucinates obstacles that GT doesn't see.
+                //   Safe: causes unnecessary avoidance, not collisions.
+                //
+                // Recall: fraction of slot-B (GT) voxels confirmed by slot-A (primary).
+                //   Low recall → ONNX misses real obstacles.
+                //   SAFETY-CRITICAL: missed obstacles cause collisions.
                 static constexpr float kVoxelSizeM = 0.5F;
-                const float agreement = compute_depth_agreement(slot_a_evidence, slot_b_evidence, kVoxelSizeM);
+                const float precision = compute_depth_agreement(slot_a_evidence, slot_b_evidence, kVoxelSizeM);
+                const float recall    = compute_depth_agreement(slot_b_evidence, slot_a_evidence, kVoxelSizeM);
+                const float f1 = (precision + recall > 0.0F)
+                    ? 2.0F * precision * recall / (precision + recall) : 0.0F;
+
+                // False positives: ONNX voxels with no GT neighbor (phantom obstacles).
+                // False negatives: GT voxels with no ONNX neighbor (missed obstacles — dangerous).
+                const auto fp_count = static_cast<std::int64_t>(
+                    std::round((1.0F - precision) * static_cast<float>(slot_a_evidence.size())));
+                const auto fn_count = static_cast<std::int64_t>(
+                    std::round((1.0F - recall) * static_cast<float>(slot_b_evidence.size())));
+
+                // Keep legacy key for JSONL backward compat.
                 timing_writer_->record_stage("depth.voxel_overlap_ppt",
-                    static_cast<std::int64_t>(agreement * 1000.0F));
+                    static_cast<std::int64_t>(precision * 1000.0F));
+                timing_writer_->record_stage("depth.voxel_precision_ppt",
+                    static_cast<std::int64_t>(precision * 1000.0F));
+                timing_writer_->record_stage("depth.voxel_recall_ppt",
+                    static_cast<std::int64_t>(recall    * 1000.0F));
+                timing_writer_->record_stage("depth.voxel_f1_ppt",
+                    static_cast<std::int64_t>(f1        * 1000.0F));
+                timing_writer_->record_stage("depth.false_positive_count", fp_count);
+                timing_writer_->record_stage("depth.false_negative_count", fn_count);
 
                 // Median range (|center_local|) per slot → ratio ≈ slot_b_scale / slot_a_scale.
                 // For ONNX (A) + airsim_gt (B): ratio ≈ GT_metres / ONNX_metres → scale error factor.
