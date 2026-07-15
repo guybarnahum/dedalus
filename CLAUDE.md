@@ -202,6 +202,14 @@ tools/validation/           Behavior/trajectory-specific validators
 config/behaviors/           Behavior specs, trajectories, and ghost fixture assets
 ```
 
+**Generated files — never commit directly:**
+
+| Generated file | Source (edit this instead) |
+|---|---|
+| `simulation/airsim/static/mission_unified_viewer.html` | `tools/visualization/mission_unified_viewer.py` |
+
+These are produced by `build.sh`. `.gitignore` intentionally excludes `*.html`. Fix the Python source; the HTML is rebuilt on the next `build.sh` run.
+
 ---
 
 **These guidelines are working if:** fewer unnecessary changes in diffs, fewer rewrites due to overcomplication, clarifying questions come before implementation rather than after mistakes, and architecture boundaries are respected across sessions.
