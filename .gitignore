@@ -177,4 +177,9 @@ simulation/airsim/colosseum_environments/
 *.mp4
 *.mov
 *.avi
-*.mkvdepth_provider_report.html
+*.mkv
+
+# Analysis / report outputs dropped in repo root during dev sessions
+*.tsv
+*.csv
+depth_provider_report.html
