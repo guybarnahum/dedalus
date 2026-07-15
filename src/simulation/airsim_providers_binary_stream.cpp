@@ -24,23 +24,26 @@ std::int64_t elapsed_us(const SteadyClock::time_point start) {
     return std::chrono::duration_cast<std::chrono::microseconds>(SteadyClock::now() - start).count();
 }
 
-constexpr std::size_t kBinaryFrameHeaderSize = 56U;
-constexpr std::uint32_t kBinaryFrameVersion = 1U;
-constexpr std::uint32_t kBinaryFrameEgoVersion = 2U;
-constexpr std::uint32_t kBinaryPixelFormatRgb8 = 1U;
+constexpr std::size_t kBinaryFrameHeaderSize   = 56U;  // v1 / v2
+constexpr std::size_t kBinaryFrameHeaderSizeV3 = 60U;  // v3 (adds depth_size)
+constexpr std::uint32_t kBinaryFrameVersion      = 1U;
+constexpr std::uint32_t kBinaryFrameEgoVersion   = 2U;
+constexpr std::uint32_t kBinaryFrameDepthVersion = 3U;  // v3: binary depth chunk
+constexpr std::uint32_t kBinaryPixelFormatRgb8   = 1U;
 constexpr char kBinaryFrameMagic[8] = {'D', 'E', 'D', 'F', 'R', 'M', '1', '\0'};
 
 struct BinaryFrameHeader {
     std::uint32_t header_size{0};
     std::uint32_t version{0};
     std::uint64_t sequence{0};
-    std::int64_t timestamp_ns{0};
+    std::int64_t  timestamp_ns{0};
     std::uint32_t width{0};
     std::uint32_t height{0};
     std::uint32_t channels{0};
     std::uint32_t pixel_format{0};
     std::uint32_t payload_size{0};
     std::uint32_t sidecar_size{0};
+    std::uint32_t depth_size{0};    // v3 only; 0 for v1/v2
 };
 
 std::string shell_quote(const std::string& value) {
@@ -87,7 +90,8 @@ std::int64_t read_i64_le(const std::string& bytes, std::size_t offset) {
 }
 
 BinaryFrameHeader parse_binary_header(const std::string& header_bytes) {
-    if (header_bytes.size() != kBinaryFrameHeaderSize) {
+    // header_bytes is 56 bytes for v1/v2, 60 bytes for v3.
+    if (header_bytes.size() < kBinaryFrameHeaderSize) {
         throw std::runtime_error("binary frame header has invalid size");
     }
     if (std::memcmp(header_bytes.data(), kBinaryFrameMagic, sizeof(kBinaryFrameMagic)) != 0) {
@@ -95,22 +99,33 @@ BinaryFrameHeader parse_binary_header(const std::string& header_bytes) {
     }
 
     BinaryFrameHeader header;
-    header.header_size = read_u32_le(header_bytes, 8U);
-    header.version = read_u32_le(header_bytes, 12U);
-    header.sequence = read_u64_le(header_bytes, 16U);
+    header.header_size  = read_u32_le(header_bytes, 8U);
+    header.version      = read_u32_le(header_bytes, 12U);
+    header.sequence     = read_u64_le(header_bytes, 16U);
     header.timestamp_ns = read_i64_le(header_bytes, 24U);
-    header.width = read_u32_le(header_bytes, 32U);
-    header.height = read_u32_le(header_bytes, 36U);
-    header.channels = read_u32_le(header_bytes, 40U);
+    header.width        = read_u32_le(header_bytes, 32U);
+    header.height       = read_u32_le(header_bytes, 36U);
+    header.channels     = read_u32_le(header_bytes, 40U);
     header.pixel_format = read_u32_le(header_bytes, 44U);
     header.payload_size = read_u32_le(header_bytes, 48U);
     header.sidecar_size = read_u32_le(header_bytes, 52U);
 
-    if (header.header_size != kBinaryFrameHeaderSize ||
-        (header.version != kBinaryFrameVersion && header.version != kBinaryFrameEgoVersion)) {
-        throw std::runtime_error("binary frame header has unsupported version or header size");
+    if (header.version == kBinaryFrameDepthVersion) {
+        if (header.header_size != static_cast<std::uint32_t>(kBinaryFrameHeaderSizeV3) ||
+            header_bytes.size() < kBinaryFrameHeaderSizeV3) {
+            throw std::runtime_error("binary frame v3 requires 60-byte header");
+        }
+        header.depth_size = read_u32_le(header_bytes, 56U);
+    } else if (header.version == kBinaryFrameVersion || header.version == kBinaryFrameEgoVersion) {
+        if (header.header_size != static_cast<std::uint32_t>(kBinaryFrameHeaderSize)) {
+            throw std::runtime_error("binary frame v1/v2 requires 56-byte header");
+        }
+    } else {
+        throw std::runtime_error("binary frame header has unsupported version");
     }
-    if (header.width == 0U || header.height == 0U || header.channels != 3U || header.pixel_format != kBinaryPixelFormatRgb8) {
+
+    if (header.width == 0U || header.height == 0U || header.channels != 3U ||
+        header.pixel_format != kBinaryPixelFormatRgb8) {
         throw std::runtime_error("binary frame header has unsupported image shape or pixel format");
     }
     if (header.payload_size != header.width * header.height * header.channels) {
@@ -163,10 +178,22 @@ std::optional<FramePacket> AirSimFrameSource::next_stream_binary_frame() {
     std::vector<FrameSourceTiming> timings;
 
     auto start = SteadyClock::now();
-    const auto header_bytes = transport_->read_stream_bytes(command, kBinaryFrameHeaderSize);
+    auto header_bytes = transport_->read_stream_bytes(command, kBinaryFrameHeaderSize);
     timings.push_back(FrameSourceTiming{"frame_source.detail.read_header", elapsed_us(start)});
     if (!header_bytes.has_value()) {
         return std::nullopt;
+    }
+
+    // v3 has a 60-byte header — peek version (offset 12) and read 4 extra bytes.
+    {
+        const std::uint32_t version_peek = read_u32_le(*header_bytes, 12U);
+        if (version_peek == kBinaryFrameDepthVersion) {
+            const auto extra = transport_->read_stream_bytes(command, 4U);
+            if (!extra.has_value()) {
+                throw std::runtime_error("binary stream ended during v3 header extension");
+            }
+            header_bytes->append(*extra);
+        }
     }
 
     start = SteadyClock::now();
@@ -191,6 +218,23 @@ std::optional<FramePacket> AirSimFrameSource::next_stream_binary_frame() {
         sidecar_payload = *sidecar;
     }
 
+    // v3: binary depth chunk (float32 LE, width×height values, no downsampling).
+    // The C++ airsim_gt_vd detector then runs the same block-minimum grid as
+    // visual_onnx — both providers are pipeline-identical from this point.
+    std::vector<float> binary_depth;
+    if (header.depth_size > 0U) {
+        start = SteadyClock::now();
+        const auto depth_raw = transport_->read_stream_byte_vector(command, header.depth_size);
+        timings.push_back(FrameSourceTiming{"frame_source.detail.read_depth_binary", elapsed_us(start)});
+        if (!depth_raw.has_value()) {
+            throw std::runtime_error("binary stream ended before binary depth payload");
+        }
+        // Little-endian float32: safe to memcpy on x86/ARM64 (both LE).
+        const std::size_t n_floats = header.depth_size / sizeof(float);
+        binary_depth.resize(n_floats);
+        std::memcpy(binary_depth.data(), depth_raw->data(), header.depth_size);
+    }
+
     ++next_frame_index_;
     start = SteadyClock::now();
     auto frame = frame_from_image(
@@ -212,7 +256,15 @@ std::optional<FramePacket> AirSimFrameSource::next_stream_binary_frame() {
     if (!sidecar_payload.empty()) {
         start = SteadyClock::now();
         frame.ego_hint = parse_ego_json(sidecar_payload, config_.map_frame_id, frame.timestamp);
-        frame.depth_frame = parse_depth_frame_optional(sidecar_payload, frame, config_.map_frame_id);
+        if (!binary_depth.empty()) {
+            // v3: depth floats came from the binary chunk; dims from JSON sidecar.
+            frame.depth_frame = parse_depth_frame_from_binary(
+                sidecar_payload, std::move(binary_depth), frame, config_.map_frame_id);
+        } else {
+            // v2: depth_m float array encoded in JSON sidecar.
+            frame.depth_frame = parse_depth_frame_optional(
+                sidecar_payload, frame, config_.map_frame_id);
+        }
         timings.push_back(FrameSourceTiming{"frame_source.detail.parse_sidecar", elapsed_us(start)});
         // DEDALUS_DEBUG_EGO: trace what AirSim sidecar delivered this frame.
         if (std::getenv("DEDALUS_DEBUG_EGO")) {

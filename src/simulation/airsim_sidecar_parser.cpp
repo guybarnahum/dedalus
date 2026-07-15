@@ -147,6 +147,30 @@ std::optional<AirSimDepthFrame> parse_depth_frame_optional(
     return depth_frame;
 }
 
+std::optional<AirSimDepthFrame> parse_depth_frame_from_binary(
+    const std::string& json,
+    std::vector<float> depth_m,
+    const FramePacket& frame,
+    const MapFrameId& map_frame_id) {
+    const auto width  = parse_json_int_optional(json, "depth_width");
+    const auto height = parse_json_int_optional(json, "depth_height");
+    if (!width.has_value() || !height.has_value()) return std::nullopt;
+    if (*width <= 0 || *height <= 0) return std::nullopt;
+    if (depth_m.size() < static_cast<std::size_t>(*width) * static_cast<std::size_t>(*height)) {
+        return std::nullopt;
+    }
+    AirSimDepthFrame depth_frame;
+    depth_frame.timestamp        = frame.timestamp;
+    depth_frame.source_frame_id  = frame.frame_id;
+    depth_frame.has_source_frame = true;
+    depth_frame.sensor_name      = frame.camera_id.value;
+    depth_frame.map_frame_id     = map_frame_id;
+    depth_frame.width            = *width;
+    depth_frame.height           = *height;
+    depth_frame.depth_m          = std::move(depth_m);
+    return depth_frame;
+}
+
 Vec3 to_vec3(const std::vector<double>& values) {
     return Vec3{values.at(0), values.at(1), values.at(2)};
 }

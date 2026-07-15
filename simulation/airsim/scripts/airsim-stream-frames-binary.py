@@ -4,8 +4,8 @@
 Frame protocol, little-endian:
 
     magic[8]        = b'DEDFRM1\0'
-    header_size     uint32, currently 56
-    version         uint32, 1 for RGB-only, 2 for RGB + ego JSON
+    header_size     uint32  — 56 for v1/v2, 60 for v3
+    version         uint32  — 1 RGB-only, 2 RGB+ego JSON, 3 RGB+ego JSON+binary depth
     sequence        uint64
     timestamp_ns    int64
     width           uint32
@@ -13,20 +13,28 @@ Frame protocol, little-endian:
     channels        uint32, currently 3
     pixel_format    uint32, currently 1 for RGB8
     payload_size    uint32
-    reserved        uint32, version 2 uses this as ego_json_size
-    payload         raw RGB bytes
-    ego_json        optional UTF-8 JSON bytes when version == 2
+    ego_json_size   uint32  — 0 for v1
+    depth_size      uint32  — v3 only: byte count of binary depth chunk (float32 LE)
 
-This avoids JSON/base64/PPM overhead while keeping AirSim dependencies in the
-Python bridge process instead of the C++ core stack.
+    payload         raw RGB bytes  (payload_size bytes)
+    ego_json        UTF-8 JSON     (ego_json_size bytes, v2/v3 only)
+    depth_binary    float32 LE     (depth_size bytes, v3 only)
+
+Version 3 binary depth:
+  - Full-resolution AirSim DepthPlanar — no downsampling.
+  - The C++ airsim_gt_vd provider receives full-res data and runs the same
+    block-minimum grid as visual_onnx, making both providers pipeline-identical.
+  - Encoding: raw float32 little-endian, row-major.  0.0 = invalid/no-return.
+  - Dimensions and encoding metadata come from the ego_json sidecar:
+      depth_width  (int), depth_height (int)
 """
 
 from __future__ import annotations
 
 import argparse
+import array
 from contextlib import redirect_stdout
 import json
-import math
 import os
 from pathlib import Path
 import struct
@@ -39,7 +47,9 @@ import airsim
 MAGIC = b"DEDFRM1\0"
 VERSION_RGB_ONLY = 1
 VERSION_RGB_EGO = 2
-HEADER_SIZE = 56
+VERSION_RGB_EGO_DEPTH = 3
+HEADER_SIZE = 56      # v1 / v2
+HEADER_SIZE_V3 = 60   # v3 (adds depth_size field)
 PIXEL_FORMAT_RGB8 = 1
 MAVLINK_SAFETY_ARMED_FLAG = 128
 
@@ -193,83 +203,43 @@ def rgb_bytes_from_response(response: object) -> bytes:
     )
 
 
-def sample_depth_grid(response: object, cols: int, rows: int) -> dict[str, object]:
-    """Sample AirSim DepthPlanar into a cols×rows block-minimum grid.
+def raw_depth_info(response: object) -> tuple[int, int, bytes]:
+    """Return AirSim DepthPlanar as (width, height, float32_le_bytes).
 
-    Each cell (gc, gr) covers pixels x∈[gc*BW, (gc+1)*BW) × y∈[gr*BH, (gr+1)*BH).
-    The minimum positive finite depth (= closest obstacle) is selected per cell,
-    matching the block-minimum logic in the C++ project_depth_to_device_evidence()
-    kernel.  depth_width==cols and depth_height==rows in the output, so the C++
-    detector receives an N×M frame that aligns exactly with its configured grid.
+    Sends the full-resolution depth buffer as raw float32 bytes — no downsampling.
+    The C++ airsim_gt_vd detector receives full-res data and runs the same
+    block-minimum grid as visual_onnx, making both providers pipeline-identical.
+
+    Encoding uses array.array('f') for fast bulk conversion (~5 ms for 640×360)
+    vs json.dumps which would take ~150 ms for the same count.
+
+    Returns (0, 0, b"") on failure (missing/undersized AirSim response).
     """
     width = int(getattr(response, "width", 0))
     height = int(getattr(response, "height", 0))
-    raw = list(getattr(response, "image_data_float", []) or [])
-    if width <= 0 or height <= 0 or len(raw) < width * height:
-        return {
-            "depth_width": 0,
-            "depth_height": 0,
-            "depth_m": [],
-            "depth_valid_count": 0,
-            "depth_min_m": 0.0,
-            "depth_max_m": 0.0,
-        }
-
-    BW = width // cols
-    BH = height // rows
-    if BW <= 0 or BH <= 0:
-        # Source resolution is smaller than the requested grid — configuration mismatch.
-        # Return empty so the C++ detector logs a warning rather than crashing.
-        return {
-            "depth_width": 0,
-            "depth_height": 0,
-            "depth_m": [],
-            "depth_valid_count": 0,
-            "depth_min_m": 0.0,
-            "depth_max_m": 0.0,
-        }
-
-    sampled: list[float] = []
-    for gr in range(rows):
-        y0 = gr * BH
-        for gc in range(cols):
-            x0 = gc * BW
-            # Block minimum: closest positive finite depth in the cell.
-            # 0.0 represents invalid / no-return (same as C++ sentinel).
-            best = 0.0
-            for y in range(y0, y0 + BH):
-                for x in range(x0, x0 + BW):
-                    v = float(raw[y * width + x])
-                    if math.isfinite(v) and 0.0 < v < 60000.0:
-                        if best == 0.0 or v < best:
-                            best = v
-            sampled.append(best)
-
-    valid = [v for v in sampled if v > 0.0]
-    usable_0_5m = [v for v in valid if v <= 5.0]
-    usable_5_20m = [v for v in valid if 5.0 < v <= 20.0]
-    usable_20_80m = [v for v in valid if 20.0 < v <= 80.0]
-    far_over_80m = [v for v in valid if v > 80.0]
-    return {
-        "depth_width": cols,
-        "depth_height": rows,
-        "depth_m": sampled,
-        "depth_valid_count": len(valid),
-        "depth_0_5m_count": len(usable_0_5m),
-        "depth_5_20m_count": len(usable_5_20m),
-        "depth_20_80m_count": len(usable_20_80m),
-        "depth_over_80m_count": len(far_over_80m),
-        "depth_min_m": min(valid) if valid else 0.0,
-        "depth_max_m": max(valid) if valid else 0.0,
-    }
+    raw = getattr(response, "image_data_float", None) or []
+    n = width * height
+    if width <= 0 or height <= 0 or len(raw) < n:
+        return 0, 0, b""
+    buf = array.array("f", raw[:n])
+    if sys.byteorder != "little":
+        buf.byteswap()
+    return width, height, buf.tobytes()
 
 
-def ego_json_bytes(    client: airsim.MultirotorClient,
+def ego_json_bytes(
+    client: airsim.MultirotorClient,
     vehicle_name: str,
     timestamp_ns: int,
     mavlink_ego_reader: MavlinkEgoTelemetryReader | None = None,
-    depth_payload: dict[str, object] | None = None,
+    depth_dims: tuple[int, int] | None = None,
 ) -> bytes:
+    """Build the ego sidecar JSON.
+
+    depth_dims: (width, height) when a binary depth chunk follows this sidecar
+    in the v3 frame; None when no binary depth is attached.  Only the dimensions
+    are included in JSON — the float data itself is in the binary chunk.
+    """
     state = client.getMultirotorState(vehicle_name=vehicle_name)
     kin = state.kinematics_estimated
 
@@ -308,8 +278,10 @@ def ego_json_bytes(    client: airsim.MultirotorClient,
     if mavlink_ego_reader is not None:
         payload.update(mavlink_ego_reader.sample())
 
-    if depth_payload:
-        payload.update(depth_payload)
+    if depth_dims is not None:
+        # Dimensions only — the float32 data is in the binary depth chunk.
+        payload["depth_width"] = depth_dims[0]
+        payload["depth_height"] = depth_dims[1]
 
     return json.dumps(payload, separators=(",", ":"), allow_nan=False).encode("utf-8")
 
@@ -321,27 +293,46 @@ def write_frame(
     height: int,
     payload: bytes,
     ego_payload: bytes = b"",
+    depth_bytes: bytes = b"",
 ) -> bool:
-    version = VERSION_RGB_EGO if ego_payload else VERSION_RGB_ONLY
-    header = struct.pack(
-        "<8sIIQqIIIIII",
-        MAGIC,
-        HEADER_SIZE,
-        version,
-        sequence,
-        timestamp_ns,
-        width,
-        height,
-        3,
-        PIXEL_FORMAT_RGB8,
-        len(payload),
-        len(ego_payload),
-    )
+    """Write one binary frame to stdout.
+
+    Selects protocol version automatically:
+      v1 — RGB only
+      v2 — RGB + ego JSON sidecar
+      v3 — RGB + ego JSON sidecar + binary depth (float32 LE)
+    """
+    if depth_bytes:
+        header = struct.pack(
+            "<8sIIQqIIIIIII",
+            MAGIC, HEADER_SIZE_V3, VERSION_RGB_EGO_DEPTH,
+            sequence, timestamp_ns, width, height,
+            3, PIXEL_FORMAT_RGB8,
+            len(payload), len(ego_payload), len(depth_bytes),
+        )
+    elif ego_payload:
+        header = struct.pack(
+            "<8sIIQqIIIIII",
+            MAGIC, HEADER_SIZE, VERSION_RGB_EGO,
+            sequence, timestamp_ns, width, height,
+            3, PIXEL_FORMAT_RGB8,
+            len(payload), len(ego_payload),
+        )
+    else:
+        header = struct.pack(
+            "<8sIIQqIIIIII",
+            MAGIC, HEADER_SIZE, VERSION_RGB_ONLY,
+            sequence, timestamp_ns, width, height,
+            3, PIXEL_FORMAT_RGB8,
+            len(payload), 0,
+        )
     try:
         sys.stdout.buffer.write(header)
         sys.stdout.buffer.write(payload)
         if ego_payload:
             sys.stdout.buffer.write(ego_payload)
+        if depth_bytes:
+            sys.stdout.buffer.write(depth_bytes)
         sys.stdout.buffer.flush()
     except BrokenPipeError:
         return False
@@ -356,13 +347,20 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--camera-name", default="front_center")
     parser.add_argument("--count", type=int, default=0, help="0 means stream forever")
     parser.add_argument("--rate-hz", type=float, default=5.0)
-    parser.add_argument("--include-ego", action="store_true", help="Append ego telemetry JSON after each RGB payload using binary protocol version 2.")
-    parser.add_argument("--mavlink-armed-endpoints", default=os.environ.get("DEDALUS_MAVLINK_ARMED_ENDPOINTS", ""), help="Deprecated alias for --mavlink-ego-endpoints.")
-    parser.add_argument("--mavlink-ego-endpoints", default=os.environ.get("DEDALUS_MAVLINK_EGO_ENDPOINTS", ""), help="Comma-separated pymavlink endpoints used to derive ego telemetry from HEARTBEAT and LOCAL_POSITION_NED.")
-    parser.add_argument("--timing-jsonl", default="", help="Optional path for bridge-internal timing JSONL records.")
-    parser.add_argument("--include-depth", action="store_true", help="Append an N×M block-minimum AirSim DepthPlanar grid to the sidecar JSON.")
-    parser.add_argument("--depth-grid-cols", type=int, default=40, help="Grid columns for --include-depth block-minimum sampling. Must match visual_onnx.depth_grid_cols in the C++ pipeline config.")
-    parser.add_argument("--depth-grid-rows", type=int, default=22, help="Grid rows for --include-depth block-minimum sampling. Must match visual_onnx.depth_grid_rows in the C++ pipeline config.")
+    parser.add_argument("--include-ego", action="store_true",
+                        help="Append ego telemetry JSON after each RGB payload (v2/v3).")
+    parser.add_argument("--mavlink-armed-endpoints",
+                        default=os.environ.get("DEDALUS_MAVLINK_ARMED_ENDPOINTS", ""),
+                        help="Deprecated alias for --mavlink-ego-endpoints.")
+    parser.add_argument("--mavlink-ego-endpoints",
+                        default=os.environ.get("DEDALUS_MAVLINK_EGO_ENDPOINTS", ""),
+                        help="Comma-separated pymavlink endpoints for ego telemetry.")
+    parser.add_argument("--timing-jsonl", default="",
+                        help="Optional path for bridge-internal timing JSONL records.")
+    parser.add_argument("--include-depth", action="store_true",
+                        help="Append full-resolution AirSim DepthPlanar as binary float32 "
+                             "(protocol v3).  The C++ detector runs block-minimum sampling, "
+                             "matching visual_onnx exactly.  Requires --include-ego.")
     return parser.parse_args()
 
 
@@ -386,10 +384,7 @@ def main() -> int:
             requests = [airsim.ImageRequest(args.camera_name, airsim.ImageType.Scene, False, False)]
             if args.include_depth:
                 requests.append(airsim.ImageRequest(args.camera_name, airsim.ImageType.DepthPlanar, True, False))
-            responses = client.simGetImages(
-                requests,
-                vehicle_name=args.vehicle_name,
-            )
+            responses = client.simGetImages(requests, vehicle_name=args.vehicle_name)
             image_end_ns = time.perf_counter_ns()
             if not responses:
                 raise RuntimeError("AirSim returned no image responses")
@@ -402,23 +397,31 @@ def main() -> int:
             payload = rgb_bytes_from_response(response)
             rgb_end_ns = time.perf_counter_ns()
 
-            response_index = 1
-            depth_payload = (
-                sample_depth_grid(responses[response_index], args.depth_grid_cols, args.depth_grid_rows)
-                if args.include_depth and len(responses) > response_index
-                else None
+            depth_start_ns = time.perf_counter_ns()
+            depth_w, depth_h, depth_bytes = (
+                raw_depth_info(responses[1])
+                if args.include_depth and len(responses) > 1
+                else (0, 0, b"")
             )
+            depth_end_ns = time.perf_counter_ns()
 
             ego_start_ns = time.perf_counter_ns()
             ego_payload = (
-                ego_json_bytes(client, args.vehicle_name, timestamp_ns, mavlink_ego_reader, depth_payload)
+                ego_json_bytes(
+                    client, args.vehicle_name, timestamp_ns, mavlink_ego_reader,
+                    (depth_w, depth_h) if depth_bytes else None,
+                )
                 if args.include_ego
                 else b""
             )
             ego_end_ns = time.perf_counter_ns()
 
             write_start_ns = time.perf_counter_ns()
-            write_ok = write_frame(sequence, timestamp_ns, int(response.width), int(response.height), payload, ego_payload)
+            write_ok = write_frame(
+                sequence, timestamp_ns,
+                int(response.width), int(response.height),
+                payload, ego_payload, depth_bytes,
+            )
             write_end_ns = time.perf_counter_ns()
             if not write_ok:
                 return 0
@@ -447,22 +450,15 @@ def main() -> int:
                     "height": int(response.height),
                     "payload_bytes": len(payload),
                     "ego_bytes": len(ego_payload),
+                    "depth_width": depth_w,
+                    "depth_height": depth_h,
+                    "depth_bytes": len(depth_bytes),
                     "include_ego": bool(args.include_ego),
                     "include_depth": bool(args.include_depth),
-                    "depth_grid_cols": int(args.depth_grid_cols),
-                    "depth_grid_rows": int(args.depth_grid_rows),
-                    "depth_width": int(depth_payload.get("depth_width", 0)) if depth_payload else 0,
-                    "depth_height": int(depth_payload.get("depth_height", 0)) if depth_payload else 0,
-                    "depth_valid_count": int(depth_payload.get("depth_valid_count", 0)) if depth_payload else 0,
-                    "depth_0_5m_count": int(depth_payload.get("depth_0_5m_count", 0)) if depth_payload else 0,
-                    "depth_5_20m_count": int(depth_payload.get("depth_5_20m_count", 0)) if depth_payload else 0,
-                    "depth_20_80m_count": int(depth_payload.get("depth_20_80m_count", 0)) if depth_payload else 0,
-                    "depth_over_80m_count": int(depth_payload.get("depth_over_80m_count", 0)) if depth_payload else 0,
-                    "depth_min_m": float(depth_payload.get("depth_min_m", 0.0)) if depth_payload else 0.0,
-                    "depth_max_m": float(depth_payload.get("depth_max_m", 0.0)) if depth_payload else 0.0,
                     "target_period_ms": target_period_ms,
                     "sim_get_images_ms": elapsed_ms(image_start_ns, image_end_ns),
                     "rgb_convert_ms": elapsed_ms(rgb_start_ns, rgb_end_ns),
+                    "depth_encode_ms": elapsed_ms(depth_start_ns, depth_end_ns),
                     "ego_sample_ms": elapsed_ms(ego_start_ns, ego_end_ns),
                     "stdout_write_ms": elapsed_ms(write_start_ns, write_end_ns),
                     "sleep_ms": sleep_ms,

@@ -2,15 +2,16 @@
 # Adds --include-depth to the bridge command so that the airsim_gt_vd slot
 # receives DepthPlanar frames in-band with the RGB stream.
 #
-# --depth-grid-cols / --depth-grid-rows must match visual_onnx.depth_grid_cols
-# and visual_onnx.depth_grid_rows in the pipeline config (default 40×22).
-# The bridge samples a block-minimum N×M grid from full-resolution AirSim
-# DepthPlanar; the C++ detector receives exactly N×M values, which aligns
-# BW=1/BH=1 in project_depth_to_device_evidence().
+# Protocol v3 (binary depth): the bridge sends the full-resolution AirSim
+# DepthPlanar frame (e.g. 640×360) as raw float32 LE in a binary chunk after
+# the ego JSON sidecar.  The C++ airsim_gt_vd detector receives full-res data
+# and runs the same block-minimum grid (BW=16/BH=16 for a 40×22 grid) as
+# visual_onnx — both providers are pipeline-identical from data entry onward.
+# No --depth-grid-cols / --depth-grid-rows flags; grid config lives in C++ only.
 #
 # Not needed for visual_onnx — that slot infers depth from RGB.
 
 include: config/drone/px4_front_center.yaml
 
 # Override bridge_command from the base drone config to add depth streaming.
-bridge_command: python3 simulation/airsim/scripts/airsim-stream-frames-binary.py --include-ego --include-depth --depth-grid-cols 40 --depth-grid-rows 22 --rate-hz 10 --mavlink-armed-endpoints udpin:127.0.0.1:14540
+bridge_command: python3 simulation/airsim/scripts/airsim-stream-frames-binary.py --include-ego --include-depth --rate-hz 10 --mavlink-armed-endpoints udpin:127.0.0.1:14540
