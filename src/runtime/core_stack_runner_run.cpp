@@ -25,6 +25,9 @@ using SteadyClock = std::chrono::steady_clock;
 // Compute the fraction of slot-A evidence voxels that have a slot-B voxel
 // within a ±1-voxel neighborhood.  Returns 0 if either set is empty.
 // O(|B|×27 + |A|) time, O(|B|×27) space.
+//
+// NOTE: at long range this fixed-distance threshold becomes too tight.
+// Use compute_depth_agreement_angular for a range-proportional comparison.
 float compute_depth_agreement(
     const std::vector<ObstacleEvidence>& a,
     const std::vector<ObstacleEvidence>& b,
@@ -63,6 +66,50 @@ float compute_depth_agreement(
         if (b_set.count(pack(ax, ay, az)) > 0U) ++matched;
     }
 
+    return static_cast<float>(matched) / static_cast<float>(a.size());
+}
+
+// Angular-space agreement metric.
+//
+// The fixed ±voxel_size_m threshold in compute_depth_agreement becomes too tight
+// at range: at 30 m a 1° angular error → 0.52 m displacement, outside the 0.5 m
+// matching window even when both providers detect the same obstacle.
+//
+// This function matches in bearing × elevation (angular) space with a threshold
+// that grows with range: threshold(r) = max(voxel_size_m, r × tan(half_cell_rad)).
+// half_cell_rad ≈ tan(half_cell_rad) for small angles; for a 40-col grid on 90°
+// hFoV each cell is ~2.25° → half-cell ≈ 1.1° → tan ≈ 0.020.
+//
+// Returns fraction of set-A voxels confirmed by set-B under this metric.
+// O(|A|×|B|) — acceptable for ≤1024 points each.
+float compute_depth_agreement_angular(
+    const std::vector<ObstacleEvidence>& a,
+    const std::vector<ObstacleEvidence>& b,
+    float voxel_size_m,
+    float half_cell_tan) {      // tan(half_cell_angle_rad); pass 0 to use fixed threshold
+    if (a.empty() || b.empty()) return 0.0F;
+
+    std::uint32_t matched = 0U;
+    for (const auto& ea : a) {
+        const float ax = static_cast<float>(ea.center_local.x);
+        const float ay = static_cast<float>(ea.center_local.y);
+        const float az = static_cast<float>(ea.center_local.z);
+        const float r_a = std::sqrt(ax*ax + ay*ay + az*az);
+        const float thresh = (half_cell_tan > 0.0F)
+            ? std::max(voxel_size_m, r_a * half_cell_tan)
+            : voxel_size_m;
+        const float thresh2 = thresh * thresh;
+
+        for (const auto& eb : b) {
+            const float dx = ax - static_cast<float>(eb.center_local.x);
+            const float dy = ay - static_cast<float>(eb.center_local.y);
+            const float dz = az - static_cast<float>(eb.center_local.z);
+            if (dx*dx + dy*dy + dz*dz <= thresh2) {
+                ++matched;
+                break;
+            }
+        }
+    }
     return static_cast<float>(matched) / static_cast<float>(a.size());
 }
 
@@ -438,6 +485,72 @@ bool CoreStackRunner::run_once() {
                     static_cast<std::int64_t>(f1        * 1000.0F));
                 timing_writer_->record_stage("depth.false_positive_count", fp_count);
                 timing_writer_->record_stage("depth.false_negative_count", fn_count);
+
+                // Angular (range-proportional) agreement.
+                // Threshold grows with range so long-distance evidence is compared fairly.
+                // half_cell_tan ≈ tan(1.1°) for a 40-col 90°-hFoV grid.
+                // If this metric is much higher than the fixed metric, the providers agree
+                // on WHICH SCENE REGIONS have obstacles but not on exact 3D depth.
+                // If both are equally low, there is a genuine directional mismatch.
+                static constexpr float kHalfCellTan = 0.020F;  // tan(~1.1°)
+                const float ang_precision = compute_depth_agreement_angular(
+                    slot_a_evidence, slot_b_evidence, kVoxelSizeM, kHalfCellTan);
+                const float ang_recall = compute_depth_agreement_angular(
+                    slot_b_evidence, slot_a_evidence, kVoxelSizeM, kHalfCellTan);
+                const float ang_f1 = (ang_precision + ang_recall > 0.0F)
+                    ? 2.0F * ang_precision * ang_recall / (ang_precision + ang_recall) : 0.0F;
+                timing_writer_->record_stage("depth.angular_precision_ppt",
+                    static_cast<std::int64_t>(ang_precision * 1000.0F));
+                timing_writer_->record_stage("depth.angular_recall_ppt",
+                    static_cast<std::int64_t>(ang_recall    * 1000.0F));
+                timing_writer_->record_stage("depth.angular_f1_ppt",
+                    static_cast<std::int64_t>(ang_f1        * 1000.0F));
+
+                // Intrinsics from each slot — logged once per frame to detect mismatch.
+                // For ONNX+GT: fx_a should equal fx_b if calibrated and FoV-based agree.
+                // Large difference → evidence clouds land at different 3D positions per cell.
+                {
+                    const ProjectionParams pa = depth_slot_a_->last_params();
+                    timing_writer_->record_stage("depth.slot_a.fx",
+                        static_cast<std::int64_t>(pa.fx * 1000.0F));
+                    timing_writer_->record_stage("depth.slot_a.fy",
+                        static_cast<std::int64_t>(pa.fy * 1000.0F));
+                    const ProjectionParams pb = depth_slot_b_->last_params();
+                    timing_writer_->record_stage("depth.slot_b.fx",
+                        static_cast<std::int64_t>(pb.fx * 1000.0F));
+                    timing_writer_->record_stage("depth.slot_b.fy",
+                        static_cast<std::int64_t>(pb.fy * 1000.0F));
+                }
+
+                // Nearest-neighbor distance: for each A voxel, find the closest B voxel.
+                // Logs median distance — no threshold assumption.
+                // If this is large (e.g. >2 m) even when scale_ratio ≈ 1.0, the providers
+                // are projecting to spatially distinct regions (intrinsic mismatch or depth
+                // distribution mismatch), not just sub-voxel offsets.
+                // O(|A|×|B|) ≤ ~1024×1024 ≈ 1M FP ops; ~0.5 ms on a modern CPU.
+                if (!slot_a_evidence.empty() && !slot_b_evidence.empty()) {
+                    std::vector<float> nn_dists;
+                    nn_dists.reserve(slot_a_evidence.size());
+                    for (const auto& ea : slot_a_evidence) {
+                        const float ax = static_cast<float>(ea.center_local.x);
+                        const float ay = static_cast<float>(ea.center_local.y);
+                        const float az = static_cast<float>(ea.center_local.z);
+                        float best2 = std::numeric_limits<float>::max();
+                        for (const auto& eb : slot_b_evidence) {
+                            const float dx = ax - static_cast<float>(eb.center_local.x);
+                            const float dy = ay - static_cast<float>(eb.center_local.y);
+                            const float dz = az - static_cast<float>(eb.center_local.z);
+                            const float d2 = dx*dx + dy*dy + dz*dz;
+                            if (d2 < best2) best2 = d2;
+                        }
+                        nn_dists.push_back(std::sqrt(best2));
+                    }
+                    const auto mid = nn_dists.begin() +
+                        static_cast<std::ptrdiff_t>(nn_dists.size() / 2);
+                    std::nth_element(nn_dists.begin(), mid, nn_dists.end());
+                    timing_writer_->record_stage("depth.nn_median_dist_mm",
+                        static_cast<std::int64_t>(*mid * 1000.0F));
+                }
 
                 // Median range (|center_local|) per slot → ratio ≈ slot_b_scale / slot_a_scale.
                 // For ONNX (A) + airsim_gt (B): ratio ≈ GT_metres / ONNX_metres → scale error factor.

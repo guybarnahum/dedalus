@@ -269,28 +269,97 @@ def main() -> None:
         else:
             print(f"  ✓  Scale within ±15% of GT — well calibrated.")
 
-    # ── Precision vs range correlation ────────────────────────────────────────
-    # Use per-frame pairs: (median_range_a_m, recall_ppt) to show how recall
-    # degrades with distance.  Bin into 0-5m, 5-15m, 15-30m, 30m+ buckets.
+    # ── Angular (range-proportional) agreement ───────────────────────────────
+    # Threshold grows with range: max(0.5m, range × tan(~1.1°)).
+    # If angular >> fixed: providers agree on SCENE REGIONS but not exact depth.
+    # If angular ≈ fixed: providers look at spatially distinct scene regions.
+    raw_ang_prec = extract(frames, "depth.angular_precision_ppt")
+    raw_ang_rec  = extract(frames, "depth.angular_recall_ppt")
+    raw_ang_f1   = extract(frames, "depth.angular_f1_ppt")
+    if raw_ang_prec or raw_ang_rec:
+        ang_prec_pct = [v / 10.0 for v in raw_ang_prec]
+        ang_rec_pct  = [v / 10.0 for v in raw_ang_rec]
+        ang_f1_pct   = [v / 10.0 for v in raw_ang_f1]
+        print(f"\n  Angular (range-proportional) agreement  [threshold = max(0.5m, range×0.020)]")
+        print(f"  {'─'*68}")
+        print(stats_line("Angular precision", ang_prec_pct, "%"))
+        print(stats_line("Angular recall    ← compare to fixed recall", ang_rec_pct, "%"))
+        print(stats_line("Angular F1", ang_f1_pct, "%"))
+        if ang_rec_pct and rec_pct:
+            lift = statistics.mean(ang_rec_pct) - statistics.mean(rec_pct)
+            print()
+            if lift > 15.0:
+                print(f"  → Angular recall is {lift:.1f}pp higher than fixed recall.")
+                print(f"    Providers agree on scene regions but evidence is spatially offset")
+                print(f"    (range-proportional displacement — likely intrinsic mismatch).")
+            elif lift > 5.0:
+                print(f"  → Modest angular lift ({lift:.1f}pp). Mix of offset and genuine misses.")
+            else:
+                print(f"  → Angular and fixed recall are similar (lift {lift:.1f}pp).")
+                print(f"    Providers disagree on scene regions, not just depth.")
+
+    # ── Nearest-neighbour distance ────────────────────────────────────────────
+    nn_dists_m = [v / 1000.0 for v in extract(frames, "depth.nn_median_dist_mm") if v > 0]
+    if nn_dists_m:
+        sv = sorted(nn_dists_m)
+        n  = len(sv)
+        print(f"\n  Nearest-neighbour distance A→B  (median distance per frame, no threshold)")
+        print(f"  {'─'*68}")
+        print(stats_line("NN median dist (A→B)", nn_dists_m, " m"))
+        med_nn = sv[n // 2]
+        print()
+        if med_nn < 0.5:
+            print(f"  ✓  Median NN dist {med_nn:.2f} m — providers are spatially close.")
+            print(f"     If recall is still low, the ±0.5 m matching window is too tight at range.")
+        elif med_nn < 2.0:
+            print(f"  △  Median NN dist {med_nn:.2f} m — providers are offset by more than 1 voxel.")
+            print(f"     Likely cause: intrinsic mismatch (fx/fy differ between slots).")
+        else:
+            print(f"  ✗  Median NN dist {med_nn:.2f} m — providers look at different scene regions.")
+            print(f"     Check intrinsics (depth.slot_a.fx vs depth.slot_b.fx in JSONL).")
+
+    # ── Intrinsics comparison ─────────────────────────────────────────────────
+    fx_a_vals = [v / 1000.0 for v in extract(frames, "depth.slot_a.fx") if v > 0]
+    fx_b_vals = [v / 1000.0 for v in extract(frames, "depth.slot_b.fx") if v > 0]
+    fy_a_vals = [v / 1000.0 for v in extract(frames, "depth.slot_a.fy") if v > 0]
+    fy_b_vals = [v / 1000.0 for v in extract(frames, "depth.slot_b.fy") if v > 0]
+    if fx_a_vals and fx_b_vals:
+        fx_a = statistics.median(fx_a_vals)
+        fx_b = statistics.median(fx_b_vals)
+        fy_a = statistics.median(fy_a_vals) if fy_a_vals else 0.0
+        fy_b = statistics.median(fy_b_vals) if fy_b_vals else 0.0
+        print(f"\n  Intrinsics per slot  (median across frames)")
+        print(f"  {'─'*68}")
+        print(f"  {'slot A fx':<30} {fx_a:8.2f} px")
+        print(f"  {'slot B fx':<30} {fx_b:8.2f} px")
+        print(f"  {'slot A fy':<30} {fy_a:8.2f} px")
+        print(f"  {'slot B fy':<30} {fy_b:8.2f} px")
+        fx_diff_pct = abs(fx_a - fx_b) / max(fx_a, fx_b, 1.0) * 100.0
+        fy_diff_pct = abs(fy_a - fy_b) / max(fy_a, fy_b, 1.0) * 100.0
+        print()
+        if fx_diff_pct > 5.0 or fy_diff_pct > 5.0:
+            print(f"  ⚠️  fx mismatch: {fx_diff_pct:.1f}%   fy mismatch: {fy_diff_pct:.1f}%")
+            print(f"     At 30 m, {fx_diff_pct:.1f}% fx error → {30*fx_diff_pct/100*0.017:.2f} m lateral displacement.")
+            print(f"     Fix: set visual_onnx.fx_cal to match AirSim camera FoV-derived fx.")
+        elif fx_diff_pct > 1.0:
+            print(f"  △  fx mismatch {fx_diff_pct:.1f}% — small but visible at 30+ m range.")
+        else:
+            print(f"  ✓  Intrinsics match (fx diff {fx_diff_pct:.1f}%, fy diff {fy_diff_pct:.1f}%).")
+            print(f"     If recall is still low, the issue is depth value distribution (not direction).")
+    else:
+        print(f"\n  Intrinsics: no data (rebuild needed for depth.slot_a.fx / depth.slot_b.fx).")
+
+    # ── Recall by range bucket ────────────────────────────────────────────────
     prec_range_pairs = extract_pair(frames, "depth.median_range_a_m", "depth.voxel_recall_ppt")
     if prec_range_pairs:
-        buckets: dict[str, list[float]] = {
-            "0–5 m":  [],
-            "5–15 m": [],
-            "15–30 m":[],
-            "30 m+":  [],
-        }
+        buckets: dict[str, list[float]] = {"0–5 m": [], "5–15 m": [], "15–30 m": [], "30 m+": []}
         for range_mm, recall_ppt in prec_range_pairs:
             r_m = range_mm / 1000.0
             pct_val = recall_ppt / 10.0
-            if r_m < 5.0:
-                buckets["0–5 m"].append(pct_val)
-            elif r_m < 15.0:
-                buckets["5–15 m"].append(pct_val)
-            elif r_m < 30.0:
-                buckets["15–30 m"].append(pct_val)
-            else:
-                buckets["30 m+"].append(pct_val)
+            if r_m < 5.0:       buckets["0–5 m"].append(pct_val)
+            elif r_m < 15.0:    buckets["5–15 m"].append(pct_val)
+            elif r_m < 30.0:    buckets["15–30 m"].append(pct_val)
+            else:               buckets["30 m+"].append(pct_val)
 
         if any(buckets.values()):
             print(f"\n  Recall by range bucket  (frames binned by median obstacle range)")

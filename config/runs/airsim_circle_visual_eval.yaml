@@ -8,6 +8,14 @@
 #   depth.false_positive_count — ONNX-only voxels (phantom obstacles)
 #   depth.false_negative_count — GT-only voxels (missed obstacles, safety-critical)
 #   depth.scale_ratio          — GT_range / ONNX_range (calibration error)
+#   depth.angular_precision_ppt depth.angular_recall_ppt depth.angular_f1_ppt
+#   depth.slot_a.fx depth.slot_a.fy depth.slot_b.fx depth.slot_b.fy
+#   depth.nn_median_dist_mm    — median nearest-neighbour distance A→B (no threshold)
+#
+# IMPORTANT: Do NOT use --obstacle-evidence-overlay during A/B depth evaluation.
+# The overlay injects ONNX evidence tiles as 3D objects into AirSim, which appear
+# in DepthPlanar and cause GT to detect obstacles at ONNX positions → circular
+# self-confirmation → artificially inflated recall. Always run without overlay.
 #
 # Report:
 #   python3 tools/mission/ab-depth-report.py out/circle_visual_eval/profile/pipeline_*.jsonl
@@ -18,7 +26,7 @@
 #     --config config/runs/airsim_circle_visual_eval.yaml \
 #     --output-dir out/circle_visual_eval \
 #     --pipeline-timing \
-#     --obstacle-evidence-overlay
+#     --no-obstacle-evidence-overlay
 
 include: config/world-env/airsim.yaml
 include: config/drone/px4_front_center_depth.yaml
