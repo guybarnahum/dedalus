@@ -179,6 +179,11 @@ simulation/airsim/colosseum_environments/
 *.avi
 *.mkv
 
+# Images (debug/analysis outputs)
+*.png
+*.jpg
+*.jpeg
+
 # Analysis / report outputs dropped in repo root during dev sessions
 *.tsv
 *.csv
