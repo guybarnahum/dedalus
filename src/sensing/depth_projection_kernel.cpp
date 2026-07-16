@@ -212,12 +212,19 @@ void project_depth_to_device_evidence(
     const float inv_fx = 1.0F / params.fx;
     const float inv_fy = 1.0F / params.fy;
 
-    // Block-minimum sampling: divide the depth map into grid_cols × grid_rows cells.
-    // For each cell, project the closest valid pixel (max inverse_depth = min depth_m).
-    // One evidence point per cell — no cross-cell voxel deduplication.
+    // P5-percentile block sampling: divide the depth map into grid_cols × grid_rows cells.
+    // For each cell, collect all valid pixels then pick the one at the 5th-percentile
+    // depth position (sorted closest-first).  At least 5% of block pixels must agree on
+    // a close depth value before it becomes evidence — filtering single-pixel noise
+    // (< 1% of block for ONNX 276-px cells) while preserving genuine thin obstacles
+    // (power-line column ≈ 8% of block).  One evidence point per cell.
     const int BW = params.width  / params.grid_cols;  // block width in pixels
     const int BH = params.height / params.grid_rows;  // block height in pixels
     if (BW <= 0 || BH <= 0) return;
+
+    struct CellPixel { float id; int u; int v; };
+    std::vector<CellPixel> cell_buf;
+    cell_buf.reserve(static_cast<std::size_t>(BW) * static_cast<std::size_t>(BH));
 
     for (int gr = 0; gr < params.grid_rows && count_out < params.max_evidence; ++gr) {
         const int v0 = gr * BH;
@@ -227,10 +234,8 @@ void project_depth_to_device_evidence(
             const int u0 = gc * BW;
             const int u1 = std::min(u0 + BW, params.width);
 
-            // Find the pixel in this cell with the highest inverse_depth (= closest obstacle).
-            float best_id = 0.0F;
-            int   best_u  = -1;
-            int   best_v  = -1;
+            // Collect valid pixels in this cell, then pick the p5-closest.
+            cell_buf.clear();
             for (int v = v0; v < v1; ++v) {
                 for (int u = u0; u < u1; ++u) {
                     const float id = inverse_depth[
@@ -239,10 +244,23 @@ void project_depth_to_device_evidence(
                     if (!std::isfinite(id) || id <= 0.0F) continue;
                     const float dm = params.scale / id;
                     if (dm < params.min_depth_m || dm > params.max_depth_m) continue;
-                    if (id > best_id) { best_id = id; best_u = u; best_v = v; }
+                    cell_buf.push_back({id, u, v});
                 }
             }
-            if (best_u < 0) continue;  // no valid pixel in this cell
+            if (cell_buf.empty()) continue;
+
+            const std::size_t n_valid = cell_buf.size();
+            const std::size_t p5_idx  = static_cast<std::size_t>(
+                static_cast<float>(n_valid) * 0.05F);
+            std::nth_element(cell_buf.begin(),
+                             cell_buf.begin() + static_cast<std::ptrdiff_t>(p5_idx),
+                             cell_buf.end(),
+                             [](const CellPixel& a, const CellPixel& b) {
+                                 return a.id > b.id;  // descending: closest first
+                             });
+            const float best_id = cell_buf[p5_idx].id;
+            const int   best_u  = cell_buf[p5_idx].u;
+            const int   best_v  = cell_buf[p5_idx].v;
 
             const float depth_m = params.scale / best_id;
             float xn = (static_cast<float>(best_u) - params.cx) * inv_fx;

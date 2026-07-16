@@ -172,6 +172,29 @@ RuntimeEventStreamServer TCP JSONL (port 7788 / --world-snapshot-stream-port)
 
 Three parallel tracks: **VD** (visual depth), **VL** (visual localization — camera-only ego), and **P** (actor perception). Planning work (Stages 7–8) is deferred; see Section 5.
 
+### Visual Depth Diagnosis (as of 2026-07-16)
+
+The ONNX monocular depth model (DepthAnything V2 ViT-S metric) achieves only **11% voxel recall** against AirSim GT across a full circle mission. Voxel size sweep (0.5m → 2m → 5m → 15m) showed completely flat recall — confirming that ONNX and GT evidence are consistently >15m apart in 3D. This is a total domain gap, not a scale or noise issue that can be fixed by pipeline parameters.
+
+Root cause: DepthAnything V2 metric small is trained on ground-level imagery. At aerial 52° downward pitch, the model compresses 15–30m GT geometry into the 5–15m output range. The block-minimum sampler (276 px/cell for ONNX vs 36 px/cell for GT) amplifies single-pixel noise, further displacing evidence angular positions.
+
+**Two distinct failure modes:**
+1. **Block-sampler noise** — single close pixel in 276-px ONNX block dominates evidence position. Fix: p5-percentile block sampler in `depth_projection_kernel.cpp` lines 215–268 (pending).
+2. **Model domain gap** — scale compression 2-3× due to no aerial training data. Fix: fine-tune or replace model.
+
+**Architecture audit finding (2026-07-16):**
+L0 and L1 currently share the same sensing source via `MissionLocalObstacleMap`. Both layers are downstream of the 264ms ONNX inference. `detect_thin_structures_device` uses depth gradient (not absolute depth), so it is quality-resilient — a fence at 20m with ONNX placing it at 8m still generates a thin-structure event if the depth discontinuity is sharp. However, its 3D localization inherits the scale error, and it still waits for the full ONNX inference. L0 does not have an independent fast sensing path today.
+
+**Depth improvement plan (VD series additions):**
+
+| Step | What | Expected recall | Effort |
+|---|---|---|---|
+| VD4a | p5-percentile block sampler (depth_projection_kernel.cpp L215-268) | ~15–20% | low |
+| VD4b | AGL scale anchoring: multiply depth output by `AGL / (sin(|pitch|) * ground_median_range)` | ~25–35% | low |
+| VD4c | UniDepth V2 ViT-S with known intrinsics (fx=141.6, fy=141.2) — ONNX drop-in | ~30–50% est. | medium |
+| VD4d | Fine-tune DepthAnything V2 or UniDepth V2 on (RGB, GT depth) pairs from profiler runs | ~60–80% est. | high |
+| VD8  | Decouple L0 from ONNX latency — dedicated proximity path (<50ms) | — | future |
+
 ### EgoStateProvider — first-class A/B provider (IMPLEMENTED)
 
 `EgoStateProvider` follows the same pattern as every other pipeline stage:
@@ -443,6 +466,9 @@ Ghost detections           enter through same Observation3D path as real detecti
 Artifacts                  evidence/debug outputs, not IPC
 Overlay                    subscriber/renderer only
 L0                         reflexive avoidance — no planner coupling
+                           NOTE: L0 evidence currently derives from the same MissionLocalObstacleMap
+                           as L1. Both layers share the ONNX depth source. True L0/L1 sensing
+                           separation (VD8) requires a dedicated sub-50ms proximity path.
 L3                         planning primitive — no flight command coupling until Stage 7 scoped
 DepthEngineInterface       platform-transparent depth inference (ONNX/TensorRT)
 DepthPipelineInput         provider-filled struct: inverse_depth + fully-resolved fx/fy/cx/cy + source_kind; no provider branching downstream

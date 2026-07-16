@@ -99,6 +99,61 @@ Stage 8  L0/L3 calibration (sim run)                 DEFERRED — blocked on Sta
 
 ---
 
+## Active Investigation: Visual Depth Quality (as of 2026-07-16)
+
+### Diagnosis complete
+
+The ONNX monocular depth model (DepthAnything V2 ViT-S metric) achieves **11% voxel recall** against AirSim GT. A voxel size sweep (0.5m → 2m → 5m → 15m) showed completely flat recall across all sizes — ONNX and GT evidence are consistently >15m apart in 3D world space. This is total domain gap: the model is trained on ground-level imagery and cannot interpret aerial 52° downward views. No pipeline parameter fixes this.
+
+Key measurements from `tools/mission/depth-evidence-dist.py` on 814-frame circle missions:
+- GT dominant bucket 15–30m (151 frames): ONNX puts 49.5% at 0–5m, 49.5% at 5–15m, 1% at 15–30m
+- `depth.scale_ratio` metric reads ~0.99 (appears healthy) but is broken — uses `|center_local|` (world-origin distance) not drone-relative range; the 30m orbit radius dilutes the signal
+- Block sampler: ONNX has 276 px/cell (12×23) vs GT 36 px/cell (6×6). Single noise pixel dominates 276-px block minimum.
+
+### Architecture audit finding
+
+L0 and L1 **share the same sensing source** via `MissionLocalObstacleMap`. The 264ms ONNX inference is in the L0 critical path. `detect_thin_structures_device` (local contrast, quality-resilient) is NOT a separate L0 path — it waits on ONNX and still uses the same inverse_depth buffer for 3D localization. True L0/L1 sensing separation is future work (VD8).
+
+See LLM.md §3 "Visual Depth Diagnosis" for the full depth improvement plan.
+
+### Improvement plan
+
+Execute in order — benchmark after each step using:
+```bash
+python3 tools/mission/depth-evidence-dist.py out/<run>/profile/pipeline_*.jsonl
+```
+
+**VD4a — p5-percentile block sampler** (pending, low effort)
+- File: `src/sensing/depth_projection_kernel.cpp` lines 215–268
+- Replace block-minimum (max inverse_depth) with 5th-percentile — requires 5% of block pixels to agree on close depth before it becomes evidence
+- Single noise pixel (0.36% of 276-px block) is filtered. Power line column (8.3% of block) is preserved.
+- Expected: 0–5m noise spike collapses; recall improves ~15–20%
+
+**VD4b — AGL scale anchoring** (not started, low effort)
+- Post-process ONNXDepthEngine output by multiplying by `AGL_m / (sin(|pitch_rad|) * ground_plane_median_range)`
+- Drone knows AGL (barometer) and pitch (IMU). Ground-plane range is computable from bottom-row pixel medians.
+- Corrects the systematic 2–3× scale compression without training.
+- Expected: shifts ONNX 5–15m evidence toward 15–30m GT range; recall improves ~25–35%
+
+**VD4c — UniDepth V2 ViT-S with intrinsics** (not started, medium effort)
+- Replace DepthAnything V2 ONNX model with UniDepth V2 ViT-S
+- Key advantage: accepts camera intrinsics (fx=141.6, fy=141.2 for 256×144) and uses pseudo-spherical output — architecture is explicitly designed for view-angle diversity
+- Has ONNX export support → direct drop-in to `ONNXDepthEngine`
+- NC 4.0 license — fine for development
+- Expected: ~30–50% recall (estimate, must measure)
+
+**VD4d — Fine-tune on AirSim GT** (not started, high effort, highest ROI)
+- Training data already available: (RGB, GT depth NPY) pairs from every profiler run (`/tmp/dedalus_frame0_*.npy` and JSONL logs)
+- Fine-tune DepthAnything V2 ViT-S or UniDepth V2 ViT-S on 500–2000 aerial frames at cruise pitch
+- Expected: ~60–80% recall; only path to production-quality L1 evidence
+
+**VD8 — Decouple L0 from ONNX latency** (future)
+- Dedicated proximity sensing path independent of full depth inference
+- Candidates: lightweight optical flow divergence detector, MobileNet-class proximity classifier, or thin-structure detector run on downsampled frame at <30ms
+- Milestone: L0 evidence available at 10Hz regardless of L1 depth model latency
+
+---
+
 ## Development Context: AirSim Without Ground Truth
 
 **AirSim GT depth is replaced by visual algorithms.** `DepthPlanar` API is the validation
