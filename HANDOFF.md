@@ -123,24 +123,78 @@ Execute in order — benchmark after each step using:
 python3 tools/mission/depth-evidence-dist.py out/<run>/profile/pipeline_*.jsonl
 ```
 
-**VD4a — p5-percentile block sampler** (pending, low effort)
-- File: `src/sensing/depth_projection_kernel.cpp` lines 215–268
-- Replace block-minimum (max inverse_depth) with 5th-percentile — requires 5% of block pixels to agree on close depth before it becomes evidence
-- Single noise pixel (0.36% of 276-px block) is filtered. Power line column (8.3% of block) is preserved.
-- Expected: 0–5m noise spike collapses; recall improves ~15–20%
+**VD4a — p5-percentile block sampler** ✓ DONE — commit `c3e6f59`
+- Recall: 11.1% → 11.5% (marginal). Confirmed block sampler noise was not the root cause.
+- Root cause: ONNX outputs 1–5m for ~54% of pixels during aerial cruise — the model genuinely
+  believes the aerial ground is 1–5m away. No block-sampler fix can correct this.
 
-**VD4b — AGL scale anchoring** (not started, low effort)
-- Post-process ONNXDepthEngine output by multiplying by `AGL_m / (sin(|pitch_rad|) * ground_plane_median_range)`
-- Drone knows AGL (barometer) and pitch (IMU). Ground-plane range is computable from bottom-row pixel medians.
-- Corrects the systematic 2–3× scale compression without training.
-- Expected: shifts ONNX 5–15m evidence toward 15–30m GT range; recall improves ~25–35%
+**VD4b — AGL scale anchoring** ✗ SKIPPED (simulation confirms scale is not the bottleneck)
+- Simulation tool: `tools/mission/depth-scale-anchoring-sweep.py`
+- Key finding: at α=1.0 (no change), bucket-overlap recall proxy is already 55.1%, yet actual
+  voxel recall is only 11.5%. The 4.8× gap means ONNX evidence is in the correct range band
+  for most frames but lands at the wrong azimuth/elevation (wrong pixel-to-direction mapping).
+- GT distribution: 573/815 frames have GT dominant at 5–15m — ONNX already puts 68% there.
+  Scale anchoring cannot fix direction placement. Best simulated α=1.5 yields only +12 pp on
+  the proxy, translating to ~+2.5 pp actual recall. Not worth C++ implementation.
+- Tool output: `depth.scale_ratio` metric in JSONL reads ~0.99 (biased by 30m orbit radius —
+  known broken metric, not worth fixing).
 
-**VD4c — UniDepth V2 ViT-S with intrinsics** (not started, medium effort)
-- Replace DepthAnything V2 ONNX model with UniDepth V2 ViT-S
-- Key advantage: accepts camera intrinsics (fx=141.6, fy=141.2 for 256×144) and uses pseudo-spherical output — architecture is explicitly designed for view-angle diversity
-- Has ONNX export support → direct drop-in to `ONNXDepthEngine`
-- NC 4.0 license — fine for development
-- Expected: ~30–50% recall (estimate, must measure)
+**VD4c — UniDepth V2 ViT-S with intrinsics** (active, medium effort)
+
+Research complete (2026-07-16). Key findings:
+
+*ONNX export:*
+```bash
+python unidepth/models/unidepthv2/export.py \
+  --version v2 --backbone vits \
+  --shape 336 602 \               # must be multiples of 14; ≥200K px (training minimum)
+  --output-path unidepthv2_vits_336x602.onnx
+# With camera rays (recommended):
+python unidepth/models/unidepthv2/export.py \
+  --version v2 --backbone vits \
+  --shape 336 602 --with-camera \
+  --output-path unidepthv2_vits_336x602_cam.onnx
+```
+
+*Input tensors (at shape 602×336):*
+- `rgbs`: `[1, 3, 336, 602]` float32, ImageNet-normalized
+- `rays` (if `--with-camera`): `[1, 3, 336, 602]` float32 — dense per-pixel unit ray vectors
+  (NOT the K matrix — must precompute from scaled intrinsics at C++ layer)
+
+*Output tensors:*
+- `pts_3d`: `[1, 3, 336, 602]` float32 — metric XYZ in camera frame. Z channel = depth.
+- `confidence`: `[1, 1, 336, 602]` float32 — relative uncertainty (log scale)
+- `intrinsics`: `[1, 3, 3]` float32 — predicted K matrix
+
+*Critical integration requirement — upsampling:*
+- Native camera is 256×144 = 36K px. Training minimum is 200K px (5.4× below floor).
+- Must bilinearly upsample to 602×336 = 202K px before ONNX inference.
+- Scale intrinsics: fx_scaled = 141.6 × (602/256) ≈ 332.7, fy_scaled = 141.2 × (336/144) ≈ 329.5,
+  cx_scaled = 128 × (602/256) ≈ 300.7, cy_scaled = 72 × (336/144) = 168.0
+- After inference, downsample depth map back to 256×144 for projection pipeline.
+- Shape is baked at export time — cannot change at runtime.
+
+*Integration delta vs current ONNXDepthEngine:*
+- Add upsample step: 256×144 → 602×336 (bilinear, before inference)
+- Extract Z channel from `pts_3d[0, 2, :, :]` as metric depth (no scale/shift needed)
+- Convert metric depth → inverse depth for `run_depth_pipeline()` compatibility:
+  `inverse_depth[i] = params.scale / depth_m[i]` (same formula as `metric_to_inverse_depth()`)
+- Optionally: precompute rays map from scaled intrinsics, pass as second ONNX input
+- Verify ORT ≥ 1.11 (opset 14 required) on EC2 build: `python -c "import onnxruntime; print(onnxruntime.__version__)"`
+- Model: `lpiccinelli/unidepth-v2-vits14`, 137 MB safetensors
+
+*Pseudo-spherical output:* Model predicts unit sphere ray directions × radius per pixel.
+  Z channel of pts_3d = direct metric depth. Loss is computed on sphere → robust to FoV
+  and camera tilt changes. No disparity or relative-scale ambiguity.
+
+*License:* CC BY-NC 4.0 — no commercial use without separate agreement from authors.
+  Fine for development and research evaluation.
+
+*Expected recall:* ~30–50% (estimate — must measure against AirSim GT after integration).
+  The pseudo-spherical loss is the mechanism that should fix the direction-placement failure
+  mode identified by VD4b simulation.
+
+Export script: `tools/perception/export_unidepth.py` (to create — parallel to `export_depth_anything.py`).
 
 **VD4d — Fine-tune on AirSim GT** (not started, high effort, highest ROI)
 - Training data already available: (RGB, GT depth NPY) pairs from every profiler run (`/tmp/dedalus_frame0_*.npy` and JSONL logs)
