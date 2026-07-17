@@ -234,6 +234,8 @@ def find_unidepth_export_script() -> Path | None:
         import unidepth  # type: ignore
     except ImportError:
         return None
+    if unidepth.__file__ is None:
+        return None
     candidate = Path(unidepth.__file__).parent / "models" / "unidepthv2" / "export.py"
     return candidate if candidate.is_file() else None
 
