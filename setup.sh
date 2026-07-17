@@ -288,7 +288,7 @@ if [[ "${CUDA_MAX_MAJOR}" -ge 12 ]]; then
     else
         echo "✅ CUDA 12 nvcc already installed."
     fi
-    ORT_GPU_PKG="onnxruntime-gpu"        # latest wheel; requires CUDA 12 + cuDNN 9
+    ORT_GPU_PKG="onnxruntime-gpu==1.21.1" # pinned to match C++ SDK; requires CUDA 12 + cuDNN 9
 
 elif [[ "${CUDA_MAX_MAJOR}" -eq 11 && "${CUDA_MAX_MINOR}" -ge 8 ]]; then
     # ── CUDA 11.8 path ────────────────────────────────────────────────────
