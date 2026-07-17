@@ -525,7 +525,7 @@ def main() -> None:
     print(f"depth: unidepth_v2")
     print(f"depth_eval: airsim_gt_vd   # keep GT in slot B for A/B eval")
     print(f"unidepth.model_path:       {args.output}")
-    print(f"unidepth.backbone:         {args.backbone}")
+    print(f"# backbone ({args.backbone}) is baked into the model — not a runtime config key")
     print(f"unidepth.inference_height: {inf_h}")
     print(f"unidepth.inference_width:  {inf_w}")
     print(f"unidepth.native_height:    {args.native_height}")
