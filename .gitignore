@@ -160,6 +160,7 @@ models/*
 third_party/PX4-Autopilot/
 third_party/iceoryx_build/
 third_party/colosseum_environments/
+third_party/UniDepth/
 
 # Legacy roots (pre-2.28B.1 layout); ignored in case of manual moves
 PX4-Autopilot/

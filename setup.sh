@@ -225,18 +225,25 @@ if [[ "${CUDA_MAX_MAJOR}" -ge 12 ]]; then
     fi
     unset _ORT_SONAMES _ORT_STEMS _MISSING_ORT _PKGS_TO_INSTALL _soname _i _pkg
 
-    # cuDNN 9 is required by onnxruntime-gpu ≥ 1.18; best-effort install.
-    if ldconfig -p 2>/dev/null | grep -q "libcudnn.so.9"; then
-        echo "✅ libcudnn.so.9 already present — skipping cuDNN 9 install."
+    # cuDNN 9.1.x is required by onnxruntime-gpu 1.21.1.
+    # Pin to 9.1.1.17-1; newer cuDNN 9.x releases (e.g. 9.24) trigger
+    # CUDNN_STATUS_SUBLIBRARY_VERSION_MISMATCH, forcing Conv ops onto CPU.
+    # --allow-downgrades handles the case where a newer version is pre-installed.
+    _CUDNN_PIN="9.1.1.17-1"
+    _installed_cudnn=$(dpkg-query -W -f='${Version}' libcudnn9-cuda-12 2>/dev/null || true)
+    if [[ "${_installed_cudnn}" == "${_CUDNN_PIN}" ]]; then
+        echo "✅ libcudnn9-cuda-12=${_CUDNN_PIN} already installed."
     else
-        if apt-cache show libcudnn9-cuda-12 &>/dev/null 2>&1; then
-            run_and_log "Install cuDNN 9 (libcudnn9-cuda-12)" \
-                sudo DEBIAN_FRONTEND=noninteractive apt-get install -y libcudnn9-cuda-12
+        if apt-cache show "libcudnn9-cuda-12=${_CUDNN_PIN}" &>/dev/null 2>&1; then
+            run_and_log "Install cuDNN 9.1 pinned for ORT 1.21.1 (libcudnn9-cuda-12=${_CUDNN_PIN})" \
+                sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --allow-downgrades \
+                    "libcudnn9-cuda-12=${_CUDNN_PIN}" "libcudnn9-dev-cuda-12=${_CUDNN_PIN}"
             sudo ldconfig
         else
-            echo "⚠️  libcudnn9-cuda-12 not found in repo — ORT CUDA EP may degrade to no-cuDNN mode."
+            echo "⚠️  libcudnn9-cuda-12=${_CUDNN_PIN} not found in repo — ORT CUDA EP may degrade to CPU fallback."
         fi
     fi
+    unset _CUDNN_PIN _installed_cudnn
 
     # ── CUDA runtime (libcudart) — our binary links CUDA::cudart directly ───
     # cuda-nvcc-12-x pulls in cuda-cudart-12-x as a dep, so this is usually
