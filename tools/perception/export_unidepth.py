@@ -224,18 +224,34 @@ def download_weights(hf_repo: str, weights_dir: Path) -> Path:
 
 @contextlib.contextmanager
 def _quiet_output():
-    """Redirect both stdout and stderr to suppress known-benign UniDepth and
-    HuggingFace loading messages.  UniDepth uses print() to stdout for several
-    status messages; ORT's Python EP fallback uses sys.stderr.
-    On exception both streams are restored and the captured output replayed."""
+    """Suppress stdout and stderr at both Python and C-library level.
+
+    Python layer: redirects sys.stdout/sys.stderr so print() calls are gone.
+    C layer: dup2() redirect of fds 1 and 2 so C++ loggers that write to raw
+    file descriptors (e.g. ORT's C++ logger) are also suppressed.
+
+    On exception both layers are restored and any captured Python output
+    replayed so error messages remain visible."""
     buf_out, buf_err = io.StringIO(), io.StringIO()
     old_out, old_err = sys.stdout, sys.stderr
     sys.stdout = buf_out
     sys.stderr = buf_err
+
+    old_fd1 = os.dup(1)
+    old_fd2 = os.dup(2)
     try:
-        yield
+        with open(os.devnull, "w") as null:
+            os.dup2(null.fileno(), 1)
+            os.dup2(null.fileno(), 2)
+            try:
+                yield
+            finally:
+                os.dup2(old_fd1, 1)
+                os.dup2(old_fd2, 2)
     except BaseException:
         sys.stdout, sys.stderr = old_out, old_err
+        os.close(old_fd1)
+        os.close(old_fd2)
         if buf_out.getvalue().strip():
             sys.stdout.write(buf_out.getvalue())
         if buf_err.getvalue().strip():
@@ -243,6 +259,8 @@ def _quiet_output():
         raise
     else:
         sys.stdout, sys.stderr = old_out, old_err
+        os.close(old_fd1)
+        os.close(old_fd2)
 
 
 def _ensure_unidepth() -> None:
