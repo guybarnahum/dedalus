@@ -15,9 +15,23 @@ UniDepth V2 must be installed from source before running this script:
 
 USAGE
 -----
+The script runs two steps in sequence:
+  1. Download weights from HuggingFace hub to a local directory (no-op if present).
+  2. Export the PyTorch model to ONNX and run an ORT sanity check.
+
 Default (ViT-S, 256×144 camera, single-input):
     python3 tools/perception/export_unidepth.py \\
         --output models/unidepth_v2_vits_336x602.onnx
+
+Download only (no export):
+    python3 tools/perception/export_unidepth.py \\
+        --output /dev/null \\
+        --weights-dir models/weights/unidepth_v2_vits
+
+Use pre-downloaded weights (avoids re-download):
+    python3 tools/perception/export_unidepth.py \\
+        --output models/unidepth_v2_vits_336x602.onnx \\
+        --weights-dir models/weights/unidepth_v2_vits
 
 With camera-ray second input (slightly more accurate, requires C++ ray precomputation):
     python3 tools/perception/export_unidepth.py \\
@@ -84,6 +98,10 @@ import subprocess
 import sys
 from pathlib import Path
 
+# Files to fetch from the HuggingFace repo.  safetensors is preferred;
+# pytorch_model.bin is the legacy fallback if safetensors is absent.
+_WEIGHT_FILES = ["config.json", "model.safetensors", "pytorch_model.bin"]
+
 # ── Constants ────────────────────────────────────────────────────────────────
 
 # ViT patch size — H and W must be exact multiples.
@@ -135,6 +153,49 @@ def compute_inference_shape(
     return inf_h, inf_w
 
 
+# ── Weight download ───────────────────────────────────────────────────────────
+
+def download_weights(hf_repo: str, weights_dir: Path) -> Path:
+    """Download model weights from HuggingFace hub to weights_dir.
+
+    Uses huggingface_hub.snapshot_download so every file in the repo is fetched
+    in one call, progress is visible, and the result is a plain directory that
+    both UniDepthV2.from_pretrained() and the subprocess path can consume.
+
+    Returns the resolved local directory path.
+    """
+    try:
+        from huggingface_hub import snapshot_download  # type: ignore
+    except ImportError:
+        sys.exit(
+            "ERROR: huggingface_hub is not installed.\n"
+            "  pip install huggingface_hub"
+        )
+
+    weights_dir.mkdir(parents=True, exist_ok=True)
+
+    # Check if weights are already present (safetensors or bin).
+    already_have = (weights_dir / "model.safetensors").is_file() or \
+                   (weights_dir / "pytorch_model.bin").is_file()
+    if already_have:
+        size_mb = sum(f.stat().st_size for f in weights_dir.rglob("*") if f.is_file()) / (1024 * 1024)
+        print(f"Weights already present at {weights_dir}  ({size_mb:.0f} MB) — skipping download.")
+        return weights_dir
+
+    print(f"Downloading {hf_repo} → {weights_dir} …")
+    print("(This is ~137 MB for ViT-S.  Set HF_HUB_DISABLE_PROGRESS_BARS=1 to suppress bars.)")
+
+    local_dir = snapshot_download(
+        repo_id=hf_repo,
+        local_dir=str(weights_dir),
+        ignore_patterns=["*.msgpack", "flax_model*", "tf_model*", "rust_model*"],
+    )
+
+    size_mb = sum(f.stat().st_size for f in Path(local_dir).rglob("*") if f.is_file()) / (1024 * 1024)
+    print(f"OK: downloaded to {local_dir}  ({size_mb:.0f} MB)")
+    return Path(local_dir)
+
+
 # ── Export ────────────────────────────────────────────────────────────────────
 
 def find_unidepth_export_script() -> Path | None:
@@ -153,10 +214,16 @@ def run_unidepth_export(
     inf_h: int,
     inf_w: int,
     output: Path,
+    weights_dir: Path,
     with_camera_rays: bool,
     opset: int,
 ) -> None:
-    """Invoke UniDepth's own export.py as a subprocess."""
+    """Invoke UniDepth's own export.py as a subprocess.
+
+    The weights_dir is injected via HF_HUB_CACHE so the subprocess finds the
+    already-downloaded weights without hitting the network again.
+    """
+    import os
     cmd = [
         sys.executable,
         str(export_py),
@@ -168,8 +235,17 @@ def run_unidepth_export(
     if with_camera_rays:
         cmd.append("--with-camera")
 
+    # Point HuggingFace hub to the directory we already downloaded into.
+    # snapshot_download stores files directly in local_dir (not in a
+    # models--org--name/snapshots/... subdirectory) when local_dir is given,
+    # so we also set TRANSFORMERS_CACHE as a fallback for older HF versions.
+    env = os.environ.copy()
+    env["HF_HUB_CACHE"]       = str(weights_dir.parent)
+    env["TRANSFORMERS_CACHE"]  = str(weights_dir.parent)
+    env["HF_HOME"]             = str(weights_dir.parent)
+
     print(f"Running: {' '.join(cmd)}")
-    result = subprocess.run(cmd, check=False)
+    result = subprocess.run(cmd, env=env, check=False)
     if result.returncode != 0:
         sys.exit(f"ERROR: UniDepth export script exited with code {result.returncode}")
 
@@ -180,6 +256,7 @@ def run_direct_export(
     inf_h: int,
     inf_w: int,
     output: Path,
+    weights_dir: Path,
     with_camera_rays: bool,
     opset: int,
 ) -> None:
@@ -187,6 +264,7 @@ def run_direct_export(
 
     Wraps the model in a thin tracer shim that returns positional tensors
     (ONNX cannot trace dict-returning forwards directly).
+    Loads from the locally-downloaded weights_dir to avoid re-downloading.
     """
     try:
         import torch
@@ -194,8 +272,9 @@ def run_direct_export(
     except ImportError as exc:
         sys.exit(f"ERROR: {exc}")
 
-    print(f"Loading {hf_repo} …")
-    model = UniDepthV2.from_pretrained(hf_repo)
+    # Load from local dir so no network call is made.
+    print(f"Loading from {weights_dir} …")
+    model = UniDepthV2.from_pretrained(str(weights_dir))
     model.eval()
 
     # Disable memory-efficient attention (xFormers) before tracing.
@@ -314,6 +393,10 @@ def main() -> None:
     ap.add_argument("--with-camera-rays", action="store_true",
                     help="Export two-input model (rgbs + rays per-pixel unit vectors). "
                          "Requires C++ ray precomputation from camera intrinsics.")
+    ap.add_argument("--weights-dir", type=Path,
+                    help="Directory to download HuggingFace weights into "
+                         "(default: models/weights/unidepth_v2_<backbone>). "
+                         "Re-run is a no-op if weights already present.")
     ap.add_argument("--opset", type=int, default=14,
                     help="ONNX opset version (minimum 14, default: 14)")
     args = ap.parse_args()
@@ -341,10 +424,13 @@ def main() -> None:
     scale_h   = inf_h / args.native_height
     scale_w   = inf_w / args.native_width
 
+    weights_dir = args.weights_dir or Path(f"models/weights/unidepth_v2_{args.backbone}")
+
     print("=" * 64)
     print(f"  UniDepth V2 {args.backbone.upper()} ONNX export")
     print("=" * 64)
     print(f"  HuggingFace : {hf_repo}")
+    print(f"  Weights dir : {weights_dir}")
     print(f"  Native res  : {args.native_width}×{args.native_height}  "
           f"({native_px:,} px = {native_px/_MIN_PIXELS:.2f}× training minimum)")
     print(f"  Inference   : {inf_w}×{inf_h}  "
@@ -355,6 +441,11 @@ def main() -> None:
     print(f"  Output      : {args.output}")
     print()
 
+    # ── Step 1: Download weights ──────────────────────────────────────────────
+    weights_dir = download_weights(hf_repo, weights_dir)
+    print()
+
+    # ── Step 2: Export to ONNX ───────────────────────────────────────────────
     args.output.parent.mkdir(parents=True, exist_ok=True)
 
     # Prefer UniDepth's own export.py — it handles model-specific tracing quirks.
@@ -363,7 +454,7 @@ def main() -> None:
         print(f"Found UniDepth export.py at: {export_py}")
         run_unidepth_export(
             export_py, args.backbone, inf_h, inf_w,
-            args.output, args.with_camera_rays, args.opset)
+            args.output, weights_dir, args.with_camera_rays, args.opset)
     else:
         print("UniDepth export.py not found — using direct PyTorch export.")
         print("NOTE: if this fails, install UniDepth from source:")
@@ -372,7 +463,7 @@ def main() -> None:
         print()
         run_direct_export(
             args.backbone, hf_repo, inf_h, inf_w,
-            args.output, args.with_camera_rays, args.opset)
+            args.output, weights_dir, args.with_camera_rays, args.opset)
 
     size_mb = args.output.stat().st_size / (1024 * 1024)
     print(f"OK: wrote {args.output}  ({size_mb:.1f} MB)")
