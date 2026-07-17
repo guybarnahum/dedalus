@@ -538,6 +538,18 @@ assert 'CUDAExecutionProvider' in providers, \
     'Run: pip uninstall onnxruntime -y'
 "
 
+# Clone UniDepth V2 into third_party/ and install it in the venv.
+# Required by tools/perception/export_unidepth.py; not committed to the repo.
+UNIDEPTH_DIR="$THIRD_PARTY_DIR/UniDepth"
+if [ ! -d "$UNIDEPTH_DIR" ]; then
+    run_and_log "Clone UniDepth V2" \
+        git clone --depth 1 https://github.com/lpiccinelli-eth/UniDepth.git "$UNIDEPTH_DIR"
+else
+    echo "✅ UniDepth already cloned at $UNIDEPTH_DIR."
+fi
+run_and_log "Install UniDepth from source" \
+    python -m pip install -e "$UNIDEPTH_DIR"
+
 echo "✅ Python environment ready at $VENV_PATH"
 
 # ---------------- Step 5b: Depth Model Export ----------------

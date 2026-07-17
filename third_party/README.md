@@ -11,6 +11,11 @@ third_party/iceoryx_build/
 
 third_party/colosseum_environments/
   Downloaded Colosseum/AirSim Unreal environment packages.
+
+third_party/UniDepth/
+  UniDepth V2 source checkout (lpiccinelli-eth/UniDepth).
+  Installed into the venv with pip install -e; required by
+  tools/perception/export_unidepth.py to export the ONNX model.
 ```
 
 Dedalus-owned scripts and configuration live outside this directory:

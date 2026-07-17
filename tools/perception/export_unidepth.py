@@ -6,10 +6,11 @@ Run this once on each target device to generate the .onnx file.
 
 SETUP
 -----
-UniDepth V2 must be installed from source before running this script:
+UniDepth V2 is installed automatically from third_party/UniDepth (cloned by
+setup.sh).  To provision manually without running setup.sh:
 
-    git clone https://github.com/lpiccinelli-eth/UniDepth.git
-    cd UniDepth && pip install -e .
+    git clone https://github.com/lpiccinelli-eth/UniDepth.git third_party/UniDepth
+    pip install -e third_party/UniDepth
     pip install onnxruntime          # for sanity check
     pip install onnxruntime-gpu      # if CUDA EP is available
 
@@ -198,6 +199,35 @@ def download_weights(hf_repo: str, weights_dir: Path) -> Path:
 
 # ── Export ────────────────────────────────────────────────────────────────────
 
+def _ensure_unidepth() -> None:
+    """Import unidepth; auto-install from third_party/UniDepth if absent."""
+    try:
+        import unidepth  # noqa: F401
+        return
+    except ImportError:
+        pass
+
+    repo_root = Path(__file__).resolve().parents[2]
+    local_src = repo_root / "third_party" / "UniDepth"
+    if not local_src.is_dir():
+        sys.exit(
+            "ERROR: 'unidepth' module not found and third_party/UniDepth does not exist.\n"
+            "  Run ./setup.sh to provision it, or clone manually:\n"
+            f"    git clone https://github.com/lpiccinelli-eth/UniDepth.git {local_src}\n"
+            f"    pip install -e {local_src}"
+        )
+
+    print(f"Auto-installing UniDepth from {local_src} …")
+    result = subprocess.run(
+        [sys.executable, "-m", "pip", "install", "-e", str(local_src)],
+        check=False,
+    )
+    if result.returncode != 0:
+        sys.exit(f"ERROR: pip install -e {local_src} failed (exit code {result.returncode})")
+    print("OK: UniDepth installed.")
+    print()
+
+
 def find_unidepth_export_script() -> Path | None:
     """Return the path to UniDepth's own export.py if importable, else None."""
     try:
@@ -376,6 +406,8 @@ def sanity_check(output: Path, inf_h: int, inf_w: int, with_camera_rays: bool) -
 # ── Main ──────────────────────────────────────────────────────────────────────
 
 def main() -> None:
+    _ensure_unidepth()
+
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--output", required=True, type=Path,
@@ -456,10 +488,7 @@ def main() -> None:
             export_py, args.backbone, inf_h, inf_w,
             args.output, weights_dir, args.with_camera_rays, args.opset)
     else:
-        print("UniDepth export.py not found — using direct PyTorch export.")
-        print("NOTE: if this fails, install UniDepth from source:")
-        print("  git clone https://github.com/lpiccinelli-eth/UniDepth.git")
-        print("  cd UniDepth && pip install -e .")
+        print("Using direct PyTorch export.")
         print()
         run_direct_export(
             args.backbone, hf_repo, inf_h, inf_w,
