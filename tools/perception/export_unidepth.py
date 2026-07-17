@@ -223,29 +223,32 @@ def download_weights(hf_repo: str, weights_dir: Path) -> Path:
 # ── Export ────────────────────────────────────────────────────────────────────
 
 @contextlib.contextmanager
-def _quiet_stderr():
-    """Redirect stderr during model import/loading to suppress known-benign
-    print-to-stderr messages from UniDepth and HuggingFace internals.
-    On exception the captured output is replayed so tracebacks remain visible."""
-    buf = io.StringIO()
-    old = sys.stderr
-    sys.stderr = buf
+def _quiet_output():
+    """Redirect both stdout and stderr to suppress known-benign UniDepth and
+    HuggingFace loading messages.  UniDepth uses print() to stdout for several
+    status messages; ORT's Python EP fallback uses sys.stderr.
+    On exception both streams are restored and the captured output replayed."""
+    buf_out, buf_err = io.StringIO(), io.StringIO()
+    old_out, old_err = sys.stdout, sys.stderr
+    sys.stdout = buf_out
+    sys.stderr = buf_err
     try:
         yield
     except BaseException:
-        sys.stderr = old
-        captured = buf.getvalue()
-        if captured.strip():
-            sys.stderr.write(captured)
+        sys.stdout, sys.stderr = old_out, old_err
+        if buf_out.getvalue().strip():
+            sys.stdout.write(buf_out.getvalue())
+        if buf_err.getvalue().strip():
+            sys.stderr.write(buf_err.getvalue())
         raise
     else:
-        sys.stderr = old
+        sys.stdout, sys.stderr = old_out, old_err
 
 
 def _ensure_unidepth() -> None:
     """Import unidepth; auto-install from third_party/UniDepth if absent."""
     try:
-        with _quiet_stderr():
+        with _quiet_output():
             import unidepth  # noqa: F401
         return
     except ImportError:
@@ -343,7 +346,7 @@ def run_direct_export(
     Loads from the locally-downloaded weights_dir to avoid re-downloading.
     """
     try:
-        with _quiet_stderr():
+        with _quiet_output():
             import torch
             from unidepth.models import UniDepthV2  # type: ignore
     except ImportError as exc:
@@ -351,7 +354,7 @@ def run_direct_export(
 
     # Load from local dir so no network call is made.
     print(f"Loading from {weights_dir} …")
-    with _quiet_stderr():
+    with _quiet_output():
         model = UniDepthV2.from_pretrained(str(weights_dir))
     model.eval()
 
@@ -433,8 +436,12 @@ def sanity_check(output: Path, inf_h: int, inf_w: int, with_camera_rays: bool) -
         return
 
     providers = ["CUDAExecutionProvider", "CPUExecutionProvider"]
-    sess = ort.InferenceSession(str(output), providers=providers)
-    active_ep = sess.get_providers()[0]
+    # log_severity_level=4 (FATAL): suppress ORT's [W:] and [E:] C++ logger
+    # output and the Python-level "EP Error / Falling back" EP-fallback messages.
+    # cuDNN sublibrary version mismatches cause a graceful CUDA→CPU fallback;
+    # these are benign and the check still passes.
+    opts = ort.SessionOptions()
+    opts.log_severity_level = 4
 
     feed: dict = {"rgbs": np.zeros((1, 3, inf_h, inf_w), dtype=np.float32)}
     if with_camera_rays:
@@ -442,7 +449,10 @@ def sanity_check(output: Path, inf_h: int, inf_w: int, with_camera_rays: bool) -
         rays[:, 2] = 1.0
         feed["rays"] = rays
 
-    pts3d, conf, K = sess.run(["pts_3d", "confidence", "intrinsics"], feed)
+    with _quiet_output():
+        sess = ort.InferenceSession(str(output), providers=providers, sess_options=opts)
+        active_ep = sess.get_providers()[0]
+        pts3d, conf, K = sess.run(["pts_3d", "confidence", "intrinsics"], feed)
 
     assert pts3d.shape == (1, 3, inf_h, inf_w), \
         f"pts_3d shape mismatch: got {pts3d.shape}"
