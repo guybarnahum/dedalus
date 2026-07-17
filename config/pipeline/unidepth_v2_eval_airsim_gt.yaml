@@ -1,0 +1,18 @@
+# ── Pipeline: UniDepth V2 primary + AirSim GT eval (A/B comparison) ────────────
+# UniDepth V2 as slot A (primary); AirSim GT depth as slot B (eval).
+# Grid/filter params for the GT eval are derived from unidepth.* keys here,
+# so evidence grids are identical — a fair apples-to-apples comparison.
+# GT-centric metrics logged per-frame to profiler JSONL:
+#   depth.voxel_precision_ppt  depth.voxel_recall_ppt  depth.voxel_f1_ppt
+#   depth.false_positive_count depth.false_negative_count  depth.scale_ratio
+#
+# Requires: drone/px4_front_center_depth.yaml (eval slot needs depth frames).
+
+include: config/pipeline/unidepth_v2.yaml
+
+# Override VO ego — use AirSim telemetry so the drone flies correctly while
+# UniDepth depth detection is evaluated against GT.
+ego_provider: frame_hint
+
+# Slot B: GT projected through VD kernels, same 40×22 grid as UniDepth.
+depth_eval: airsim_gt_vd

@@ -1,0 +1,47 @@
+# ── Pipeline: UniDepth V2 metric depth (no AirSim GT) ───────────────────────
+# Visual sensing with UniDepth V2 as the depth provider:
+#   ego:   VisualOdometryProvider (same as visual.yaml)
+#   depth: UniDepth V2 ViT-S — pseudo-spherical metric depth, rotation-invariant.
+#          Infers at 336×602 (≥ 200K px training minimum), downsamples to 256×144.
+#          Output: pts_3d Z channel → metric depth in metres (HIGH=FAR).
+#          Engine stores inverse_depth = 1/Z; Z < 1 cm stored as 0 (invalid).
+#
+# Requires:
+#   - Build with -DDEDALUS_ENABLE_ONNX_DEPTH=ON
+#   - models/weights/unidepth_v2_vits/ directory with model weights
+#   - models/unidepth_v2_vits.onnx  (export with tools/perception/export_unidepth.py)
+#       python3 tools/perception/export_unidepth.py \
+#           --backbone vits \
+#           --weights-dir models/weights/unidepth_v2_vits \
+#           --output models/unidepth_v2_vits.onnx
+#   - drone/px4_front_center.yaml
+#
+# Override at runtime:
+#   DEDALUS_DEPTH=unidepth_v2       — select this provider
+#   DEDALUS_DEPTH_EVAL=airsim_gt_vd — add GT eval slot without editing YAML
+
+ego_provider: visual_odometry
+depth: unidepth_v2
+
+detector: null
+camera_stabilizer: null
+tracker: simple_centroid
+identity_resolver: appearance_only
+projector: flat_ground
+world_model: in_memory
+
+unidepth.model_path: models/unidepth_v2_vits.onnx
+unidepth.inference_width: 602
+unidepth.inference_height: 336
+unidepth.native_width: 256
+unidepth.native_height: 144
+unidepth.use_camera_rays: false
+unidepth.scale: 1.0
+unidepth.use_cuda: true
+unidepth.cuda_arena_limit_bytes: 1073741824
+unidepth.depth_grid_cols: 40
+unidepth.depth_grid_rows: 22
+unidepth.min_depth_m: 0.5
+unidepth.max_depth_m: 60.0
+unidepth.voxel_size_m: 0.5
+unidepth.max_evidence: 1024
