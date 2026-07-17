@@ -94,10 +94,33 @@ Or set DEDALUS_DEPTH=unidepth_v2 at runtime to override without editing YAML.
 from __future__ import annotations
 
 import argparse
+import contextlib
+import io
 import math
+import os
 import subprocess
 import sys
+import warnings
 from pathlib import Path
+
+# ── Suppress benign third-party warnings ─────────────────────────────────────
+# All are expected noise for a fixed-shape JIT-traced ONNX export.
+# timm: importing from a deprecated submodule (timm's own migration debt).
+warnings.filterwarnings("ignore", category=FutureWarning, module="timm")
+# UniDepth: optional CUDA evaluation ops (KNN, EdgeGuidedLocalSSI) not compiled.
+# These are only used for training/evaluation metrics, not inference.
+warnings.filterwarnings("ignore", message=r".*KNN.*")
+warnings.filterwarnings("ignore", message=r".*EdgeGuidedLocalSSI.*")
+# torch.onnx JIT tracer: shape-conditional branches baked as constants at
+# trace time. Correct for a single fixed inference shape.
+warnings.filterwarnings("ignore", message=r"Converting a tensor to a Python")
+warnings.filterwarnings("ignore", message=r"torch\.tensor results are registered as constants")
+# torch.onnx: deprecation notice for the TorchScript exporter — intentional;
+# the dynamo/torch.export path fails on UniDepth's dict-based encode_decode.
+warnings.filterwarnings("ignore", message=r".*legacy TorchScript.*", category=DeprecationWarning)
+# torch.onnx: opset constant-fold limitation for slice ops with step != 1.
+# No impact on model correctness.
+warnings.filterwarnings("ignore", message=r"Constant folding - Only steps=1")
 
 # Files to fetch from the HuggingFace repo.  safetensors is preferred;
 # pytorch_model.bin is the legacy fallback if safetensors is absent.
@@ -199,10 +222,31 @@ def download_weights(hf_repo: str, weights_dir: Path) -> Path:
 
 # ── Export ────────────────────────────────────────────────────────────────────
 
+@contextlib.contextmanager
+def _quiet_stderr():
+    """Redirect stderr during model import/loading to suppress known-benign
+    print-to-stderr messages from UniDepth and HuggingFace internals.
+    On exception the captured output is replayed so tracebacks remain visible."""
+    buf = io.StringIO()
+    old = sys.stderr
+    sys.stderr = buf
+    try:
+        yield
+    except BaseException:
+        sys.stderr = old
+        captured = buf.getvalue()
+        if captured.strip():
+            sys.stderr.write(captured)
+        raise
+    else:
+        sys.stderr = old
+
+
 def _ensure_unidepth() -> None:
     """Import unidepth; auto-install from third_party/UniDepth if absent."""
     try:
-        import unidepth  # noqa: F401
+        with _quiet_stderr():
+            import unidepth  # noqa: F401
         return
     except ImportError:
         pass
@@ -299,14 +343,16 @@ def run_direct_export(
     Loads from the locally-downloaded weights_dir to avoid re-downloading.
     """
     try:
-        import torch
-        from unidepth.models import UniDepthV2  # type: ignore
+        with _quiet_stderr():
+            import torch
+            from unidepth.models import UniDepthV2  # type: ignore
     except ImportError as exc:
         sys.exit(f"ERROR: {exc}")
 
     # Load from local dir so no network call is made.
     print(f"Loading from {weights_dir} …")
-    model = UniDepthV2.from_pretrained(str(weights_dir))
+    with _quiet_stderr():
+        model = UniDepthV2.from_pretrained(str(weights_dir))
     model.eval()
 
     # Disable memory-efficient attention (xFormers) before tracing.
