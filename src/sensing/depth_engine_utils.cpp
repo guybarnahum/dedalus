@@ -64,6 +64,39 @@ std::vector<float> downsample(
     return out;
 }
 
+std::vector<float> downsample_min_z(
+    const float* src, int src_w, int src_h,
+    int dst_w, int dst_h) {
+
+    // Each output pixel covers a bin of input pixels.  Take the minimum valid
+    // Z (> 0) within that bin — the closest obstacle wins.
+    // Z == 0 means invalid/sky; excluded so it doesn't beat real depth readings.
+    static constexpr float kInvalid = 0.0F;
+    static constexpr float kSentinel = 1e9F;  // initialiser — replaced by real values
+
+    const float sx = static_cast<float>(src_w) / static_cast<float>(dst_w);
+    const float sy = static_cast<float>(src_h) / static_cast<float>(dst_h);
+
+    std::vector<float> out(static_cast<std::size_t>(dst_h * dst_w), kSentinel);
+
+    for (int sy_i = 0; sy_i < src_h; ++sy_i) {
+        const int dy = std::min(static_cast<int>(static_cast<float>(sy_i) / sy), dst_h - 1);
+        for (int sx_i = 0; sx_i < src_w; ++sx_i) {
+            const float z = src[static_cast<std::size_t>(sy_i * src_w + sx_i)];
+            if (z <= kInvalid) continue;  // skip invalid pixels
+            const int dx = std::min(static_cast<int>(static_cast<float>(sx_i) / sx), dst_w - 1);
+            float& cell = out[static_cast<std::size_t>(dy * dst_w + dx)];
+            if (z < cell) cell = z;
+        }
+    }
+
+    // Replace sentinel with 0 (invalid) for any output pixel that had no valid input.
+    for (float& v : out) {
+        if (v >= kSentinel) v = kInvalid;
+    }
+    return out;
+}
+
 namespace {
 
 // Write NumPy 1.0 file header + raw data.  Used by both dump_npy_* overloads.

@@ -626,10 +626,14 @@ PY
 fi
 
 # Inject depth debug MP4 path into effective config when requested.
+# Write both provider keys so --depth-debug-mp4 works regardless of which
+# depth provider is active (visual_onnx or unidepth_v2); only the active
+# provider's key has any effect at runtime.
 if [[ -n "$DEPTH_DEBUG_MP4" ]]; then
     _depth_eff="${OUTPUT_DIR}/effective_core_stack_depth_${TIMESTAMP}.yaml"
     cat "$CONFIG_PATH" > "$_depth_eff"
     echo "visual_onnx.debug_depth_mp4: $DEPTH_DEBUG_MP4" >> "$_depth_eff"
+    echo "unidepth.debug_depth_mp4: $DEPTH_DEBUG_MP4" >> "$_depth_eff"
     CONFIG_PATH="$_depth_eff"
 fi
 

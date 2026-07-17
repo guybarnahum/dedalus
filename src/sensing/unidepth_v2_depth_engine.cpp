@@ -136,7 +136,10 @@ DepthInferenceResult UniDepthV2DepthEngine::extract_result(
     int z_w = out_w, z_h = out_h;
 
     if (out_w != nat_w || out_h != nat_h) {
-        z_native = depth_engine_utils::downsample(z_channel, out_w, out_h, nat_w, nat_h);
+        // Min-pool: keep the closest obstacle (minimum Z) in each spatial bin.
+        // Nearest-neighbour would miss thin obstacles with ~82% probability at
+        // the ~2.3× scale factor (336×602 → 256×144).
+        z_native = depth_engine_utils::downsample_min_z(z_channel, out_w, out_h, nat_w, nat_h);
         z_ptr    = z_native.data();
         z_w      = nat_w;
         z_h      = nat_h;

@@ -24,7 +24,21 @@ std::vector<float> resize_and_normalise(
     float std_r,  float std_g,  float std_b);
 
 // Nearest-neighbour downsample of a float src_h × src_w map to dst_h × dst_w.
+// For RGB preprocessing only — not for depth maps (use downsample_min_z instead).
 std::vector<float> downsample(
+    const float* src, int src_w, int src_h,
+    int dst_w, int dst_h);
+
+// Min-pool downsample of a metric depth (Z) map: each output pixel gets the
+// minimum Z value (= closest obstacle) within its corresponding input bin.
+//
+// This is the correct aggregation for obstacle detection:
+//   - Nearest-neighbour picks 1 of ~N input pixels, missing thin obstacles.
+//   - Min-pool guarantees the closest object in each spatial bin is retained,
+//     consistent with the p5-percentile VD4a sampler philosophy.
+// Input Z values: metric depth in metres (HIGH=FAR, 0 = invalid/unknown).
+// Zero values are excluded from the min so they don't mask valid depth.
+std::vector<float> downsample_min_z(
     const float* src, int src_w, int src_h,
     int dst_w, int dst_h);
 
