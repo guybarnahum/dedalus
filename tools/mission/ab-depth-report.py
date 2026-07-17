@@ -261,11 +261,13 @@ def main() -> None:
         print()
         if med > 1.15:
             suggested = round(med, 2)
-            print(f"  → ONNX under-estimates range by ~{(1-1/med)*100:.0f}% relative to GT.")
-            print(f"    Set  visual_onnx.scale: {suggested}  in config/pipeline/visual.yaml")
+            print(f"  → Primary under-estimates range by ~{(1-1/med)*100:.0f}% relative to GT.")
+            print(f"    If using visual_onnx:  visual_onnx.scale: {suggested}  in config/pipeline/visual.yaml")
+            print(f"    If using unidepth_v2:  metric provider — scale calibration not applicable.")
         elif med < 0.87:
-            print(f"  → ONNX over-estimates range by ~{(1/med - 1)*100:.0f}% relative to GT.")
-            print(f"    Set  visual_onnx.scale: {round(med, 2)}  in config/pipeline/visual.yaml")
+            print(f"  → Primary over-estimates range by ~{(1/med - 1)*100:.0f}% relative to GT.")
+            print(f"    If using visual_onnx:  visual_onnx.scale: {round(med, 2)}  in config/pipeline/visual.yaml")
+            print(f"    If using unidepth_v2:  metric provider — scale calibration not applicable.")
         else:
             print(f"  ✓  Scale within ±15% of GT — well calibrated.")
 

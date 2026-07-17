@@ -318,13 +318,18 @@ void build_depth_slots(CoreStackConfig& config) {
         make_depth_provider(depth_eval_name, shared, config.runner.visual_onnx_depth, config.runner.unidepth_v2_depth);
 
     // Wire debug_depth_mp4 into the annotator config (separated from detector).
-    // visual_onnx takes priority; fall back to unidepth.
-    if (!config.runner.visual_onnx_depth.debug_depth_mp4.empty()) {
-        config.runner.debug_depth_annotator.output_path =
-            config.runner.visual_onnx_depth.debug_depth_mp4;
-    } else if (!config.runner.unidepth_v2_depth.debug_depth_mp4.empty()) {
-        config.runner.debug_depth_annotator.output_path =
-            config.runner.unidepth_v2_depth.debug_depth_mp4;
+    // Prefer the active provider's key; fall back to the other so that a config
+    // setting either key works regardless of which provider is active.
+    const std::string& active_mp4 = (primary_visual_name == "unidepth_v2")
+        ? config.runner.unidepth_v2_depth.debug_depth_mp4
+        : config.runner.visual_onnx_depth.debug_depth_mp4;
+    const std::string& fallback_mp4 = (primary_visual_name == "unidepth_v2")
+        ? config.runner.visual_onnx_depth.debug_depth_mp4
+        : config.runner.unidepth_v2_depth.debug_depth_mp4;
+    if (!active_mp4.empty()) {
+        config.runner.debug_depth_annotator.output_path = active_mp4;
+    } else if (!fallback_mp4.empty()) {
+        config.runner.debug_depth_annotator.output_path = fallback_mp4;
     }
 }
 

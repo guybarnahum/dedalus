@@ -115,8 +115,9 @@ Rgb filter_color(float depth_m, bool valid, bool is_evidence,
 
 // Source name → header background color.
 Rgb source_color(const std::string& name) {
-    if (name.find("visual_onnx") != std::string::npos) return {0U,  90U, 30U};
-    if (name.find("airsim_gt")   != std::string::npos) return {80U, 60U, 0U};
+    if (name.find("visual_onnx") != std::string::npos) return {0U,  90U, 30U};  // green
+    if (name.find("unidepth")    != std::string::npos) return {0U,  60U, 90U};  // teal-blue
+    if (name.find("airsim_gt")   != std::string::npos) return {80U, 60U,  0U};  // amber
     return {50U, 50U, 50U};
 }
 

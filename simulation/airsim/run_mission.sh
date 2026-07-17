@@ -98,7 +98,7 @@ ANNOTATION_DIR=""       # where the PPM depth-annotation frames are written (fro
 OUTPUT_MP4=""              # destination .mp4; empty = disabled
 OUTPUT_MP4_FPS="5"        # input frame rate for ffmpeg -framerate (matches annotation_output_fps default)
 OUTPUT_MP4_FPS_EXPLICIT=0 # set to 1 when user passes --output-mp4-fps explicitly
-DEPTH_DEBUG_MP4=""         # raw ONNX depth debug MP4; sets visual_onnx.debug_depth_mp4 in effective config
+DEPTH_DEBUG_MP4=""         # depth debug MP4; sets debug_depth_mp4 for the active depth provider in effective config
 
 usage() {
     cat <<'EOF'
@@ -197,8 +197,8 @@ Options:
                                 from --annotation-dir, or from the config annotation_output_path key.
   --annotation-dir PATH       Override the annotation PPM frame directory (resolved relative to repo root).
   --output-mp4-fps N          Input frame rate for ffmpeg.  Default: 10
-  --depth-debug-mp4 PATH      Write raw ONNX depth map frames (Jet colormap) to an H.264 MP4 in real time.
-                                Sets visual_onnx.debug_depth_mp4.  Requires ffmpeg on PATH.
+  --depth-debug-mp4 PATH      Write depth map frames (Jet colormap) to an H.264 MP4 in real time.
+                                Sets debug_depth_mp4 for the active depth provider.  Requires ffmpeg on PATH.
   --attach                    Attach to tmux after starting
   --tail                      tail -f the mission log after starting (foreground; Ctrl-C to detach)
   --keep-tools-running        Do not stop camera bridge / overlay on mission runtime_stop

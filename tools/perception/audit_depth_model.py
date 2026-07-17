@@ -249,14 +249,16 @@ def main() -> None:
 
         if infer_result["kind"] == "METRIC":
             print()
-            print("Pipeline config for metric model (high=FAR):")
+            print("Pipeline config for metric model loaded via visual_onnx engine (high=FAR):")
             print("  visual_onnx.metric_depth: true")
             print("  visual_onnx.scale: 1.0  (calibrate per scene; engine uses scale/raw)")
             print("  ONNXDepthEngine converts: inverse_depth = scale/raw (1/metres)")
             print("  Kernel recovers: depth_m = scale/inverse_depth = raw ✓")
+            print("  Note: UniDepth V2 uses the unidepth_v2 engine and unidepth.* config keys,")
+            print("        not visual_onnx.*  (export via tools/perception/export_unidepth.py).")
         else:
             print()
-            print("Pipeline config for inverse-depth model (high=CLOSE):")
+            print("Pipeline config for inverse-depth model loaded via visual_onnx engine (high=CLOSE):")
             print("  visual_onnx.metric_depth: false   # or true with 1/raw conversion")
             print("  visual_onnx.scale: <calibrate>")
 

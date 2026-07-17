@@ -459,14 +459,18 @@ def render_html(frames: list[dict], summary: dict, source_path: Path, output_pat
         if 0.95 <= sr <= 1.05:
             advice = "Scale is well-calibrated — no change needed."
         else:
-            advice = f"Set <code>visual_onnx.scale: {sr:.3f}</code> in config/pipeline/visual.yaml to align ONNX with GT."
+            advice = (
+                f"If using <b>visual_onnx</b>: set <code>visual_onnx.scale: {sr:.3f}</code> "
+                f"in config/pipeline/visual.yaml to align with GT.<br>"
+                f"If using <b>unidepth_v2</b>: metric provider — scale calibration is not applicable."
+            )
         recommend_block = f"""
 <div class="recommend">
-  <div class="label">Recommended scale correction</div>
-  <div class="cmd {sr_cls}">visual_onnx.scale: {sr:.3f}</div>
+  <div class="label">Scale calibration</div>
+  <div class="cmd {sr_cls}">visual_onnx.scale: {sr:.3f} &nbsp;(visual_onnx only)</div>
   <div class="note">{advice}<br>
   p50 scale ratio = {sr:.3f} &nbsp;|&nbsp; p10={_fmt(summary['scale_ratio_p10'])} &nbsp;p90={_fmt(summary['scale_ratio_p90'])}<br>
-  ONNX median range = {_fmt(summary['range_a_mean'])} m &nbsp;|&nbsp; GT median range = {_fmt(summary['range_b_mean'])} m</div>
+  Primary median range = {_fmt(summary['range_a_mean'])} m &nbsp;|&nbsp; GT median range = {_fmt(summary['range_b_mean'])} m</div>
 </div>"""
     else:
         recommend_block = """
@@ -664,7 +668,10 @@ def main():
         print(f"  GT   median range: {_fmt(summary['range_b_mean'])} m  (p50={_fmt(summary['range_b_p50'])} m)")
         sr = summary["scale_ratio_p50"]
         if sr is not None:
-            print(f"  Scale ratio p50:   {sr:.3f}  → recommended visual_onnx.scale: {sr:.3f}")
+            print(f"  Scale ratio p50:   {sr:.3f}")
+            if not (0.95 <= sr <= 1.05):
+                print(f"    visual_onnx provider:  set visual_onnx.scale: {sr:.3f}")
+                print(f"    unidepth_v2 provider:  metric — scale calibration not applicable")
     else:
         print("  No A/B range data — run with DEDALUS_DEPTH_EVAL=airsim_gt_detector to enable")
 

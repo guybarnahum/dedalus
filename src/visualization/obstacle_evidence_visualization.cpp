@@ -3,8 +3,7 @@
 namespace dedalus {
 
 bool is_depth_surface_patch_evidence(const ObstacleEvidence& evidence) {
-    return evidence.shape == ObstacleEvidenceShape::SurfacePatch &&
-           evidence.source_provider == "airsim_gt_vd";
+    return evidence.shape == ObstacleEvidenceShape::SurfacePatch;
 }
 
 ObstacleEvidenceVisualClass obstacle_evidence_visual_class(const ObstacleEvidence& evidence) {
