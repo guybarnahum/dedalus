@@ -1,0 +1,21 @@
+# ── Run: AirSim  ·  far person sequence  ·  UniDepth V2 primary + AirSim GT eval
+# UniDepth V2 ViT-S as slot A (primary); AirSim GT depth as slot B (eval).
+# Ego uses frame_hint (AirSim telemetry) so the drone flies correctly while
+# depth detection quality is the variable under test.
+# GT-centric metrics logged per-frame to profiler JSONL:
+#   depth.voxel_precision_ppt  depth.voxel_recall_ppt  depth.voxel_f1_ppt
+#   depth.false_positive_count depth.false_negative_count  depth.scale_ratio
+#
+# Usage:
+#   simulation/airsim/run_mission.sh \
+#     --config config/runs/airsim_sequence_unidepth_eval.yaml \
+#     --output-dir out/sequence_unidepth_eval \
+#     --depth-debug-mp4 out/sequence_unidepth_eval/depth_debug.mp4
+
+include: config/world-env/airsim.yaml
+include: config/drone/px4_front_center_depth.yaml
+include: config/pipeline/unidepth_v2_eval_airsim_gt.yaml
+include: config/mission/sequence_far_person.yaml
+include: config/output/standard_ppm.yaml
+
+annotation_output_path: out/sequence_unidepth_eval_annotation
