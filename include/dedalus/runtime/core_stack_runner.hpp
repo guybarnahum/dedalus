@@ -50,13 +50,17 @@ struct CoreStackRunnerConfig {
     // Subscribers subscribed to snapshot_publisher at construction time.
     // CoreStackRunner retains these shared_ptrs (the publisher holds weak refs).
     std::vector<std::shared_ptr<WorldSnapshotSubscriber>> snapshot_subscribers;
-    // Config for the visual_onnx depth provider.
+    // Config for the visual_onnx depth provider (DepthAnythingV2).
     // Populated by config_loader when depth: visual_onnx (or depth_eval: visual_onnx).
     VisualONNXDepthConfig visual_onnx_depth;
 
+    // Config for the unidepth_v2 depth provider (UniDepth V2).
+    // Populated by config_loader when depth: unidepth_v2 (or depth_eval: unidepth_v2).
+    UniDepthV2Config unidepth_v2_depth;
+
     // Optional: 4-panel debug MP4 (ONNX top, GT eval bottom).
     // Empty output_path disables the annotator entirely (zero overhead).
-    // Set via visual_onnx.debug_depth_mp4 in config.
+    // Set via visual_onnx.debug_depth_mp4 or unidepth.debug_depth_mp4 in config.
     DepthDebugAnnotatorConfig debug_depth_annotator;
 
     // Two-slot depth provider injection.

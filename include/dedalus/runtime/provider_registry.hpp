@@ -54,6 +54,36 @@ struct VisualONNXDepthConfig {
     std::string debug_depth_mp4;  // if non-empty, pipe depth frames into ffmpeg → H.264 MP4
 };
 
+// Flat config for the "unidepth_v2" depth provider.
+// Aggregates UniDepthV2DepthEngineConfig + VisualDepthObstacleDetectorConfig fields
+// without pulling ONNX headers into this header.
+struct UniDepthV2Config {
+    // DepthEngine params
+    std::string model_path;                          // required: path to exported .onnx file
+    int inference_width{602};                        // must be multiple of 14; 336×602=202K px ≥ 200K minimum
+    int inference_height{336};
+    int native_width{256};                           // camera native resolution — DepthInferenceResult dims
+    int native_height{144};
+    bool use_camera_rays{false};                     // feed per-pixel rays as second ONNX input
+    bool use_cuda{false};
+    int  cuda_device_id{0};
+    std::size_t cuda_arena_limit_bytes{1ULL * 1024 * 1024 * 1024};
+    bool use_coreml{false};
+    float scale{1.0F};
+
+    // VisualDepthObstacleDetector params — same as visual_onnx
+    std::size_t depth_grid_cols{40U};
+    std::size_t depth_grid_rows{22U};
+    float  min_depth_m{0.2F};
+    float  max_depth_m{80.0F};
+    float  voxel_size_m{0.5F};
+    float  confidence{0.75F};
+    std::size_t max_evidence{512U};
+    bool   detect_surface_patches{true};
+    bool   detect_thin_structures{true};
+    std::string debug_depth_mp4;
+};
+
 struct CoreStackProviderConfig {
     std::string frame_source{"synthetic"};
     std::string ego_provider{"frame_hint"};

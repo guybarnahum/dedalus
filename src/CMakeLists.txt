@@ -116,7 +116,11 @@ target_compile_options(dedalus_core
 # Enable with -DDEDALUS_ENABLE_ONNX_DEPTH=ON when ONNX Runtime is installed.
 if(DEDALUS_ENABLE_ONNX_DEPTH)
     find_package(onnxruntime REQUIRED)
-    target_sources(dedalus_core PRIVATE sensing/onnx_depth_engine.cpp)
+    target_sources(dedalus_core PRIVATE
+        sensing/depth_engine_utils.cpp
+        sensing/onnx_depth_engine_base.cpp
+        sensing/onnx_depth_engine.cpp
+        sensing/unidepth_v2_depth_engine.cpp)
     target_link_libraries(dedalus_core PRIVATE onnxruntime::onnxruntime)
     target_compile_definitions(dedalus_core PUBLIC DEDALUS_ONNX_DEPTH_ENABLED)
 endif()

@@ -27,6 +27,7 @@
 #ifdef DEDALUS_ONNX_DEPTH_ENABLED
 #include "dedalus/sensing/metric_scale_estimate.hpp"
 #include "dedalus/sensing/onnx_depth_engine.hpp"
+#include "dedalus/sensing/unidepth_v2_depth_engine.hpp"
 #include "dedalus/sensing/visual_depth_obstacle_detector.hpp"
 #endif
 
@@ -160,22 +161,57 @@ void warn_unknown_dedalus_vars() {
 }
 
 // Build a depth ObstacleEvidenceProvider by string name.
+// Shared detector grid/filter params extracted from whichever visual provider is
+// active.  Passed to make_depth_provider() so that airsim_gt_vd mirrors the same
+// evidence grid as its paired visual provider, regardless of which that is.
+struct DepthDetectorSharedParams {
+    std::size_t depth_grid_cols{40U};
+    std::size_t depth_grid_rows{22U};
+    float  min_depth_m{0.2F};
+    float  max_depth_m{80.0F};
+    float  voxel_size_m{0.5F};
+    float  confidence{0.75F};
+    std::size_t max_evidence{512U};
+    bool   detect_surface_patches{true};
+    bool   detect_thin_structures{true};
+};
+
+DepthDetectorSharedParams shared_params_from(const VisualONNXDepthConfig& cfg) {
+    return {cfg.depth_grid_cols, cfg.depth_grid_rows,
+            cfg.min_depth_m, cfg.max_depth_m, cfg.voxel_size_m,
+            cfg.confidence, cfg.max_evidence,
+            cfg.detect_surface_patches, cfg.detect_thin_structures};
+}
+
+DepthDetectorSharedParams shared_params_from(const UniDepthV2Config& cfg) {
+    return {cfg.depth_grid_cols, cfg.depth_grid_rows,
+            cfg.min_depth_m, cfg.max_depth_m, cfg.voxel_size_m,
+            cfg.confidence, cfg.max_evidence,
+            cfg.detect_surface_patches, cfg.detect_thin_structures};
+}
+
+// Build a depth ObstacleEvidenceProvider by string name.
 // Returns nullptr if name is empty (slot inactive).
+// shared: detector grid/filter params to use for airsim_gt_vd — must mirror
+//         the primary visual provider so evidence grids are comparable.
 std::unique_ptr<ObstacleEvidenceProvider> make_depth_provider(
     const std::string& name,
-    const VisualONNXDepthConfig& visual_onnx_config) {
+    const DepthDetectorSharedParams& shared,
+    const VisualONNXDepthConfig& visual_onnx_config,
+    const UniDepthV2Config& unidepth_config) {
     if (name.empty()) return nullptr;
     if (name == "airsim_gt_vd") {
-        // Mirror ONNX grid/filter params so GT and ONNX produce equal cell counts.
+        // Mirror the primary provider's grid/filter params so GT and visual evidence
+        // grids are comparable in the A/B delta log.
         AirSimEmulationDepthObstacleDetectorConfig gt_cfg;
-        gt_cfg.depth_grid_cols        = visual_onnx_config.depth_grid_cols;
-        gt_cfg.depth_grid_rows        = visual_onnx_config.depth_grid_rows;
-        gt_cfg.min_depth_m            = visual_onnx_config.min_depth_m;
-        gt_cfg.max_depth_m            = visual_onnx_config.max_depth_m;
-        gt_cfg.voxel_size_m           = visual_onnx_config.voxel_size_m;
-        gt_cfg.max_evidence           = visual_onnx_config.max_evidence;
-        gt_cfg.detect_surface_patches = visual_onnx_config.detect_surface_patches;
-        gt_cfg.detect_thin_structures = visual_onnx_config.detect_thin_structures;
+        gt_cfg.depth_grid_cols        = shared.depth_grid_cols;
+        gt_cfg.depth_grid_rows        = shared.depth_grid_rows;
+        gt_cfg.min_depth_m            = shared.min_depth_m;
+        gt_cfg.max_depth_m            = shared.max_depth_m;
+        gt_cfg.voxel_size_m           = shared.voxel_size_m;
+        gt_cfg.max_evidence           = shared.max_evidence;
+        gt_cfg.detect_surface_patches = shared.detect_surface_patches;
+        gt_cfg.detect_thin_structures = shared.detect_thin_structures;
         return std::make_unique<AirSimEmulationDepthObstacleDetector>(gt_cfg);
     }
     if (name == "visual_onnx") {
@@ -215,6 +251,44 @@ std::unique_ptr<ObstacleEvidenceProvider> make_depth_provider(
             "visual_onnx: build requires -DDEDALUS_ENABLE_ONNX_DEPTH=ON");
 #endif
     }
+    if (name == "unidepth_v2") {
+#ifdef DEDALUS_ONNX_DEPTH_ENABLED
+        if (unidepth_config.model_path.empty())
+            throw std::invalid_argument("unidepth_v2: unidepth.model_path is required");
+        UniDepthV2DepthEngineConfig engine_cfg;
+        engine_cfg.model_path             = unidepth_config.model_path;
+        engine_cfg.inference_width        = unidepth_config.inference_width;
+        engine_cfg.inference_height       = unidepth_config.inference_height;
+        engine_cfg.native_width           = unidepth_config.native_width;
+        engine_cfg.native_height          = unidepth_config.native_height;
+        engine_cfg.use_camera_rays        = unidepth_config.use_camera_rays;
+        engine_cfg.use_cuda               = unidepth_config.use_cuda;
+        engine_cfg.cuda_device_id         = unidepth_config.cuda_device_id;
+        engine_cfg.cuda_arena_limit_bytes = unidepth_config.cuda_arena_limit_bytes;
+        engine_cfg.use_coreml             = unidepth_config.use_coreml;
+        engine_cfg.scale                  = unidepth_config.scale;
+        VisualDepthObstacleDetectorConfig detector_cfg;
+        detector_cfg.depth_grid_cols          = unidepth_config.depth_grid_cols;
+        detector_cfg.depth_grid_rows          = unidepth_config.depth_grid_rows;
+        detector_cfg.min_depth_m              = unidepth_config.min_depth_m;
+        detector_cfg.max_depth_m              = unidepth_config.max_depth_m;
+        detector_cfg.voxel_size_m             = unidepth_config.voxel_size_m;
+        detector_cfg.confidence               = unidepth_config.confidence;
+        detector_cfg.max_evidence             = unidepth_config.max_evidence;
+        detector_cfg.detect_surface_patches   = unidepth_config.detect_surface_patches;
+        detector_cfg.detect_thin_structures   = unidepth_config.detect_thin_structures;
+        MetricScaleEstimate scale;
+        scale.scale      = unidepth_config.scale;
+        scale.confidence = 1.0F;
+        return std::make_unique<VisualDepthObstacleDetector>(
+            std::make_unique<UniDepthV2DepthEngine>(std::move(engine_cfg)),
+            scale, detector_cfg);
+#else
+        (void)unidepth_config;
+        throw std::invalid_argument(
+            "unidepth_v2: build requires -DDEDALUS_ENABLE_ONNX_DEPTH=ON");
+#endif
+    }
     throw std::invalid_argument("unknown depth provider: " + name);
 }
 
@@ -226,15 +300,31 @@ void build_depth_slots(CoreStackConfig& config) {
     const std::string depth_eval_name =
         env_str_or(config.providers.depth_eval, "DEDALUS_DEPTH_EVAL");
 
+    // Derive shared detector params from the primary visual provider so that
+    // airsim_gt_vd (when used as eval/slot-B) mirrors the same evidence grid.
+    // Primary = slot A (depth_name); fall back to slot B if slot A is GT itself.
+    const std::string& primary_visual_name =
+        (depth_name != "airsim_gt_vd" && !depth_name.empty()) ? depth_name : depth_eval_name;
+    DepthDetectorSharedParams shared;
+    if (primary_visual_name == "unidepth_v2") {
+        shared = shared_params_from(config.runner.unidepth_v2_depth);
+    } else {
+        shared = shared_params_from(config.runner.visual_onnx_depth);
+    }
+
     config.runner.depth_slot_a =
-        make_depth_provider(depth_name, config.runner.visual_onnx_depth);
+        make_depth_provider(depth_name, shared, config.runner.visual_onnx_depth, config.runner.unidepth_v2_depth);
     config.runner.depth_slot_b =
-        make_depth_provider(depth_eval_name, config.runner.visual_onnx_depth);
+        make_depth_provider(depth_eval_name, shared, config.runner.visual_onnx_depth, config.runner.unidepth_v2_depth);
 
     // Wire debug_depth_mp4 into the annotator config (separated from detector).
+    // visual_onnx takes priority; fall back to unidepth.
     if (!config.runner.visual_onnx_depth.debug_depth_mp4.empty()) {
         config.runner.debug_depth_annotator.output_path =
             config.runner.visual_onnx_depth.debug_depth_mp4;
+    } else if (!config.runner.unidepth_v2_depth.debug_depth_mp4.empty()) {
+        config.runner.debug_depth_annotator.output_path =
+            config.runner.unidepth_v2_depth.debug_depth_mp4;
     }
 }
 
@@ -468,8 +558,45 @@ bool parse_visual_onnx_key(
 }
 
 
+bool parse_unidepth_key(
+    CoreStackRunnerConfig& config,
+    const std::string& key,
+    const std::string& value) {
+    const std::string prefix = "unidepth.";
+    if (key.rfind(prefix, 0U) != 0U) return false;
+    const auto field = key.substr(prefix.size());
+    auto& cfg = config.unidepth_v2_depth;
+    if (field == "model_path")                { cfg.model_path = value; }
+    else if (field == "inference_width")      { cfg.inference_width  = std::stoi(value); }
+    else if (field == "inference_height")     { cfg.inference_height = std::stoi(value); }
+    else if (field == "native_width")         { cfg.native_width  = std::stoi(value); }
+    else if (field == "native_height")        { cfg.native_height = std::stoi(value); }
+    else if (field == "use_camera_rays")      { cfg.use_camera_rays = parse_bool(value); }
+    else if (field == "scale")                { cfg.scale = std::stof(value); }
+    else if (field == "use_cuda")             { cfg.use_cuda = parse_bool(value); }
+    else if (field == "cuda_device_id")       { cfg.cuda_device_id = std::stoi(value); }
+    else if (field == "cuda_arena_limit_bytes") {
+        cfg.cuda_arena_limit_bytes = static_cast<std::size_t>(std::stoull(value));
+    }
+    else if (field == "use_coreml")           { cfg.use_coreml = parse_bool(value); }
+    else if (field == "depth_grid_cols")      { cfg.depth_grid_cols = static_cast<std::size_t>(std::stoul(value)); }
+    else if (field == "depth_grid_rows")      { cfg.depth_grid_rows = static_cast<std::size_t>(std::stoul(value)); }
+    else if (field == "min_depth_m")          { cfg.min_depth_m = std::stof(value); }
+    else if (field == "max_depth_m")          { cfg.max_depth_m = std::stof(value); }
+    else if (field == "voxel_size_m")         { cfg.voxel_size_m = std::stof(value); }
+    else if (field == "confidence")           { cfg.confidence = std::stof(value); }
+    else if (field == "max_evidence")         { cfg.max_evidence = static_cast<std::size_t>(std::stoul(value)); }
+    else if (field == "detect_surface_patches") { cfg.detect_surface_patches = parse_bool(value); }
+    else if (field == "detect_thin_structures") { cfg.detect_thin_structures = parse_bool(value); }
+    else if (field == "debug_depth_mp4")      { cfg.debug_depth_mp4 = value; }
+    else { throw std::invalid_argument("unknown unidepth field: " + key); }
+    return true;
+}
+
+
 void apply_config_value(CoreStackConfig& config, const std::string& key, const std::string& value) {
     if (parse_visual_onnx_key(config.runner, key, value)) return;
+    if (parse_unidepth_key(config.runner, key, value)) return;
     if (parse_airsim_object_binding_key(config.providers, key, value)) return;
     if (parse_airsim_pattern_binding_key(config.providers, key, value)) return;
     if (key == "frame_source") config.providers.frame_source = value;
@@ -564,7 +691,7 @@ void validate_obstacle_sensing_cameras(const MissionOptions& options) {
 
 void validate_depth_provider_name(const std::string& name, const char* field) {
     if (name.empty()) return;
-    if (name != "airsim_gt_vd" && name != "visual_onnx")
+    if (name != "airsim_gt_vd" && name != "visual_onnx" && name != "unidepth_v2")
         throw std::invalid_argument(std::string(field) + ": unknown depth provider: " + name);
 }
 
