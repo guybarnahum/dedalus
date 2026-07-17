@@ -314,14 +314,20 @@ def run_direct_export(
     if hasattr(model, "config") and isinstance(model.config, dict):
         model.config.setdefault("training", {})["export"] = True
 
+    # UniDepthV2.forward(inputs_dict, image_metas) — not a plain tensor forward.
+    # Shims call encode_decode() directly, which accepts {"image": tensor} and
+    # returns outputs["points"] ([B,3,H,W] XYZ), "confidence", "intrinsics".
+    # For the two-input variant, precomputed rays are injected via the dict so
+    # the decoder uses them instead of inferring the camera.
+
     class _SingleInputShim(torch.nn.Module):
         def __init__(self, inner: torch.nn.Module) -> None:
             super().__init__()
             self.inner = inner
 
         def forward(self, rgbs: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
-            out = self.inner(rgbs)
-            return out["pts_3d"], out["confidence"], out["intrinsics"]
+            _, out = self.inner.encode_decode({"image": rgbs}, image_metas=[])
+            return out["points"], out["confidence"], out["intrinsics"]
 
     class _TwoInputShim(torch.nn.Module):
         def __init__(self, inner: torch.nn.Module) -> None:
@@ -331,8 +337,8 @@ def run_direct_export(
         def forward(
             self, rgbs: torch.Tensor, rays: torch.Tensor
         ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
-            out = self.inner(rgbs, rays=rays)
-            return out["pts_3d"], out["confidence"], out["intrinsics"]
+            _, out = self.inner.encode_decode({"image": rgbs, "rays": rays}, image_metas=[])
+            return out["points"], out["confidence"], out["intrinsics"]
 
     dummy_rgb = torch.zeros(1, 3, inf_h, inf_w, dtype=torch.float32)
 
@@ -355,6 +361,8 @@ def run_direct_export(
                      "confidence": {0: "batch"}, "intrinsics": {0: "batch"}}
 
     print(f"Exporting to {output} (opset {opset}, {inf_h}×{inf_w}) …")
+    # dynamo=False: use the JIT tracer (torch.jit.trace) rather than torch.export.
+    # The dynamo path fails on UniDepth's dict-based forward/encode_decode.
     torch.onnx.export(
         shim,
         inputs,
@@ -364,6 +372,7 @@ def run_direct_export(
         dynamic_axes=dyn_axes,
         opset_version=opset,
         do_constant_folding=True,
+        dynamo=False,
     )
 
 
