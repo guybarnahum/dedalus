@@ -34,8 +34,11 @@ struct MissionLocalTraversabilityMapConfig {
     // Log-odds accumulation parameters.
     // log_odds_occupied_increment: added to log_odds per occupied observation, weighted by
     //   source.confidence.  Value = log(p_hit / (1 - p_hit)) with p_hit = 0.7.
+    // log_odds_free_decrement: subtracted from log_odds per free-space ray step, weighted by
+    //   source.confidence.  Value = log(p_free / (1 - p_free)) with p_free = 0.9.
     // log_odds_max: clamp ceiling (sigmoid(4.0) ≈ 0.982); also used as negative floor.
     double log_odds_occupied_increment{0.8473};  // log(0.7 / 0.3)
+    double log_odds_free_decrement{2.197};        // log(0.9 / 0.1)
     double log_odds_max{4.0};
 
     // Decay rate applied to log_odds per second — evidence fades when a region is no

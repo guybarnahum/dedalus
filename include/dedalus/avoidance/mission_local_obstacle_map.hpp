@@ -88,6 +88,12 @@ struct MissionLocalObstacleMapSnapshot {
     MissionLocalObstacleMapConfig config;
     MissionLocalObstacleMapSummary summary;
     std::vector<MissionLocalObstacleCell> cells;
+    // Sensor (ego) position in the map frame at snapshot time.
+    // Used by the traversability map for free-space ray-casting (Stage 2).
+    // Valid only when sensor_origin_valid is true; defaults to false so callers
+    // that do not stamp an origin (e.g. tests) safely skip ray-casting.
+    Vec3 sensor_origin_map{};
+    bool sensor_origin_valid{false};
 };
 
 class MissionLocalObstacleMap {

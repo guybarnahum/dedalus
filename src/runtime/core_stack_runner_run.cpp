@@ -699,10 +699,12 @@ bool CoreStackRunner::run_once() {
     }
 
     start = SteadyClock::now();
-    const auto mission_local_obstacle_map_snapshot = mission_local_obstacle_map_.update(
+    auto mission_local_obstacle_map_snapshot = mission_local_obstacle_map_.update(
         perception_output.obstacle_evidence,
         frame->timestamp,
         snapshot_for_annotation.ego.map_frame_id);
+    mission_local_obstacle_map_snapshot.sensor_origin_map   = snapshot_for_annotation.ego.local_T_body.position;
+    mission_local_obstacle_map_snapshot.sensor_origin_valid = true;
     snapshot_for_annotation.mission_local_obstacle_map = mission_local_obstacle_map_snapshot;
     snapshot_for_annotation.has_mission_local_obstacle_map = true;
 

@@ -237,6 +237,49 @@ MissionLocalTraversabilityMapSnapshot MissionLocalTraversabilityMap::update_from
         }
     }
 
+    // Stage 2: free-space ray-casting.
+    // For each observed evidence cell, march from the sensor origin toward the cell
+    // center and apply negative log-odds to intermediate voxels.  Voxels on the path
+    // from the sensor to a reported obstacle are more likely free — they would have
+    // blocked the sensor ray if they were occupied.  This cancels false-positive
+    // accumulation in voxels crossed by rays from other views.
+    //
+    // Skipped when sensor_origin_valid is false (default, tests, unknown origin).
+    if (obstacle_map.sensor_origin_valid) {
+        const double step_m = config_.cell_size_m * 0.5;
+        const Vec3& origin = obstacle_map.sensor_origin_map;
+
+        for (const auto& source : obstacle_map.cells) {
+            if (!source.observed || !finite_point(source.center_map)) {
+                continue;
+            }
+            const double dx = source.center_map.x - origin.x;
+            const double dy = source.center_map.y - origin.y;
+            const double dz = source.center_map.z - origin.z;
+            const double dist = std::sqrt(dx*dx + dy*dy + dz*dz);
+            if (dist <= step_m) {
+                continue;  // sensor inside or adjacent to endpoint voxel — skip
+            }
+            const double nx = dx / dist;
+            const double ny = dy / dist;
+            const double nz = dz / dist;
+
+            const auto endpoint_key = key_for_point(source.center_map);
+
+            for (double t = step_m; t < dist; t += step_m) {
+                const Vec3 pt{origin.x + nx * t, origin.y + ny * t, origin.z + nz * t};
+                const auto key = key_for_point(pt);
+                if (key == endpoint_key) {
+                    break;  // reached the endpoint voxel — do not apply free here
+                }
+                auto& cell = ensure_cell(key);
+                cell.log_odds = std::clamp(
+                    cell.log_odds - (source.confidence * config_.log_odds_free_decrement),
+                    -config_.log_odds_max, config_.log_odds_max);
+            }
+        }
+    }
+
     recompute_derived_fields(now, include_clearance);
 
     summary_.update_count += 1U;
