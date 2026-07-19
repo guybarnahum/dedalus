@@ -43,6 +43,7 @@
 #include "dedalus/avoidance/mission_local_planning_map.hpp"
 
 #include <chrono>
+#include <cmath>
 #include <mutex>
 #include <string_view>
 #include <unordered_set>
