@@ -59,25 +59,10 @@ struct MissionLocalTraversabilityMapConfig {
     std::uint32_t endpoint_spread_voxels{1U};
     double        endpoint_spread_decay{0.5};
 
-    // Decay rate applied to log_odds (and free_score/confidence) per second.
-    // For a persistent static-environment map these should stay at 0.0 — evidence
-    // is corrected by Stage 2 free-space ray-casting, not by time.  Non-zero values
-    // are useful only for dynamic-obstacle scenarios where obstacles move away.
-    //
-    // NOTE: when enable_log_odds=true, occupied_score_decay_per_second is applied
-    // to log_odds (not to occupied_score directly); the name is kept for config
-    // key compatibility.
-    double occupied_score_decay_per_second{0.0};
-    double free_score_decay_per_second{0.0};
-    double confidence_decay_per_second{0.0};
+    // Evidence is never time-decayed. Cells persist until Stage 2 free-space
+    // ray-casting actively contradicts them with new sensor evidence.
 
     double stale_after_seconds{300.0};
-
-    // Pruning — evict cells whose occupied_score has fallen below this floor.
-    // 0.0 disables pruning entirely (correct for persistent maps).
-    // prune_interval_ticks controls how often the O(N) sweep runs; 0 disables pruning.
-    double prune_min_occupied_score{0.0};
-    std::uint32_t prune_interval_ticks{10U};
 
     double required_clearance_m{1.5};
     double soft_clearance_m{3.0};
@@ -225,21 +210,14 @@ private:
     MissionLocalTraversabilityCell& ensure_cell(const CellKey& key);
     const MissionLocalTraversabilityCell* cell_at_key(const CellKey& key) const;
 
-    void apply_aging(TimePoint now);
     void recompute_derived_fields(TimePoint now, bool include_clearance = true);
     void refresh_summary();
-    // Evict cells whose occupied_score is below prune_min_occupied_score.
-    // Rebuilds cell_index_ after compacting the cells_ vector.
-    void prune_weak_cells();
 
     MissionLocalTraversabilityMapConfig config_;
     MissionLocalTraversabilityMapSummary summary_;
 
     std::vector<StoredCell> cells_;
     std::unordered_map<CellKey, std::size_t, CellKeyHash> cell_index_;
-
-    bool has_last_update_{false};
-    TimePoint last_update_{};
 };
 
 }  // namespace dedalus

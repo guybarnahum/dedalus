@@ -13,15 +13,6 @@ std::uint64_t timestamp_ns(const TimePoint& time) {
     return time.timestamp_ns > 0 ? static_cast<std::uint64_t>(time.timestamp_ns) : 0U;
 }
 
-double elapsed_seconds(const TimePoint& from, const TimePoint& to) {
-    const auto from_ns = timestamp_ns(from);
-    const auto to_ns = timestamp_ns(to);
-    if (to_ns <= from_ns) {
-        return 0.0;
-    }
-    return static_cast<double>(to_ns - from_ns) * 1.0e-9;
-}
-
 bool finite_point(const Vec3& point) {
     return std::isfinite(point.x) && std::isfinite(point.y) && std::isfinite(point.z);
 }
@@ -142,39 +133,10 @@ const MissionLocalTraversabilityCell* MissionLocalTraversabilityMap::cell_at_key
     return &cells_[found->second].cell;
 }
 
-void MissionLocalTraversabilityMap::apply_aging(const TimePoint now) {
-    if (!has_last_update_) {
-        return;
-    }
-
-    const auto seconds = elapsed_seconds(last_update_, now);
-    if (seconds <= 0.0) {
-        return;
-    }
-
-    for (auto& stored : cells_) {
-        auto& cell = stored.cell;
-        if (config_.enable_log_odds) {
-            cell.log_odds = std::clamp(
-                cell.log_odds - (config_.occupied_score_decay_per_second * seconds),
-                -config_.log_odds_max, config_.log_odds_max);
-        } else {
-            cell.occupied_score = clamp_score(
-                cell.occupied_score - (config_.occupied_score_decay_per_second * seconds),
-                config_.max_score);
-        }
-        cell.free_score = clamp_score(
-            cell.free_score - (config_.free_score_decay_per_second * seconds),
-            config_.max_score);
-        cell.confidence = clamp01(cell.confidence - (config_.confidence_decay_per_second * seconds));
-    }
-}
-
 MissionLocalTraversabilityMapSnapshot MissionLocalTraversabilityMap::update_from_mission_obstacle_map(
     const MissionLocalObstacleMapSnapshot& obstacle_map,
     const TimePoint now,
     const bool include_clearance) {
-    apply_aging(now);
 
     if (frame_empty(summary_.map_frame_id) && !frame_empty(obstacle_map.summary.map_frame_id)) {
         summary_.map_frame_id = obstacle_map.summary.map_frame_id;
@@ -347,19 +309,8 @@ MissionLocalTraversabilityMapSnapshot MissionLocalTraversabilityMap::update_from
 
     summary_.update_count += 1U;
     summary_.last_update_timestamp_ns = now_ns;
-    last_update_ = now;
-    has_last_update_ = true;
 
     refresh_summary();
-
-    // Prune cells that have decayed below the minimum score floor.
-    // Runs every prune_interval_ticks updates to amortise the O(N) vector compaction.
-    if (config_.prune_min_occupied_score > 0.0 &&
-        config_.prune_interval_ticks > 0U &&
-        (summary_.update_count % config_.prune_interval_ticks) == 0U) {
-        prune_weak_cells();
-        refresh_summary();
-    }
 
     return snapshot();
 }
@@ -615,38 +566,10 @@ TraversabilityQueryResult MissionLocalTraversabilityMap::query_sphere(
     return result;
 }
 
-void MissionLocalTraversabilityMap::prune_weak_cells() {
-    if (!(config_.prune_min_occupied_score > 0.0) || cells_.empty()) {
-        return;
-    }
-
-    // Compact: move cells that should be retained to the front of the vector.
-    const auto keep_end = std::stable_partition(
-        cells_.begin(), cells_.end(),
-        [this](const StoredCell& stored) {
-            return stored.cell.occupied_score >= config_.prune_min_occupied_score;
-        });
-
-    if (keep_end == cells_.end()) {
-        return;  // nothing to evict
-    }
-
-    cells_.erase(keep_end, cells_.end());
-
-    // Rebuild index to match the compacted vector.
-    cell_index_.clear();
-    cell_index_.reserve(cells_.size());
-    for (std::size_t i = 0U; i < cells_.size(); ++i) {
-        cell_index_.emplace(cells_[i].key, i);
-    }
-}
-
 void MissionLocalTraversabilityMap::reset() {
     cells_.clear();
     cell_index_.clear();
     summary_ = MissionLocalTraversabilityMapSummary{};
-    has_last_update_ = false;
-    last_update_ = TimePoint{};
 }
 
 }  // namespace dedalus

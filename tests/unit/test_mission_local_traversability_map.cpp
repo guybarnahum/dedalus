@@ -88,7 +88,7 @@ void compacted_obstacle_snapshot_builds_foundational_map_without_trajectory() {
     config.vertical_cell_size_m = 1.0;
     config.required_clearance_m = 1.5;
     config.soft_clearance_m = 3.0;
-    config.free_score_decay_per_second = 0.0;
+    config.enable_log_odds = false;  // test exercises legacy free_score path
 
     MissionLocalTraversabilityMap map(config);
     const auto snapshot = map.update_from_mission_obstacle_map(
@@ -127,7 +127,6 @@ void repeated_full_snapshots_do_not_bloat_or_oversaturate_counts() {
     MissionLocalTraversabilityMapConfig config;
     config.cell_size_m = 1.0;
     config.vertical_cell_size_m = 1.0;
-    config.free_score_decay_per_second = 0.0;
 
     MissionLocalTraversabilityMap map(config);
     const auto obstacle_snapshot = source_snapshot({
@@ -151,7 +150,7 @@ void stale_free_space_ages_without_becoming_erased() {
     config.cell_size_m = 1.0;
     config.vertical_cell_size_m = 1.0;
     config.stale_after_seconds = 1.0;
-    config.free_score_decay_per_second = 0.0;
+    config.enable_log_odds = false;  // test exercises legacy free_score path
 
     MissionLocalTraversabilityMap map(config);
     auto snapshot = map.update_from_mission_obstacle_map(
