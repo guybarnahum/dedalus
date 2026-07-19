@@ -599,9 +599,29 @@ bool parse_unidepth_key(
 }
 
 
+bool parse_traversability_key(
+    CoreStackRunnerConfig& config,
+    const std::string& key,
+    const std::string& value) {
+    const std::string prefix = "traversability.";
+    if (key.rfind(prefix, 0U) != 0U) return false;
+    const auto field = key.substr(prefix.size());
+    auto& trav = config.mission_map_assimilator.traversability_config;
+    if      (field == "enable_log_odds")              trav.enable_log_odds                = parse_bool(value);
+    else if (field == "log_odds_occupied_increment")  trav.log_odds_occupied_increment    = std::stod(value);
+    else if (field == "log_odds_free_decrement")      trav.log_odds_free_decrement        = std::stod(value);
+    else if (field == "log_odds_max")                 trav.log_odds_max                   = std::stod(value);
+    else if (field == "endpoint_spread_voxels")       trav.endpoint_spread_voxels         = parse_uint32(value, key.c_str());
+    else if (field == "endpoint_spread_decay")        trav.endpoint_spread_decay          = std::stod(value);
+    else { throw std::invalid_argument("unknown traversability field: " + key); }
+    return true;
+}
+
+
 void apply_config_value(CoreStackConfig& config, const std::string& key, const std::string& value) {
     if (parse_visual_onnx_key(config.runner, key, value)) return;
     if (parse_unidepth_key(config.runner, key, value)) return;
+    if (parse_traversability_key(config.runner, key, value)) return;
     if (parse_airsim_object_binding_key(config.providers, key, value)) return;
     if (parse_airsim_pattern_binding_key(config.providers, key, value)) return;
     if (key == "frame_source") config.providers.frame_source = value;

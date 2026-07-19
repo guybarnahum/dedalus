@@ -154,9 +154,15 @@ void MissionLocalTraversabilityMap::apply_aging(const TimePoint now) {
 
     for (auto& stored : cells_) {
         auto& cell = stored.cell;
-        cell.log_odds = std::clamp(
-            cell.log_odds - (config_.occupied_score_decay_per_second * seconds),
-            -config_.log_odds_max, config_.log_odds_max);
+        if (config_.enable_log_odds) {
+            cell.log_odds = std::clamp(
+                cell.log_odds - (config_.occupied_score_decay_per_second * seconds),
+                -config_.log_odds_max, config_.log_odds_max);
+        } else {
+            cell.occupied_score = clamp_score(
+                cell.occupied_score - (config_.occupied_score_decay_per_second * seconds),
+                config_.max_score);
+        }
         cell.free_score = clamp_score(
             cell.free_score - (config_.free_score_decay_per_second * seconds),
             config_.max_score);
@@ -212,9 +218,15 @@ MissionLocalTraversabilityMapSnapshot MissionLocalTraversabilityMap::update_from
         }
         cell.last_observed_timestamp_ns = std::max(cell.last_observed_timestamp_ns, source_time);
 
-        cell.log_odds = std::clamp(
-            cell.log_odds + (source.confidence * config_.log_odds_occupied_increment),
-            -config_.log_odds_max, config_.log_odds_max);
+        if (config_.enable_log_odds) {
+            cell.log_odds = std::clamp(
+                cell.log_odds + (source.confidence * config_.log_odds_occupied_increment),
+                -config_.log_odds_max, config_.log_odds_max);
+        } else {
+            cell.occupied_score = clamp_score(
+                std::max(cell.occupied_score, source.occupied_score),
+                config_.max_score);
+        }
         cell.free_score = clamp_score(
             std::max(cell.free_score, source.free_score),
             config_.max_score);
@@ -248,7 +260,7 @@ MissionLocalTraversabilityMapSnapshot MissionLocalTraversabilityMap::update_from
     //
     // Run as a separate pass to avoid invalidating the `cell` reference held during
     // the main merge loop (ensure_cell may grow the cells_ vector).
-    if (obstacle_map.sensor_origin_valid && config_.endpoint_spread_voxels > 0U) {
+    if (config_.enable_log_odds && obstacle_map.sensor_origin_valid && config_.endpoint_spread_voxels > 0U) {
         const Vec3& origin = obstacle_map.sensor_origin_map;
 
         for (const auto& source : obstacle_map.cells) {
@@ -290,7 +302,7 @@ MissionLocalTraversabilityMapSnapshot MissionLocalTraversabilityMap::update_from
     // accumulation in voxels crossed by rays from other views.
     //
     // Skipped when sensor_origin_valid is false (default, tests, unknown origin).
-    if (obstacle_map.sensor_origin_valid) {
+    if (config_.enable_log_odds && obstacle_map.sensor_origin_valid) {
         const double step_m = config_.cell_size_m * 0.5;
         const Vec3& origin = obstacle_map.sensor_origin_map;
 
@@ -349,8 +361,11 @@ MissionLocalTraversabilityMapSnapshot MissionLocalTraversabilityMap::update_from
 void MissionLocalTraversabilityMap::recompute_derived_fields(const TimePoint now, const bool include_clearance) {
     // First pass: derive occupied_score from log_odds for every cell so that the
     // occupied-cell list below and all downstream logic use current values.
-    for (auto& stored : cells_) {
-        stored.cell.occupied_score = sigmoid(stored.cell.log_odds);
+    // Skipped when enable_log_odds=false — occupied_score is managed directly.
+    if (config_.enable_log_odds) {
+        for (auto& stored : cells_) {
+            stored.cell.occupied_score = sigmoid(stored.cell.log_odds);
+        }
     }
 
     // Build the occupied-cell list only when clearance is requested (O(N) scan).

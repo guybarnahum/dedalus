@@ -24,6 +24,11 @@ struct MissionLocalTraversabilityMapConfig {
     double cell_size_m{0.5};
     double vertical_cell_size_m{0.5};
 
+    // Master switch for the probabilistic log-odds pipeline (Stages 1–3).
+    // true  → additive log-odds accumulation + free-space ray-casting + endpoint spread.
+    // false → legacy max-merge of occupied_score; Stages 2 & 3 are fully skipped.
+    bool enable_log_odds{true};
+
     // occupied_threshold applies to occupied_score = sigmoid(log_odds).
     // With log-odds accumulation sigmoid never reaches 1.0, so threshold must be < 1.
     // 0.5 = "more likely occupied than not" (log_odds > 0, i.e. at least one observation).
