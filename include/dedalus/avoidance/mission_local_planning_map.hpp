@@ -50,8 +50,10 @@ struct MissionLocalPlanningMapConfig {
     double vertical_cell_size_m{2.0};
 
     // Only L1 cells at or above this score are projected into L2.
-    // Should be >= MissionLocalTraversabilityMapConfig::occupied_threshold (1.0).
-    double min_occupied_score{1.0};
+    // Must be < 1.0 when log-odds is enabled (sigmoid never reaches 1.0).
+    // 0.5 matches L1's occupied_threshold: any cell more likely occupied than
+    // not passes into L2.
+    double min_occupied_score{0.5};
 
     // How much one L1 free-space observation reduces an L2 voxel's occupied_score.
     // Applied multiplicatively: new_score = old_score * (1 - free_evidence_weight).

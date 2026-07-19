@@ -289,6 +289,9 @@ MissionLocalTraversabilityMapSnapshot MissionLocalTraversabilityMap::update_from
                 spread_cell.log_odds = std::clamp(
                     spread_cell.log_odds + (source.confidence * weight * config_.log_odds_occupied_increment),
                     -config_.log_odds_max, config_.log_odds_max);
+                // Stamp so the SSE delta filter sees this cell as changed.
+                spread_cell.last_observed_timestamp_ns =
+                    std::max(spread_cell.last_observed_timestamp_ns, now_ns);
                 weight *= config_.endpoint_spread_decay;
             }
         }
@@ -333,6 +336,9 @@ MissionLocalTraversabilityMapSnapshot MissionLocalTraversabilityMap::update_from
                 cell.log_odds = std::clamp(
                     cell.log_odds - (source.confidence * config_.log_odds_free_decrement),
                     -config_.log_odds_max, config_.log_odds_max);
+                // Stamp so the SSE delta filter sees this cell as changed.
+                cell.last_observed_timestamp_ns =
+                    std::max(cell.last_observed_timestamp_ns, now_ns);
             }
         }
     }
@@ -399,7 +405,12 @@ void MissionLocalTraversabilityMap::recompute_derived_fields(const TimePoint now
         cell.stale = config_.stale_after_seconds > 0.0 && age_seconds > config_.stale_after_seconds;
 
         const auto occupied = occupied_strength >= 1.0;
-        const auto observed_free = free_strength >= 1.0;
+        // With log-odds, free-space is negative log_odds — free_score is never
+        // written by Stage 2, so free_strength is always 0.  Use the log_odds
+        // sign directly instead.  Legacy (non-log-odds) path keeps the old gate.
+        const auto observed_free = config_.enable_log_odds
+            ? (cell.log_odds < 0.0 && !occupied)
+            : (free_strength >= 1.0);
         if (occupied && observed_free) {
             cell.state = TraversabilityCellState::Mixed;
         } else if (occupied) {

@@ -59,18 +59,24 @@ struct MissionLocalTraversabilityMapConfig {
     std::uint32_t endpoint_spread_voxels{1U};
     double        endpoint_spread_decay{0.5};
 
-    // Decay rate applied to log_odds per second — evidence fades when a region is no
-    // longer observed.  At 0.05/s a cell observed once (log_odds ≈ 0.85) returns to
-    // neutral in ~17 s; a cell reinforced from 5 views (log_odds ≈ 4.0) takes ~124 s.
-    double occupied_score_decay_per_second{0.05};
-    double free_score_decay_per_second{0.02};
+    // Decay rate applied to log_odds (and free_score/confidence) per second.
+    // For a persistent static-environment map these should stay at 0.0 — evidence
+    // is corrected by Stage 2 free-space ray-casting, not by time.  Non-zero values
+    // are useful only for dynamic-obstacle scenarios where obstacles move away.
+    //
+    // NOTE: when enable_log_odds=true, occupied_score_decay_per_second is applied
+    // to log_odds (not to occupied_score directly); the name is kept for config
+    // key compatibility.
+    double occupied_score_decay_per_second{0.0};
+    double free_score_decay_per_second{0.0};
     double confidence_decay_per_second{0.0};
 
     double stale_after_seconds{300.0};
 
-    // Pruning — evict cells whose occupied_score has decayed below this floor.
+    // Pruning — evict cells whose occupied_score has fallen below this floor.
+    // 0.0 disables pruning entirely (correct for persistent maps).
     // prune_interval_ticks controls how often the O(N) sweep runs; 0 disables pruning.
-    double prune_min_occupied_score{0.1};
+    double prune_min_occupied_score{0.0};
     std::uint32_t prune_interval_ticks{10U};
 
     double required_clearance_m{1.5};
