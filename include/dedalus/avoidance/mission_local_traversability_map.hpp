@@ -41,6 +41,19 @@ struct MissionLocalTraversabilityMapConfig {
     double log_odds_free_decrement{2.197};        // log(0.9 / 0.1)
     double log_odds_max{4.0};
 
+    // Endpoint uncertainty spread — models depth-estimation error along the ray.
+    // After marking the endpoint voxel occupied, spread decaying positive log-odds
+    // N voxels forward (away from sensor) along the ray direction.  Two views with
+    // slightly different depth estimates for the same obstacle will then reinforce
+    // each other even if they land in adjacent voxels.
+    //
+    // Forward-only by design: the toward-sensor side is already correctly asserted
+    // free by Stage 2 ray-casting (log_odds_free_decrement >> spread weight).
+    //
+    // Gated on sensor_origin_valid; 0 disables spread entirely.
+    std::uint32_t endpoint_spread_voxels{1U};
+    double        endpoint_spread_decay{0.5};
+
     // Decay rate applied to log_odds per second — evidence fades when a region is no
     // longer observed.  At 0.05/s a cell observed once (log_odds ≈ 0.85) returns to
     // neutral in ~17 s; a cell reinforced from 5 views (log_odds ≈ 4.0) takes ~124 s.

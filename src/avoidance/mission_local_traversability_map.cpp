@@ -237,6 +237,51 @@ MissionLocalTraversabilityMapSnapshot MissionLocalTraversabilityMap::update_from
         }
     }
 
+    // Stage 3: endpoint uncertainty spread (forward along ray, away from sensor).
+    // For each evidence cell, spread decaying positive log-odds N voxels beyond the
+    // endpoint.  Views with slightly different depth estimates for the same real
+    // obstacle will reinforce each other when their evidence clouds overlap.
+    //
+    // Forward-only: the toward-sensor side is on Stage 2's free-space path and
+    // Stage 2's decrement (2.197) far exceeds the spread weight (~0.42), so toward-
+    // sensor spread would simply create noise.
+    //
+    // Run as a separate pass to avoid invalidating the `cell` reference held during
+    // the main merge loop (ensure_cell may grow the cells_ vector).
+    if (obstacle_map.sensor_origin_valid && config_.endpoint_spread_voxels > 0U) {
+        const Vec3& origin = obstacle_map.sensor_origin_map;
+
+        for (const auto& source : obstacle_map.cells) {
+            if (!source.observed || !finite_point(source.center_map)) {
+                continue;
+            }
+            const double dx = source.center_map.x - origin.x;
+            const double dy = source.center_map.y - origin.y;
+            const double dz = source.center_map.z - origin.z;
+            const double dist = std::sqrt(dx*dx + dy*dy + dz*dz);
+            if (dist <= config_.cell_size_m * 0.5) {
+                continue;  // sensor inside endpoint voxel — no ray direction
+            }
+            const double nx = dx / dist;
+            const double ny = dy / dist;
+            const double nz = dz / dist;
+
+            double weight = config_.endpoint_spread_decay;
+            for (std::uint32_t s = 1U; s <= config_.endpoint_spread_voxels; ++s) {
+                const double step = static_cast<double>(s) * config_.cell_size_m;
+                const Vec3 pt{
+                    source.center_map.x + nx * step,
+                    source.center_map.y + ny * step,
+                    source.center_map.z + nz * step};
+                auto& spread_cell = ensure_cell(key_for_point(pt));
+                spread_cell.log_odds = std::clamp(
+                    spread_cell.log_odds + (source.confidence * weight * config_.log_odds_occupied_increment),
+                    -config_.log_odds_max, config_.log_odds_max);
+                weight *= config_.endpoint_spread_decay;
+            }
+        }
+    }
+
     // Stage 2: free-space ray-casting.
     // For each observed evidence cell, march from the sensor origin toward the cell
     // center and apply negative log-odds to intermediate voxels.  Voxels on the path
