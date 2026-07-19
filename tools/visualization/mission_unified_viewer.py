@@ -473,6 +473,9 @@ let   travFacesGeom = [];              // pre-built exterior face geometry (at c
 let   travCellSizeM = 0.5;
 let   travVCellSizeM = 0.5;
 let   travDisplayLevelM = 8;           // current LOD cell size for rendering (metres)
+// Stage 4: faces with sigmoid(avg_log_odds) below this threshold are not rendered.
+// Cells that Stage 2 free-space rays have pushed to net-negative evidence are hidden.
+const TRAV_VISIBILITY_THRESHOLD = 0.3;
 
 // Ghost detections
 let ghostDetections = [];              // {id, cls, pos, vel, size_m, seen_ms}
@@ -1662,8 +1665,8 @@ function buildTravFaces() {
     const cz = (Math.floor(cell.center.z / levelM) + 0.5) * levelM;
     const k  = `${cx},${cy},${cz}`;
     let e = coarseGrid.get(k);
-    if (!e) { e = {cx, cy, cz, occ:0, edge:0, conf:0}; coarseGrid.set(k, e); }
-    if (isOcc)  { e.occ++;  e.conf += cell.confidence; }
+    if (!e) { e = {cx, cy, cz, occ:0, edge:0, conf:0, log_odds_sum:0}; coarseGrid.set(k, e); }
+    if (isOcc)  { e.occ++;  e.conf += cell.confidence; e.log_odds_sum += cell.log_odds||0; }
     if (isEdge) { e.edge++; }
   }
 
@@ -1699,9 +1702,10 @@ function buildTravFaces() {
   ];
 
   for (const [, e] of occEntries) {
-    const {cx, cy, cz, occ, edge, conf} = e;
-    const isPartial = edge > 0; // coarse voxel has sub-threshold cells mixed with occupied → boundary
-    const avgConf   = occ > 0 ? clamp(conf / occ, 0, 1) : 0.5;
+    const {cx, cy, cz, occ, edge, conf, log_odds_sum} = e;
+    const isPartial  = edge > 0; // coarse voxel has sub-threshold cells mixed with occupied → boundary
+    const avgConf    = occ > 0 ? clamp(conf / occ, 0, 1) : 0.5;
+    const avgLogOdds = occ > 0 ? log_odds_sum / occ : 0;
 
     for (const [dx, dy, dz, shading] of DIRS) {
       const nk = `${cx+dx*levelM},${cy+dy*levelM},${cz+dz*levelM}`;
@@ -1735,6 +1739,7 @@ function buildTravFaces() {
                    z:(corners[0].z+corners[2].z)*0.5},
         isPartial,
         confidence: avgConf,
+        avg_log_odds: avgLogOdds,
         shading,
         // Voxel identity — used by hover card.
         vx: cx, vy: cy, vz: cz,
@@ -1769,6 +1774,9 @@ function drawTravFaces() {
     const ps = face.corners.map(c => project(c));
     if (ps.some(p => !Number.isFinite(p.x) || !Number.isFinite(p.y))) continue;
 
+    const sigA = 1.0 / (1.0 + Math.exp(-(face.avg_log_odds ?? 0)));
+    if (sigA < TRAV_VISIBILITY_THRESHOLD) continue;
+
     const base = byType
       ? (face.isPartial ? [200, 150, 30] : [190, 55, 45])
       : rgbForH(Math.max(0, -face.centroid.z));
@@ -1776,11 +1784,12 @@ function drawTravFaces() {
     const fr = Math.round(base[0] * s);
     const fg = Math.round(base[1] * s);
     const fb = Math.round(base[2] * s);
-    const fa = byType
+    const faMax = byType
       ? (face.isPartial ? 0.60 : 0.82)
       : (face.isPartial ? 0.52 : 0.78);
+    const fa  = sigA * faMax;
     const sa  = Math.min(1, fa + 0.12);
-    const key = `${fr},${fg},${fb},${face.isPartial?1:0}`;
+    const key = `${fr},${fg},${fb},${fa.toFixed(2)}`;
 
     let g = groups.get(key);
     if (!g) {
@@ -2674,6 +2683,7 @@ function applyTravSnapshot(trav, {deferRender=false}={}) {
       occupied_score: fin(raw.occupied_score,0),
       free_score:     fin(raw.free_score,0),
       confidence:     fin(raw.confidence,0),
+      log_odds:       fin(raw.log_odds,0),
       stale: raw.stale===true||state_s==="stale",
     };
     const k=travQuantKey(center.x, center.y, center.z);
@@ -2748,6 +2758,7 @@ function applyTravDelta(trav, {deferRender=false}={}) {
       occupied_score: fin(raw.occupied_score,0),
       free_score:     fin(raw.free_score,0),
       confidence:     fin(raw.confidence,0),
+      log_odds:       fin(raw.log_odds,0),
       stale: raw.stale===true||state_s==="stale",
     };
     const k=travQuantKey(center.x, center.y, center.z);
