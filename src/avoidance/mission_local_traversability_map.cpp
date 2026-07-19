@@ -30,6 +30,10 @@ double clamp01(const double value) {
     return std::max(0.0, std::min(value, 1.0));
 }
 
+double sigmoid(const double x) {
+    return 1.0 / (1.0 + std::exp(-x));
+}
+
 double clamp_score(const double value, const double max_score) {
     return std::max(0.0, std::min(value, max_score));
 }
@@ -150,9 +154,9 @@ void MissionLocalTraversabilityMap::apply_aging(const TimePoint now) {
 
     for (auto& stored : cells_) {
         auto& cell = stored.cell;
-        cell.occupied_score = clamp_score(
-            cell.occupied_score - (config_.occupied_score_decay_per_second * seconds),
-            config_.max_score);
+        cell.log_odds = std::clamp(
+            cell.log_odds - (config_.occupied_score_decay_per_second * seconds),
+            -config_.log_odds_max, config_.log_odds_max);
         cell.free_score = clamp_score(
             cell.free_score - (config_.free_score_decay_per_second * seconds),
             config_.max_score);
@@ -208,9 +212,9 @@ MissionLocalTraversabilityMapSnapshot MissionLocalTraversabilityMap::update_from
         }
         cell.last_observed_timestamp_ns = std::max(cell.last_observed_timestamp_ns, source_time);
 
-        cell.occupied_score = clamp_score(
-            std::max(cell.occupied_score, source.occupied_score),
-            config_.max_score);
+        cell.log_odds = std::clamp(
+            cell.log_odds + (source.confidence * config_.log_odds_occupied_increment),
+            -config_.log_odds_max, config_.log_odds_max);
         cell.free_score = clamp_score(
             std::max(cell.free_score, source.free_score),
             config_.max_score);
@@ -255,14 +259,19 @@ MissionLocalTraversabilityMapSnapshot MissionLocalTraversabilityMap::update_from
 }
 
 void MissionLocalTraversabilityMap::recompute_derived_fields(const TimePoint now, const bool include_clearance) {
+    // First pass: derive occupied_score from log_odds for every cell so that the
+    // occupied-cell list below and all downstream logic use current values.
+    for (auto& stored : cells_) {
+        stored.cell.occupied_score = sigmoid(stored.cell.log_odds);
+    }
+
     // Build the occupied-cell list only when clearance is requested (O(N) scan).
     // Skipping it avoids the O(N²) inner loop during in-flight ticks.
     std::vector<const StoredCell*> occupied_cells;
     if (include_clearance) {
         occupied_cells.reserve(cells_.size());
         for (const auto& stored : cells_) {
-            const auto& cell = stored.cell;
-            if (cell.occupied_score >= config_.occupied_threshold) {
+            if (stored.cell.occupied_score >= config_.occupied_threshold) {
                 occupied_cells.push_back(&stored);
             }
         }
@@ -272,6 +281,7 @@ void MissionLocalTraversabilityMap::recompute_derived_fields(const TimePoint now
     for (auto& stored : cells_) {
         auto& cell = stored.cell;
 
+        // occupied_score already derived in the first pass above.
         const auto occupied_strength = normalize_score(cell.occupied_score, config_.occupied_threshold);
         const auto free_strength = normalize_score(cell.free_score, config_.free_threshold);
         const auto strongest_evidence = std::max(occupied_strength, free_strength);

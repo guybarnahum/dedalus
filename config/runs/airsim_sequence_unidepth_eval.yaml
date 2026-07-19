@@ -10,6 +10,7 @@
 #   simulation/airsim/run_mission.sh \
 #     --config config/runs/airsim_sequence_unidepth_eval.yaml \
 #     --output-dir out/sequence_unidepth_eval \
+#     --pipeline-timing \
 #     --depth-debug-mp4 out/sequence_unidepth_eval/depth_debug.mp4
 
 include: config/world-env/airsim.yaml

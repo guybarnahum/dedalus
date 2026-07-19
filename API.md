@@ -80,8 +80,11 @@ Bounded ego-radius Cartesian voxel crop, rebuilt every tick. Drives `TrajectoryS
 | `occupied_score_decay_per_second` | 0.05 | Time decay rate (0 = no decay) |
 | `prune_min_occupied_score` | 0.1 | Score floor; cells below evicted |
 | `prune_interval_ticks` | 10 | Prune every N assimilator ticks |
+| `visibility_threshold` | 0.3 | **Planned (VD4e):** viewer hides voxels with sigmoid(log_odds) below this |
 
 Internal storage: `std::vector<StoredCell>` + `unordered_map<CellKey, size_t>`. Uniform 0.5 m voxels. Published to SSE as `traversability_map_snapshot` (full) and `traversability_map_delta` (incremental), throttled to ≤1 per 2 s.
+
+**Planned (VD4e) — Log-odds probabilistic accumulation:** Cells will gain a `log_odds` float field. `occupied_score` will be derived as `sigmoid(log_odds)` for backward compatibility. `MissionMapAssimilator` will call `ray_cast_update(origin, endpoint, sigma_m, p_hit, p_free)` for each `ObstacleEvidence` entry, writing occupied evidence at the depth endpoint and free evidence through traversed voxels. This enables multi-view convergence: true obstacle voxels accumulate from all angles; false-positive candidates along single rays are cancelled by crossing views. Viewer alpha = `sigmoid(log_odds)`; voxels with value below `visibility_threshold` are hidden. See LLM.md §3 VD4e for full design.
 
 ### L2 — Persistent planning map (`MissionLocalPlanningMap`)
 

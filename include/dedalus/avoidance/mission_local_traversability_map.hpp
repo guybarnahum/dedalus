@@ -24,13 +24,23 @@ struct MissionLocalTraversabilityMapConfig {
     double cell_size_m{0.5};
     double vertical_cell_size_m{0.5};
 
-    double occupied_threshold{1.0};
+    // occupied_threshold applies to occupied_score = sigmoid(log_odds).
+    // With log-odds accumulation sigmoid never reaches 1.0, so threshold must be < 1.
+    // 0.5 = "more likely occupied than not" (log_odds > 0, i.e. at least one observation).
+    double occupied_threshold{0.5};
     double free_threshold{1.0};
     double max_score{20.0};
 
-    // Decay rates — evidence fades when a region is no longer observed.
-    // At 0.05/s an occupied cell decays from score 1.5 → 0.1 in ~28 s without
-    // re-observation, giving reasonable persistence for slow-moving platforms.
+    // Log-odds accumulation parameters.
+    // log_odds_occupied_increment: added to log_odds per occupied observation, weighted by
+    //   source.confidence.  Value = log(p_hit / (1 - p_hit)) with p_hit = 0.7.
+    // log_odds_max: clamp ceiling (sigmoid(4.0) ≈ 0.982); also used as negative floor.
+    double log_odds_occupied_increment{0.8473};  // log(0.7 / 0.3)
+    double log_odds_max{4.0};
+
+    // Decay rate applied to log_odds per second — evidence fades when a region is no
+    // longer observed.  At 0.05/s a cell observed once (log_odds ≈ 0.85) returns to
+    // neutral in ~17 s; a cell reinforced from 5 views (log_odds ≈ 4.0) takes ~124 s.
     double occupied_score_decay_per_second{0.05};
     double free_score_decay_per_second{0.02};
     double confidence_decay_per_second{0.0};
@@ -62,6 +72,9 @@ struct MissionLocalTraversabilityCell {
 
     TraversabilityCellState state{TraversabilityCellState::Unknown};
 
+    // log_odds accumulates occupied evidence additively across frames.
+    // occupied_score = sigmoid(log_odds) — derived in recompute_derived_fields().
+    double log_odds{0.0};
     double occupied_score{0.0};
     double free_score{0.0};
     double confidence{0.0};

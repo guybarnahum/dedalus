@@ -139,62 +139,83 @@ python3 tools/mission/depth-evidence-dist.py out/<run>/profile/pipeline_*.jsonl
 - Tool output: `depth.scale_ratio` metric in JSONL reads ~0.99 (biased by 30m orbit radius —
   known broken metric, not worth fixing).
 
-**VD4c — UniDepth V2 ViT-S with intrinsics** (active, medium effort)
+**VD4c — UniDepth V2 ViT-S with intrinsics** ✓ IMPLEMENTED (2026-07-16)
 
-Research complete (2026-07-16). Key findings:
+Full provider integration complete. A/B results on circle mission vs AirSim GT:
+- Scale p50 = **1.002×** — metric calibration is correct; no scale error.
+- Per-frame voxel F1 p50 = **23.4%** — domain gap (ViT-S trained on ground-level imagery).
+- Per-frame F1 is the wrong metric for an accumulation-based system (see VD4e).
 
-*ONNX export:*
-```bash
-python unidepth/models/unidepthv2/export.py \
-  --version v2 --backbone vits \
-  --shape 336 602 \               # must be multiples of 14; ≥200K px (training minimum)
-  --output-path unidepthv2_vits_336x602.onnx
-# With camera rays (recommended):
-python unidepth/models/unidepthv2/export.py \
-  --version v2 --backbone vits \
-  --shape 336 602 --with-camera \
-  --output-path unidepthv2_vits_336x602_cam.onnx
+Implementation files:
+- `include/dedalus/sensing/unidepth_v2_depth_engine.hpp` — engine class
+- `src/sensing/unidepth_v2_depth_engine.cpp` — ONNX inference + upsample/downsample
+- `tools/perception/export_unidepth.py` — exports `unidepthv2_vits_336x602.onnx`
+- `config/pipeline/unidepth_v2.yaml`, `config/pipeline/unidepth_v2_eval_airsim_gt.yaml`
+- `config/runs/airsim_sequence_unidepth_eval.yaml` — eval run config
+- Slot A/B fully interchangeable; `unidepth_v2`, `visual_onnx`, `airsim_gt_vd` all implement `ObstacleEvidenceProvider`.
+
+cuDNN pin required on EC2: `sudo apt-get install -y --allow-downgrades libcudnn9-cuda-12=9.1.1.17-1`
+(ORT 1.21.1 was compiled against cuDNN 9.1.x; 9.24.x causes CPU Conv fallback + latency spike.)
+`setup.sh` handles this automatically on fresh EC2.
+
+**VD4e — Log-odds probabilistic L1 accumulation** (next milestone, high effort)
+
+The per-frame F1 metric grades each depth frame independently. The actual system accumulates
+evidence across many frames from many angles. The right architecture is **probabilistic
+ray-casting occupancy fusion** — the same model used in robotics occupancy grids.
+
+*Core model:*
+
+Every depth observation contributes to the L1 voxel grid as two log-odds updates:
+
+1. **Occupied update** — voxels at the depth endpoint ± `depth_sigma_m` (from the model's
+   `confidence` output) receive a positive increment:
+   `log_odds[v] += log(p_hit / (1 - p_hit))`
+   where `p_hit ≈ 0.3` per observation (low per-frame confidence; accumulation does the work).
+
+2. **Free update** — every voxel the ray traverses *before* the endpoint receives a negative
+   decrement:
+   `log_odds[v] += log(p_free / (1 - p_free))`
+   where `p_free ≈ 0.1`.
+
+*Multi-view convergence:* True obstacle voxels receive occupied evidence from all viewing angles.
+Voxels that appear occupied in one ray's path but are actually empty get free evidence when a
+crossing ray traverses them — the false candidate is cancelled. After N frames from N directions,
+true obstacles converge to high log-odds; artefacts decay toward zero.
+
+*L0 / L1 boundary:* L0 needs only direction + approximate distance in ego frame for reflexive
+avoidance — it does not need ray-casting. L0 continues to use direct per-frame evidence with a
+fast proximity threshold. L1 is the multi-frame world-frame probabilistic accumulator.
+
+*Implementation delta (C++):*
+- `MissionLocalTraversabilityMap` cells: add `log_odds` float field. `occupied_score` becomes
+  `sigmoid(log_odds)` for backward-compat callers. `occupied_threshold` config stays: a cell is
+  Occupied when `sigmoid(log_odds) >= occupied_threshold`.
+- `MissionMapAssimilator`: call new `ray_cast_update(origin, endpoint, sigma_m, p_hit, p_free)`
+  for each `ObstacleEvidence` entry (replacing the current direct-increment path).
+- `ObstacleEvidenceProvider::confidence()` drives `p_hit` per observation. Lower
+  `unidepth.confidence` to ~0.3 in `config/pipeline/unidepth_v2.yaml`.
+- WorldSnapshot L1 delta stream: carry `log_odds` per cell alongside `occupied_score`.
+
+*Viewer changes:*
+- L1 voxel alpha = `sigmoid(log_odds)`, clamped [0, 1].
+- Voxels with `sigmoid(log_odds) < 0.3` (configurable `traversability_map.visibility_threshold`)
+  are invisible — below evidence threshold.
+- As `log_odds` accumulates, voxels materialize from transparent to opaque — live confidence
+  visualization. Display the weighted-mean centroid across the uncertainty spread; update on each
+  delta event so the voxel "drifts" as the multi-view estimate refines.
+
+*Evaluation:* Correct metric is **end-of-flight L1 map recall** against GT occupancy grid —
+not per-frame voxel F1. Run a full circle mission, compare accumulated L1 against AirSim GT
+depth accumulated over the same trajectory, compute recall and precision on the final map.
+
+*Config:*
+```yaml
+# Lower per-observation p_hit so accumulation converges gradually (not dominated by first frame):
+unidepth.confidence: 0.30   # was 0.75
+# Viewer threshold — voxels below this sigmoid(log_odds) value are hidden:
+traversability_map.visibility_threshold: 0.30
 ```
-
-*Input tensors (at shape 602×336):*
-- `rgbs`: `[1, 3, 336, 602]` float32, ImageNet-normalized
-- `rays` (if `--with-camera`): `[1, 3, 336, 602]` float32 — dense per-pixel unit ray vectors
-  (NOT the K matrix — must precompute from scaled intrinsics at C++ layer)
-
-*Output tensors:*
-- `pts_3d`: `[1, 3, 336, 602]` float32 — metric XYZ in camera frame. Z channel = depth.
-- `confidence`: `[1, 1, 336, 602]` float32 — relative uncertainty (log scale)
-- `intrinsics`: `[1, 3, 3]` float32 — predicted K matrix
-
-*Critical integration requirement — upsampling:*
-- Native camera is 256×144 = 36K px. Training minimum is 200K px (5.4× below floor).
-- Must bilinearly upsample to 602×336 = 202K px before ONNX inference.
-- Scale intrinsics: fx_scaled = 141.6 × (602/256) ≈ 332.7, fy_scaled = 141.2 × (336/144) ≈ 329.5,
-  cx_scaled = 128 × (602/256) ≈ 300.7, cy_scaled = 72 × (336/144) = 168.0
-- After inference, downsample depth map back to 256×144 for projection pipeline.
-- Shape is baked at export time — cannot change at runtime.
-
-*Integration delta vs current ONNXDepthEngine:*
-- Add upsample step: 256×144 → 602×336 (bilinear, before inference)
-- Extract Z channel from `pts_3d[0, 2, :, :]` as metric depth (no scale/shift needed)
-- Convert metric depth → inverse depth for `run_depth_pipeline()` compatibility:
-  `inverse_depth[i] = params.scale / depth_m[i]` (same formula as `metric_to_inverse_depth()`)
-- Optionally: precompute rays map from scaled intrinsics, pass as second ONNX input
-- Verify ORT ≥ 1.11 (opset 14 required) on EC2 build: `python -c "import onnxruntime; print(onnxruntime.__version__)"`
-- Model: `lpiccinelli/unidepth-v2-vits14`, 137 MB safetensors
-
-*Pseudo-spherical output:* Model predicts unit sphere ray directions × radius per pixel.
-  Z channel of pts_3d = direct metric depth. Loss is computed on sphere → robust to FoV
-  and camera tilt changes. No disparity or relative-scale ambiguity.
-
-*License:* CC BY-NC 4.0 — no commercial use without separate agreement from authors.
-  Fine for development and research evaluation.
-
-*Expected recall:* ~30–50% (estimate — must measure against AirSim GT after integration).
-  The pseudo-spherical loss is the mechanism that should fix the direction-placement failure
-  mode identified by VD4b simulation.
-
-Export script: `tools/perception/export_unidepth.py` (to create — parallel to `export_depth_anything.py`).
 
 **VD4d — Fine-tune on AirSim GT** (not started, high effort, highest ROI)
 - Training data already available: (RGB, GT depth NPY) pairs from every profiler run (`/tmp/dedalus_frame0_*.npy` and JSONL logs)

@@ -505,7 +505,7 @@ run_and_log "Upgrade Python packaging tools" python -m pip install --upgrade pip
 
 # 4. Install build-time blockers
 # AirSim 1.8.1 eagerly imports these during its own metadata generation.
-run_and_log "Install AirSim build-time blockers" python -m pip install numpy msgpack-rpc-python
+run_and_log "Install AirSim build-time blockers" python -m pip install numpy "msgpack==0.6.2" msgpack-rpc-python
 
 # 5. Install AirSim with build isolation DISABLED.
 # Forces pip to use the numpy/msgpackrpc we just installed in this venv.

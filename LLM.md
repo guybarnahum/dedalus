@@ -187,11 +187,12 @@ L0 and L1 currently share the same sensing source via `MissionLocalObstacleMap`.
 
 **Depth improvement plan (VD series additions):**
 
-| Step | What | Expected recall | Effort |
+| Step | What | Result / Expected recall | Effort |
 |---|---|---|---|
-| VD4a | p5-percentile block sampler (depth_projection_kernel.cpp L215-268) | ~15–20% | low |
-| VD4b | AGL scale anchoring: multiply depth output by `AGL / (sin(|pitch|) * ground_median_range)` | ~25–35% | low |
-| VD4c | UniDepth V2 ViT-S with known intrinsics (fx=141.6, fy=141.2) — ONNX drop-in | ~30–50% est. | medium |
+| VD4a | p5-percentile block sampler (depth_projection_kernel.cpp L215-268) | **DONE** — 11.1% → 11.5% (not root cause) | low |
+| VD4b | AGL scale anchoring | **SKIPPED** — simulation shows direction error, not scale error | low |
+| VD4c | UniDepth V2 ViT-S with known intrinsics (fx=141.6, fy=141.2) — ONNX drop-in | **DONE** — scale p50=1.002×; per-frame F1 p50=23.4% (domain gap) | medium |
+| VD4e | Log-odds probabilistic L1 accumulation — ray-casting multi-frame fusion | +20–30 pp over VD4c (estimate) | high |
 | VD4d | Fine-tune DepthAnything V2 or UniDepth V2 on (RGB, GT depth) pairs from profiler runs | ~60–80% est. | high |
 | VD8  | Decouple L0 from ONNX latency — dedicated proximity path (<50ms) | — | future |
 
@@ -285,6 +286,36 @@ Agreement metric: fraction of slot-A voxels with slot-B voxel within ±1 voxel.
 Logged as `depth_slot.agreement_ppt` (parts per thousand) via `timing_writer_`.
 `tools/perception/depth_provider_report.py` — HTML report: time-series, histogram, IoU distribution.
 **Milestone:** Slot A + Slot B running simultaneously. Agreement logged per frame. Report generated.
+
+A/B results (circle mission, UniDepth V2 ViT-S vs AirSim GT): scale p50 = 1.002× (correct); per-frame F1 p50 = 23.4% (domain gap — ViT-S trained on ground-level data). Per-frame F1 is the wrong metric for an accumulation-based system; see VD4e.
+
+#### VD4e — Log-odds probabilistic L1 accumulation
+
+Probabilistic ray-casting fusion across multiple depth frames from multiple viewing angles.
+
+**Model:** Each depth observation makes two log-odds updates to L1 voxels:
+- **Occupied** — voxels at the endpoint ± `depth_sigma_m` receive: `log_odds[v] += log(p_hit / (1-p_hit))` with `p_hit ≈ 0.3` (low per-frame weight; accumulation does the work).
+- **Free** — every voxel the ray traverses before the endpoint receives: `log_odds[v] += log(p_free / (1-p_free))` with `p_free ≈ 0.1`.
+
+**Multi-view convergence:** True obstacle voxels accumulate occupied evidence from all viewing angles. False-candidate voxels (only occupied along one ray) get free evidence when a crossing ray traverses them — they are cancelled. After N frames from N directions, true obstacles converge to high log-odds; artefacts decay.
+
+**L0/L1 boundary:** L0 uses direct per-frame evidence (direction + approximate distance, ego frame). L0 does not need ray-casting — only L1 accumulates world-frame log-odds.
+
+**Implementation delta:**
+- `MissionLocalTraversabilityMap` cells: add `log_odds` float. `occupied_score = sigmoid(log_odds)` for backward-compat.
+- `MissionMapAssimilator`: new `ray_cast_update(origin, endpoint, sigma_m, p_hit, p_free)` replaces direct cell increment.
+- `ObstacleEvidenceProvider::confidence()` drives `p_hit`. Set `unidepth.confidence: 0.30` (was 0.75).
+- WorldSnapshot L1 delta stream: carry `log_odds` alongside `occupied_score`.
+
+**Viewer changes:**
+- L1 voxel alpha = `sigmoid(log_odds)`, clamped [0, 1].
+- `sigmoid(log_odds) < 0.3` → invisible (configurable `traversability_map.visibility_threshold`).
+- Voxels materialize from transparent to opaque as evidence accumulates.
+- Voxel centroid drifts toward the weighted-mean estimate as multi-view data refines it.
+
+**Evaluation:** End-of-flight L1 map recall against GT occupancy grid — not per-frame voxel F1. Run a full circle mission; compare accumulated L1 map vs AirSim GT depth accumulated over the same trajectory.
+
+**Milestone:** Full circle mission → L1 map recall against GT ≥ 50%. Viewer shows voxels materializing and drifting in real time as log-odds accumulates.
 
 #### VD5 — PerchCandidateEvaluator
 Non-realtime evaluator (runs outside the 30 Hz tick loop). Queries L1 for `SurfacePatch`
