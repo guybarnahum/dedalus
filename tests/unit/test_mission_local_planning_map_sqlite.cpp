@@ -141,7 +141,6 @@ void test_eviction_roundtrip() {
     std::filesystem::remove(path);
 
     MissionLocalPlanningMapConfig cfg;
-    cfg.free_evidence_weight = 1.0;  // one free observation fully clears a cell
 
     {
         MissionLocalPlanningMap map{cfg};

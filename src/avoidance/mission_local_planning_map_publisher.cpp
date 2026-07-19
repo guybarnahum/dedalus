@@ -61,6 +61,7 @@ std::string to_compact_stream_json(
             << cell.center_map.x << ","
             << cell.center_map.y << ","
             << cell.center_map.z << "]";
+        out << ",\"log_odds\":"          << cell.log_odds;
         out << ",\"occupied_score\":"    << cell.occupied_score;
         out << ",\"confidence\":"        << cell.confidence;
         out << ",\"source_cell_count\":" << cell.source_cell_count;

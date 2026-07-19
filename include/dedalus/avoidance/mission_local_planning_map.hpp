@@ -23,9 +23,8 @@ namespace dedalus {
 // ─────────────────────
 // Level 1  MissionLocalTraversabilityMap  (accumulator)
 //   • 0.5 m voxels, all observed states (Occupied / Free / Unknown / Stale).
-//   • Time-based score decay (0.05/s default) — evidence fades when a region
-//     leaves the sensor FOV.
-//   • Score-floor pruning — cells evicted once score drops below 0.1.
+//   • Log-odds accumulation — evidence compounds additively across frames.
+//   • No time-based decay: cells persist until Stage 2 ray-casting contradicts them.
 //   • Lifetime: per-flight.  Reset at mission start if desired.
 //
 // Level 2  MissionLocalPlanningMap  (this class)
@@ -34,9 +33,11 @@ namespace dedalus {
 //   • NO time-based decay.  Cells only leave L2 when free-space evidence
 //     explicitly clears them.
 //   • Evidence rule (applied per L1 update):
-//       L1 Occupied  → max-merge occupied_score into L2 voxel
-//       L1 Free      → multiplicative reduction on L2 voxel score;
-//                      evict if score drops below min_occupied_score
+//       L1 Occupied  → log_odds += confidence × log_odds_occupied_increment;
+//                      occupied_score = sigmoid(log_odds)
+//       L1 Free      → log_odds -= confidence × log_odds_free_decrement;
+//                      occupied_score = sigmoid(log_odds);
+//                      evict if log_odds < log_odds_eviction_threshold
 //       L1 Unknown / absent → no change  (absence ≠ free space)
 //
 // This separation gives the flight-planning layer a stable, persistent obstacle
@@ -49,17 +50,23 @@ struct MissionLocalPlanningMapConfig {
     double cell_size_m{1.0};
     double vertical_cell_size_m{2.0};
 
-    // Only L1 cells at or above this score are projected into L2.
-    // Must be < 1.0 when log-odds is enabled (sigmoid never reaches 1.0).
-    // 0.5 matches L1's occupied_threshold: any cell more likely occupied than
-    // not passes into L2.
+    // Only L1 cells at or above this occupied_score (sigmoid(log_odds)) are
+    // projected into L2.  0.5 = "more likely occupied than not" (log_odds > 0).
     double min_occupied_score{0.5};
 
-    // How much one L1 free-space observation reduces an L2 voxel's occupied_score.
-    // Applied multiplicatively: new_score = old_score * (1 - free_evidence_weight).
-    // At 0.5 a cell at score 1.5 clears after one observation; a cell at 15.0
-    // (max evidence) takes ~4 free observations to drop below min_occupied_score.
-    double free_evidence_weight{0.5};
+    // Log-odds accumulation parameters.
+    // log_odds_occupied_increment: added to L2 log_odds per occupied L1 tick,
+    //   weighted by L1 cell confidence.  Same value as L1 (log(0.7/0.3)).
+    // log_odds_free_decrement: subtracted from L2 log_odds per free L1 tick,
+    //   weighted by L1 cell confidence.  Same value as L1 (log(0.9/0.1)).
+    // log_odds_max: symmetric clamp.  8.0 allows multi-mission compounding
+    //   (sigmoid(8.0) ≈ 0.9997).
+    // log_odds_eviction_threshold: L2 cells with log_odds below this are evicted.
+    //   0.0 = evict once free evidence outweighs occupied evidence.
+    double log_odds_occupied_increment{0.8473};  // log(0.7 / 0.3)
+    double log_odds_free_decrement{2.197};        // log(0.9 / 0.1)
+    double log_odds_max{8.0};
+    double log_odds_eviction_threshold{0.0};
 
     // Sliding-window horizon (Stage 2).  Cells beyond 2×horizon_m from the
     // drone are evicted from memory (they remain in the DB for re-entry).
@@ -70,7 +77,10 @@ struct MissionLocalPlanningMapConfig {
 
 struct MissionLocalPlanningCell {
     Vec3 center_map;                    // world-frame centre of the planning voxel
-    float occupied_score{0.0F};         // accumulated occupied evidence (max-merged from L1)
+    // log_odds accumulates occupied evidence additively across frames and missions.
+    // occupied_score = sigmoid(log_odds) — derived on every update and on DB load.
+    float log_odds{0.0F};
+    float occupied_score{0.0F};         // derived: sigmoid(log_odds)
     float confidence{0.0F};             // max confidence across contributing L1 cells
     std::uint32_t source_cell_count{0U}; // cumulative L1 hits
     // Wall-clock timestamp (nanoseconds since Unix epoch) of the last live L1

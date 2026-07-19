@@ -10,6 +10,14 @@
 
 namespace dedalus {
 
+namespace {
+
+inline float sigmoid(const float x) noexcept {
+    return 1.0F / (1.0F + std::exp(-x));
+}
+
+}  // namespace
+
 MissionLocalPlanningMap::MissionLocalPlanningMap(MissionLocalPlanningMapConfig config)
     : config_(config) {
     if (!(config_.cell_size_m > 0.0)) {
@@ -19,9 +27,11 @@ MissionLocalPlanningMap::MissionLocalPlanningMap(MissionLocalPlanningMapConfig c
         config_.vertical_cell_size_m = 2.0;
     }
     if (!(config_.min_occupied_score > 0.0)) {
-        config_.min_occupied_score = 1.0;
+        config_.min_occupied_score = 0.5;
     }
-    config_.free_evidence_weight = std::max(0.0, std::min(config_.free_evidence_weight, 1.0));
+    if (!(config_.log_odds_max > 0.0)) {
+        config_.log_odds_max = 8.0;
+    }
 }
 
 std::size_t MissionLocalPlanningMap::CellKeyHash::operator()(const CellKey& key) const noexcept {
@@ -86,13 +96,16 @@ void MissionLocalPlanningMap::update_from_traversability(
         if (is_occupied && l1_cell.occupied_score >= config_.min_occupied_score) {
             ++last_update_stats_.l1_occupied_merged;
 
+            const float increment = static_cast<float>(
+                l1_cell.confidence * config_.log_odds_occupied_increment);
+            const float max_lo = static_cast<float>(config_.log_odds_max);
+
             const auto it = cell_index_.find(key);
             if (it != cell_index_.end()) {
-                // Reinforce existing L2 cell.
+                // Reinforce existing L2 cell via additive log-odds accumulation.
                 auto& sc = cells_[it->second];
-                sc.cell.occupied_score = std::max(
-                    sc.cell.occupied_score,
-                    static_cast<float>(l1_cell.occupied_score));
+                sc.cell.log_odds = std::min(sc.cell.log_odds + increment, max_lo);
+                sc.cell.occupied_score = sigmoid(sc.cell.log_odds);
                 sc.cell.confidence = std::max(
                     sc.cell.confidence,
                     static_cast<float>(l1_cell.confidence));
@@ -103,7 +116,8 @@ void MissionLocalPlanningMap::update_from_traversability(
                 // Create new L2 cell.
                 MissionLocalPlanningCell cell;
                 cell.center_map = center_for_key(key);
-                cell.occupied_score = static_cast<float>(l1_cell.occupied_score);
+                cell.log_odds = std::min(increment, max_lo);
+                cell.occupied_score = sigmoid(cell.log_odds);
                 cell.confidence = static_cast<float>(l1_cell.confidence);
                 cell.source_cell_count = 1U;
                 cell.last_updated_ns = now_ns;
@@ -118,13 +132,15 @@ void MissionLocalPlanningMap::update_from_traversability(
 
             const auto it = cell_index_.find(key);
             if (it != cell_index_.end()) {
-                // Reduce the L2 voxel's occupied score by the free_evidence_weight.
-                // new_score = old_score * (1 - free_evidence_weight)
+                // Reduce the L2 voxel's log_odds by a confidence-weighted decrement.
                 auto& sc = cells_[it->second];
-                sc.cell.occupied_score = static_cast<float>(
-                    sc.cell.occupied_score * (1.0 - config_.free_evidence_weight));
-                if (sc.cell.occupied_score < static_cast<float>(config_.min_occupied_score)) {
-                    // Mark for eviction: set score to 0 — evict_cleared_cells() sweeps.
+                const float decrement = static_cast<float>(
+                    l1_cell.confidence * config_.log_odds_free_decrement);
+                const float min_lo = -static_cast<float>(config_.log_odds_max);
+                sc.cell.log_odds = std::max(sc.cell.log_odds - decrement, min_lo);
+                sc.cell.occupied_score = sigmoid(sc.cell.log_odds);
+                if (sc.cell.log_odds < static_cast<float>(config_.log_odds_eviction_threshold)) {
+                    // Mark for eviction: occupied_score sentinel 0 — evict_cleared_cells() sweeps.
                     sc.cell.occupied_score = 0.0F;
                     ++last_update_stats_.cells_evicted;
                     any_evicted = true;
@@ -201,8 +217,8 @@ void MissionLocalPlanningMap::reset() {
 //
 // Format (versioned text, one cell per line after the header):
 //
-//   planning_map_v1 cell_size=<m> vcell_size=<m> min_score=<f> free_weight=<f>
-//   <cx> <cy> <cz> <score> <conf> <count>
+//   planning_map_v2 cell_size=<m> vcell_size=<m> min_score=<f> eviction=<f>
+//   <cx> <cy> <cz> <log_odds> <conf> <count>
 //   ...
 
 bool MissionLocalPlanningMap::save_to_file(const std::filesystem::path& path) const {
@@ -210,11 +226,11 @@ bool MissionLocalPlanningMap::save_to_file(const std::filesystem::path& path) co
     if (!f) {
         return false;
     }
-    f << "planning_map_v1"
+    f << "planning_map_v2"
       << " cell_size=" << config_.cell_size_m
       << " vcell_size=" << config_.vertical_cell_size_m
       << " min_score=" << config_.min_occupied_score
-      << " free_weight=" << config_.free_evidence_weight
+      << " eviction=" << config_.log_odds_eviction_threshold
       << "\n";
     f.precision(9);
     for (const auto& sc : cells_) {
@@ -222,7 +238,7 @@ bool MissionLocalPlanningMap::save_to_file(const std::filesystem::path& path) co
         f << c.center_map.x << " "
           << c.center_map.y << " "
           << c.center_map.z << " "
-          << c.occupied_score << " "
+          << c.log_odds << " "
           << c.confidence << " "
           << c.source_cell_count << "\n";
     }
@@ -239,15 +255,16 @@ bool MissionLocalPlanningMap::load_from_file(const std::filesystem::path& path) 
     if (!std::getline(f, header)) {
         return false;
     }
-    if (header.rfind("planning_map_v1", 0) != 0) {
-        return false;  // unrecognised version
+    if (header.rfind("planning_map_v2", 0) != 0) {
+        return false;  // unrecognised or legacy version
     }
 
     reset();
 
     double cx = 0.0, cy = 0.0, cz = 0.0;
-    float score = 0.0F, conf = 0.0F;
+    float lo = 0.0F, conf = 0.0F;
     std::uint32_t count = 0U;
+    const float eviction_floor = static_cast<float>(config_.log_odds_eviction_threshold);
 
     std::string line;
     while (std::getline(f, line)) {
@@ -255,11 +272,11 @@ bool MissionLocalPlanningMap::load_from_file(const std::filesystem::path& path) 
             continue;
         }
         std::istringstream ss(line);
-        if (!(ss >> cx >> cy >> cz >> score >> conf >> count)) {
+        if (!(ss >> cx >> cy >> cz >> lo >> conf >> count)) {
             continue;
         }
-        if (score < static_cast<float>(config_.min_occupied_score)) {
-            continue;  // skip cells that would be below the current floor
+        if (lo < eviction_floor) {
+            continue;  // skip cells that would be evicted under current config
         }
 
         const Vec3 center{cx, cy, cz};
@@ -269,7 +286,8 @@ bool MissionLocalPlanningMap::load_from_file(const std::filesystem::path& path) 
         }
         MissionLocalPlanningCell cell;
         cell.center_map = center_for_key(key);  // re-snap to grid
-        cell.occupied_score = score;
+        cell.log_odds = lo;
+        cell.occupied_score = sigmoid(lo);
         cell.confidence = conf;
         cell.source_cell_count = count;
         cells_.push_back(StoredCell{key, cell});

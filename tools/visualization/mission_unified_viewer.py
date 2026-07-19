@@ -1267,6 +1267,7 @@ function applyPlanningSnapshot(plan, {deferRender=false}={}) {
       planningQuantKey(center.x, center.y, center.z, planCellSizeM, planVCellSizeM),
       {
         center,
+        log_odds:          fin(raw.log_odds, 0),
         occupied_score:    fin(raw.occupied_score, 0),
         confidence:        fin(raw.confidence, 0),
         source_cell_count: fin(raw.source_cell_count, 0),
@@ -1308,7 +1309,7 @@ function buildPlanningFaces() {
   ];
 
   for (const cell of planningCellsByKey.values()) {
-    const {center, occupied_score, confidence, updated_at} = cell;
+    const {center, log_odds, occupied_score, confidence, updated_at} = cell;
     if (!center) continue;
 
     const cx = center.x, cy = center.y, cz = center.z;
@@ -1348,6 +1349,7 @@ function buildPlanningFaces() {
           z: (corners[0].z+corners[2].z)*0.5,
         },
         shading,
+        log_odds,
         occupied_score,
         confidence,
         updated_at,  // Unix seconds of last live update; 0 = DB-only / unknown age
@@ -1368,14 +1370,19 @@ function drawPlanningFaces() {
   const byType = state.travColorByType;
   // L2 age-decay: 0–2 s full brightness, 2–10 s linear cool to 80%, stable after.
   // updated_at=0 (unknown) renders at the dimmed final value.
-  const L2_ALPHA  = 0.44;
-  const L2_STROKE = 0.52;
+  const L2_ALPHA_MAX  = 0.82;
+  const L2_STROKE_MAX = 0.90;
+  const L2_VIS_THRESHOLD = 0.3;  // sigmoid(log_odds) < 0.3 → skip (matches L1)
 
   const groups = new Map();
 
   for (const face of sorted) {
     const ps = face.corners.map(c => project(c));
     if (ps.some(p => !Number.isFinite(p.x) || !Number.isFinite(p.y))) continue;
+
+    // Alpha driven by log_odds via sigmoid — same pattern as L1 travFaces.
+    const sigA = 1.0 / (1.0 + Math.exp(-(face.log_odds ?? 0)));
+    if (sigA < L2_VIS_THRESHOLD) continue;
 
     const liveBase = byType ? [60, 100, 200] : rgbForH(Math.max(0, -face.centroid.z));
     const s = face.shading;
@@ -1384,9 +1391,9 @@ function drawPlanningFaces() {
     const fb = Math.round(liveBase[2] * s);
     // ageFactor: 1.0 (fresh) → 0.8 (≥10 s old). liveDecay takes ms timestamp.
     const ageFactor = (liveDecay(face.updated_at * 1000, 0.8) ?? 0.8);
-    const af10 = Math.round(ageFactor * 10);   // 8, 9, or 10 — batch key bucket
-    const fa = L2_ALPHA  * ageFactor;
-    const sa = L2_STROKE * ageFactor;
+    const fa = sigA * L2_ALPHA_MAX  * ageFactor;
+    const sa = sigA * L2_STROKE_MAX * ageFactor;
+    const af10 = Math.round(fa * 100);  // bucket by 1% steps
     const key = `${fr},${fg},${fb},${af10}`;
 
     let g = groups.get(key);
@@ -2709,6 +2716,7 @@ function applyPlanningDelta(plan, {deferRender=false}={}) {
     planningCellsByKey.set(
       planningQuantKey(center.x, center.y, center.z, csM, vcM),
       { center,
+        log_odds:          fin(raw.log_odds, 0),
         occupied_score:    fin(raw.occupied_score, 0),
         confidence:        fin(raw.confidence, 0),
         source_cell_count: fin(raw.source_cell_count, 0),

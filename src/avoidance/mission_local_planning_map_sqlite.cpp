@@ -2,12 +2,13 @@
 //
 // SQLite persistence for MissionLocalPlanningMap.
 //
-// Schema (v2)
+// Schema (v3)
 // ──────────────────────────────────────────────────────────────────────────
 //   methods(id PK, name UNIQUE)          — detection method names → int IDs
 //
 //   cells(xi, yi, zi PK,
 //         score, confidence REAL,
+//         log_odds REAL,                 — primary evidence accumulator
 //         count INTEGER,
 //         mission_count INTEGER,         — distinct missions that observed this cell
 //         updated_ns INTEGER)            — last-write wall-clock ns
@@ -26,11 +27,10 @@
 //
 // Schema migration
 // ──────────────────────────────────────────────────────────────────────────
-//   v1 databases (no methods/cell_votes/mission_count) are upgraded in-place
-//   via ALTER TABLE (exec ignores errors on already-existing columns) and the
-//   new tables + triggers are created with IF NOT EXISTS / DROP IF EXISTS.
-//   No data migration is performed for cell_votes — old cells start with
-//   mission_count = 0 and accrue votes as the current mission updates them.
+//   v1/v2 databases (no log_odds column) are upgraded in-place via ALTER TABLE
+//   (exec ignores errors on already-existing columns).  Old cells start with
+//   log_odds = 0 (DEFAULT 0) and accrue evidence as the current mission updates
+//   them — occupied_score is recomputed as sigmoid(log_odds) on each write.
 //
 // Thread-safety
 // ──────────────────────────────────────────────────────────────────────────
@@ -57,6 +57,10 @@ namespace {
 
 inline sqlite3* as_db(void* p) noexcept { return static_cast<sqlite3*>(p); }
 
+inline float sigmoid(const float x) noexcept {
+    return 1.0F / (1.0F + std::exp(-x));
+}
+
 // Execute a statement that returns no rows.  Ignores all errors.
 void exec(sqlite3* db, const char* sql) noexcept {
     sqlite3_exec(db, sql, nullptr, nullptr, nullptr);
@@ -81,6 +85,7 @@ CREATE TABLE IF NOT EXISTS cells (
     zi            INTEGER NOT NULL,
     score         REAL    NOT NULL,
     confidence    REAL    NOT NULL,
+    log_odds      REAL    NOT NULL DEFAULT 0,
     count         INTEGER NOT NULL,
     mission_count INTEGER NOT NULL DEFAULT 0,
     updated_ns    INTEGER NOT NULL DEFAULT 0,
@@ -121,11 +126,12 @@ CREATE TABLE IF NOT EXISTS esdf_cells (
 
 // Upsert a cell (does not touch mission_count — that is trigger-managed).
 const char* kUpsert =
-    "INSERT INTO cells(xi,yi,zi,score,confidence,count,updated_ns)"
-    "  VALUES(?,?,?,?,?,?,?)"
+    "INSERT INTO cells(xi,yi,zi,score,confidence,log_odds,count,updated_ns)"
+    "  VALUES(?,?,?,?,?,?,?,?)"
     "  ON CONFLICT(xi,yi,zi) DO UPDATE SET"
     "    score=excluded.score,"
     "    confidence=excluded.confidence,"
+    "    log_odds=excluded.log_odds,"
     "    count=excluded.count,"
     "    updated_ns=excluded.updated_ns;";
 
@@ -144,7 +150,7 @@ const char* kDelete =
     "DELETE FROM cells WHERE xi=? AND yi=? AND zi=?;";
 
 const char* kSelectAll =
-    "SELECT xi,yi,zi,score,confidence,count,updated_ns"
+    "SELECT xi,yi,zi,score,confidence,count,updated_ns,log_odds"
     "  FROM cells"
     "  WHERE score>=?;";
 
@@ -180,6 +186,12 @@ bool MissionLocalPlanningMap::open_db(const std::filesystem::path& path) {
     // Add mission_count if this is a v1 database (exec ignores error if it
     // already exists).
     exec(db, "ALTER TABLE cells ADD COLUMN mission_count INTEGER NOT NULL DEFAULT 0;");
+
+    // ── v2 → v3 migration ────────────────────────────────────────────────────
+    // Add log_odds column if this is a v1/v2 database (exec ignores error if
+    // it already exists).  Old cells start with log_odds = 0 and accrue
+    // evidence from the current mission going forward.
+    exec(db, "ALTER TABLE cells ADD COLUMN log_odds REAL NOT NULL DEFAULT 0;");
 
     // ── triggers (recreate each open to handle v1 databases) ─────────────────
     exec(db, "DROP TRIGGER IF EXISTS trg_cv_insert;");
@@ -260,10 +272,12 @@ END;)");
         }
         MissionLocalPlanningCell cell;
         cell.center_map        = center_for_key(key);
-        cell.occupied_score    = static_cast<float>(sqlite3_column_double(sel, 3));
+        // col 3: score (legacy; ignored — recomputed from log_odds below)
         cell.confidence        = static_cast<float>(sqlite3_column_double(sel, 4));
         cell.source_cell_count = static_cast<std::uint32_t>(sqlite3_column_int(sel, 5));
         cell.last_updated_ns   = sqlite3_column_int64(sel, 6);
+        cell.log_odds          = static_cast<float>(sqlite3_column_double(sel, 7));
+        cell.occupied_score    = sigmoid(cell.log_odds);
         cells_.push_back(StoredCell{key, cell});
         cell_index_.emplace(key, cells_.size() - 1U);
     }
@@ -317,8 +331,9 @@ bool MissionLocalPlanningMap::flush_dirty_to_db() {
         sqlite3_bind_int(ups,    3, key.z);
         sqlite3_bind_double(ups, 4, static_cast<double>(cell.occupied_score));
         sqlite3_bind_double(ups, 5, static_cast<double>(cell.confidence));
-        sqlite3_bind_int64(ups,  6, static_cast<sqlite3_int64>(cell.source_cell_count));
-        sqlite3_bind_int64(ups,  7, now_ns);
+        sqlite3_bind_double(ups, 6, static_cast<double>(cell.log_odds));
+        sqlite3_bind_int64(ups,  7, static_cast<sqlite3_int64>(cell.source_cell_count));
+        sqlite3_bind_int64(ups,  8, now_ns);
         sqlite3_step(ups);
         sqlite3_reset(ups);
     }
