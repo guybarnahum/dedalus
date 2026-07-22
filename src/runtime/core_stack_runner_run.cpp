@@ -707,6 +707,8 @@ bool CoreStackRunner::run_once() {
     mission_local_obstacle_map_snapshot.sensor_origin_valid = true;
     snapshot_for_annotation.mission_local_obstacle_map = mission_local_obstacle_map_snapshot;
     snapshot_for_annotation.has_mission_local_obstacle_map = true;
+    // Capture L1 update duration before 'start' is reused for subsequent sub-stages.
+    const std::int64_t l1_update_duration_us = timing_writer_ ? duration_us(start) : 0LL;
 
     start = SteadyClock::now();
     mission_obstacle_map_artifact_writer_.write_if_due(mission_local_obstacle_map_snapshot);
@@ -731,7 +733,7 @@ bool CoreStackRunner::run_once() {
     }
 
     if (timing_writer_) {
-        timing_writer_->record_stage("mission_local_obstacle_map.update", duration_us(start));
+        timing_writer_->record_stage("mission_local_obstacle_map.update", l1_update_duration_us);
         timing_writer_->record_stage(
             "mission_local_obstacle_map.observed_cells",
             mission_local_obstacle_map_snapshot.summary.observed_cell_count);
