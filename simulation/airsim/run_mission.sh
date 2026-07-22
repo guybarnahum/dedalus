@@ -686,7 +686,7 @@ CAMERA_CMD=(
     --stream-host "$STREAM_HOST" --stream-port "$STREAM_PORT"
     --host "$AIRSIM_HOST" --rpc-port "$AIRSIM_RPC_PORT" --vehicle-name "$VEHICLE_NAME"
     --rate-hz "$CAMERA_RATE_HZ" --resend-s "$CAMERA_RESEND_S"
-    --verify-pose --capture-dir "$CAMERA_FRAMES_DIR" --capture-every-s "$CAMERA_CAPTURE_EVERY_S"
+    --capture-dir "$CAMERA_FRAMES_DIR" --capture-every-s "$CAMERA_CAPTURE_EVERY_S"
     --debug --debug-json "$CAMERA_DEBUG_JSON"
 )
 if [[ "$EXIT_ON_COMPLETE" -eq 1 ]]; then CAMERA_CMD+=(--exit-on-runtime-stop); fi

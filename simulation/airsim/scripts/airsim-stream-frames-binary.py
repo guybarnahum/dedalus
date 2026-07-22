@@ -182,16 +182,27 @@ def rgb_bytes_from_response(response: object) -> bytes:
     pixel_count = width * height
     if len(raw) == pixel_count * 3:
         # AirSim returns BGR (OpenCV convention) — swap R and B to get RGB.
-        buf = bytearray(raw)
-        for i in range(0, len(buf), 3):
-            buf[i], buf[i + 2] = buf[i + 2], buf[i]
-        return bytes(buf)
+        try:
+            import numpy as np
+            arr = np.frombuffer(raw, dtype=np.uint8).reshape(height, width, 3).copy()
+            arr[:, :, [0, 2]] = arr[:, :, [2, 0]]
+            return arr.tobytes()
+        except ImportError:
+            buf = bytearray(raw)
+            for i in range(0, len(buf), 3):
+                buf[i], buf[i + 2] = buf[i + 2], buf[i]
+            return bytes(buf)
     if len(raw) == pixel_count * 4:
         # BGRA → RGB
-        rgb_buffer = bytearray()
-        for i in range(0, len(raw), 4):
-            rgb_buffer += bytes([raw[i + 2], raw[i + 1], raw[i]])
-        return bytes(rgb_buffer)
+        try:
+            import numpy as np
+            arr = np.frombuffer(raw, dtype=np.uint8).reshape(height, width, 4)
+            return arr[:, :, [2, 1, 0]].tobytes()
+        except ImportError:
+            rgb_buffer = bytearray()
+            for i in range(0, len(raw), 4):
+                rgb_buffer += bytes([raw[i + 2], raw[i + 1], raw[i]])
+            return bytes(rgb_buffer)
 
     raise RuntimeError(
         f"unexpected AirSim image byte count: got {len(raw)}, "
@@ -236,43 +247,64 @@ def ego_json_bytes(
     in the v3 frame; None when no binary depth is attached.  Only the dimensions
     are included in JSON — the float data itself is in the binary chunk.
     """
-    state = client.getMultirotorState(vehicle_name=vehicle_name)
-    kin = state.kinematics_estimated
-
-    position = kin.position
-    orientation = airsim.to_eularian_angles(kin.orientation)
-    velocity = kin.linear_velocity
-    angular_velocity = kin.angular_velocity
-
-    landed_state = int(getattr(state, "landed_state", 0))
-    armed_valid = hasattr(state, "armed")
-    armed = bool(getattr(state, "armed", False)) if armed_valid else False
-    armed_source = "airsim" if armed_valid else "none"
-
-    payload = {
-        "timestamp_ns": int(timestamp_ns),
-        "position": [float(position.x_val), float(position.y_val), float(position.z_val)],
-        "position_valid": False,
-        "position_source": "airsim_multirotor_state",
-        "height_m": max(0.0, -float(position.z_val)),
-        "height_valid": False,
-        "rotation_rpy": [float(orientation[0]), float(orientation[1]), float(orientation[2])],
-        "velocity": [float(velocity.x_val), float(velocity.y_val), float(velocity.z_val)],
-        "velocity_valid": False,
-        "velocity_source": "airsim_multirotor_state",
-        "angular_velocity": [
-            float(angular_velocity.x_val),
-            float(angular_velocity.y_val),
-            float(angular_velocity.z_val),
-        ],
-        "landed_state": landed_state,
-        "armed": armed,
-        "armed_valid": armed_valid,
-        "armed_source": armed_source,
-    }
-
+    # When MAVLink ego is active it provides position, velocity, armed, and
+    # landed_state — all overriding the AirSim values anyway.  In that case
+    # use simGetVehiclePose (pose only, lighter RPC) instead of the heavier
+    # getMultirotorState call.  We still need AirSim for orientation (rpy) and
+    # angular_velocity, which are not in LOCAL_POSITION_NED or HEARTBEAT.
     if mavlink_ego_reader is not None:
+        pose = client.simGetVehiclePose(vehicle_name=vehicle_name)
+        orientation = airsim.to_eularian_angles(pose.orientation)
+        pos = pose.position
+        payload = {
+            "timestamp_ns": int(timestamp_ns),
+            "position": [float(pos.x_val), float(pos.y_val), float(pos.z_val)],
+            "position_valid": False,
+            "position_source": "airsim_vehicle_pose",
+            "height_m": max(0.0, -float(pos.z_val)),
+            "height_valid": False,
+            "rotation_rpy": [float(orientation[0]), float(orientation[1]), float(orientation[2])],
+            "velocity": [0.0, 0.0, 0.0],
+            "velocity_valid": False,
+            "velocity_source": "airsim_vehicle_pose",
+            "angular_velocity": [0.0, 0.0, 0.0],
+            "landed_state": 1,
+            "armed": False,
+            "armed_valid": False,
+            "armed_source": "none",
+        }
         payload.update(mavlink_ego_reader.sample())
+    else:
+        state = client.getMultirotorState(vehicle_name=vehicle_name)
+        kin = state.kinematics_estimated
+        position = kin.position
+        orientation = airsim.to_eularian_angles(kin.orientation)
+        velocity = kin.linear_velocity
+        angular_velocity = kin.angular_velocity
+        landed_state = int(getattr(state, "landed_state", 0))
+        armed_valid = hasattr(state, "armed")
+        armed = bool(getattr(state, "armed", False)) if armed_valid else False
+        payload = {
+            "timestamp_ns": int(timestamp_ns),
+            "position": [float(position.x_val), float(position.y_val), float(position.z_val)],
+            "position_valid": False,
+            "position_source": "airsim_multirotor_state",
+            "height_m": max(0.0, -float(position.z_val)),
+            "height_valid": False,
+            "rotation_rpy": [float(orientation[0]), float(orientation[1]), float(orientation[2])],
+            "velocity": [float(velocity.x_val), float(velocity.y_val), float(velocity.z_val)],
+            "velocity_valid": False,
+            "velocity_source": "airsim_multirotor_state",
+            "angular_velocity": [
+                float(angular_velocity.x_val),
+                float(angular_velocity.y_val),
+                float(angular_velocity.z_val),
+            ],
+            "landed_state": landed_state,
+            "armed": armed,
+            "armed_valid": armed_valid,
+            "armed_source": "airsim" if armed_valid else "none",
+        }
 
     if depth_dims is not None:
         # Dimensions only — the float32 data is in the binary depth chunk.

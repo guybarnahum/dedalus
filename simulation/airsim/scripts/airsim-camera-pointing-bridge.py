@@ -601,7 +601,7 @@ def main() -> int:
                         f"target={latest.get('has_target_selected')}",
                         file=sys.stderr,
                     )
-            write_debug(args.debug_json, latest)
+                write_debug(args.debug_json, latest)
             time.sleep(0.02)
     except KeyboardInterrupt:
         print("airsim-camera-pointing-bridge: interrupted", file=sys.stderr)

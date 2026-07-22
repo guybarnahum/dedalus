@@ -163,6 +163,29 @@ std::optional<std::string> PipeBridgeTransport::read_stream_line(const std::stri
         }
     }
 
+    // Apply a per-read select() timeout so a stalled bridge subprocess cannot
+    // block the pipeline thread indefinitely.  The 30 s first-read timeout
+    // above guards startup; this 10 s watchdog covers the hot streaming path.
+    {
+        const int fd = fileno(impl_->stream_pipe.get());
+        fd_set rfds;
+        FD_ZERO(&rfds);
+        FD_SET(fd, &rfds);
+        struct timeval tv{};
+        tv.tv_sec  = 10;
+        tv.tv_usec = 0;
+        const int ready = select(fd + 1, &rfds, nullptr, nullptr, &tv);
+        if (ready == 0) {
+            throw std::runtime_error(
+                "bridge subprocess stalled (10 s without output). "
+                "Command: " + command);
+        }
+        if (ready < 0 && errno != EINTR) {
+            throw std::runtime_error(
+                "select() failed on bridge subprocess stream. "
+                "Command: " + command);
+        }
+    }
     std::array<char, 65536> line{};
     if (std::fgets(line.data(), static_cast<int>(line.size()), impl_->stream_pipe.get()) == nullptr) {
         const int status = pclose(impl_->stream_pipe.release());
@@ -200,6 +223,28 @@ std::optional<std::vector<std::uint8_t>> PipeBridgeTransport::read_stream_byte_v
         }
     }
 
+    // Guard the blocking fread() loop: if the subprocess does not begin
+    // sending the next frame within 10 s, treat it as a stall.
+    {
+        const int fd = fileno(impl_->stream_pipe.get());
+        fd_set rfds;
+        FD_ZERO(&rfds);
+        FD_SET(fd, &rfds);
+        struct timeval tv{};
+        tv.tv_sec  = 10;
+        tv.tv_usec = 0;
+        const int ready = select(fd + 1, &rfds, nullptr, nullptr, &tv);
+        if (ready == 0) {
+            throw std::runtime_error(
+                "bridge subprocess stalled (10 s without frame start). "
+                "Command: " + command);
+        }
+        if (ready < 0 && errno != EINTR) {
+            throw std::runtime_error(
+                "select() failed on bridge subprocess byte stream. "
+                "Command: " + command);
+        }
+    }
     std::vector<std::uint8_t> output(byte_count);
     std::size_t total_read = 0U;
     while (total_read < byte_count) {

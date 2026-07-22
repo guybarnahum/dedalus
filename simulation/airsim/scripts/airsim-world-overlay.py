@@ -958,16 +958,26 @@ def draw_obstacle_evidence(client: Any, snapshot: dict[str, Any] | None, args: a
     if client is None:
         return
     duration = marker_duration(args)
+    # Batch all evidence segments by (color, thickness) so the entire evidence
+    # cloud is drawn with one simPlotLineList call per unique style instead of
+    # one call per evidence item (was 160+ AirSim RPCs/tick → now 3-6).
+    batched: dict[tuple, list[Any]] = {}
     for evidence in evidence_items:
         color = tuple(obstacle_evidence_color(evidence))
         segments = obstacle_evidence_segments(evidence, args.obstacle_evidence_z_lift_m)
-        if segments:
-            thickness = args.obstacle_evidence_line_thickness
-            if list(color) == EVIDENCE_BLOCKING_COLOR:
-                thickness *= 1.5
-            if str(evidence.get("state", "unknown")) == "thin_structure_risk":
-                thickness *= 1.35
-            plot_line_segments(client, segments, list(color), thickness, duration, args.persistent)
+        if not segments:
+            continue
+        thickness = args.obstacle_evidence_line_thickness
+        if list(color) == EVIDENCE_BLOCKING_COLOR:
+            thickness *= 1.5
+        if str(evidence.get("state", "unknown")) == "thin_structure_risk":
+            thickness *= 1.35
+        key = (color, round(thickness, 4))
+        if key not in batched:
+            batched[key] = []
+        batched[key].extend(segments)
+    for (color, thickness), segments in batched.items():
+        plot_line_segments(client, segments, list(color), thickness, duration, args.persistent)
 
 
 def draw_swept_volume(client: Any, snapshot: dict[str, Any] | None, args: argparse.Namespace) -> None:

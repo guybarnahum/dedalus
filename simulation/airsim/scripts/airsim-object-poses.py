@@ -18,6 +18,7 @@ import argparse
 import contextlib
 import json
 import sys
+import threading
 import time
 from typing import Any
 
@@ -177,7 +178,30 @@ def run_stream(args: argparse.Namespace, client: Any) -> int:
     query_by_name = {name: pattern for name, pattern in query_names}
     dynamic_names = set(args.dynamic_objects)
     cached: dict[str, dict[str, Any]] = {}
+    cached_lock = threading.Lock()
     frame_index = 0
+
+    # Pre-warm static object poses in a background thread at 2 Hz per object.
+    # Previously the stream loop queried all static objects on frame_index==1,
+    # causing an 18-second AirSim RPC burst that blocked the frame-capture
+    # bridge and produced stale_ticks=180 at mission start.  The background
+    # thread spreads the startup cost over ~N*0.5 s without blocking the stream.
+    def _prewarm_statics() -> None:
+        for name, pattern in query_names:
+            if name in dynamic_names:
+                continue
+            try:
+                pose = read_object_pose(client, name, pattern, fail_on_missing=False)
+            except Exception as exc:
+                pose = {"name": name, "pose_available": False, "error": str(exc)}
+            with cached_lock:
+                if name not in cached:  # don't overwrite a fresher main-loop update
+                    cached[name] = pose
+            time.sleep(0.5)  # ~2 Hz — leaves AirSim RPC server headroom for frame bridge
+
+    prewarm_thread = threading.Thread(target=_prewarm_statics, daemon=True)
+    prewarm_thread.start()
+
     # Minimum 1 Hz to guard against zero/negative config values.
     # Dynamic objects (--dynamic-object) are refreshed every frame; static objects
     # are refreshed every --static-refresh-every-frames frames.  At 1 Hz with
@@ -189,18 +213,25 @@ def run_stream(args: argparse.Namespace, client: Any) -> int:
         next_deadline += period_s
         frame_index += 1
         output_objects: list[dict[str, Any]] = []
-        refresh_static = frame_index == 1 or args.static_refresh_every_frames == 1 or (frame_index % args.static_refresh_every_frames) == 0
+        # frame_index==1 special case removed: statics are pre-warmed by the
+        # background thread above to avoid blocking the AirSim RPC server at startup.
+        refresh_static = args.static_refresh_every_frames == 1 or (frame_index % args.static_refresh_every_frames) == 0
         errors: list[str] = []
         for name, pattern in query_names:
-            should_refresh = name in dynamic_names or refresh_static or name not in cached
+            with cached_lock:
+                in_cache = name in cached
+            should_refresh = name in dynamic_names or refresh_static or not in_cache
             if should_refresh:
                 try:
-                    cached[name] = read_object_pose(client, name, pattern, fail_on_missing=args.fail_on_missing)
+                    pose = read_object_pose(client, name, pattern, fail_on_missing=args.fail_on_missing)
                 except Exception as exc:
                     error = f"{name}: {exc}"
                     errors.append(error)
-                    cached[name] = {"name": name, "pose_available": False, "error": str(exc)}
-            output_objects.append(cached[name])
+                    pose = {"name": name, "pose_available": False, "error": str(exc)}
+                with cached_lock:
+                    cached[name] = pose
+            with cached_lock:
+                output_objects.append(cached.get(name, {"name": name, "pose_available": False}))
         if errors and args.fail_on_missing:
             raise RuntimeError("failed to read AirSim object pose(s): " + "; ".join(errors))
         emit_payload(
