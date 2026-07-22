@@ -81,7 +81,8 @@ std::string build_object_pose_stream_command(
             << " --rpc-port " << config.rpc_port
             << " --stream-jsonl"
             << " --stream-rate-hz " << config.stream_rate_hz
-            << " --static-refresh-every-frames " << config.static_refresh_every_n_frames;
+            << " --static-refresh-every-frames " << config.static_refresh_every_n_frames
+            << " --dynamic-refresh-every-n-frames " << std::max(1, static_cast<int>(std::round(config.stream_rate_hz)));
     for (const auto& object : objects) {
         command << " --object " << shell_quote(object.airsim_object_name);
     }

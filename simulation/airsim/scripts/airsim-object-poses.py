@@ -40,6 +40,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--stream-jsonl", action="store_true", help="Persistent mode: emit one compact JSON pose frame per line until interrupted")
     parser.add_argument("--stream-rate-hz", type=float, default=30.0, help="Persistent stream output rate. Default: 30 Hz")
     parser.add_argument("--static-refresh-every-frames", type=int, default=10, help="Refresh non-dynamic objects every N stream frames. Cached poses are emitted between refreshes. Use 1 to refresh all objects every frame.")
+    parser.add_argument("--dynamic-refresh-every-n-frames", type=int, default=1, help="Refresh --dynamic-object names from AirSim every N stream frames. Cached poses are emitted on non-refresh frames. Use 1 (default) to refresh every frame.")
     return parser.parse_args()
 
 
@@ -172,6 +173,8 @@ def run_stream(args: argparse.Namespace, client: Any) -> int:
         raise ValueError("--stream-rate-hz must be positive")
     if args.static_refresh_every_frames <= 0:
         raise ValueError("--static-refresh-every-frames must be positive")
+    if args.dynamic_refresh_every_n_frames <= 0:
+        raise ValueError("--dynamic-refresh-every-n-frames must be positive")
 
     query_names = build_query_names(client, args.objects, [], args.max_pattern_matches)
     query_by_name = {name: pattern for name, pattern in query_names}
@@ -193,9 +196,13 @@ def run_stream(args: argparse.Namespace, client: Any) -> int:
         frame_index += 1
         output_objects: list[dict[str, Any]] = []
         refresh_static = args.static_refresh_every_frames == 1 or (frame_index % args.static_refresh_every_frames) == 0
+        is_dynamic_refresh_frame = (args.dynamic_refresh_every_n_frames == 1 or
+                                    frame_index % args.dynamic_refresh_every_n_frames == 0)
         errors: list[str] = []
         for name, pattern in query_names:
-            should_refresh = name in dynamic_names or refresh_static or name not in cached
+            should_refresh = ((name in dynamic_names and is_dynamic_refresh_frame) or
+                              refresh_static or
+                              name not in cached)
             if should_refresh:
                 try:
                     pose = read_object_pose(client, name, pattern, fail_on_missing=args.fail_on_missing)

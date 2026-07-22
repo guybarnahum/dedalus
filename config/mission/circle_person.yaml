@@ -14,14 +14,13 @@ mission_controller: object_behavior
 mission_tick_hz: 10
 flight_command_sink: px4_bridge
 
-# Ghost-target AirSim RPC throttle.
-# With 100+ static scene objects, 30 Hz polling saturates AirSim's single-threaded
-# RPC server and starves the frame-capture bridge — causing 10–20 s pipeline stalls
-# and stale ego that corrupts orbit velocity commands.
-# 10 Hz base rate + static objects refreshed once every 60 frames (6 s) is sufficient:
-# BRPlayer_01_96 is declared --dynamic-object so it still gets a fresh pose every frame.
-ghost_targets_airsim_object_pose_stream_rate_hz: 1
-ghost_targets_airsim_object_pose_static_refresh_every_n_frames: 600
+# Ghost-target pipe and AirSim RPC rates — decoupled:
+#   stream_rate_hz controls the pipe write rate (how often C++ reads a line).
+#   dynamic refresh = round(stream_rate_hz) frames → 1 Hz AirSim RPC for BRPlayer_01_96.
+#   static refresh  = stream_rate_hz × 600 frames → 600 s AirSim RPC for trees/walls/etc.
+# At 10 Hz stream the pipeline is never blocked by a 1 Hz AirSim call.
+ghost_targets_airsim_object_pose_stream_rate_hz: 10
+ghost_targets_airsim_object_pose_static_refresh_every_n_frames: 6000
 
 ghost_targets_enabled: true
 ghost_targets_source: airsim_objects
