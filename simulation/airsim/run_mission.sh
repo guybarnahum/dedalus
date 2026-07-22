@@ -1303,7 +1303,7 @@ if [[ "$WITH_OVERLAY" -eq 1 ]]; then
     echo "  debug:      $([[ "$WITH_OVERLAY_DEBUG" -eq 1 ]] && echo enabled || echo disabled)"
     echo "  occupancy:  $([[ "$WITH_OCCUPANCY_OVERLAY" -eq 1 ]] && echo enabled || echo disabled)"
     echo "  swept vol:  $([[ "$WITH_SWEPT_VOLUME_OVERLAY" -eq 1 ]] && echo enabled || echo disabled)"
-    echo "  sense/evid: $([[ "$WITH_SENSING_EVIDENCE_OVERLAY" -eq 1 ]] && echo enabled || echo disabled)"
+    echo "  sense/evid: $([[ "$WITH_OBSTACLE_EVIDENCE_OVERLAY" -eq 1 ]] && echo enabled || echo disabled)"
     if [[ "$WITH_OCCUPANCY_OVERLAY" -eq 1 ]]; then echo "  max cells:  $OVERLAY_MAX_OCCUPANCY_CELLS"; fi
     echo ""
 fi
