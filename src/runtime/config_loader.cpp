@@ -646,6 +646,7 @@ void apply_config_value(CoreStackConfig& config, const std::string& key, const s
     else if (key == "ghost_targets_scenario_path") config.providers.ghost_targets_scenario_path = value;
     else if (key == "ghost_targets_airsim_scene_inventory_path") config.providers.ghost_targets_airsim_scene_inventory_path = value;
     else if (key == "ghost_targets_airsim_object_pose_stream_rate_hz") config.providers.ghost_targets_airsim_object_pose_stream_rate_hz = std::stod(value);
+    else if (key == "ghost_targets_airsim_object_pose_static_refresh_every_n_frames") config.providers.ghost_targets_airsim_object_pose_static_refresh_every_n_frames = std::stoi(value);
     else if (key == "world_model") config.providers.world_model = value;
     else if (key == "occupancy_source") config.providers.occupancy_source = value;
     else if (key == "frame_annotator") config.providers.frame_annotator = value;

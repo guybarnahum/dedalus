@@ -136,6 +136,7 @@ struct CoreStackProviderConfig {
     std::vector<AirSimGhostObjectPatternBinding> ghost_targets_airsim_patterns;
     std::string ghost_targets_airsim_scene_inventory_path;
     double ghost_targets_airsim_object_pose_stream_rate_hz{30.0};
+    int ghost_targets_airsim_object_pose_static_refresh_every_n_frames{10};
     std::string world_model{"in_memory"};
     std::string occupancy_source{"synthetic_fixture"};
     std::string frame_annotator{"null"};

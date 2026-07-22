@@ -178,10 +178,11 @@ def run_stream(args: argparse.Namespace, client: Any) -> int:
     dynamic_names = set(args.dynamic_objects)
     cached: dict[str, dict[str, Any]] = {}
     frame_index = 0
-    # Keep the persistent stream above the mission/runtime tick rate even when
-    # older C++ callers pass the previous 5 Hz default. This prevents a 200 ms
-    # bridge-imposed wait from dominating ghost_targets.frame_at.
-    effective_rate_hz = max(args.stream_rate_hz, 30.0)
+    # Minimum 1 Hz to guard against zero/negative config values.
+    # Dynamic objects (--dynamic-object) are refreshed every frame; static objects
+    # are refreshed every --static-refresh-every-frames frames.  At 1 Hz with
+    # static_refresh_every_n_frames=600 this gives: dynamic=1 s, static=600 s.
+    effective_rate_hz = max(args.stream_rate_hz, 1.0)
     period_s = 1.0 / effective_rate_hz
     next_deadline = time.monotonic()
     while True:

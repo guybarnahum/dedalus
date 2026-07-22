@@ -103,7 +103,8 @@ std::unique_ptr<GhostTargetProvider> make_ghost_target_provider(const CoreStackP
                 .stream_rate_hz = config.ghost_targets_airsim_object_pose_stream_rate_hz,
                 .nearby_radius_m = env_double_or("DEDALUS_AIRSIM_GT_NEARBY_RADIUS_M", 80.0),
                 .max_objects_per_frame = env_int_or("DEDALUS_AIRSIM_GT_MAX_OBJECTS_PER_FRAME", 128),
-                .static_refresh_every_n_frames = env_int_or("DEDALUS_AIRSIM_GT_STATIC_REFRESH_EVERY_N_FRAMES", 10),
+                .static_refresh_every_n_frames = env_int_or("DEDALUS_AIRSIM_GT_STATIC_REFRESH_EVERY_N_FRAMES",
+                    config.ghost_targets_airsim_object_pose_static_refresh_every_n_frames),
                 .objects = config.ghost_targets_airsim_objects,
                 .patterns = config.ghost_targets_airsim_patterns});
     }
