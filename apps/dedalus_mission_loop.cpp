@@ -501,7 +501,10 @@ int main(int argc, char** argv) {
 
         std::unique_ptr<dedalus::PipelineProfiler> timing_writer;
         if (config.pipeline_timing_enabled) {
-            timing_writer = std::make_unique<dedalus::PipelineProfiler>(config.pipeline_timing_output_path);
+            const std::int64_t frame_budget_us =
+                static_cast<std::int64_t>(1'000'000.0 / config.mission_tick_hz);
+            timing_writer = std::make_unique<dedalus::PipelineProfiler>(
+                config.pipeline_timing_output_path, frame_budget_us);
         }
 
         std::cerr << "dedalus_mission_loop: frame_source=" << config.frame_source

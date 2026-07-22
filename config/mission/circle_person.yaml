@@ -19,6 +19,14 @@ flight_command_sink: px4_bridge
 #   dynamic refresh = round(stream_rate_hz) frames → 1 Hz AirSim RPC for BRPlayer_01_96.
 #   static refresh  = stream_rate_hz × 600 frames → 600 s AirSim RPC for trees/walls/etc.
 # At 10 Hz stream the pipeline is never blocked by a 1 Hz AirSim call.
+# Stage 2b POV cross-check: re-ray-cast K existing occupied cells per frame.
+# Cursor walks all occupied cells round-robin; cycle = occupied_cells / K frames.
+# K derivation: time_budget_us / (avg_ray_steps * ~200ns_per_step)
+#   10ms budget, 20m avg range, 0.5m cells → 80 steps/ray → K ≈ 625
+#   5ms budget → K ≈ 312; adjust based on [PipelineSlow] headroom.
+# At mission_tick_hz=10 and K=250: cycle ≈ 33K_cells / 250 = 132 frames = 13s.
+traversability.raycast_cross_check_per_frame: 250
+
 ghost_targets_airsim_object_pose_stream_rate_hz: 10
 ghost_targets_airsim_object_pose_static_refresh_every_n_frames: 6000
 

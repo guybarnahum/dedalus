@@ -26,7 +26,11 @@ struct PipelineFrameProfile {
 
 class PipelineProfiler {
 public:
-    explicit PipelineProfiler(std::filesystem::path output_path);
+    // frame_budget_us: per-frame latency budget in microseconds, used as the
+    // slow-frame diagnostic threshold.  Derive from tick rate:
+    //   frame_budget_us = 1'000'000 / mission_tick_hz
+    explicit PipelineProfiler(std::filesystem::path output_path,
+                              std::int64_t frame_budget_us = 100'000LL);
     // Destructor flushes any in-progress frame so that partial data is
     // committed on normal object destruction (RAII flush guarantee).
     ~PipelineProfiler();
@@ -41,6 +45,8 @@ private:
     std::ofstream output_;
     PipelineFrameProfile current_frame_;
     bool frame_open_{false};
+
+    std::int64_t frame_budget_us_;  // slow-frame diagnostic threshold, derived from tick_hz
 
     // Rolling perf stats — printed to stderr every kStatsPrintEvery frames.
     // Window covers the last kStatsWindow samples.

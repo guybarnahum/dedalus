@@ -48,8 +48,10 @@ std::string escape_json_string(const std::string& value) {
 
 }  // namespace
 
-PipelineProfiler::PipelineProfiler(std::filesystem::path output_path)
-    : output_path_(std::move(output_path)) {
+PipelineProfiler::PipelineProfiler(std::filesystem::path output_path,
+                                   const std::int64_t frame_budget_us)
+    : output_path_(std::move(output_path))
+    , frame_budget_us_(frame_budget_us) {
     if (output_path_.empty()) {
         throw std::invalid_argument("pipeline profiler requires non-empty profile_output_path");
     }
@@ -141,6 +143,37 @@ void PipelineProfiler::end_frame() {
     }
 
     frame_open_ = false;
+
+    // ── Slow-frame diagnostic ─────────────────────────────────────────────────
+    // When a frame exceeds the mission tick budget, print per-stage breakdown to
+    // stderr.  This directly explains what caused snapshot_stale / tick_overrun
+    // in the mission controller without requiring log correlation.
+    if (measured_total_us >= frame_budget_us_) {
+        // Sort indices by duration descending; skip attribution-only sub-stages.
+        std::vector<std::size_t> order;
+        order.reserve(current_frame_.stages.size());
+        for (std::size_t i = 0U; i < current_frame_.stages.size(); ++i) {
+            if (!is_attribution_only_stage(current_frame_.stages[i].name)) {
+                order.push_back(i);
+            }
+        }
+        std::sort(order.begin(), order.end(), [&](std::size_t a, std::size_t b) {
+            return current_frame_.stages[a].duration_us > current_frame_.stages[b].duration_us;
+        });
+
+        std::fprintf(stderr, "[PipelineSlow] frame=%s total=%ldms",
+            current_frame_.frame_id.c_str(),
+            static_cast<long>(measured_total_us / 1000LL));
+        for (const auto i : order) {
+            const auto& s = current_frame_.stages[i];
+            if (s.duration_us >= 1'000LL) {
+                std::fprintf(stderr, "  %s=%ldms",
+                    s.name.c_str(), static_cast<long>(s.duration_us / 1000LL));
+            }
+        }
+        std::fprintf(stderr, "\n");
+        std::fflush(stderr);
+    }
 
     // ── Rolling perf stats ────────────────────────────────────────────────────
     // Keep the last kStatsWindow frame totals in a ring buffer and print

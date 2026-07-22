@@ -59,6 +59,17 @@ struct MissionLocalTraversabilityMapConfig {
     std::uint32_t endpoint_spread_voxels{1U};
     double        endpoint_spread_decay{0.5};
 
+    // Stage 2b: POV cross-check budget — existing occupied cells re-ray-cast per frame.
+    // A cursor walks cells_ K steps per frame (skipping log_odds ≤ 0), wrapping at end.
+    // Every occupied cell is revisited once per cycle of ≈ occupied_cells / K frames.
+    //
+    // How to pick K:
+    //   time_budget_us / (ray_length_m / (cell_size_m * 0.5) * ~200ns_per_step)
+    //   e.g. 10 ms budget, 20 m avg range, 0.5 m cells → 200 steps/ray → K ≈ 250
+    //
+    // 0 = disabled (default — set explicitly in mission config).
+    std::uint32_t raycast_cross_check_per_frame{0U};
+
     // Evidence is never time-decayed. Cells persist until Stage 2 free-space
     // ray-casting actively contradicts them with new sensor evidence.
 
@@ -218,6 +229,10 @@ private:
 
     std::vector<StoredCell> cells_;
     std::unordered_map<CellKey, std::size_t, CellKeyHash> cell_index_;
+
+    // Stage 2b cross-check state: cursor walks cells_ K steps per frame, wrapping at end.
+    // No pool, no RNG — cells_ insertion order has no correlation with obstacle layout.
+    std::size_t cross_check_cursor_{0U};
 };
 
 }  // namespace dedalus

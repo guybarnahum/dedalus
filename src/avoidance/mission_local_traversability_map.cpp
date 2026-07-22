@@ -149,7 +149,16 @@ MissionLocalTraversabilityMapSnapshot MissionLocalTraversabilityMap::update_from
 
     const auto now_ns = timestamp_ns(now);
 
-    for (const auto& source : obstacle_map.cells) {
+    // Collect indices of source cells that are NEW to the traversability map.
+    // Stages 2 and 3 (ray-cast / endpoint spread) only need to run for new cells:
+    // existing cells have already had their ray paths marked in prior ticks.
+    // Re-running Stage 2 for all M=33K accumulated cells every frame (O(M × ray_steps))
+    // is the dominant cost and grows super-linearly as M accumulates.
+    std::vector<std::size_t> new_cell_indices;
+    new_cell_indices.reserve(obstacle_map.cells.size());
+
+    for (std::size_t ci = 0U; ci != obstacle_map.cells.size(); ++ci) {
+        const auto& source = obstacle_map.cells[ci];
         if (!source.observed || !finite_point(source.center_map)) {
             continue;
         }
@@ -166,6 +175,8 @@ MissionLocalTraversabilityMapSnapshot MissionLocalTraversabilityMap::update_from
         auto& cell = ensure_cell(key);
         if (existed) {
             ++summary_.updated_cell_count;
+        } else {
+            new_cell_indices.push_back(ci);
         }
 
         cell.center_map = center_for_key(key);
@@ -225,7 +236,8 @@ MissionLocalTraversabilityMapSnapshot MissionLocalTraversabilityMap::update_from
     if (config_.enable_log_odds && obstacle_map.sensor_origin_valid && config_.endpoint_spread_voxels > 0U) {
         const Vec3& origin = obstacle_map.sensor_origin_map;
 
-        for (const auto& source : obstacle_map.cells) {
+        for (const auto ci : new_cell_indices) {
+            const auto& source = obstacle_map.cells[ci];
             if (!source.observed || !finite_point(source.center_map)) {
                 continue;
             }
@@ -271,7 +283,8 @@ MissionLocalTraversabilityMapSnapshot MissionLocalTraversabilityMap::update_from
         const double step_m = config_.cell_size_m * 0.5;
         const Vec3& origin = obstacle_map.sensor_origin_map;
 
-        for (const auto& source : obstacle_map.cells) {
+        for (const auto ci : new_cell_indices) {
+            const auto& source = obstacle_map.cells[ci];
             if (!source.observed || !finite_point(source.center_map)) {
                 continue;
             }
@@ -299,6 +312,63 @@ MissionLocalTraversabilityMapSnapshot MissionLocalTraversabilityMap::update_from
                     cell.log_odds - (source.confidence * config_.log_odds_free_decrement),
                     -config_.log_odds_max, config_.log_odds_max);
                 // Stamp so the SSE delta filter sees this cell as changed.
+                cell.last_observed_timestamp_ns =
+                    std::max(cell.last_observed_timestamp_ns, now_ns);
+            }
+        }
+    }
+
+    // Stage 2b: POV cross-check — re-ray-cast K existing occupied cells per frame from
+    // the current sensor position, using a cursor that walks cells_ in insertion order.
+    // No pool, no RNG: cells_ order has no spatial correlation with the obstacle layout,
+    // so round-robin gives uniform coverage without bias.  Cursor wraps at cells_.size();
+    // every occupied cell is revisited once per ≈ occupied_cells / K frames.
+    if (config_.enable_log_odds && obstacle_map.sensor_origin_valid &&
+        config_.raycast_cross_check_per_frame > 0U && !cells_.empty()) {
+
+        const double step_m = config_.cell_size_m * 0.5;
+        const Vec3& origin = obstacle_map.sensor_origin_map;
+        const std::size_t k       = config_.raycast_cross_check_per_frame;
+        const std::size_t total   = cells_.size();
+        std::size_t checked = 0U;
+        std::size_t scanned = 0U;
+
+        // Wrap cursor so we always start within the valid range.
+        if (cross_check_cursor_ >= total) { cross_check_cursor_ = 0U; }
+
+        // scanned caps the loop at one full pass even if fewer than K occupied cells exist.
+        while (checked < k && scanned < total) {
+            const std::size_t ci = cross_check_cursor_;
+            cross_check_cursor_ = (cross_check_cursor_ + 1U < total)
+                ? cross_check_cursor_ + 1U : 0U;
+            ++scanned;
+
+            if (cells_[ci].cell.log_odds <= 0.0) { continue; }  // skip free / unknown
+            ++checked;
+
+            // Copy before the inner ensure_cell loop — realloc of cells_ invalidates refs.
+            const Vec3   endpoint   = cells_[ci].cell.center_map;
+            const double confidence = cells_[ci].cell.confidence;
+
+            const double dx = endpoint.x - origin.x;
+            const double dy = endpoint.y - origin.y;
+            const double dz = endpoint.z - origin.z;
+            const double dist = std::sqrt(dx*dx + dy*dy + dz*dz);
+            if (dist <= step_m) { continue; }
+
+            const double nx = dx / dist;
+            const double ny = dy / dist;
+            const double nz = dz / dist;
+            const auto endpoint_key = key_for_point(endpoint);
+
+            for (double t = step_m; t < dist; t += step_m) {
+                const Vec3 pt{origin.x + nx * t, origin.y + ny * t, origin.z + nz * t};
+                const auto key = key_for_point(pt);
+                if (key == endpoint_key) { break; }
+                auto& cell = ensure_cell(key);
+                cell.log_odds = std::clamp(
+                    cell.log_odds - (confidence * config_.log_odds_free_decrement),
+                    -config_.log_odds_max, config_.log_odds_max);
                 cell.last_observed_timestamp_ns =
                     std::max(cell.last_observed_timestamp_ns, now_ns);
             }
@@ -570,6 +640,7 @@ void MissionLocalTraversabilityMap::reset() {
     cells_.clear();
     cell_index_.clear();
     summary_ = MissionLocalTraversabilityMapSummary{};
+    cross_check_cursor_ = 0U;
 }
 
 }  // namespace dedalus

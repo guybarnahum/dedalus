@@ -234,6 +234,37 @@ A method for autonomous vehicle session initialization wherein the vehicle's coo
 
 ---
 
+## IP-14 · Budget-Bounded Round-Robin POV Cross-Check for Incremental Free-Space Ray Casting in Persistent Occupancy Maps
+
+**Status:** Implemented — `src/avoidance/mission_local_traversability_map.cpp`, Stage 2b.
+
+**Technical description:**
+The L1 traversability map accumulates log-odds evidence across frames. Stage 2 (free-space ray casting) correctly marks intermediate voxels free for newly-observed cells, but existing occupied cells are never re-ray-cast from subsequent sensor positions — leaving their intermediate free-space paths unupdated as the drone moves to new vantage points.
+
+Stage 2b resolves this with a single `cross_check_cursor_` integer walking `cells_` (the full voxel array) K steps per pipeline frame. On each step, if the cell's `log_odds > 0` (occupied-leaning), a ray is cast from the current sensor origin to the cell center and the `log_odds_free_decrement` is applied to every intermediate voxel along the path, exactly as Stage 2. The cursor wraps at `cells_.size()`, giving every occupied cell exactly one cross-check per cycle of `ceil(occupied_cells / K)` frames. The loop also bounds iteration at one full array pass to guard against all-free maps.
+
+K is mission-configurable via `traversability.raycast_cross_check_per_frame` (default 0 = disabled), derived from the frame time budget and expected average ray length:
+```
+K = budget_us / (avg_ray_steps × ns_per_step)
+  = 10ms / (80 steps × 200ns/step) ≈ 625
+```
+
+Key properties:
+- **No pool allocation, no RNG**: insertion order in `cells_` has no spatial correlation with the obstacle layout, so round-robin order is unbiased.
+- **Occupied-only**: free and unknown cells (log_odds ≤ 0) are skipped — no wasted budget on cells that are already confirmed free.
+- **Bounded per frame**: exactly K ray steps consumed regardless of total map size; cycle length grows linearly with `occupied_cells`, not quadratically.
+- **Adaptive**: as cells decay from occupied to free, they exit the cross-check pool organically on the next cursor pass without explicit bookkeeping.
+
+**Novelty argument:**
+Existing incremental occupancy map systems (OctoMap, Voxblox, FIESTA) apply free-space ray casting only to newly-observed cells from the current sensor view; there is no mechanism to retroactively update intermediate free-space evidence along sight-lines to cells observed in prior frames from new vantage points. The specific construction — a persistent cursor, per-frame budget, occupied-only filter, and derivation of K from the frame time budget and ray geometry — is not present in any known mapping or SLAM literature. The approach is stateless relative to prior frames (requires only one size_t member) and imposes no constraint on the accumulation or eviction policy of the underlying map.
+
+**Claim boundary:**
+A method for maintaining free-space evidence in a persistent log-odds occupancy voxel map wherein, each processing cycle, a bounded number K of previously-observed occupied voxels are selected by a cursor advancing in fixed-stride order through the voxel array, and for each selected voxel a free-space ray is cast from the current sensor origin to the voxel center, applying a free-space evidence decrement to intermediate voxels along the ray path; wherein K is derived from the available per-cycle time budget and expected ray length; and wherein the cursor wraps at the array end to ensure uniform coverage over all occupied voxels within a bounded number of cycles.
+
+**Evidence of conception:** Design session between developer and AI assistant, July 22 2026.
+
+---
+
 ## Summary and Priority
 
 | ID | Title | Priority | Status |
@@ -251,6 +282,7 @@ A method for autonomous vehicle session initialization wherein the vehicle's coo
 | IP-11 | Ghost detections as first-class primitives | **Lower** | Implemented |
 | IP-12 | Decoupled EDT resolution + L2-aligned snapping | **Lower** | Implemented |
 | IP-13 | L2-anchored cross-session relocalization + elastic frame | **Highest** | Not implemented — conceived Jun 2026 |
+| IP-14 | Budget-bounded round-robin POV cross-check for free-space ray casting | **High** | Implemented — Jul 2026 |
 
 ---
 

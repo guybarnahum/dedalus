@@ -613,6 +613,7 @@ bool parse_traversability_key(
     else if (field == "log_odds_max")                 trav.log_odds_max                   = std::stod(value);
     else if (field == "endpoint_spread_voxels")       trav.endpoint_spread_voxels         = parse_uint32(value, key.c_str());
     else if (field == "endpoint_spread_decay")        trav.endpoint_spread_decay          = std::stod(value);
+    else if (field == "raycast_cross_check_per_frame") trav.raycast_cross_check_per_frame = parse_uint32(value, key.c_str());
     else { throw std::invalid_argument("unknown traversability field: " + key); }
     return true;
 }
