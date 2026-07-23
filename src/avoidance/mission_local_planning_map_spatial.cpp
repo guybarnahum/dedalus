@@ -158,10 +158,10 @@ void MissionLocalPlanningMap::load_window_from_db(const Vec3& centre) {
 
 // ─── slide_window ────────────────────────────────────────────────────────────
 
-void MissionLocalPlanningMap::slide_window(const Vec3& drone_pos) {
+bool MissionLocalPlanningMap::slide_window(const Vec3& drone_pos) {
     // No DB → evicted cells can't be reloaded; don't slide.
     if (!db_) {
-        return;
+        return false;
     }
 
     const double slide_threshold_m = config_.horizon_m / 4.0;
@@ -169,7 +169,7 @@ void MissionLocalPlanningMap::slide_window(const Vec3& drone_pos) {
     if (slide_initialized_) {
         const double dist = std::sqrt(dist3_sq(drone_pos, last_slide_pos_));
         if (dist < slide_threshold_m) {
-            return;  // not moved enough
+            return false;  // not moved enough
         }
     }
 
@@ -178,6 +178,7 @@ void MissionLocalPlanningMap::slide_window(const Vec3& drone_pos) {
 
     evict_far_cells(drone_pos, 2.0 * config_.horizon_m);
     load_window_from_db(drone_pos);
+    return true;
 }
 
 }  // namespace dedalus

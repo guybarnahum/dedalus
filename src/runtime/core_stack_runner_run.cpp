@@ -767,12 +767,12 @@ bool CoreStackRunner::run_once() {
 
     // Slide the L2 in-memory window to follow the drone.
     // No-op when no DB is open or the drone has not moved > horizon_m/4.
-    mission_local_planning_map_.slide_window(
+    const bool window_slid = mission_local_planning_map_.slide_window(
         snapshot_for_annotation.ego.local_T_body.position);
     // Newly loaded cells carry their original write_seq (not current map_seq_),
     // so they won't appear in dirty_centers_since().  Force a full ESDF recompute
-    // to cover the newly entered window region.
-    if (esdf_map_publisher_) { esdf_needs_full_recompute_ = true; }
+    // only when the window actually slid — incremental handles normal L2 updates.
+    if (esdf_map_publisher_ && window_slid) { esdf_needs_full_recompute_ = true; }
 
     // When the assimilator drained at least one obstacle-map snapshot this tick:
     //  1. Rebuild the Level 2 planning map from the fresh Level 1 snapshot.

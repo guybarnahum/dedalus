@@ -365,7 +365,13 @@ void MissionLocalTraversabilityMap::update_from_mission_obstacle_map(
                 const Vec3 pt{origin.x + nx * t, origin.y + ny * t, origin.z + nz * t};
                 const auto key = key_for_point(pt);
                 if (key == endpoint_key) { break; }
-                auto& cell = ensure_cell(key);
+                // Stage 2b must not create new cells — only update existing ones.
+                // ensure_cell() here would grow cells_ by ~ray_steps per occupied
+                // cell per tick as the drone orbits (each new sensor angle hits novel
+                // voxels), making recompute_derived_fields O(T^2) over the mission.
+                const auto idx_it = cell_index_.find(key);
+                if (idx_it == cell_index_.end()) { continue; }
+                auto& cell = cells_[idx_it->second].cell;
                 cell.log_odds = std::clamp(
                     cell.log_odds - (confidence * config_.log_odds_free_decrement),
                     -config_.log_odds_max, config_.log_odds_max);

@@ -193,7 +193,8 @@ public:
     //   When triggered:
     //     1. Evicts in-memory cells beyond 2×horizon_m (still in DB for re-entry).
     //     2. Loads cells from DB within drone_pos ± horizon_m not yet in memory.
-    void slide_window(const Vec3& drone_pos);
+    // Returns true when the window actually slid (cells evicted/loaded).
+    bool slide_window(const Vec3& drone_pos);
 
     // Set the mission identity used when attributing cell votes to a mission.
     // Must be called before open_db().  Calling after open_db() is a no-op on
