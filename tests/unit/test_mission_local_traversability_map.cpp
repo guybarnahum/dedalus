@@ -91,13 +91,14 @@ void compacted_obstacle_snapshot_builds_foundational_map_without_trajectory() {
     config.enable_log_odds = false;  // test exercises legacy free_score path
 
     MissionLocalTraversabilityMap map(config);
-    const auto snapshot = map.update_from_mission_obstacle_map(
+    map.update_from_mission_obstacle_map(
         source_snapshot({
             source_cell(Vec3{0.1, 0.1, 0.1}, 1.0, 0.0),
             source_cell(Vec3{2.1, 0.1, 0.1}, 0.0, 1.0),
             source_cell(Vec3{2.1, 0.1, 2.1}, 1.0, 0.0),
         }),
         at_ns(1000U));
+    const auto snapshot = map.snapshot();
 
     assert(snapshot.summary.map_frame_id.value == "mission_local");
     assert(snapshot.summary.source_obstacle_cell_count == 3U);
@@ -133,11 +134,13 @@ void repeated_full_snapshots_do_not_bloat_or_oversaturate_counts() {
         source_cell(Vec3{1.1, 1.1, 0.1}, 1.0, 0.0),
     });
 
-    auto snapshot = map.update_from_mission_obstacle_map(obstacle_snapshot, at_ns(1000U));
+    map.update_from_mission_obstacle_map(obstacle_snapshot, at_ns(1000U));
+    auto snapshot = map.snapshot();
     assert(snapshot.summary.cell_count == 1U);
     assert(snapshot.cells.front().occupied_hits_capped == 7U);
 
-    snapshot = map.update_from_mission_obstacle_map(obstacle_snapshot, at_ns(2000U));
+    map.update_from_mission_obstacle_map(obstacle_snapshot, at_ns(2000U));
+    snapshot = map.snapshot();
     assert(snapshot.summary.cell_count == 1U);
     assert(snapshot.summary.new_cell_count == 0U);
     assert(snapshot.summary.updated_cell_count == 1U);
@@ -153,18 +156,20 @@ void stale_free_space_ages_without_becoming_erased() {
     config.enable_log_odds = false;  // test exercises legacy free_score path
 
     MissionLocalTraversabilityMap map(config);
-    auto snapshot = map.update_from_mission_obstacle_map(
+    map.update_from_mission_obstacle_map(
         source_snapshot({
             source_cell(Vec3{3.1, 0.1, 0.1}, 0.0, 1.0, 1000U),
         }),
         at_ns(1000U));
+    auto snapshot = map.snapshot();
 
     assert(snapshot.summary.free_cell_count == 1U);
     assert(snapshot.summary.stale_cell_count == 0U);
 
     MissionLocalObstacleMapSnapshot empty_snapshot;
     empty_snapshot.summary.map_frame_id = map_frame("mission_local");
-    snapshot = map.update_from_mission_obstacle_map(empty_snapshot, at_ns(3000001000ULL));
+    map.update_from_mission_obstacle_map(empty_snapshot, at_ns(3000001000ULL));
+    snapshot = map.snapshot();
 
     assert(snapshot.summary.cell_count == 1U);
     assert(snapshot.summary.stale_cell_count == 1U);

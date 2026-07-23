@@ -780,10 +780,12 @@ bool CoreStackRunner::run_once() {
     static constexpr std::uint64_t kTravPublishMinIntervalNs = 2'000'000'000ULL;
     if (trav_map_updated) {
         start = SteadyClock::now();
-        // Take one snapshot and share it between L2 rebuild and SSE publish.
-        // No cell cap: the SSE subscriber delta-filters internally, so every
-        // cell must be present in the full snapshot.
-        auto trav_snapshot = mission_map_assimilator_.traversability_map().snapshot();
+        // Filtered, unsorted snapshot for the L2 planning-map update.
+        // Excludes pure free-space cells (never observed as occupied, only
+        // decremented by ray-casting) that have no L2 counterpart, avoiding
+        // O(N_free) wasted hash lookups in update_from_traversability.
+        // Also skips the O(N log N) sort that is only needed by the SSE viewer.
+        auto trav_snapshot = mission_map_assimilator_.traversability_map().snapshot_for_planning_map();
         if (timing_writer_) {
             timing_writer_->record_stage(
                 "mission_map_assimilator.traversability_snapshot", duration_us(start));
@@ -796,6 +798,9 @@ bool CoreStackRunner::run_once() {
             const auto& pm_stats = mission_local_planning_map_.last_update_stats();
             timing_writer_->record_stage(
                 "planning_map.update_from_traversability", duration_us(start));
+            timing_writer_->record_stage(
+                "planning_map.l1_input_cells",
+                pm_stats.l1_input_cells);
             timing_writer_->record_stage(
                 "planning_map.l1_occupied_merged",
                 pm_stats.l1_occupied_merged);
@@ -820,15 +825,19 @@ bool CoreStackRunner::run_once() {
                 (now_ns - last_trav_publish_ns_) < kTravPublishMinIntervalNs;
             if (!throttled) {
                 start = SteadyClock::now();
+                // Full sorted snapshot for SSE viewer — fires at most once per 2 s,
+                // so the O(N log N) sort cost is amortised across many frames.
+                auto trav_snapshot_sse =
+                    mission_map_assimilator_.traversability_map().snapshot();
                 MissionLocalTraversabilityMapFrame trav_frame;
                 trav_frame.timestamp_ns =
-                    trav_snapshot.summary.last_update_timestamp_ns != 0U
-                        ? trav_snapshot.summary.last_update_timestamp_ns
+                    trav_snapshot_sse.summary.last_update_timestamp_ns != 0U
+                        ? trav_snapshot_sse.summary.last_update_timestamp_ns
                         : mission_local_obstacle_map_snapshot.summary.last_update_timestamp_ns;
                 last_trav_publish_ns_ = trav_frame.timestamp_ns != 0U
                     ? trav_frame.timestamp_ns
                     : now_ns;
-                trav_frame.snapshot = std::move(trav_snapshot);
+                trav_frame.snapshot = std::move(trav_snapshot_sse);
                 traversability_map_publisher_->publish(trav_frame);
                 if (timing_writer_) {
                     timing_writer_->record_stage(

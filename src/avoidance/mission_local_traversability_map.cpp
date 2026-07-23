@@ -133,7 +133,7 @@ const MissionLocalTraversabilityCell* MissionLocalTraversabilityMap::cell_at_key
     return &cells_[found->second].cell;
 }
 
-MissionLocalTraversabilityMapSnapshot MissionLocalTraversabilityMap::update_from_mission_obstacle_map(
+void MissionLocalTraversabilityMap::update_from_mission_obstacle_map(
     const MissionLocalObstacleMapSnapshot& obstacle_map,
     const TimePoint now,
     const bool include_clearance) {
@@ -381,8 +381,6 @@ MissionLocalTraversabilityMapSnapshot MissionLocalTraversabilityMap::update_from
     summary_.last_update_timestamp_ns = now_ns;
 
     refresh_summary();
-
-    return snapshot();
 }
 
 void MissionLocalTraversabilityMap::recompute_derived_fields(const TimePoint now, const bool include_clearance) {
@@ -599,6 +597,27 @@ MissionLocalTraversabilityMapSnapshot MissionLocalTraversabilityMap::snapshot(
         result.cells.resize(max_cells);
     }
 
+    return result;
+}
+
+MissionLocalTraversabilityMapSnapshot MissionLocalTraversabilityMap::snapshot_for_planning_map() const {
+    MissionLocalTraversabilityMapSnapshot result;
+    result.config = config_;
+    result.summary = summary_;
+    for (const auto& stored : cells_) {
+        // Skip cells never observed as an obstacle endpoint (occupied_hits_capped == 0).
+        // This covers:
+        //  • Pure ray-cast free-space cells (log_odds < 0)  — never create L2 entries.
+        //  • Endpoint-spread / unknown cells (log_odds ≈ 0) — never create L2 entries.
+        // L2 planning-map cells are only ever created from occupied L1 cells, so
+        // cells with hits == 0 cannot have a L2 counterpart. Including them causes
+        // O(N_hits0) wasted hash lookups in update_from_traversability.
+        // No sort needed: planning-map iteration is order-independent.
+        if (stored.cell.occupied_hits_capped == 0U) {
+            continue;
+        }
+        result.cells.push_back(stored.cell);
+    }
     return result;
 }
 

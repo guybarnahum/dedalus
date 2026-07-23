@@ -184,12 +184,18 @@ public:
     const MissionLocalTraversabilityMapConfig& config() const noexcept { return config_; }
     const MissionLocalTraversabilityMapSummary& summary() const noexcept { return summary_; }
 
-    MissionLocalTraversabilityMapSnapshot update_from_mission_obstacle_map(
+    void update_from_mission_obstacle_map(
         const MissionLocalObstacleMapSnapshot& obstacle_map,
         TimePoint now,
         bool include_clearance = true);
 
     MissionLocalTraversabilityMapSnapshot snapshot(std::size_t max_cells = 0U) const;
+
+    // Filtered unsorted snapshot for the L2 planning-map update path.
+    // Excludes pure free-space cells (never observed as occupied, only decremented
+    // by ray-casting) that have no L2 counterpart — avoiding O(N_free) wasted hash
+    // lookups in update_from_traversability.  Does not sort by traversability cost.
+    MissionLocalTraversabilityMapSnapshot snapshot_for_planning_map() const;
 
     TraversabilityQueryResult query_sphere(const Vec3& center_map, double radius_m) const;
 
