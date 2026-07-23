@@ -1359,7 +1359,14 @@ if [[ "$ATTACH" -eq 1 ]]; then
 fi
 
 if [[ "$TAIL" -eq 1 ]]; then
-    tail -f "$MISSION_LOG"
+    tail -f "$MISSION_LOG" &
+    TAIL_PID=$!
+    # Exit automatically when the mission-loop tmux window closes (binary exited).
+    while tmux list-windows -t "${SESSION_NAME}" 2>/dev/null | grep -q 'mission-loop'; do
+        sleep 1
+    done
+    kill "$TAIL_PID" 2>/dev/null || true
+    wait "$TAIL_PID" 2>/dev/null || true
 fi
 
 
