@@ -32,6 +32,157 @@ substitute for checking the code first.
 
 ---
 
+## 🔥 Active Investigation: L1 Free-Space Cell Explosion (as of 2026-07-24)
+
+**Current commit:** `a106ab4` — `perf: stop O(T^2) cells_ growth and unnecessary ESDF full recomputes`
+
+### What was fixed (commits `b10e650`, `a106ab4`)
+
+Two prior performance fixes were applied and confirmed working in flight:
+
+1. **`b10e650`**: Eliminated a hidden O(N log N) sort from the `update_from_mission_obstacle_map`
+   hot path. Added `snapshot_for_planning_map()` (filtered, unsorted) for the L2 update path;
+   kept `snapshot()` (sorted, full) for the SSE viewer only.
+
+2. **`a106ab4`** (two sub-fixes):
+   - **Fix A**: Stage 2b (`raycast_cross_check_per_frame`) was calling `ensure_cell(key)` for
+     every ray step, creating O(T²) free-space cell growth. Changed to `cell_index_.find(key)`
+     with `continue` on miss — Stage 2b now only updates existing cells, never creates new ones.
+   - **Fix B**: `slide_window()` changed from `void` to `bool`; `esdf_needs_full_recompute_`
+     now only set when the window actually slides (drone moves >37.5 m). Eliminates unnecessary
+     full ESDF recomputes on every L2 publish cycle during short-radius orbits.
+
+### What is still broken (remaining bottleneck)
+
+A full circle orbit mission (660 frames, ~66s) shows **FPS declining 4.6 → 1.8** over the
+flight. The dominant costs at frame 660:
+
+| Profiler stage | Frame 30 | Frame 660 | Growth |
+|---|---|---|---|
+| `traversability_map_publisher.publish` | 3 ms | 430–460 ms | ~150× |
+| `mission_map_assimilator.traversability_snapshot` | <1 ms | 40–65 ms | ~50× |
+| `mission_map_assimilator.tick` | 4 ms | 200–300 ms | ~60× |
+| `planning_map.update_from_traversability` | 1 ms | 60–90 ms | ~70× |
+
+### Root cause: Stage 2 `ensure_cell` creating unbounded free-space cells
+
+**File:** `src/avoidance/mission_local_traversability_map.cpp`, lines 282–319.
+
+Stage 2 (initial free-space ray-cast for *new* cells) still calls `ensure_cell(key)` for every
+0.25 m step along the ray from sensor origin to each newly-detected voxel. At 10 m sensor range
+with 0.25 m steps, each new detection creates ~40 new free-space cells. As the drone explores new
+background terrain, hundreds of new detections per tick (especially early in the flight) each
+spawn 40 cells. The total L1 `cells_` vector grows to **estimated 50,000–200,000 cells** over a
+full orbit, even though only ~178 are occupied-leaning and fed to L2.
+
+Evidence from the runner code comment (lines 784–787 of `core_stack_runner_run.cpp`):
+```cpp
+// Filtered, unsorted snapshot for the L2 planning-map update.
+// Excludes pure free-space cells (never observed as occupied, only
+// decremented by ray-casting) that have no L2 counterpart, avoiding
+// O(N_free) wasted hash lookups in update_from_traversability.
+// Also skips the O(N log N) sort that is only needed by the SSE viewer.
+auto trav_snapshot = mission_map_assimilator_.traversability_map().snapshot_for_planning_map();
+```
+
+The `planning_map.l1_input_cells=178` profiler value is the count from `snapshot_for_planning_map()`
+(occupied-only snapshot). The full `cells_` vector — including all the Stage 2 free-space cells —
+is far larger and is what drives all the O(N) slowdowns:
+
+- `traversability_snapshot` → `snapshot_for_planning_map()` scans ALL cells to filter occupied ones (O(N_total) scan, no copy of free cells)
+- `traversability_map_publisher.publish` → `snapshot()` copies AND sorts ALL cells (O(N_total log N_total))
+- `recompute_derived_fields` → runs over ALL cells every tick (O(N_total))
+- Stage 2b cursor scan → scans ALL cells to find occupied ones (O(N_total) to locate K=250)
+
+**Affected code location:**
+```cpp
+// src/avoidance/mission_local_traversability_map.cpp, lines 304–317
+for (double t = step_m; t < dist; t += step_m) {
+    const Vec3 pt{origin.x + nx * t, origin.y + ny * t, origin.z + nz * t};
+    const auto key = key_for_point(pt);
+    if (key == endpoint_key) { break; }
+    auto& cell = ensure_cell(key);   // ← creates new free-space cells
+    cell.log_odds = std::clamp(...);
+    cell.last_observed_timestamp_ns = std::max(...);
+}
+```
+
+### Immediate task: instrument, verify, then fix
+
+**Step 1: Add cell-count instrumentation to `update_from_mission_obstacle_map`.**
+
+Add a profiler record after `recompute_derived_fields(now, include_clearance)` that reports the
+ACTUAL total size of `cells_` (not just occupied cells, which is what `l1_input_cells` reports):
+
+```cpp
+// At the end of update_from_mission_obstacle_map, before the return:
+// (timing_writer_ is not accessible here — this record must go in
+//  core_stack_runner_run.cpp where l1_update_duration_us is captured,
+//  OR expose cells_.size() through a new summary field)
+```
+
+The cleanest path: add `total_cell_count` to `MissionLocalTraversabilityMapSummary` in
+`include/dedalus/avoidance/mission_local_traversability_map.hpp`, set it at the end of
+`update_from_mission_obstacle_map`, and record it in `core_stack_runner_run.cpp` alongside
+`observed_cells` and `occupied_cells` (lines 735–743). Read the summary struct first to find the
+exact field name pattern before adding.
+
+**Step 2: Fly a mission with instrumentation, confirm cell count.**
+
+Expected: `l1_total_cells` grows from ~10 at frame 30 to >10,000 by frame 300.
+If confirmed, proceed to Fix C.
+
+**Step 3: Fix C — apply Stage 2b pattern to Stage 2's inner loop.**
+
+In `src/avoidance/mission_local_traversability_map.cpp`, Stage 2 inner loop
+(lines 304–317), replace `ensure_cell(key)` with `cell_index_.find()` + `continue` on miss:
+
+```cpp
+// BEFORE:
+auto& cell = ensure_cell(key);
+cell.log_odds = std::clamp(...);
+cell.last_observed_timestamp_ns = std::max(...);
+
+// AFTER (same pattern as Stage 2b fix in commit a106ab4):
+// Stage 2 must not create new cells for the initial ray-cast — only update
+// cells that already exist (e.g., previously occupied cells on the ray path
+// that need free-space decrement). New free-space voxels remain absent = unknown,
+// consistent with the "absence ≠ free space" design invariant.
+const auto idx_it = cell_index_.find(key);
+if (idx_it == cell_index_.end()) { continue; }
+auto& cell = cells_[idx_it->second].cell;
+cell.log_odds = std::clamp(
+    cell.log_odds - (source.confidence * config_.log_odds_free_decrement),
+    -config_.log_odds_max, config_.log_odds_max);
+cell.last_observed_timestamp_ns =
+    std::max(cell.last_observed_timestamp_ns, now_ns);
+```
+
+**Semantic tradeoff to be explicit about:** Stage 2 will no longer create free-space cells for
+the initial ray-cast when a new voxel is observed for the first time. L1 cells_ will contain only:
+- Occupied cells (from Stage 1)
+- Stage 3 endpoint-spread occupied cells (from Stage 3)
+- Cells that were initially occupied and then decremented below zero by Stage 2b
+
+Free-space clearing in L2 still works via Stage 2b: when Stage 2b re-casts an occupied cell's
+ray and finds the intermediate path clear, those occupied cells get decremented toward ObservedFree,
+which then propagates to L2 as a free-space vote.
+
+**Expected performance after Fix C:**
+- `cells_` drops from ~100,000 to ~200–400 total cells
+- All O(N_total) operations collapse to microseconds
+- FPS should remain stable near `mission_tick_hz: 10` throughout the flight
+
+**Step 4: Build, run 44 tests, fly mission, verify FPS is stable.**
+
+```bash
+cmake --build build-staging -j$(sysctl -n hw.logicalcpu)
+ctest --test-dir build-staging --output-on-failure
+# then fly and confirm l1_total_cells is bounded (<500) and FPS stays >5 hz
+```
+
+---
+
 ## Active Development State
 
 ### Obstacle map stack — COMPLETE
@@ -353,6 +504,8 @@ L0  LocalFlightMapSnapshot        ego-local, 0.5 m cells, rebuilt every tick
 L1  MissionLocalTraversabilityMap  per-flight accumulator, 0.5 m, decay 0.05/s
       Feeds L2 via update_from_traversability() each tick.
       Viewer: exterior voxel face surface (LOD, throttled 2 s).
+      ⚠ PERFORMANCE BUG: Stage 2 free-space ray-cast creates O(N_unique_obs × ray_steps)
+        cells_, inflating the map to 50k–200k cells. Fix in progress — see §Active Investigation.
 
 L2  MissionLocalPlanningMap        persistent site map, 1 m × 1 m × 2 m voxels
       SQLite + WAL. slide_window(±150 m). ray_cast + query_occupied_in_box.
