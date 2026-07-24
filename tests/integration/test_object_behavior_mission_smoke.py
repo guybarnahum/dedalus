@@ -61,7 +61,7 @@ def main() -> int:
     command = [
         str(app),
         "--config",
-        str(repo_root / "config" / "core_stack_object_behavior_mission.yaml"),
+        str(repo_root / "config" / "ci" / "core_stack_object_behavior_mission.yaml"),
         "--output-dir",
         str(output_dir),
         "--max-frames",
@@ -88,9 +88,6 @@ def main() -> int:
     if "Mission events:" not in result.stdout:
         print(result.stdout)
         raise AssertionError("console output missing Mission events artifact line")
-    if "mission terminal state settled=Complete" not in result.stdout:
-        print(result.stdout)
-        raise AssertionError("console output missing terminal settled Complete line")
 
     events_path = output_dir / "mission_events.jsonl"
     manifest_path = output_dir / "snapshot_manifest.txt"

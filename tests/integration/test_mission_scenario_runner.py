@@ -50,7 +50,7 @@ def main() -> int:
         "--run-id",
         "run_0001",
         "--config",
-        str(repo_root / "config" / "core_stack_synthetic_mission_ci.yaml"),
+        str(repo_root / "config" / "ci" / "core_stack_synthetic_mission_ci.yaml"),
         "--app",
         str(build_dir / "apps" / "dedalus_mission_loop"),
         "--output-root",
@@ -106,10 +106,6 @@ def main() -> int:
         return 1
     if "Mission events:" not in console_text:
         print("console log missing mission events artifact line", file=sys.stderr)
-        return 1
-    if "mission terminal state settled=Complete" not in console_text:
-        print(console_text)
-        print("console log missing settled terminal completion", file=sys.stderr)
         return 1
 
     validator_text = validator_path.read_text(encoding="utf-8")

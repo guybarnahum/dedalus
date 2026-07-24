@@ -25,7 +25,7 @@ def main() -> int:
         "--run-id",
         "run_0001",
         "--config",
-        str(repo_root / "config" / "core_stack_synthetic_mission_abort_ci.yaml"),
+        str(repo_root / "config" / "ci" / "core_stack_synthetic_mission_abort_ci.yaml"),
         "--app",
         str(build_dir / "apps" / "dedalus_mission_loop"),
         "--output-root",
