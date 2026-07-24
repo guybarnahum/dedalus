@@ -103,7 +103,7 @@ def main() -> int:
         return 2
 
     repo_root = Path(sys.argv[1])
-    config_paths = sorted((repo_root / "config").glob("core_stack*.y*ml"))
+    config_paths = sorted((repo_root / "config").glob("**/core_stack*.y*ml"))
     checked: list[Path] = []
     errors: list[str] = []
 

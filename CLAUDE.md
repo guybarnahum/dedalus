@@ -106,7 +106,7 @@ Before offering code changes, inspect the current repo files that define the cal
 # Active build directory is build-staging/
 cmake --build build-staging -j$(sysctl -n hw.logicalcpu)
 
-# Run all tests (must stay green — currently 44/44)
+# Run all tests (must stay green — currently 59/59)
 ctest --test-dir build-staging --output-on-failure
 
 # CI subset (fast; excludes synthetic/scenario tests)
@@ -209,6 +209,12 @@ config/behaviors/           Behavior specs, trajectories, and ghost fixture asse
 | `simulation/airsim/static/mission_unified_viewer.html` | `tools/visualization/mission_unified_viewer.py` |
 
 These are produced by `build.sh`. `.gitignore` intentionally excludes `*.html`. Fix the Python source; the HTML is rebuilt on the next `build.sh` run.
+
+---
+
+## 11. Git Workflow
+
+Work directly on `main`. Do not create feature branches unless explicitly asked.
 
 ---
 

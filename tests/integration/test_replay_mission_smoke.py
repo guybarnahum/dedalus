@@ -17,7 +17,7 @@ def main() -> int:
         shutil.rmtree(out_dir)
     cmd = [
         str(app),
-        "--config", str(repo_root / "config" / "core_stack_mission_ci.yaml"),
+        "--config", str(repo_root / "config" / "ci" / "core_stack_mission_ci.yaml"),
         "--output-dir", str(out_dir),
         "--max-frames", "1",
         "--no-progress",

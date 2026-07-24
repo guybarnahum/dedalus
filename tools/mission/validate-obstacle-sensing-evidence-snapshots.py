@@ -56,8 +56,8 @@ REQUIRED_EVIDENCE_KEYS = (
     "elevation_rad",
 )
 
-INVALID_VOLUME_PROVIDERS = {"airsim_gt_visual_emulation"}
-GT_VISUAL_SOURCE_KIND = "airsim_gt_visual_emulation"
+INVALID_VOLUME_PROVIDERS = {"airsim_gt_vd"}
+GT_VISUAL_SOURCE_KIND = "airsim_gt_vd"
 
 
 def load_json(path: pathlib.Path) -> dict[str, Any]:
