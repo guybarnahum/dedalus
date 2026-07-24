@@ -307,7 +307,15 @@ void MissionLocalTraversabilityMap::update_from_mission_obstacle_map(
                 if (key == endpoint_key) {
                     break;  // reached the endpoint voxel — do not apply free here
                 }
-                auto& cell = ensure_cell(key);
+                // Stage 2 must not create new cells for the initial ray-cast — only
+                // update cells that already exist.  ensure_cell() here would grow
+                // cells_ by ~ray_steps per newly-observed voxel per tick as the drone
+                // explores new terrain, making recompute_derived_fields O(T^2) over
+                // the mission.  New free-space voxels remain absent = unknown,
+                // consistent with the "absence != free space" design invariant.
+                const auto idx_it = cell_index_.find(key);
+                if (idx_it == cell_index_.end()) { continue; }
+                auto& cell = cells_[idx_it->second].cell;
                 cell.log_odds = std::clamp(
                     cell.log_odds - (source.confidence * config_.log_odds_free_decrement),
                     -config_.log_odds_max, config_.log_odds_max);

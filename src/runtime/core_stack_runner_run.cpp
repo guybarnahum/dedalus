@@ -789,6 +789,9 @@ bool CoreStackRunner::run_once() {
         if (timing_writer_) {
             timing_writer_->record_stage(
                 "mission_map_assimilator.traversability_snapshot", duration_us(start));
+            timing_writer_->record_stage(
+                "mission_map_assimilator.l1_total_cells",
+                mission_map_assimilator_.traversability_map().summary().cell_count);
         }
 
         // ── Level 2: rebuild planning map ───────────────────────────────────
