@@ -256,13 +256,24 @@ private:
     CellKey key_for_point(const Vec3& point) const noexcept;
     Vec3 center_for_key(const CellKey& key) const noexcept;
 
-    // Evict cells whose score has been driven below min_occupied_score.
-    // Rebuilds cell_index_ after compacting cells_.
-    void evict_cleared_cells();
+    // Evict cells among candidate_keys whose score is still at or below the
+    // eviction floor. Re-checks the live occupied_score at removal time
+    // (rather than trusting candidate_keys unconditionally) because a key can
+    // appear more than once in one update_from_traversability() call, or be
+    // resurrected by a later occupied hit within the same call — both cases
+    // must evict exactly the cells the old full-scan sweep would have.
+    // O(candidate_keys.size()) via remove_cell_by_key() — no full cells_ scan
+    // or cell_index_ rebuild.
+    void evict_cleared_cells(const std::vector<CellKey>& candidate_keys);
 
     // Remove cells beyond evict_radius_m from centre from the in-memory store.
     // Does NOT add to evicted_keys_ — evicted cells remain in the DB.
     void evict_far_cells(const Vec3& centre, double evict_radius_m);
+
+    // Remove the cell at `key` from cells_/cell_index_ via swap-with-last +
+    // pop_back, re-pointing the moved element's index. O(1) amortized — no
+    // full-vector scan or index rebuild. No-op if key is not present.
+    void remove_cell_by_key(const CellKey& key);
 
     // Load cells from the open DB within centre ± horizon_m that are not yet
     // in cell_index_.  If a cell is also in dirty_cells_, its dirty value takes

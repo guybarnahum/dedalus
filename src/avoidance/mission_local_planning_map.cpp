@@ -154,7 +154,7 @@ void MissionLocalPlanningMap::update_from_traversability(
     }
 
     if (any_evicted) {
-        evict_cleared_cells();
+        evict_cleared_cells(local_evicted);
     }
 
     // Merge into shared dirty/evicted maps under a single lock.
@@ -170,24 +170,32 @@ void MissionLocalPlanningMap::update_from_traversability(
     }
 }
 
-void MissionLocalPlanningMap::evict_cleared_cells() {
-    // Compact: keep cells whose score is still at or above the floor.
-    const auto keep_end = std::stable_partition(
-        cells_.begin(), cells_.end(),
-        [](const StoredCell& sc) { return sc.cell.occupied_score > 0.0F; });
+void MissionLocalPlanningMap::evict_cleared_cells(const std::vector<CellKey>& candidate_keys) {
+    for (const auto& key : candidate_keys) {
+        const auto it = cell_index_.find(key);
+        if (it == cell_index_.end()) {
+            continue;  // already removed by an earlier duplicate in candidate_keys
+        }
+        if (cells_[it->second].cell.occupied_score > 0.0F) {
+            continue;  // resurrected by a later occupied hit within this same tick
+        }
+        remove_cell_by_key(key);
+    }
+}
 
-    if (keep_end == cells_.end()) {
+void MissionLocalPlanningMap::remove_cell_by_key(const CellKey& key) {
+    const auto it = cell_index_.find(key);
+    if (it == cell_index_.end()) {
         return;
     }
-
-    cells_.erase(keep_end, cells_.end());
-
-    // Rebuild index.
-    cell_index_.clear();
-    cell_index_.reserve(cells_.size());
-    for (std::size_t i = 0U; i < cells_.size(); ++i) {
-        cell_index_.emplace(cells_[i].key, i);
+    const std::size_t idx = it->second;
+    const std::size_t last = cells_.size() - 1U;
+    if (idx != last) {
+        cells_[idx] = std::move(cells_[last]);
+        cell_index_[cells_[idx].key] = idx;
     }
+    cells_.pop_back();
+    cell_index_.erase(key);
 }
 
 MissionLocalPlanningMapSnapshot MissionLocalPlanningMap::snapshot(std::uint64_t since_seq) const {

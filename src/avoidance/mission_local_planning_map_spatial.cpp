@@ -32,7 +32,6 @@
 
 #include "dedalus/avoidance/mission_local_planning_map.hpp"
 
-#include <algorithm>
 #include <cmath>
 #include <mutex>
 
@@ -59,23 +58,18 @@ void MissionLocalPlanningMap::evict_far_cells(const Vec3& centre,
                                                const double evict_radius_m) {
     const double r2 = evict_radius_m * evict_radius_m;
 
-    const auto keep_end = std::stable_partition(
-        cells_.begin(), cells_.end(),
-        [&](const StoredCell& sc) {
-            return dist3_sq(sc.cell.center_map, centre) <= r2;
-        });
-
-    if (keep_end == cells_.end()) {
-        return;  // nothing to evict
+    // No spatial index over cells_, so identifying which cells are far still
+    // requires one O(N) scan — but removal is O(evicted_count) via
+    // remove_cell_by_key() instead of a full cell_index_ rebuild.
+    std::vector<CellKey> to_remove;
+    for (const auto& sc : cells_) {
+        if (dist3_sq(sc.cell.center_map, centre) > r2) {
+            to_remove.push_back(sc.key);
+        }
     }
 
-    cells_.erase(keep_end, cells_.end());
-
-    // Rebuild index.
-    cell_index_.clear();
-    cell_index_.reserve(cells_.size());
-    for (std::size_t i = 0U; i < cells_.size(); ++i) {
-        cell_index_.emplace(cells_[i].key, i);
+    for (const auto& key : to_remove) {
+        remove_cell_by_key(key);
     }
 }
 

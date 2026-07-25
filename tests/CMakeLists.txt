@@ -314,6 +314,13 @@ dedalus_add_native_test(
 )
 
 dedalus_add_native_test(
+    NAME mission_local_planning_map_eviction
+    LAYER unit
+    TAGS avoidance mission_local_map eviction
+    SOURCES unit/test_mission_local_planning_map_eviction.cpp
+)
+
+dedalus_add_native_test(
     NAME local_esdf_map
     LAYER unit
     TAGS avoidance esdf planning
