@@ -206,6 +206,38 @@ void post_landing_flush_drains_pending_evidence_for_map_learning() {
     assert(assimilator.traversability_map().summary().cell_count == 2U);
 }
 
+void drain_delta_for_planning_map_returns_only_recently_touched_occupied_cells() {
+    MissionLocalTraversabilityMapConfig config;
+    config.cell_size_m = 1.0;
+    config.vertical_cell_size_m = 1.0;
+
+    MissionLocalTraversabilityMap map(config);
+    map.update_from_mission_obstacle_map(
+        source_snapshot({
+            source_cell(Vec3{0.1, 0.1, 0.1}, 1.0, 0.0),
+        }),
+        at_ns(1000U));
+
+    const auto delta = map.drain_delta_for_planning_map();
+    assert(delta.cells.size() == 1U);
+    assert(delta.cells.front().occupied_hits_capped > 0U);
+
+    // Draining again before any new update returns nothing.
+    const auto empty_delta = map.drain_delta_for_planning_map();
+    assert(empty_delta.cells.empty());
+
+    // A second, disjoint update only surfaces the newly touched cell — the
+    // full L1 map still has both.
+    map.update_from_mission_obstacle_map(
+        source_snapshot({
+            source_cell(Vec3{9.1, 0.1, 0.1}, 1.0, 0.0),
+        }),
+        at_ns(2000U));
+    const auto second_delta = map.drain_delta_for_planning_map();
+    assert(second_delta.cells.size() == 1U);
+    assert(map.snapshot().summary.cell_count == 2U);
+}
+
 }  // namespace
 
 int main() {
@@ -213,6 +245,7 @@ int main() {
     repeated_full_snapshots_do_not_bloat_or_oversaturate_counts();
     stale_free_space_ages_without_becoming_erased();
     post_landing_flush_drains_pending_evidence_for_map_learning();
+    drain_delta_for_planning_map_returns_only_recently_touched_occupied_cells();
 
     std::cout << "mission local traversability map tests passed\n";
     return 0;

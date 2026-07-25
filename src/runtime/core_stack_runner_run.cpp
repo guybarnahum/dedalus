@@ -750,14 +750,22 @@ bool CoreStackRunner::run_once() {
             static_cast<std::int64_t>(mission_local_obstacle_map_snapshot.cells.size()), /*is_count=*/true);
     }
 
-    // Background-assimilate the current cumulative obstacle map into the
-    // traversability map so it builds in-flight, not only at landing.
-    // Enqueue only when the map has cells; tick() unconditionally (empty
-    // queue is a cheap no-op).  finalize_mission_map_after_landing() handles
-    // the final enqueue + high-priority flush at shutdown.
+    // Background-assimilate this tick's new/changed obstacle-map cells into
+    // the traversability map so it builds in-flight, not only at landing.
+    // Enqueue only the delta (cells touched since the last drain), not the
+    // full never-evicted history: update_from_mission_obstacle_map's merge
+    // loop scans every cell it is handed, so feeding it the full snapshot
+    // every tick makes that scan cost grow with total mission history
+    // instead of with new evidence.  finalize_mission_map_after_landing()
+    // independently enqueues one final full snapshot() at landing, so a
+    // delta that never gets drained (e.g. queue overflow) cannot cause
+    // permanent evidence loss — it is resynced there.
     start = SteadyClock::now();
-    if (!mission_local_obstacle_map_snapshot.cells.empty()) {
-        mission_map_assimilator_.enqueue_mission_obstacle_map(mission_local_obstacle_map_snapshot);
+    auto mission_local_obstacle_map_delta = mission_local_obstacle_map_.drain_delta();
+    mission_local_obstacle_map_delta.sensor_origin_map   = mission_local_obstacle_map_snapshot.sensor_origin_map;
+    mission_local_obstacle_map_delta.sensor_origin_valid = mission_local_obstacle_map_snapshot.sensor_origin_valid;
+    if (!mission_local_obstacle_map_delta.cells.empty()) {
+        mission_map_assimilator_.enqueue_mission_obstacle_map(mission_local_obstacle_map_delta);
     }
     const auto drained_before = mission_map_assimilator_.status().drained_snapshot_count;
     mission_map_assimilator_.tick(frame->timestamp);
@@ -788,12 +796,14 @@ bool CoreStackRunner::run_once() {
     static constexpr std::uint64_t kTravPublishMinIntervalNs = 2'000'000'000ULL;
     if (trav_map_updated) {
         start = SteadyClock::now();
-        // Filtered, unsorted snapshot for the L2 planning-map update.
-        // Excludes pure free-space cells (never observed as occupied, only
-        // decremented by ray-casting) that have no L2 counterpart, avoiding
-        // O(N_free) wasted hash lookups in update_from_traversability.
-        // Also skips the O(N log N) sort that is only needed by the SSE viewer.
-        auto trav_snapshot = mission_map_assimilator_.traversability_map().snapshot_for_planning_map();
+        // Delta (cells touched since the last drain), not L1's full history:
+        // update_from_traversability scans every cell it is handed, so this
+        // keeps L2's ingest cost proportional to new evidence per tick rather
+        // than total L1 size.  Also excludes pure free-space cells (never
+        // observed as occupied, only decremented by ray-casting) that have
+        // no L2 counterpart, and skips the O(N log N) sort only needed by
+        // the SSE viewer's snapshot().
+        auto trav_snapshot = mission_map_assimilator_.mutable_traversability_map().drain_delta_for_planning_map();
         if (timing_writer_) {
             const auto& l1_summary = mission_map_assimilator_.traversability_map().summary();
             timing_writer_->record_stage(

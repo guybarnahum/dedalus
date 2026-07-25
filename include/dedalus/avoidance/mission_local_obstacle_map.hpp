@@ -4,6 +4,7 @@
 #include <cstdint>
 #include <string>
 #include <unordered_map>
+#include <unordered_set>
 #include <vector>
 
 #include "dedalus/core/types.hpp"
@@ -108,6 +109,15 @@ public:
         TimePoint now,
         const MapFrameId& fallback_map_frame_id = {});
 
+    // Returns a snapshot containing only the cells inserted or updated since
+    // the last call to drain_delta() (or construction/reset()), then clears
+    // the tracked set. config/summary mirror the full snapshot; only .cells
+    // is restricted. This map never evicts, so its full snapshot() grows
+    // with total mission history — callers that only need to propagate new
+    // evidence forward (e.g. feeding Level 1) should use this instead of
+    // snapshot() to scale with new evidence per tick, not total history.
+    MissionLocalObstacleMapSnapshot drain_delta();
+
     void reset();
 
 private:
@@ -143,6 +153,10 @@ private:
     std::unordered_map<CellKey, std::size_t, CellKeyHash> cell_index_;
     bool has_last_update_{false};
     TimePoint last_update_{};
+
+    // Keys inserted or updated since the last drain_delta() call. Accumulates
+    // across update() calls (deduplicated) until drained.
+    std::unordered_set<CellKey, CellKeyHash> touched_keys_since_drain_;
 };
 
 }  // namespace dedalus

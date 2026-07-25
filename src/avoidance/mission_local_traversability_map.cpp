@@ -177,6 +177,7 @@ void MissionLocalTraversabilityMap::update_from_mission_obstacle_map(
         const auto key = key_for_point(source.center_map);
         const auto existed = cell_index_.find(key) != cell_index_.end();
         auto& cell = ensure_cell(key);
+        touched_keys_since_drain_.insert(key);
         if (existed) {
             ++summary_.updated_cell_count;
         } else {
@@ -267,7 +268,9 @@ void MissionLocalTraversabilityMap::update_from_mission_obstacle_map(
                     source.center_map.x + nx * step,
                     source.center_map.y + ny * step,
                     source.center_map.z + nz * step};
-                auto& spread_cell = ensure_cell(key_for_point(pt));
+                const auto spread_key = key_for_point(pt);
+                auto& spread_cell = ensure_cell(spread_key);
+                touched_keys_since_drain_.insert(spread_key);
                 spread_cell.log_odds = std::clamp(
                     spread_cell.log_odds + (source.confidence * weight * config_.log_odds_occupied_increment),
                     -config_.log_odds_max, config_.log_odds_max);
@@ -328,6 +331,7 @@ void MissionLocalTraversabilityMap::update_from_mission_obstacle_map(
                 const auto idx_it = cell_index_.find(key);
                 if (idx_it == cell_index_.end()) { continue; }
                 auto& cell = cells_[idx_it->second].cell;
+                touched_keys_since_drain_.insert(key);
                 cell.log_odds = std::clamp(
                     cell.log_odds - (source.confidence * config_.log_odds_free_decrement),
                     -config_.log_odds_max, config_.log_odds_max);
@@ -395,6 +399,7 @@ void MissionLocalTraversabilityMap::update_from_mission_obstacle_map(
                 const auto idx_it = cell_index_.find(key);
                 if (idx_it == cell_index_.end()) { continue; }
                 auto& cell = cells_[idx_it->second].cell;
+                touched_keys_since_drain_.insert(key);
                 cell.log_odds = std::clamp(
                     cell.log_odds - (confidence * config_.log_odds_free_decrement),
                     -config_.log_odds_max, config_.log_odds_max);
@@ -637,24 +642,29 @@ MissionLocalTraversabilityMapSnapshot MissionLocalTraversabilityMap::snapshot(
     return result;
 }
 
-MissionLocalTraversabilityMapSnapshot MissionLocalTraversabilityMap::snapshot_for_planning_map() const {
+MissionLocalTraversabilityMapSnapshot MissionLocalTraversabilityMap::drain_delta_for_planning_map() {
     MissionLocalTraversabilityMapSnapshot result;
     result.config = config_;
     result.summary = summary_;
-    for (const auto& stored : cells_) {
+
+    for (const auto& key : touched_keys_since_drain_) {
+        const auto found = cell_index_.find(key);
+        if (found == cell_index_.end()) {
+            continue;
+        }
         // Skip cells never observed as an obstacle endpoint (occupied_hits_capped == 0).
         // This covers:
         //  • Pure ray-cast free-space cells (log_odds < 0)  — never create L2 entries.
         //  • Endpoint-spread / unknown cells (log_odds ≈ 0) — never create L2 entries.
         // L2 planning-map cells are only ever created from occupied L1 cells, so
-        // cells with hits == 0 cannot have a L2 counterpart. Including them causes
-        // O(N_hits0) wasted hash lookups in update_from_traversability.
-        // No sort needed: planning-map iteration is order-independent.
-        if (stored.cell.occupied_hits_capped == 0U) {
+        // cells with hits == 0 cannot have a L2 counterpart.
+        if (cells_[found->second].cell.occupied_hits_capped == 0U) {
             continue;
         }
-        result.cells.push_back(stored.cell);
+        result.cells.push_back(cells_[found->second].cell);
     }
+    touched_keys_since_drain_.clear();
+
     return result;
 }
 
@@ -698,6 +708,7 @@ void MissionLocalTraversabilityMap::reset() {
     summary_ = MissionLocalTraversabilityMapSummary{};
     last_update_stats_ = MissionLocalTraversabilityMapUpdateStats{};
     cross_check_cursor_ = 0U;
+    touched_keys_since_drain_.clear();
 }
 
 }  // namespace dedalus

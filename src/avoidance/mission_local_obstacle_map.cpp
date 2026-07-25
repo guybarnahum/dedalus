@@ -241,6 +241,8 @@ MissionLocalObstacleMapSnapshot MissionLocalObstacleMap::update(
     }
 
     for (const auto& update : compacted_updates) {
+        touched_keys_since_drain_.insert(update.key);
+
         auto found_index = cell_index_.find(update.key);
         if (found_index == cell_index_.end()) {
             MissionLocalObstacleCell cell;
@@ -301,12 +303,30 @@ MissionLocalObstacleMapSnapshot MissionLocalObstacleMap::update(
     return snapshot();
 }
 
+MissionLocalObstacleMapSnapshot MissionLocalObstacleMap::drain_delta() {
+    MissionLocalObstacleMapSnapshot result;
+    result.config = config_;
+    result.summary = summary_;
+
+    result.cells.reserve(touched_keys_since_drain_.size());
+    for (const auto& key : touched_keys_since_drain_) {
+        const auto found = cell_index_.find(key);
+        if (found != cell_index_.end()) {
+            result.cells.push_back(cells_[found->second].cell);
+        }
+    }
+    touched_keys_since_drain_.clear();
+
+    return result;
+}
+
 void MissionLocalObstacleMap::reset() {
     cells_.clear();
     cell_index_.clear();
     summary_ = MissionLocalObstacleMapSummary{};
     has_last_update_ = false;
     last_update_ = TimePoint{};
+    touched_keys_since_drain_.clear();
 }
 
 }  // namespace dedalus

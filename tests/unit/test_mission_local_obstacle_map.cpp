@@ -194,6 +194,43 @@ void snapshot_cell_limit_returns_highest_priority_cells() {
     assert(limited.summary.observed_cell_count == 3U);
 }
 
+void drain_delta_returns_only_recently_touched_cells_and_clears_between_calls() {
+    MissionLocalObstacleMap map(MissionLocalObstacleMapConfig{});
+
+    map.update(
+        {occupied_evidence(Vec3{1.1, -0.2, 0.3})},
+        at_ns(1000),
+        map_frame("mission_local"));
+
+    const auto delta = map.drain_delta();
+    assert(delta.cells.size() == 1U);
+    assert(delta.cells.front().occupied);
+
+    // Draining again before any new update() returns nothing.
+    const auto empty_delta = map.drain_delta();
+    assert(empty_delta.cells.empty());
+
+    // A second, disjoint update only surfaces the newly touched cell.
+    map.update(
+        {occupied_evidence(Vec3{5.1, -0.2, 0.3})},
+        at_ns(2000),
+        map_frame("mission_local"));
+    const auto second_delta = map.drain_delta();
+    assert(second_delta.cells.size() == 1U);
+
+    // The full snapshot still reflects all cells ever observed, unaffected by draining.
+    assert(map.snapshot().cells.size() == 2U);
+}
+
+void drain_delta_accumulates_across_multiple_updates_before_drain() {
+    MissionLocalObstacleMap map(MissionLocalObstacleMapConfig{});
+
+    map.update({occupied_evidence(Vec3{1.1, 0.1, 0.1})}, at_ns(1000), map_frame("mission_local"));
+    map.update({occupied_evidence(Vec3{9.1, 0.1, 0.1})}, at_ns(2000), map_frame("mission_local"));
+
+    assert(map.drain_delta().cells.size() == 2U);
+}
+
 }  // namespace
 
 int main() {
@@ -204,6 +241,8 @@ int main() {
     decay_reduces_occupied_state();
     evidence_from_other_map_frame_is_ignored();
     snapshot_cell_limit_returns_highest_priority_cells();
+    drain_delta_returns_only_recently_touched_cells_and_clears_between_calls();
+    drain_delta_accumulates_across_multiple_updates_before_drain();
 
     std::cout << "mission local obstacle map tests passed\n";
     return 0;

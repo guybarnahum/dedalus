@@ -5,6 +5,7 @@
 #include <limits>
 #include <string>
 #include <unordered_map>
+#include <unordered_set>
 #include <vector>
 
 #include "dedalus/avoidance/mission_local_obstacle_map.hpp"
@@ -171,7 +172,7 @@ struct MissionLocalTraversabilityMapUpdateStats {
     // Of this tick's new_cell_count, how many came from the endpoint-spread pass
     // (ensure_cell() on synthetic points beyond the observed endpoint) rather than
     // from the main merge loop's real evidence. Spread-created cells always have
-    // occupied_hits_capped == 0, so they never reach L2 via snapshot_for_planning_map(),
+    // occupied_hits_capped == 0, so they never reach L2 via drain_delta_for_planning_map(),
     // but they do inflate cells_ (and every O(N) pass over it) permanently, since L1
     // has no eviction.
     std::size_t spread_created_cell_count{0U};
@@ -216,11 +217,14 @@ public:
 
     MissionLocalTraversabilityMapSnapshot snapshot(std::size_t max_cells = 0U) const;
 
-    // Filtered unsorted snapshot for the L2 planning-map update path.
-    // Excludes pure free-space cells (never observed as occupied, only decremented
-    // by ray-casting) that have no L2 counterpart — avoiding O(N_free) wasted hash
-    // lookups in update_from_traversability.  Does not sort by traversability cost.
-    MissionLocalTraversabilityMapSnapshot snapshot_for_planning_map() const;
+    // Cells touched (inserted or updated by the merge loop, endpoint spread,
+    // Stage 2, or Stage 2b) since the last call to this method (or
+    // construction/reset()). Excludes pure free-space cells (never observed
+    // as occupied, only decremented by ray-casting) that have no L2
+    // counterpart (occupied_hits_capped == 0). Clears the tracked set. Lets
+    // the L2 planning-map update scale with new evidence per tick instead of
+    // re-scanning L1's entire (never-evicted) history every tick.
+    MissionLocalTraversabilityMapSnapshot drain_delta_for_planning_map();
 
     TraversabilityQueryResult query_sphere(const Vec3& center_map, double radius_m) const;
 
@@ -265,6 +269,11 @@ private:
     // Stage 2b cross-check state: cursor walks cells_ K steps per frame, wrapping at end.
     // No pool, no RNG — cells_ insertion order has no correlation with obstacle layout.
     std::size_t cross_check_cursor_{0U};
+
+    // Keys touched by any stage since the last drain_delta_for_planning_map()
+    // call. Accumulates across update_from_mission_obstacle_map() calls
+    // (deduplicated) until drained.
+    std::unordered_set<CellKey, CellKeyHash> touched_keys_since_drain_;
 };
 
 }  // namespace dedalus
