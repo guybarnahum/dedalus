@@ -155,6 +155,28 @@ struct MissionLocalTraversabilityMapSummary {
     double minimum_vertical_clearance_up_m{std::numeric_limits<double>::infinity()};
 };
 
+// Per-tick internal breakdown of update_from_mission_obstacle_map(), which bundles
+// several independently-costed passes (main merge, endpoint spread, Stage 2
+// free-cast, Stage 2b cross-check, recompute_derived_fields) into one call. The
+// caller only sees the combined duration via its own timer; these sub-timings let
+// a profiler attribute cost to a specific pass instead of inferring it from cell
+// counts. Mirrors MissionLocalPlanningMapUpdateStats's role for L2.
+struct MissionLocalTraversabilityMapUpdateStats {
+    std::int64_t merge_loop_us{0};
+    std::int64_t endpoint_spread_us{0};
+    std::int64_t stage2_freecast_us{0};
+    std::int64_t stage2b_crosscheck_us{0};
+    std::int64_t recompute_derived_fields_us{0};
+
+    // Of this tick's new_cell_count, how many came from the endpoint-spread pass
+    // (ensure_cell() on synthetic points beyond the observed endpoint) rather than
+    // from the main merge loop's real evidence. Spread-created cells always have
+    // occupied_hits_capped == 0, so they never reach L2 via snapshot_for_planning_map(),
+    // but they do inflate cells_ (and every O(N) pass over it) permanently, since L1
+    // has no eviction.
+    std::size_t spread_created_cell_count{0U};
+};
+
 struct MissionLocalTraversabilityMapSnapshot {
     MissionLocalTraversabilityMapConfig config;
     MissionLocalTraversabilityMapSummary summary;
@@ -183,6 +205,9 @@ public:
 
     const MissionLocalTraversabilityMapConfig& config() const noexcept { return config_; }
     const MissionLocalTraversabilityMapSummary& summary() const noexcept { return summary_; }
+    const MissionLocalTraversabilityMapUpdateStats& last_update_stats() const noexcept {
+        return last_update_stats_;
+    }
 
     void update_from_mission_obstacle_map(
         const MissionLocalObstacleMapSnapshot& obstacle_map,
@@ -232,6 +257,7 @@ private:
 
     MissionLocalTraversabilityMapConfig config_;
     MissionLocalTraversabilityMapSummary summary_;
+    MissionLocalTraversabilityMapUpdateStats last_update_stats_;
 
     std::vector<StoredCell> cells_;
     std::unordered_map<CellKey, std::size_t, CellKeyHash> cell_index_;

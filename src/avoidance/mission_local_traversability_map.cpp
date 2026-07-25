@@ -1,6 +1,7 @@
 #include "dedalus/avoidance/mission_local_traversability_map.hpp"
 
 #include <algorithm>
+#include <chrono>
 #include <cmath>
 #include <functional>
 #include <limits>
@@ -157,6 +158,9 @@ void MissionLocalTraversabilityMap::update_from_mission_obstacle_map(
     std::vector<std::size_t> new_cell_indices;
     new_cell_indices.reserve(obstacle_map.cells.size());
 
+    MissionLocalTraversabilityMapUpdateStats stats;
+    const auto merge_loop_start = std::chrono::steady_clock::now();
+
     for (std::size_t ci = 0U; ci != obstacle_map.cells.size(); ++ci) {
         const auto& source = obstacle_map.cells[ci];
         if (!source.observed || !finite_point(source.center_map)) {
@@ -221,6 +225,8 @@ void MissionLocalTraversabilityMap::update_from_mission_obstacle_map(
             ++cell.refresh_count_capped;
         }
     }
+    stats.merge_loop_us = std::chrono::duration_cast<std::chrono::microseconds>(
+        std::chrono::steady_clock::now() - merge_loop_start).count();
 
     // Stage 3: endpoint uncertainty spread (forward along ray, away from sensor).
     // For each evidence cell, spread decaying positive log-odds N voxels beyond the
@@ -234,6 +240,8 @@ void MissionLocalTraversabilityMap::update_from_mission_obstacle_map(
     // Run as a separate pass to avoid invalidating the `cell` reference held during
     // the main merge loop (ensure_cell may grow the cells_ vector).
     if (config_.enable_log_odds && obstacle_map.sensor_origin_valid && config_.endpoint_spread_voxels > 0U) {
+        const auto endpoint_spread_start = std::chrono::steady_clock::now();
+        const std::size_t cells_before_spread = cells_.size();
         const Vec3& origin = obstacle_map.sensor_origin_map;
 
         for (const auto ci : new_cell_indices) {
@@ -269,6 +277,9 @@ void MissionLocalTraversabilityMap::update_from_mission_obstacle_map(
                 weight *= config_.endpoint_spread_decay;
             }
         }
+        stats.spread_created_cell_count = cells_.size() - cells_before_spread;
+        stats.endpoint_spread_us = std::chrono::duration_cast<std::chrono::microseconds>(
+            std::chrono::steady_clock::now() - endpoint_spread_start).count();
     }
 
     // Stage 2: free-space ray-casting.
@@ -280,6 +291,7 @@ void MissionLocalTraversabilityMap::update_from_mission_obstacle_map(
     //
     // Skipped when sensor_origin_valid is false (default, tests, unknown origin).
     if (config_.enable_log_odds && obstacle_map.sensor_origin_valid) {
+        const auto stage2_start = std::chrono::steady_clock::now();
         const double step_m = config_.cell_size_m * 0.5;
         const Vec3& origin = obstacle_map.sensor_origin_map;
 
@@ -324,6 +336,8 @@ void MissionLocalTraversabilityMap::update_from_mission_obstacle_map(
                     std::max(cell.last_observed_timestamp_ns, now_ns);
             }
         }
+        stats.stage2_freecast_us = std::chrono::duration_cast<std::chrono::microseconds>(
+            std::chrono::steady_clock::now() - stage2_start).count();
     }
 
     // Stage 2b: POV cross-check — re-ray-cast K existing occupied cells per frame from
@@ -333,6 +347,7 @@ void MissionLocalTraversabilityMap::update_from_mission_obstacle_map(
     // every occupied cell is revisited once per ≈ occupied_cells / K frames.
     if (config_.enable_log_odds && obstacle_map.sensor_origin_valid &&
         config_.raycast_cross_check_per_frame > 0U && !cells_.empty()) {
+        const auto stage2b_start = std::chrono::steady_clock::now();
 
         const double step_m = config_.cell_size_m * 0.5;
         const Vec3& origin = obstacle_map.sensor_origin_map;
@@ -387,9 +402,17 @@ void MissionLocalTraversabilityMap::update_from_mission_obstacle_map(
                     std::max(cell.last_observed_timestamp_ns, now_ns);
             }
         }
+        stats.stage2b_crosscheck_us = std::chrono::duration_cast<std::chrono::microseconds>(
+            std::chrono::steady_clock::now() - stage2b_start).count();
     }
 
-    recompute_derived_fields(now, include_clearance);
+    {
+        const auto recompute_start = std::chrono::steady_clock::now();
+        recompute_derived_fields(now, include_clearance);
+        stats.recompute_derived_fields_us = std::chrono::duration_cast<std::chrono::microseconds>(
+            std::chrono::steady_clock::now() - recompute_start).count();
+    }
+    last_update_stats_ = stats;
 
     summary_.update_count += 1U;
     summary_.last_update_timestamp_ns = now_ns;
@@ -673,6 +696,7 @@ void MissionLocalTraversabilityMap::reset() {
     cells_.clear();
     cell_index_.clear();
     summary_ = MissionLocalTraversabilityMapSummary{};
+    last_update_stats_ = MissionLocalTraversabilityMapUpdateStats{};
     cross_check_cursor_ = 0U;
 }
 

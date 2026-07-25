@@ -15,6 +15,12 @@ namespace dedalus {
 struct PipelineStageTiming {
     std::string name;
     std::int64_t duration_us{0};
+    // true when duration_us is actually a repurposed dimensionless count (e.g. a
+    // cell count) rather than a microsecond duration. record_stage() callers pass
+    // this explicitly; the printer uses it to avoid dividing by 1000 and appending
+    // "ms" to a count, which silently misrepresents the value (e.g. a raw count of
+    // 254 vs a duration of 254ms look identical in the default stderr output).
+    bool is_count{false};
 };
 
 struct PipelineFrameProfile {
@@ -37,6 +43,9 @@ public:
 
     void begin_frame(const FramePacket& frame);
     void record_stage(std::string name, std::int64_t duration_us);
+    // is_count=true: value is a raw count (e.g. cell_count), not a microsecond
+    // duration. Printed and summarized without unit conversion.
+    void record_stage(std::string name, std::int64_t value, bool is_count);
     void set_measured_total(std::int64_t duration_us);
     void end_frame();
 

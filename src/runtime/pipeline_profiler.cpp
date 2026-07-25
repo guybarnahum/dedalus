@@ -88,11 +88,15 @@ void PipelineProfiler::begin_frame(const FramePacket& frame) {
 }
 
 void PipelineProfiler::record_stage(std::string name, const std::int64_t duration_us) {
+    record_stage(std::move(name), duration_us, /*is_count=*/false);
+}
+
+void PipelineProfiler::record_stage(std::string name, const std::int64_t value, const bool is_count) {
     if (!frame_open_) {
         return;
     }
 
-    current_frame_.stages.push_back(PipelineStageTiming{std::move(name), duration_us});
+    current_frame_.stages.push_back(PipelineStageTiming{std::move(name), value, is_count});
 }
 
 void PipelineProfiler::set_measured_total(const std::int64_t duration_us) {
@@ -110,7 +114,11 @@ void PipelineProfiler::end_frame() {
 
     std::int64_t accounted_total_us = 0;
     for (const auto& stage : current_frame_.stages) {
-        if (!is_attribution_only_stage(stage.name)) {
+        // Count-type stages (cell counts, etc.) are not microsecond durations and
+        // must not be summed into the frame's accounted time budget — doing so
+        // previously inflated accounted_total_us / accounting_delta_us by whatever
+        // raw count (e.g. a six-figure cell count) happened to be recorded that tick.
+        if (!stage.is_count && !is_attribution_only_stage(stage.name)) {
             accounted_total_us += stage.duration_us;
         }
     }
@@ -166,7 +174,15 @@ void PipelineProfiler::end_frame() {
             static_cast<long>(measured_total_us / 1000LL));
         for (const auto i : order) {
             const auto& s = current_frame_.stages[i];
-            if (s.duration_us >= 1'000LL) {
+            if (s.is_count) {
+                // Raw count (e.g. cell_count) — print as-is, no /1000, no "ms".
+                // Always shown regardless of magnitude: a count stage sorts by its
+                // own value among durations here only for ordering convenience, not
+                // because it competes for the frame time budget.
+                if (s.duration_us != 0LL) {
+                    std::fprintf(stderr, "  %s=%ld", s.name.c_str(), static_cast<long>(s.duration_us));
+                }
+            } else if (s.duration_us >= 1'000LL) {
                 std::fprintf(stderr, "  %s=%ldms",
                     s.name.c_str(), static_cast<long>(s.duration_us / 1000LL));
             }
