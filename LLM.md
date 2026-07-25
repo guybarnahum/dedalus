@@ -5,6 +5,9 @@ Historical notes and superseded context live in `LLM.back.md`.
 
 Repository: `guybarnahum/dedalus`
 
+For AirSim/PX4 launch and runtime commands (build, run_mission.sh, dedalus_viewer), see
+HANDOFF.md's "Runtime Commands" section — this document covers architecture and roadmap only.
+
 ---
 
 ## System Goals

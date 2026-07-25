@@ -19,7 +19,7 @@ Built specifically for **NVIDIA Jetson Orin** edge-compute modules, the system a
 * **Monocular 3D Perception:** Fuses a single camera feed with Visual-Inertial Odometry (VIO) and YOLO geometric priors to extract 3D Cartesian coordinates from 2D images.
 * **Faction-Aware Tracking:** Custom YOLO11 detector categorizes dynamic entities as Friend, Neutral, or Foe.
 * **Persistent World Model:** Extrapolates trajectories of dynamic targets via Extended Kalman Filters (EKF), maintaining lock during severe occlusions.
-* **Behavior Tree Intelligence:** Evaluates complex geometric triggers defined in `behaviors.yaml` to dynamically switch flight goals (Attract, Repulse, Circle, Intercept).
+* **Behavior Tree Intelligence:** Evaluates complex geometric triggers defined in per-mission behavior specs under `config/behaviors/` (wired via `mission_options.behavior_spec_path`) to dynamically switch flight goals (Attract, Repulse, Circle, Intercept).
 
 ## Runtime Dataflow
 
@@ -79,30 +79,11 @@ To guarantee stability and prevent hardware loss, Dedalus enforces a strict sepa
 The Virtual Proving Ground (`simulation/` directory) provides a complete high-fidelity environment for testing autonomous flight logic before risking physical hardware.
 
 ### Quick Start (AWS EC2)
-1. **Provision:** Follow [simulation/INSTALL.md](simulation/INSTALL.md) to bootstrap a `g6.2xlarge` GPU instance.
-2. **Launch:** Connect via NICE DCV and run:
-   ```bash
-   cd ~/dedalus/simulation/airsim && ./run.sh AirSimNH
-   ```
-3. **Mission with obstacle memory** (provide config + region, everything else auto-derives):
-   ```bash
-   # Set once per site — geo-anchor for the persistent L2 obstacle map.
-   export DEDALUS_SITE_ID=airsim_47.641N_122.140W
-
-   # Launch mission. --output-dir, mission-id, and L2 DB path all auto-derive.
-   simulation/airsim/run_mission.sh \
-     --config config/runs/airsim_circle_airsim_gt.yaml \
-     --output-dir out/circle_airsim_gt \
-     --pipeline-timing \
-     --tail
-
-   # Open viewer in another terminal (same DEDALUS_SITE_ID picks up L2 map).
-   DEDALUS_SITE_ID=airsim_47.641N_122.140W \
-   ./build-staging/apps/dedalus_viewer \
-     --host 127.0.0.1 --port 47770 \
-     --http-port 8090 --static-root build-staging
-   ```
-   Output lands in `out/<output-dir>/`. L2 obstacle map accumulates in `maps/$DEDALUS_SITE_ID/l2_map.db`.
+1. **Provision:** Follow [INSTALL.md](INSTALL.md) to bootstrap a `g6.2xlarge` GPU instance.
+2. **Runtime — launch, flight tests, full missions with obstacle memory, viewer:** Follow
+   [simulation/airsim/INSTALL.md](simulation/airsim/INSTALL.md), the canonical guide for
+   everything after provisioning (`run.sh`, `test-flight.py`, `run_mission.sh`,
+   `dedalus_viewer`).
 
 ### Trajectory-Based Flight Testing
 
@@ -152,24 +133,27 @@ Trajectories define multi-segment flight sequences with rate-controlled playback
 
 **Interactive Testing:**
 ```bash
+# Run from simulation/airsim/ (test-flight.py lives under scripts/):
+cd simulation/airsim
+
 # Basic flight test with default 10s hover trajectory
-python test-flight.py
+python scripts/test-flight.py
 
 # Custom trajectory with explicit control mode
-python test-flight.py --control px4 --trajectory my_trajectory.json
+python scripts/test-flight.py --control px4 --trajectory my_trajectory.json
 
 # MAVLink with climb verification enabled
-python test-flight.py --control mavlink --mavlink-endpoint 127.0.0.1:14550
+python scripts/test-flight.py --control mavlink --mavlink-endpoint 127.0.0.1:14550
 
 # Real-time diagnostics (verbose PX4 shell output)
-python test-flight.py --control px4 --px4-tmux-target dedalus-sim:px4
+python scripts/test-flight.py --control px4 --px4-tmux-target dedalus-sim:px4
 ```
 
-See [simulation/README.md](simulation/README.md) for complete CLI reference and [simulation/INSTALL.md](simulation/INSTALL.md) for environment setup.
+See [simulation/README.md](simulation/README.md) for complete CLI reference and [simulation/airsim/INSTALL.md](simulation/airsim/INSTALL.md) for environment setup.
 
 ### Using AirSim Providers with the Core Stack
 
-The core stack uses config-driven provider composition. Provider configs live under `config/`. The active build directory is `build-staging/`.
+The core stack uses config-driven provider composition. Provider configs live under `config/`. The active build directory is `build-staging/`. See [API.md](API.md) for the full config-key and provider-class reference (`bridge_command`, `ghost_targets_source`, `flight_command_sink`, etc.).
 
 The CI-safe synthetic provider path:
 

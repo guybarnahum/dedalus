@@ -2,14 +2,14 @@
 
 This guide is intentionally focused on repository-level setup and provisioning.
 
-For simulation runtime operations (starting/stopping the sim, run modes, flight testing), use [simulation/INSTALL.md](simulation/INSTALL.md).
+For simulation runtime operations (starting/stopping the sim, run modes, flight testing), use [simulation/airsim/INSTALL.md](simulation/airsim/INSTALL.md).
 
 ## Scope of This Document
 
 This root install guide covers:
 - host and cloud prerequisites
 - repository checkout
-- environment bootstrap via [simulation/setup.sh](simulation/setup.sh)
+- environment bootstrap via [setup.sh](setup.sh)
 - verification that installation completed
 
 This root install guide does not cover:
@@ -43,7 +43,7 @@ cd dedalus
 Use the simulation bootstrap script to install dependencies and prepare the environment:
 
 ```bash
-./simulation/setup.sh --yes
+./setup.sh --yes
 ```
 
 What this step prepares at a high level:
@@ -72,12 +72,12 @@ ls "$HOME/dedalus/venv/bin/activate"
 dcv describe-session dedalus-sim --json
 
 # Verify simulation scripts exist
-ls simulation/setup.sh simulation/airsim/run.sh simulation/airsim/stop.sh simulation/cleanup.sh
+ls setup.sh cleanup.sh simulation/airsim/run.sh simulation/airsim/stop.sh
 ```
 
 ## 6. Next Step
 
-Proceed to [simulation/INSTALL.md](simulation/INSTALL.md) for runtime usage:
+Proceed to [simulation/airsim/INSTALL.md](simulation/airsim/INSTALL.md) for runtime usage:
 - starting the simulator
 - stopping the simulator (`stop.sh`)
 - reset/rebuild semantics (`cleanup.sh`)

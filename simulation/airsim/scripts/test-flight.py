@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 import airsim
+import sys
 import time
 import argparse
 import traceback
@@ -8,6 +9,9 @@ from pathlib import Path
 
 from pymavlink import mavutil
 
+# velocity_trajectory.py moved to tools/trajectory/ during the simulation/ layout
+# refactor (998f2b7); this script wasn't split from it, so it needs the path added.
+sys.path.insert(0, str(Path(__file__).resolve().parents[3] / "tools" / "trajectory"))
 from velocity_trajectory import (
     load_trajectory,
     segment_duration,

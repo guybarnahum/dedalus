@@ -591,29 +591,10 @@ cp build/viewer.html build-staging/viewer.html
 python3 tools/validation/validate-mission-unified-viewer.py build/viewer.html
 ```
 
-Start dedalus_viewer sidecar (live mode):
-```bash
-DEDALUS_SITE_ID=airsim_47.641N_122.140W \
-./build-staging/apps/dedalus_viewer \
-  --host 127.0.0.1 --port 47770 \
-  --http-port 8090 --static-root build-staging
-# L2 DB auto-derived: maps/$DEDALUS_SITE_ID/l2_map.db
-```
-
-Start AirSim mission:
-```bash
-DEDALUS_SITE_ID=airsim_47.641N_122.140W \
-simulation/airsim/run_mission.sh \
-  --config config/ci/core_stack_object_behavior_airsim_existing_object_circle.yaml \
-  --runtime-event-http-port 8080 \
-  --runtime-event-static-root build-staging
-```
-
-SSH browser access:
-```bash
-ssh -L 8090:127.0.0.1:8090 <ec2-host>
-open http://127.0.0.1:8090/
-```
+Starting AirSim, running a full mission (`run_mission.sh`), the `dedalus_viewer` sidecar,
+and SSH browser access are all covered in
+[simulation/airsim/INSTALL.md](simulation/airsim/INSTALL.md) — that document is the
+canonical AirSim runtime guide; don't duplicate its commands here.
 
 Git commit (FUSE lock):
 ```bash
