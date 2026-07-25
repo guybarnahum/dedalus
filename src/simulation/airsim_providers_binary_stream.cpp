@@ -254,7 +254,8 @@ std::optional<FramePacket> AirSimFrameSource::next_stream_binary_frame() {
             frame.depth_frame.has_value()
                 ? "frame_source.detail.depth_sidecar.present"
                 : "frame_source.detail.depth_sidecar.missing",
-            frame.depth_frame.has_value() ? static_cast<std::int64_t>(frame.depth_frame->depth_m.size()) : 0});
+            frame.depth_frame.has_value() ? static_cast<std::int64_t>(frame.depth_frame->depth_m.size()) : 0,
+            /*is_count=*/true});
         if (frame.depth_frame.has_value()) {
             std::int64_t valid_samples = 0;
             float min_depth = std::numeric_limits<float>::infinity();
@@ -266,11 +267,11 @@ std::optional<FramePacket> AirSimFrameSource::next_stream_binary_frame() {
                     max_depth = std::max(max_depth, depth);
                 }
             }
-            timings.push_back(FrameSourceTiming{"frame_source.detail.depth_sidecar.width", frame.depth_frame->width});
-            timings.push_back(FrameSourceTiming{"frame_source.detail.depth_sidecar.height", frame.depth_frame->height});
-            timings.push_back(FrameSourceTiming{"frame_source.detail.depth_sidecar.valid_samples", valid_samples});
-            timings.push_back(FrameSourceTiming{"frame_source.detail.depth_sidecar.min_mm", valid_samples > 0 ? static_cast<std::int64_t>(min_depth * 1000.0F) : 0});
-            timings.push_back(FrameSourceTiming{"frame_source.detail.depth_sidecar.max_mm", valid_samples > 0 ? static_cast<std::int64_t>(max_depth * 1000.0F) : 0});
+            timings.push_back(FrameSourceTiming{"frame_source.detail.depth_sidecar.width", frame.depth_frame->width, /*is_count=*/true});
+            timings.push_back(FrameSourceTiming{"frame_source.detail.depth_sidecar.height", frame.depth_frame->height, /*is_count=*/true});
+            timings.push_back(FrameSourceTiming{"frame_source.detail.depth_sidecar.valid_samples", valid_samples, /*is_count=*/true});
+            timings.push_back(FrameSourceTiming{"frame_source.detail.depth_sidecar.min_mm", valid_samples > 0 ? static_cast<std::int64_t>(min_depth * 1000.0F) : 0, /*is_count=*/true});
+            timings.push_back(FrameSourceTiming{"frame_source.detail.depth_sidecar.max_mm", valid_samples > 0 ? static_cast<std::int64_t>(max_depth * 1000.0F) : 0, /*is_count=*/true});
         }
     }
     frame.source_timings = std::move(timings);

@@ -227,11 +227,18 @@ bool CoreStackRunner::run_once() {
     if (timing_writer_) {
         std::int64_t frame_source_reported_io_us = 0;
         timing_writer_->begin_frame(*frame);
+        timing_writer_->set_external_wait_us(frame_source_wait_duration_us);
         timing_writer_->record_stage("frame_source.next_frame_wait", frame_source_wait_duration_us);
         timing_writer_->record_stage("runtime.frame_source_wall_wait", frame_source_wait_duration_us);
         for (const auto& source_timing : frame->source_timings) {
-            timing_writer_->record_stage(source_timing.name, source_timing.duration_us);
-            frame_source_reported_io_us += source_timing.duration_us;
+            timing_writer_->record_stage(source_timing.name, source_timing.duration_us, source_timing.is_count);
+            // Diagnostic fields (pixel counts, sample counts, depth range in
+            // mm) aren't durations — folding them in here previously made
+            // this "IO time" rollup report tens of seconds for a value that
+            // was actually a depth-range-in-millimeters count.
+            if (!source_timing.is_count) {
+                frame_source_reported_io_us += source_timing.duration_us;
+            }
         }
         timing_writer_->record_stage("runtime.frame_source_reported_io", frame_source_reported_io_us);
         timing_writer_->record_stage(

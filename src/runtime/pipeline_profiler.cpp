@@ -14,8 +14,19 @@ namespace {
 
 constexpr std::string_view kFrameSourceDetailPrefix = "frame_source.detail.";
 
+// Named stages that are intentional rollups of other stages recorded within
+// the same span (e.g. runtime.post_frame_compute wraps every stage timed
+// between "frame available" and "frame done"). Summing these into
+// accounted_total_us would double-count and make accounting_delta_us
+// meaningless. tools/mission/summarize-pipeline-profile.py independently
+// treats every "runtime."-prefixed stage the same way for its own leaf-stage
+// accounting; this keeps the profiler's own accounted_total_us consistent
+// with that.
 bool is_attribution_only_stage(const std::string& name) {
-    return name.rfind(std::string{kFrameSourceDetailPrefix}, 0U) == 0U;
+    if (name.rfind(std::string{kFrameSourceDetailPrefix}, 0U) == 0U) {
+        return true;
+    }
+    return name == "runtime.post_frame_compute";
 }
 
 std::string escape_json_string(const std::string& value) {
@@ -85,6 +96,7 @@ void PipelineProfiler::begin_frame(const FramePacket& frame) {
     current_frame_.frame_id = frame.frame_id.value;
     current_frame_.timestamp_ns = frame.timestamp.timestamp_ns;
     frame_open_ = true;
+    external_wait_us_ = 0;
 }
 
 void PipelineProfiler::record_stage(std::string name, const std::int64_t duration_us) {
@@ -105,6 +117,14 @@ void PipelineProfiler::set_measured_total(const std::int64_t duration_us) {
     }
 
     current_frame_.measured_total_us = duration_us;
+}
+
+void PipelineProfiler::set_external_wait_us(const std::int64_t duration_us) {
+    if (!frame_open_) {
+        return;
+    }
+
+    external_wait_us_ = duration_us;
 }
 
 void PipelineProfiler::end_frame() {
@@ -153,10 +173,18 @@ void PipelineProfiler::end_frame() {
     frame_open_ = false;
 
     // ── Slow-frame diagnostic ─────────────────────────────────────────────────
-    // When a frame exceeds the mission tick budget, print per-stage breakdown to
-    // stderr.  This directly explains what caused snapshot_stale / tick_overrun
-    // in the mission controller without requiring log correlation.
-    if (measured_total_us >= frame_budget_us_) {
+    // Gate on compute time alone (measured_total_us minus time blocked on an
+    // external frame source, e.g. AirSim rendering + network transfer), not
+    // raw wall time. That wait is bounded by the external producer's own
+    // cadence, not by anything this pipeline controls on this tick — gating
+    // on raw total fires on nearly every frame whenever the source is simply
+    // slower than the mission tick budget, drowning out the frames where our
+    // own processing is the actual bottleneck.  This directly explains what
+    // caused snapshot_stale / tick_overrun in the mission controller without
+    // requiring log correlation.
+    const std::int64_t compute_only_us =
+        std::max<std::int64_t>(0, measured_total_us - external_wait_us_);
+    if (compute_only_us >= frame_budget_us_) {
         // Sort indices by duration descending; skip attribution-only sub-stages.
         std::vector<std::size_t> order;
         order.reserve(current_frame_.stages.size());
@@ -169,9 +197,11 @@ void PipelineProfiler::end_frame() {
             return current_frame_.stages[a].duration_us > current_frame_.stages[b].duration_us;
         });
 
-        std::fprintf(stderr, "[PipelineSlow] frame=%s total=%ldms",
+        std::fprintf(stderr, "[PipelineSlow] frame=%s compute=%ldms (total=%ldms wait=%ldms)",
             current_frame_.frame_id.c_str(),
-            static_cast<long>(measured_total_us / 1000LL));
+            static_cast<long>(compute_only_us / 1000LL),
+            static_cast<long>(measured_total_us / 1000LL),
+            static_cast<long>(external_wait_us_ / 1000LL));
         for (const auto i : order) {
             const auto& s = current_frame_.stages[i];
             if (s.is_count) {

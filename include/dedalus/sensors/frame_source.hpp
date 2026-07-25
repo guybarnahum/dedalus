@@ -22,6 +22,13 @@ struct ImageView {
 struct FrameSourceTiming {
     std::string name;
     std::int64_t duration_us{0};
+    // true when duration_us is actually a repurposed diagnostic value (pixel
+    // count, sample count, depth range in mm) rather than a microsecond
+    // duration — mirrors PipelineStageTiming::is_count. Must be set for any
+    // entry that isn't a real elapsed-time measurement, so profilers summing
+    // these into an I/O-time rollup don't fold e.g. a depth range in mm into
+    // a "duration".
+    bool is_count{false};
 };
 
 struct CameraIntrinsics {

@@ -47,6 +47,14 @@ public:
     // duration. Printed and summarized without unit conversion.
     void record_stage(std::string name, std::int64_t value, bool is_count);
     void set_measured_total(std::int64_t duration_us);
+    // Portion of measured_total_us spent blocked waiting on an external,
+    // out-of-process frame source (e.g. AirSim rendering + network transfer)
+    // rather than in our own pipeline compute. The slow-frame diagnostic
+    // gates on (measured_total_us - external_wait_us), not raw wall time, so
+    // a frame that's merely waiting on a slow external producer — bounded by
+    // that producer's own cadence, not by anything our pipeline controls —
+    // doesn't trip the alarm. Defaults to 0 (no adjustment) if never called.
+    void set_external_wait_us(std::int64_t duration_us);
     void end_frame();
 
 private:
@@ -54,6 +62,7 @@ private:
     std::ofstream output_;
     PipelineFrameProfile current_frame_;
     bool frame_open_{false};
+    std::int64_t external_wait_us_{0};
 
     std::int64_t frame_budget_us_;  // slow-frame diagnostic threshold, derived from tick_hz
 

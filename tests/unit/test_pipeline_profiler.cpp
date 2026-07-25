@@ -121,5 +121,44 @@ int main() {
     }
 
     std::filesystem::remove_all(output_dir);
+
+    // --- runtime.post_frame_compute overlap exclusion test ---
+    // runtime.post_frame_compute (like frame_source.detail.*) is a rollup that
+    // intentionally overlaps finer-grained stages recorded within the same
+    // span. It must be excluded from accounted_total_us, or a fully-accounted
+    // frame would appear to have accounted MORE time than it actually took.
+    const auto overlap_profile_path = output_dir / "overlap_pipeline_profile.jsonl";
+    {
+        dedalus::PipelineProfiler overlap_profiler{overlap_profile_path};
+        dedalus::FramePacket overlap_frame;
+        overlap_frame.frame_id = dedalus::FrameId{"frame_overlap"};
+        overlap_frame.timestamp = dedalus::TimePoint{111111111};
+        overlap_profiler.begin_frame(overlap_frame);
+        overlap_profiler.record_stage("leaf_stage", 1000);
+        overlap_profiler.record_stage("runtime.post_frame_compute", 1000);  // overlaps leaf_stage
+        overlap_profiler.set_measured_total(1000);
+        overlap_profiler.end_frame();
+    }
+    {
+        const auto overlap_profile = read_text_file(overlap_profile_path);
+        if (overlap_profile.find("\"accounted_total_us\":1000,") == std::string::npos) {
+            std::cerr << "overlap exclusion test: expected accounted_total_us=1000 (leaf_stage only), got:\n"
+                      << overlap_profile << "\n";
+            return 1;
+        }
+        if (overlap_profile.find("\"accounting_delta_us\":0,") == std::string::npos) {
+            std::cerr << "overlap exclusion test: expected accounting_delta_us=0, got:\n"
+                      << overlap_profile << "\n";
+            return 1;
+        }
+        if (overlap_profile.find("\"runtime.post_frame_compute\":1000") == std::string::npos) {
+            std::cerr << "overlap exclusion test: raw runtime.post_frame_compute value must still be "
+                         "written to the JSONL (consumed by tools/mission/summarize-pipeline-profile.py), got:\n"
+                      << overlap_profile << "\n";
+            return 1;
+        }
+    }
+
+    std::filesystem::remove_all(output_dir);
     return 0;
 }
