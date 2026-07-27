@@ -1,27 +1,40 @@
 #!/usr/bin/env python3
 """Report L3/ESDF catch-up behavior from a Dedalus pipeline profiler JSONL.
 
-L3 is a lagging cache of L2, kept up to date by a bounded per-tick catch-up
-step (CoreStackRunner::run_once(), see esdf_catchup_budget_us /
-esdf.catchup_budget_us). That step only shows up in [PipelineSlow] terminal
-output when it's slow enough to blow the frame budget -- which by design it
-almost never should be. This tool reads every frame instead, so gradual
-drift or a growing backlog is visible even when nothing ever printed to
-stderr.
+L3 is a lagging cache of L2, kept up to date by two independent sources in
+CoreStackRunner::run_once():
+  - L2 value changes, pulled as one coalesced delta at most once per
+    kESDFValueCatchupMinIntervalUs (default 1s) -- NOT every tick.
+    update_incremental()'s cost is dominated by an unindexed scan over all
+    of L2 (MissionLocalPlanningMap::query_occupied_ts_in_box()), which
+    doesn't shrink with a smaller window, so this is throttled rather than
+    attempted every tick.
+  - L2 residency changes (cells slide_window() loads from disk), queued as
+    they occur and drained up to esdf_catchup_budget_us_ (default 20ms;
+    esdf.catchup_budget_us) of wall-clock time per tick. Not throttled the
+    same way -- slides are infrequent enough already that this doesn't add
+    up the way the every-tick value-delta did.
+
+Both only show up in [PipelineSlow] terminal output when slow enough to
+blow the frame budget -- which by design they almost never should be. This
+tool reads every frame instead, so gradual drift or a growing backlog is
+visible even when nothing ever printed to stderr.
 
 Stages read (all optional -- absent unless the catch-up step actually did
 something that tick):
-  esdf.catchup_us       time spent draining catch-up work this tick
-  esdf.pending_batches  queue depth after this tick's drain -- newly-loaded
-                        residency cells (from slide_window()) plus tiled L2
-                        value-delta chunks (a single tick's own delta can
-                        span the whole sensing footprint, so it's split into
-                        spatially-compact tiles before queuing)
-  esdf.publish          time spent serializing + sending to SSE
-  esdf.cell_count       L3 cell count, sampled only on esdf.publish ticks
-                        (throttled to the same ~2s cadence as L1/L2) --
-                        expect mostly blank rows in the per-frame table
-                        below; that's normal.
+  esdf.catchup_us                 time spent applying catch-up work this
+                                   tick (residency batches, and/or the
+                                   value-delta on ticks where its throttle
+                                   interval has elapsed)
+  esdf.pending_residency_batches  residency queue depth after this tick's
+                                   drain -- expect this near 0 most of the
+                                   time; growing means slides are outpacing
+                                   esdf_catchup_budget_us_
+  esdf.publish                    time spent serializing + sending to SSE
+  esdf.cell_count                 L3 cell count, sampled only on esdf.publish
+                                   ticks (throttled to the same ~2s cadence
+                                   as L1/L2) -- expect mostly blank rows in
+                                   the per-frame table below; that's normal.
 
 Usage:
   python3 tools/mission/esdf-catchup-report.py out/circle_airsim_gt/profile/pipeline_*.jsonl
@@ -86,24 +99,26 @@ def main() -> int:
 
     catchup_us = [v for f in frames if (v := stage(f, "esdf.catchup_us")) is not None]
     if catchup_us:
-        print(f"esdf.catchup_us       n={len(catchup_us)}/{n} frames applied something  "
+        print(f"esdf.catchup_us                 n={len(catchup_us)}/{n} frames applied something  "
               f"mean={statistics.mean(catchup_us):.1f}us  "
               f"p50={statistics.median(catchup_us):.1f}us  "
               f"max={max(catchup_us):.1f}us")
+        print("  (expect n well below the frame count -- the value-delta half is throttled to "
+              "~once/sec; a count close to n means the throttle isn't taking effect)")
     else:
-        print("esdf.catchup_us       never recorded -- catch-up step never applied "
+        print("esdf.catchup_us                 never recorded -- catch-up step never applied "
               "anything (no L2 changes seen, or esdf_map_publisher_ not configured)")
 
-    pending = [v for f in frames if (v := stage(f, "esdf.pending_batches")) is not None]
+    pending = [v for f in frames if (v := stage(f, "esdf.pending_residency_batches")) is not None]
     if pending:
         trend = "draining/stable" if pending[-1] <= max(pending) / 2 or max(pending) <= 1 else "GROWING"
-        print(f"esdf.pending_batches  max={max(pending):.0f}  end={pending[-1]:.0f}  "
+        print(f"esdf.pending_residency_batches  max={max(pending):.0f}  end={pending[-1]:.0f}  "
               f"({trend} -- a backlog that keeps growing means esdf_catchup_budget_us is too small "
-              "for how fast tiles are being queued, or kESDFTileSizeM needs to be smaller)")
+              "for how fast slide_window() is loading new cells)")
 
     publish_us = [v for f in frames if (v := stage(f, "esdf.publish")) is not None]
     if publish_us:
-        print(f"esdf.publish          n={len(publish_us)} publishes over {n} frames  "
+        print(f"esdf.publish                    n={len(publish_us)} publishes over {n} frames  "
               f"mean={statistics.mean(publish_us):.1f}us  max={max(publish_us):.1f}us")
 
     print(f"\nDoes L3 track L1/L2 growth over the mission? (blank esdf_cells = no publish this row,\n"
@@ -123,7 +138,7 @@ def main() -> int:
         l2 = stage(f, "planning_map.cell_count")
         esdf_cells = stage(f, "esdf.cell_count")
         c_us = stage(f, "esdf.catchup_us")
-        pend = stage(f, "esdf.pending_batches")
+        pend = stage(f, "esdf.pending_residency_batches")
         print(f"{i:>6}  {fmt(l1):>9}  {fmt(l2):>9}  {fmt(esdf_cells):>10}  {fmt(c_us):>10}  {fmt(pend):>7}")
 
     return 0

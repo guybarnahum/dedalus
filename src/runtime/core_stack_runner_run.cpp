@@ -14,7 +14,6 @@
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
-#include <unordered_map>
 #include <unordered_set>
 #include <vector>
 
@@ -121,40 +120,17 @@ static constexpr double kESDFD0M = 5.0;
 // stored every kESDFSampleSpacingM metres, giving ~4× fewer cells than dense L3.
 static constexpr double kESDFSampleSpacingM = 2.0;
 
-// L3 catch-up tiling: a single tick's own L2 value-delta can already span the
-// camera's full sensing footprint (tens of metres wide at range), even when
-// only a handful of cells actually changed — update_incremental()'s cost
-// scales with its sub-window's bounding-box *volume*, not the number of dirty
-// cells, and one non-preemptible call over that whole footprint blew well
-// past the per-tick catch-up budget on every tick (measured: mean ~20ms,
-// max ~54ms, on 100% of frames in a real run). Splitting dirty positions into
-// tiles of this size lets the budgeted drain loop apply a few tiles per tick
-// and defer the rest, instead of paying for the whole footprint in one shot.
-// Large enough that update_incremental()'s own (d0_m + cell_size_m) margin
-// doesn't dominate the tile's cost; small enough that a full sensing
-// footprint reliably splits into multiple deferrable tiles.
-static constexpr double kESDFTileSizeM = 15.0;
-
-// Groups positions into tiles of kESDFTileSizeM × kESDFTileSizeM in the
-// horizontal plane (full vertical extent per tile — evidence is normally
-// ground-level and vertical_cell_size_m already coarsens Z). Empty input
-// yields no tiles.
-std::vector<std::vector<Vec3>> tile_positions(const std::vector<Vec3>& positions) {
-    std::unordered_map<std::int64_t, std::vector<Vec3>> tiles;
-    for (const auto& p : positions) {
-        const auto tx = static_cast<std::int32_t>(std::floor(p.x / kESDFTileSizeM));
-        const auto ty = static_cast<std::int32_t>(std::floor(p.y / kESDFTileSizeM));
-        const auto key = (static_cast<std::int64_t>(tx) << 32) |
-                          static_cast<std::uint32_t>(ty);
-        tiles[key].push_back(p);
-    }
-    std::vector<std::vector<Vec3>> result;
-    result.reserve(tiles.size());
-    for (auto& [key, pts] : tiles) {
-        result.push_back(std::move(pts));
-    }
-    return result;
-}
+// L3 catch-up: how often the L2 *value*-delta is pulled and applied.
+// update_incremental()'s cost is dominated by query_occupied_ts_in_box()'s
+// unindexed scan over *all* of L2 (see MissionLocalPlanningMap) — it doesn't
+// scale down with a smaller window, so splitting a tick's delta into smaller
+// pieces (tried first) only multiplies how many times that scan runs,
+// producing an ever-growing backlog instead of a bounded cost. Since L3 is
+// explicitly allowed to lag L2, pulling the delta at most this often —
+// coalescing everything since the last applied seq into one call — trades
+// that lag for a large reduction in total time spent on the scan (one ~20ms
+// scan per interval instead of one per tick).
+static constexpr std::int64_t kESDFValueCatchupMinIntervalUs = 1'000'000LL;
 
 // Derive the ESDF computation window from the actual in-memory L2 extent.
 // Returns false (and leaves *out unchanged) when L2 is empty.
@@ -831,7 +807,7 @@ bool CoreStackRunner::run_once() {
         auto slide_result = mission_local_planning_map_.slide_window(
             snapshot_for_annotation.ego.local_T_body.position);
         if (!slide_result.newly_loaded_positions.empty()) {
-            esdf_pending_batches_.push_back(
+            esdf_pending_residency_batches_.push_back(
                 std::move(slide_result.newly_loaded_positions));
         }
     } else {
@@ -1003,54 +979,62 @@ bool CoreStackRunner::run_once() {
     // ── Level 3 ESDF catch-up (every tick, independent of the L1/L2 throttle
     // above) ─────────────────────────────────────────────────────────────────
     // L3 is purely a cache of L2: every L2 change — value or residency — must
-    // eventually reach it, but the rate can lag. Two clearly separated halves:
+    // eventually reach it, but the rate can lag. Two independent sources:
     //
-    //   1. Enqueue (unconditional, cheap — grouping only, no EDT compute):
-    //      pull the L2 value-delta since esdf_last_l2_seq_ and split it into
-    //      kESDFTileSizeM tiles before queuing. A single tick's own delta can
-    //      already span the camera's whole sensing footprint (tens of
-    //      metres), even for a handful of changed cells — measured on a real
-    //      mission, applying that as one update_incremental() call cost
-    //      ~20ms on every single tick (update_incremental()'s cost scales
-    //      with its bounding-box volume, not cell count). Tiling turns one
-    //      unavoidably-large call into several small, independently
-    //      deferrable ones.
-    //   2. Drain (budgeted — the actual EDT compute): apply queued tiles via
-    //      update_incremental() up to esdf_catchup_budget_us_ (default 20ms;
-    //      esdf.catchup_budget_us, CoreStackRunnerConfig::esdf_catchup_budget_us)
-    //      of wall-clock time. Whatever doesn't fit stays queued for next
-    //      tick — never dropped, only deferred.
+    //   1. Value changes: pulled as one coalesced delta since the last
+    //      applied seq, at most once per kESDFValueCatchupMinIntervalUs
+    //      (default 1s) — NOT every tick. update_incremental()'s cost is
+    //      dominated by query_occupied_ts_in_box()'s unindexed scan over all
+    //      of L2 (see MissionLocalPlanningMap), which doesn't shrink with a
+    //      smaller window — splitting the delta into smaller pieces (tried
+    //      first) just multiplied how many times that scan ran, producing an
+    //      ever-growing backlog instead of bounded cost (measured: mean
+    //      ~20ms *every tick*, queue depth growing unboundedly, in a real
+    //      run). Throttling the pull instead trades lag — which L3 already
+    //      tolerates — for a large cut in total time spent on the scan.
+    //   2. Residency changes: cells slide_window() loads from disk carry
+    //      their original write_seq, so they never appear in the value-delta
+    //      above — queued separately as they occur and drained here, up to
+    //      esdf_catchup_budget_us_ (default 20ms; esdf.catchup_budget_us,
+    //      CoreStackRunnerConfig::esdf_catchup_budget_us) of wall-clock time.
+    //      Not throttled the same way: slides are infrequent enough already
+    //      (tied to physical drone movement) that the per-call scan cost
+    //      doesn't add up the way the every-tick value-delta did.
     //
-    // esdf_last_l2_seq_ advances as soon as the delta is pulled+tiled+queued,
-    // not when it's actually applied — the positions are now "spoken for" by
-    // the queue, so re-pulling the same delta next tick would just duplicate
-    // work. Deliberately not gated on esdf_map_.cell_count() > 0U —
-    // update_incremental() works fine starting from an empty map (e.g. a
-    // fresh site with no prior-mission history), building L3 up from scratch
-    // as L2 grows instead of staying empty for the whole mission.
+    // esdf_last_l2_seq_ only advances once a value-delta pull has actually
+    // been applied (not merely attempted) — if a tick is throttled, next
+    // tick's delta still covers everything missed. Deliberately not gated on
+    // esdf_map_.cell_count() > 0U — update_incremental() works fine starting
+    // from an empty map (e.g. a fresh site with no prior-mission history),
+    // building L3 up from scratch as L2 grows instead of staying empty for
+    // the whole mission.
     if (esdf_map_publisher_) {
-        const std::uint64_t cur_l2_seq = mission_local_planning_map_.current_seq();
-        if (cur_l2_seq != esdf_last_l2_seq_) {
-            auto delta = mission_local_planning_map_.snapshot(esdf_last_l2_seq_);
-            std::vector<Vec3> dirty;
-            dirty.reserve(delta.cells.size());
-            for (const auto& c : delta.cells) {
-                dirty.push_back(c.center_map);
-            }
-            for (auto& tile : tile_positions(dirty)) {
-                esdf_pending_batches_.push_back(std::move(tile));
-            }
-            esdf_last_l2_seq_ = cur_l2_seq;
-        }
-
         const auto catchup_start = SteadyClock::now();
         bool applied_this_tick = false;
-        while (!esdf_pending_batches_.empty() &&
+
+        while (!esdf_pending_residency_batches_.empty() &&
                duration_us(catchup_start) < esdf_catchup_budget_us_) {
-            auto batch = std::move(esdf_pending_batches_.front());
-            esdf_pending_batches_.pop_front();
+            auto batch = std::move(esdf_pending_residency_batches_.front());
+            esdf_pending_residency_batches_.pop_front();
             esdf_map_.update_incremental(mission_local_planning_map_, batch, kESDFD0M);
             applied_this_tick = true;
+        }
+
+        const std::uint64_t cur_l2_seq = mission_local_planning_map_.current_seq();
+        if (cur_l2_seq != esdf_last_l2_seq_ &&
+            duration_us(esdf_last_value_catchup_time_) >= kESDFValueCatchupMinIntervalUs) {
+            auto delta = mission_local_planning_map_.snapshot(esdf_last_l2_seq_);
+            if (!delta.cells.empty()) {
+                std::vector<Vec3> dirty;
+                dirty.reserve(delta.cells.size());
+                for (const auto& c : delta.cells) {
+                    dirty.push_back(c.center_map);
+                }
+                esdf_map_.update_incremental(mission_local_planning_map_, dirty, kESDFD0M);
+                applied_this_tick = true;
+            }
+            esdf_last_l2_seq_ = cur_l2_seq;
+            esdf_last_value_catchup_time_ = SteadyClock::now();
         }
 
         if (applied_this_tick) {
@@ -1058,8 +1042,8 @@ bool CoreStackRunner::run_once() {
             if (timing_writer_) {
                 timing_writer_->record_stage("esdf.catchup_us", duration_us(catchup_start));
                 timing_writer_->record_stage(
-                    "esdf.pending_batches",
-                    static_cast<std::int64_t>(esdf_pending_batches_.size()),
+                    "esdf.pending_residency_batches",
+                    static_cast<std::int64_t>(esdf_pending_residency_batches_.size()),
                     /*is_count=*/true);
             }
         }
