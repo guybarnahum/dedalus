@@ -22,9 +22,9 @@ mission_options.obstacle_sensing.cameras.0.role: visual_obstacle_detector
 mission_options.obstacle_sensing.cameras.0.horizontal_fov_deg: 84
 mission_options.obstacle_sensing.cameras.0.vertical_fov_deg: 53.72
 mission_options.obstacle_sensing.cameras.0.near_range_m: 0.5
-mission_options.obstacle_sensing.cameras.0.far_range_m: 80
+mission_options.obstacle_sensing.cameras.0.far_range_m: 25
 mission_options.obstacle_sensing.cameras.0.min_reliable_range_m: 1
-mission_options.obstacle_sensing.cameras.0.max_reliable_range_m: 60
+mission_options.obstacle_sensing.cameras.0.max_reliable_range_m: 25
 mission_options.obstacle_sensing.cameras.0.body_T_camera_xyz_m: [0, 0, 0]
 mission_options.obstacle_sensing.cameras.0.body_T_camera_rpy_deg: [0, 0, 0]
 mission_options.obstacle_sensing.cameras.0.pointing_source: camera_pointing_intent

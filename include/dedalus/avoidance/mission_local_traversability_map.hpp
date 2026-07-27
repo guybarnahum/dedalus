@@ -76,6 +76,19 @@ struct MissionLocalTraversabilityMapConfig {
 
     double stale_after_seconds{300.0};
 
+    // Background sweep budget for recompute_derived_fields(): bounds its per-tick
+    // cost independent of total map size. Cells touched this tick (by the merge
+    // loop, endpoint spread, Stage 2, or Stage 2b) always get a full recompute.
+    // This many additional untouched cells get theirs too, via a round-robin
+    // cursor over cells_ (same idiom as raycast_cross_check_per_frame) — this is
+    // what advances age_score/stale/state and clearance for cells with no new
+    // evidence, so every cell is eventually revisited without an O(N) full-map
+    // pass every tick. Cells outside both sets keep their last-computed values,
+    // which remain exactly correct for log_odds-derived fields (unchanged without
+    // a touch) and merely lag on staleness/clearance — consistent with the
+    // existing TraversabilityCellState::Stale contract.
+    std::uint32_t derived_fields_sweep_per_frame{2000U};
+
     double required_clearance_m{1.5};
     double soft_clearance_m{3.0};
     double clearance_search_radius_m{6.0};
@@ -176,6 +189,13 @@ struct MissionLocalTraversabilityMapUpdateStats {
     // but they do inflate cells_ (and every O(N) pass over it) permanently, since L1
     // has no eviction.
     std::size_t spread_created_cell_count{0U};
+
+    // Number of cells recompute_derived_fields() actually touched this tick
+    // (evidence-touched ∪ background-sweep slice) — the bounded cost driver that
+    // replaced the old full cells_ scan. Compare against the map's total cell
+    // count (surfaced separately) to see the two diverge as a mission runs long:
+    // total keeps growing, this stays roughly flat.
+    std::size_t recompute_set_size{0U};
 };
 
 struct MissionLocalTraversabilityMapSnapshot {
@@ -256,7 +276,12 @@ private:
     MissionLocalTraversabilityCell& ensure_cell(const CellKey& key);
     const MissionLocalTraversabilityCell* cell_at_key(const CellKey& key) const;
 
-    void recompute_derived_fields(TimePoint now, bool include_clearance = true);
+    // Returns the number of cells actually recomputed this tick (for
+    // MissionLocalTraversabilityMapUpdateStats::recompute_set_size).
+    std::size_t recompute_derived_fields(
+        TimePoint now,
+        bool include_clearance,
+        const std::unordered_set<CellKey, CellKeyHash>& touched_this_tick);
     void refresh_summary();
 
     MissionLocalTraversabilityMapConfig config_;
@@ -269,6 +294,17 @@ private:
     // Stage 2b cross-check state: cursor walks cells_ K steps per frame, wrapping at end.
     // No pool, no RNG — cells_ insertion order has no correlation with obstacle layout.
     std::size_t cross_check_cursor_{0U};
+
+    // recompute_derived_fields() background sweep cursor — same round-robin idiom
+    // as cross_check_cursor_, walks cells_ derived_fields_sweep_per_frame steps per
+    // tick for cells not touched this tick.
+    std::size_t derived_fields_sweep_cursor_{0U};
+
+    // Indices into cells_ of every cell currently at-or-above occupied_threshold.
+    // Maintained incrementally by recompute_derived_fields() (only cells it
+    // revisits can change occupied status) so the clearance pass never has to
+    // rebuild this by scanning all of cells_.
+    std::unordered_set<std::size_t> occupied_cell_indices_;
 
     // Keys touched by any stage since the last drain_delta_for_planning_map()
     // call. Accumulates across update_from_mission_obstacle_map() calls

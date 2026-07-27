@@ -24,6 +24,6 @@ world_model: in_memory
 visual_onnx.depth_grid_cols: 40
 visual_onnx.depth_grid_rows: 22
 visual_onnx.min_depth_m: 0.5
-visual_onnx.max_depth_m: 60.0
-visual_onnx.voxel_size_m: 0.5
+visual_onnx.max_depth_m: 25.0
+visual_onnx.voxel_size_m: 1.0
 visual_onnx.max_evidence: 1024

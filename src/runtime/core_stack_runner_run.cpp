@@ -818,6 +818,9 @@ bool CoreStackRunner::run_once() {
             timing_writer_->record_stage(
                 "mission_map_assimilator.l1_total_cells",
                 l1_summary.cell_count, /*is_count=*/true);
+            timing_writer_->record_stage(
+                "mission_map_assimilator.l1_occupied_cells",
+                l1_summary.occupied_cell_count, /*is_count=*/true);
             // Previously computed every tick but never surfaced. Together these
             // show, per tick, how much of L1's total growth is genuinely new vs
             // re-touching existing cells, and how large the raw source snapshot
@@ -844,6 +847,13 @@ bool CoreStackRunner::run_once() {
             timing_writer_->record_stage(
                 "mission_map_assimilator.l1_spread_created_cells",
                 l1_stats.spread_created_cell_count, /*is_count=*/true);
+            // Bounded cost driver that replaced the old full-cells_ scan — compare
+            // against l1_total_cells over a mission to see the two diverge: total
+            // keeps growing, this stays roughly flat (touched-this-tick + the fixed
+            // background sweep budget).
+            timing_writer_->record_stage(
+                "mission_map_assimilator.l1_recompute_set_size",
+                l1_stats.recompute_set_size, /*is_count=*/true);
         }
 
         // ── Level 2: rebuild planning map ───────────────────────────────────

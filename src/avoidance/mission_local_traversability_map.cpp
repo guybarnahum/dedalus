@@ -158,6 +158,12 @@ void MissionLocalTraversabilityMap::update_from_mission_obstacle_map(
     std::vector<std::size_t> new_cell_indices;
     new_cell_indices.reserve(obstacle_map.cells.size());
 
+    // Cells touched by any stage during THIS call only — distinct from
+    // touched_keys_since_drain_, which accumulates across multiple ticks for the
+    // L2 delta drain. Feeds recompute_derived_fields()'s per-tick recompute set.
+    std::unordered_set<CellKey, CellKeyHash> touched_this_tick;
+    touched_this_tick.reserve(obstacle_map.cells.size());
+
     MissionLocalTraversabilityMapUpdateStats stats;
     const auto merge_loop_start = std::chrono::steady_clock::now();
 
@@ -178,6 +184,7 @@ void MissionLocalTraversabilityMap::update_from_mission_obstacle_map(
         const auto existed = cell_index_.find(key) != cell_index_.end();
         auto& cell = ensure_cell(key);
         touched_keys_since_drain_.insert(key);
+        touched_this_tick.insert(key);
         if (existed) {
             ++summary_.updated_cell_count;
         } else {
@@ -271,6 +278,7 @@ void MissionLocalTraversabilityMap::update_from_mission_obstacle_map(
                 const auto spread_key = key_for_point(pt);
                 auto& spread_cell = ensure_cell(spread_key);
                 touched_keys_since_drain_.insert(spread_key);
+                touched_this_tick.insert(spread_key);
                 spread_cell.log_odds = std::clamp(
                     spread_cell.log_odds + (source.confidence * weight * config_.log_odds_occupied_increment),
                     -config_.log_odds_max, config_.log_odds_max);
@@ -332,6 +340,7 @@ void MissionLocalTraversabilityMap::update_from_mission_obstacle_map(
                 if (idx_it == cell_index_.end()) { continue; }
                 auto& cell = cells_[idx_it->second].cell;
                 touched_keys_since_drain_.insert(key);
+                touched_this_tick.insert(key);
                 cell.log_odds = std::clamp(
                     cell.log_odds - (source.confidence * config_.log_odds_free_decrement),
                     -config_.log_odds_max, config_.log_odds_max);
@@ -400,6 +409,7 @@ void MissionLocalTraversabilityMap::update_from_mission_obstacle_map(
                 if (idx_it == cell_index_.end()) { continue; }
                 auto& cell = cells_[idx_it->second].cell;
                 touched_keys_since_drain_.insert(key);
+                touched_this_tick.insert(key);
                 cell.log_odds = std::clamp(
                     cell.log_odds - (confidence * config_.log_odds_free_decrement),
                     -config_.log_odds_max, config_.log_odds_max);
@@ -413,7 +423,7 @@ void MissionLocalTraversabilityMap::update_from_mission_obstacle_map(
 
     {
         const auto recompute_start = std::chrono::steady_clock::now();
-        recompute_derived_fields(now, include_clearance);
+        stats.recompute_set_size = recompute_derived_fields(now, include_clearance, touched_this_tick);
         stats.recompute_derived_fields_us = std::chrono::duration_cast<std::chrono::microseconds>(
             std::chrono::steady_clock::now() - recompute_start).count();
     }
@@ -425,33 +435,53 @@ void MissionLocalTraversabilityMap::update_from_mission_obstacle_map(
     refresh_summary();
 }
 
-void MissionLocalTraversabilityMap::recompute_derived_fields(const TimePoint now, const bool include_clearance) {
-    // First pass: derive occupied_score from log_odds for every cell so that the
-    // occupied-cell list below and all downstream logic use current values.
-    // Skipped when enable_log_odds=false — occupied_score is managed directly.
-    if (config_.enable_log_odds) {
-        for (auto& stored : cells_) {
-            stored.cell.occupied_score = sigmoid(stored.cell.log_odds);
+std::size_t MissionLocalTraversabilityMap::recompute_derived_fields(
+    const TimePoint now,
+    const bool include_clearance,
+    const std::unordered_set<CellKey, CellKeyHash>& touched_this_tick) {
+    // This tick's recompute set: every cell touched by evidence this tick, plus a
+    // bounded round-robin slice of untouched cells (derived_fields_sweep_per_frame,
+    // mirrors the cross_check_cursor_ idiom used by Stage 2b). Cells outside both
+    // keep their previously-derived values — exactly correct for the log_odds-
+    // derived fields below (they cannot have changed without a touch) and merely
+    // lag on staleness/clearance, which the existing Stale state already models.
+    // This bounds recompute cost independent of total map size instead of an O(N)
+    // (and, for clearance, O(N × occupied_cells)) pass every tick.
+    std::unordered_set<std::size_t> recompute_indices;
+    recompute_indices.reserve(touched_this_tick.size() + config_.derived_fields_sweep_per_frame);
+    for (const auto& key : touched_this_tick) {
+        const auto found = cell_index_.find(key);
+        if (found != cell_index_.end()) {
+            recompute_indices.insert(found->second);
         }
     }
-
-    // Build the occupied-cell list only when clearance is requested (O(N) scan).
-    // Skipping it avoids the O(N²) inner loop during in-flight ticks.
-    std::vector<const StoredCell*> occupied_cells;
-    if (include_clearance) {
-        occupied_cells.reserve(cells_.size());
-        for (const auto& stored : cells_) {
-            if (stored.cell.occupied_score >= config_.occupied_threshold) {
-                occupied_cells.push_back(&stored);
-            }
+    const std::size_t total_cells = cells_.size();
+    if (total_cells > 0U) {
+        if (derived_fields_sweep_cursor_ >= total_cells) { derived_fields_sweep_cursor_ = 0U; }
+        std::size_t swept = 0U;
+        while (swept < config_.derived_fields_sweep_per_frame && swept < total_cells) {
+            recompute_indices.insert(derived_fields_sweep_cursor_);
+            derived_fields_sweep_cursor_ =
+                (derived_fields_sweep_cursor_ + 1U < total_cells) ? derived_fields_sweep_cursor_ + 1U : 0U;
+            ++swept;
         }
     }
 
     const auto now_ns = timestamp_ns(now);
-    for (auto& stored : cells_) {
+
+    // Pass 1: log_odds-derived fields, age/state, and occupied_cell_indices_
+    // maintenance. Only cells in recompute_indices can have changed occupied
+    // status, so this is the only place occupied_cell_indices_ needs updating.
+    for (const auto ci : recompute_indices) {
+        auto& stored = cells_[ci];
         auto& cell = stored.cell;
 
-        // occupied_score already derived in the first pass above.
+        // occupied_score is a pure function of log_odds — recomputing it here is a
+        // no-op for cells that were only swept (not touched), which is fine.
+        if (config_.enable_log_odds) {
+            cell.occupied_score = sigmoid(cell.log_odds);
+        }
+
         const auto occupied_strength = normalize_score(cell.occupied_score, config_.occupied_threshold);
         const auto free_strength = normalize_score(cell.free_score, config_.free_threshold);
         const auto strongest_evidence = std::max(occupied_strength, free_strength);
@@ -484,6 +514,35 @@ void MissionLocalTraversabilityMap::recompute_derived_fields(const TimePoint now
 
         cell.volatility_score = clamp01(std::min(occupied_strength, free_strength) + (0.25 * cell.unknown_score));
         cell.stability_score = clamp01(std::max(occupied_strength, free_strength) - cell.volatility_score);
+
+        // Keep occupied_cell_indices_ in sync now, before Pass 2 (below) consults
+        // it — a cell in recompute_indices may have just crossed occupied_threshold
+        // this tick, and other recompute_indices cells' clearance must see that.
+        if (occupied) {
+            occupied_cell_indices_.insert(ci);
+        } else {
+            occupied_cell_indices_.erase(ci);
+        }
+    }
+
+    // Pass 2: clearance (against the now-current occupied set) and the final
+    // cost blend. Split from Pass 1 because clearance for any cell in
+    // recompute_indices may depend on another cell in the same set having just
+    // changed occupied status above.
+    std::vector<const StoredCell*> occupied_cells;
+    if (include_clearance) {
+        // O(occupied_cell_count), not O(cells_.size()) — occupied_cell_indices_ is
+        // maintained incrementally in Pass 1 rather than rebuilt by scanning cells_.
+        occupied_cells.reserve(occupied_cell_indices_.size());
+        for (const auto idx : occupied_cell_indices_) {
+            occupied_cells.push_back(&cells_[idx]);
+        }
+    }
+
+    for (const auto ci : recompute_indices) {
+        auto& stored = cells_[ci];
+        auto& cell = stored.cell;
+        const auto occupied = cell.occupied_score >= config_.occupied_threshold;
 
         if (include_clearance) {
             cell.nearest_obstacle_distance_m = std::numeric_limits<double>::infinity();
@@ -560,6 +619,8 @@ void MissionLocalTraversabilityMap::recompute_derived_fields(const TimePoint now
         cell.total_traversability_cost =
             total_weight > 0.0 ? clamp01(weighted / total_weight) : clamp01(weighted);
     }
+
+    return recompute_indices.size();
 }
 
 void MissionLocalTraversabilityMap::refresh_summary() {
@@ -708,6 +769,8 @@ void MissionLocalTraversabilityMap::reset() {
     summary_ = MissionLocalTraversabilityMapSummary{};
     last_update_stats_ = MissionLocalTraversabilityMapUpdateStats{};
     cross_check_cursor_ = 0U;
+    derived_fields_sweep_cursor_ = 0U;
+    occupied_cell_indices_.clear();
     touched_keys_since_drain_.clear();
 }
 
