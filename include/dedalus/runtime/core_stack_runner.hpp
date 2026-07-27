@@ -153,13 +153,12 @@ private:
     MissionMapAssimilator mission_map_assimilator_;
     // Level 2: compressed planning map rebuilt from Level 1 after each assimilator drain.
     MissionLocalPlanningMap mission_local_planning_map_;
-    // Level 3: ESDF derived from L2.  Updated incrementally; full recompute on startup
-    // and after slide_window().  esdf_needs_full_recompute_ starts true so the first
-    // tick after load produces a full snapshot (is_delta=false) for connecting viewers.
+    // Level 3: ESDF derived from L2. Computed exactly once, at startup, from
+    // whatever L2 state existed when this mission began — not needed in real
+    // time, since it exists to help plan a *future* mission's trajectory, not
+    // to steer this one. Never recomputed again during the mission.
     LocalESDFMap      esdf_map_;
     std::uint64_t     esdf_seq_{0U};
-    std::uint64_t     esdf_last_l2_seq_{0U};
-    bool              esdf_needs_full_recompute_{true};
     MissionObstacleMapArtifactWriter mission_obstacle_map_artifact_writer_;
     MissionObstacleMapDeltaWriter mission_obstacle_map_delta_writer_;
     MissionTraversabilityMapArtifactWriter mission_traversability_map_artifact_writer_;
@@ -184,12 +183,6 @@ private:
     // Only started when planning_map_persistence_path_ is non-empty.
     std::atomic<bool> planning_map_flush_stop_{false};
     std::thread       planning_map_flush_thread_;
-    // Staging buffer: run loop deposits ESDF snapshot here after each recompute;
-    // flush thread drains it and writes to the esdf_cells table in l2_map.db.
-    std::mutex                                           esdf_flush_mutex_;
-    std::vector<MissionLocalPlanningMap::ESDFCellRecord> esdf_flush_cells_;
-    double                                               esdf_flush_d0_m_{5.0};
-    bool                                                 esdf_flush_pending_{false};
     // Stage 5: last L2 seq number sent to SSE; used to produce delta snapshots.
     std::uint64_t     l2_last_published_seq_{0U};
     // Throttle: timestamp (ns) of the last traversability snapshot published to

@@ -188,8 +188,6 @@ bool CoreStackRunner::run_once() {
                 esdf_map_ = compute_esdf(mission_local_planning_map_,
                                          w.centre, w.horiz_half, w.vert_half,
                                          kESDFD0M, kESDFSampleSpacingM);
-                esdf_last_l2_seq_          = mission_local_planning_map_.current_seq();
-                esdf_needs_full_recompute_ = false;
             }
         }
         // Publish full L2 snapshot so connecting viewers see the persisted map.
@@ -790,12 +788,8 @@ bool CoreStackRunner::run_once() {
 
     // Slide the L2 in-memory window to follow the drone.
     // No-op when no DB is open or the drone has not moved > horizon_m/4.
-    const bool window_slid = mission_local_planning_map_.slide_window(
+    mission_local_planning_map_.slide_window(
         snapshot_for_annotation.ego.local_T_body.position);
-    // Newly loaded cells carry their original write_seq (not current map_seq_),
-    // so they won't appear in dirty_centers_since().  Force a full ESDF recompute
-    // only when the window actually slid — incremental handles normal L2 updates.
-    if (esdf_map_publisher_ && window_slid) { esdf_needs_full_recompute_ = true; }
 
     // When the assimilator drained at least one obstacle-map snapshot this tick:
     //  1. Rebuild the Level 2 planning map from the fresh Level 1 snapshot.
@@ -925,85 +919,13 @@ bool CoreStackRunner::run_once() {
                     }
                 }
 
-                // ── Level 3 ESDF (piggybacks on L2 publish tick) ────────────
-                // Three paths, in order of priority:
-                //  1. Full recompute  — startup or post-slide_window (~6 ms, rare)
-                //  2. Incremental     — dirty L2 cells only via update_incremental (<1 ms)
-                //  3. Skip cell update — L2 unchanged; re-snapshot for updated net_rep
-                if (esdf_map_publisher_) {
-                    start = SteadyClock::now();
-                    const Vec3& drone_pos =
-                        snapshot_for_annotation.ego.local_T_body.position;
-                    const std::uint64_t cur_l2_seq =
-                        mission_local_planning_map_.current_seq();
-                    bool is_full    = false;
-                    bool esdf_changed = false;
-
-                    if (esdf_needs_full_recompute_) {
-                        // Path 1: full recompute (startup / slide_window / new cells).
-                        // Window is derived from L2's actual in-memory extent so L3
-                        // always covers exactly what L2 has — no artificial crop.
-                        ESDFWindow w;
-                        if (esdf_window_from_l2(mission_local_planning_map_, kESDFD0M, &w)) {
-                            esdf_map_ = compute_esdf(mission_local_planning_map_,
-                                                     w.centre, w.horiz_half, w.vert_half,
-                                                     kESDFD0M, kESDFSampleSpacingM);
-                        }
-                        esdf_last_l2_seq_          = cur_l2_seq;
-                        esdf_needs_full_recompute_ = false;
-                        is_full      = true;
-                        esdf_changed = true;
-                    } else if (cur_l2_seq != esdf_last_l2_seq_) {
-                        // Path 2: incremental — update only cells near dirty L2 voxels.
-                        auto delta = mission_local_planning_map_.snapshot(esdf_last_l2_seq_);
-                        esdf_last_l2_seq_ = cur_l2_seq;
-                        if (!delta.cells.empty()) {
-                            std::vector<Vec3> dirty;
-                            dirty.reserve(delta.cells.size());
-                            for (const auto& c : delta.cells) {
-                                dirty.push_back(c.center_map);
-                            }
-                            esdf_map_.update_incremental(
-                                mission_local_planning_map_, dirty, kESDFD0M);
-                        }
-                        // is_full stays false → viewer merges delta cells
-                        esdf_changed = true;
-                    }
-                    // Path 3 (L2 unchanged): fall through — just re-snapshot below.
-
-                    // Stage ESDF for DB flush (paths 1 + 2 only).
-                    if (esdf_changed && !planning_map_persistence_path_.empty() &&
-                        esdf_map_.cell_count() > 0U) {
-                        const auto snap_cells =
-                            esdf_map_.snapshot(Vec3{0.0, 0.0, 0.0}, 0.0).cells;
-                        std::vector<MissionLocalPlanningMap::ESDFCellRecord> records;
-                        records.reserve(snap_cells.size());
-                        for (const auto& c : snap_cells) {
-                            records.push_back({
-                                c.centre.x, c.centre.y, c.centre.z,
-                                static_cast<double>(c.d),
-                                c.grad.x,  c.grad.y,  c.grad.z,
-                                c.sgrad.x, c.sgrad.y, c.sgrad.z,
-                            });
-                        }
-                        std::lock_guard<std::mutex> lk(esdf_flush_mutex_);
-                        esdf_flush_cells_   = std::move(records);
-                        esdf_flush_d0_m_    = kESDFD0M;
-                        esdf_flush_pending_ = true;
-                    }
-
-                    LocalESDFMapFrame esdf_frame;
-                    esdf_frame.timestamp_ns          = trav_frame.timestamp_ns;
-                    esdf_frame.snapshot              = esdf_map_.snapshot(drone_pos, 1.0);
-                    esdf_frame.snapshot.seq          = ++esdf_seq_;
-                    esdf_frame.snapshot.is_delta     = !is_full;
-                    esdf_map_publisher_->publish(esdf_frame);
-                    if (timing_writer_) {
-                        timing_writer_->record_stage("esdf.compute_and_publish", duration_us(start));
-                        timing_writer_->record_stage("esdf.cell_count",
-                            esdf_map_.cell_count(), /*is_count=*/true);
-                    }
-                }
+                // L3/ESDF is NOT recomputed here. It's not needed in real time —
+                // it exists to help plan a future mission's trajectory, not to
+                // steer this one — so it's computed exactly once, at startup,
+                // from whatever L2 state existed when this mission began (see
+                // the esdf_seq_==0U block near the top of run_once()). SSE
+                // clients connecting mid-mission still get that snapshot via the
+                // stream server's replay-to-new-clients cache.
             }
         }
     }
