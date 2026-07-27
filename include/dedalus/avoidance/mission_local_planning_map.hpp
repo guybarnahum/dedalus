@@ -104,6 +104,16 @@ struct MissionLocalPlanningMapUpdateStats {
     std::size_t cells_evicted{0U};      // L2 cells evicted due to free-space evidence
 };
 
+struct SlideWindowResult {
+    bool slid{false};
+    // World-frame centres of cells load_window_from_db() inserted this slide
+    // that were not already resident in memory. Their write_seq predates the
+    // current map_seq_ (they were written long ago), so they never appear in
+    // snapshot(since_seq)'s value-delta — callers that need to know about
+    // every L2 change (e.g. L3/ESDF catch-up) must track this separately.
+    std::vector<Vec3> newly_loaded_positions;
+};
+
 struct MissionLocalPlanningMapSnapshot {
     MissionLocalPlanningMapConfig config;
     std::size_t cell_count{0U};
@@ -193,8 +203,8 @@ public:
     //   When triggered:
     //     1. Evicts in-memory cells beyond 2×horizon_m (still in DB for re-entry).
     //     2. Loads cells from DB within drone_pos ± horizon_m not yet in memory.
-    // Returns true when the window actually slid (cells evicted/loaded).
-    bool slide_window(const Vec3& drone_pos);
+    // result.slid is true when the window actually slid (cells evicted/loaded).
+    SlideWindowResult slide_window(const Vec3& drone_pos);
 
     // Set the mission identity used when attributing cell votes to a mission.
     // Must be called before open_db().  Calling after open_db() is a no-op on
@@ -277,8 +287,9 @@ private:
 
     // Load cells from the open DB within centre ± horizon_m that are not yet
     // in cell_index_.  If a cell is also in dirty_cells_, its dirty value takes
-    // precedence over the (stale) DB value.
-    void load_window_from_db(const Vec3& centre);
+    // precedence over the (stale) DB value.  Returns the world-frame centres of
+    // exactly the cells inserted (i.e. genuinely new to memory this call).
+    std::vector<Vec3> load_window_from_db(const Vec3& centre);
 
     MissionLocalPlanningMapConfig config_;
     MissionLocalPlanningMapUpdateStats last_update_stats_{};

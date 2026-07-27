@@ -39,7 +39,8 @@ CoreStackRunner::CoreStackRunner(CoreStackProviders providers, CoreStackRunnerCo
       mission_traversability_map_artifact_writer_(
           MissionTraversabilityMapArtifactWriter::from_environment()),
       perch_candidate_evaluator_(config.perch_candidate_evaluator),
-      planning_map_persistence_path_(std::move(config.planning_map_persistence_path)) {
+      planning_map_persistence_path_(std::move(config.planning_map_persistence_path)),
+      esdf_catchup_budget_us_(config.esdf_catchup_budget_us) {
     // Build the debug annotator when an output path is configured.
     // Frame geometry (2W×H or 2W×2H) is determined at pipe-open time from the panel count.
     if (!config.debug_depth_annotator.output_path.empty()) {

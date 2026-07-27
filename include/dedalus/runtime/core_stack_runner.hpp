@@ -2,6 +2,7 @@
 
 #include <atomic>
 #include <cstddef>
+#include <deque>
 #include <filesystem>
 #include <memory>
 #include <optional>
@@ -94,12 +95,21 @@ struct CoreStackRunnerConfig {
     // (if it exists) and saved back at finalize_mission_map_after_landing().
     std::filesystem::path planning_map_persistence_path;
 
+    // Per-tick wall-clock budget (microseconds) for L3/ESDF catch-up with L2 —
+    // see CoreStackRunner::esdf_map_'s doc comment for the full mechanism.
+    // L3 is purely a cache of L2, so it's allowed to lag; this bounds how much
+    // time each tick may spend draining pending catch-up work before deferring
+    // the rest to the next tick. 0 disables catch-up entirely (L3 then only
+    // ever reflects L2's state at mission startup). Set via esdf.catchup_budget_us.
+    std::int64_t esdf_catchup_budget_us{20'000LL};
 };
-// Note: L3 (LocalESDFMap) is always recomputed from L2 — it is never saved to disk.
-// Recompute from the full in-memory L2 window costs ~6 ms and is always correct.
-// No esdf_persistence_path field: saving a stale L3 binary that diverges from L2
-// is worse than recomputing. If you need to inspect L3 off-line, use compute_esdf()
-// directly against the l2_map.db (see include/dedalus/avoidance/local_esdf_map.hpp).
+// Note: L3 (LocalESDFMap) is never saved to disk — it's always derived from L2,
+// which is the persisted source of truth. It's fully computed once at startup
+// from whatever L2 state exists then, and kept caught up afterward by the
+// bounded per-tick catch-up step above (esdf_catchup_budget_us), not by saving
+// and reloading a stale L3 binary. If you need to inspect L3 off-line, use
+// compute_esdf() directly against the l2_map.db (see
+// include/dedalus/avoidance/local_esdf_map.hpp).
 
 class CoreStackRunner {
 public:
@@ -153,12 +163,31 @@ private:
     MissionMapAssimilator mission_map_assimilator_;
     // Level 2: compressed planning map rebuilt from Level 1 after each assimilator drain.
     MissionLocalPlanningMap mission_local_planning_map_;
-    // Level 3: ESDF derived from L2. Computed exactly once, at startup, from
-    // whatever L2 state existed when this mission began — not needed in real
-    // time, since it exists to help plan a *future* mission's trajectory, not
-    // to steer this one. Never recomputed again during the mission.
+    // Level 3: ESDF derived from L2 — nothing else, it's purely a cache of L2.
+    // Not needed in real time (it helps plan a *future* mission's trajectory,
+    // not steer this one), so it's allowed to lag, but every L2 change must
+    // eventually reach it — never silently dropped. Computed fully at startup
+    // from whatever L2 state exists then; kept caught up afterward by a
+    // bounded per-tick catch-up step (see run_once()) instead of a live
+    // full-recompute-on-every-slide trigger.
     LocalESDFMap      esdf_map_;
     std::uint64_t     esdf_seq_{0U};
+    // L3 catch-up state (see the "Level 3 ESDF catch-up" step in run_once()):
+    //   esdf_last_l2_seq_          — how far the L2 *value*-delta catch-up has
+    //                                progressed; only advances once its delta
+    //                                has actually been applied.
+    //   esdf_pending_residency_    — FIFO of newly-loaded-from-DB position
+    //                                batches (from slide_window()) not yet
+    //                                applied; new batches append, only ever
+    //                                popped after being applied — never
+    //                                dropped, only deferred to a later tick.
+    std::uint64_t     esdf_last_l2_seq_{0U};
+    std::deque<std::vector<Vec3>> esdf_pending_residency_batches_;
+    // Set when the per-tick catch-up step applies any update to esdf_map_;
+    // cleared once that update has actually been published. Decouples "keep
+    // esdf_map_ caught up" (every tick, cheap) from "tell SSE clients" (only
+    // when something changed, throttled to the same 2s cadence as L1/L2).
+    bool esdf_dirty_since_publish_{false};
     MissionObstacleMapArtifactWriter mission_obstacle_map_artifact_writer_;
     MissionObstacleMapDeltaWriter mission_obstacle_map_delta_writer_;
     MissionTraversabilityMapArtifactWriter mission_traversability_map_artifact_writer_;
@@ -179,6 +208,8 @@ private:
     std::optional<TimePoint> ghost_scenario_start_;
     // Optional file path for Level 2 planning map cross-mission persistence.
     std::filesystem::path planning_map_persistence_path_;
+    // From CoreStackRunnerConfig::esdf_catchup_budget_us (esdf.catchup_budget_us).
+    std::int64_t esdf_catchup_budget_us_{20'000LL};
     // Background flush thread: calls flush_dirty_to_db() every 10 s.
     // Only started when planning_map_persistence_path_ is non-empty.
     std::atomic<bool> planning_map_flush_stop_{false};

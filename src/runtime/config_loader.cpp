@@ -619,10 +619,26 @@ bool parse_traversability_key(
 }
 
 
+bool parse_esdf_key(
+    CoreStackRunnerConfig& config,
+    const std::string& key,
+    const std::string& value) {
+    const std::string prefix = "esdf.";
+    if (key.rfind(prefix, 0U) != 0U) return false;
+    const auto field = key.substr(prefix.size());
+    // Per-tick wall-clock budget for L3/ESDF catch-up with L2 (see
+    // CoreStackRunnerConfig::esdf_catchup_budget_us). 0 disables catch-up.
+    if (field == "catchup_budget_us") config.esdf_catchup_budget_us = std::stoll(value);
+    else { throw std::invalid_argument("unknown esdf field: " + key); }
+    return true;
+}
+
+
 void apply_config_value(CoreStackConfig& config, const std::string& key, const std::string& value) {
     if (parse_visual_onnx_key(config.runner, key, value)) return;
     if (parse_unidepth_key(config.runner, key, value)) return;
     if (parse_traversability_key(config.runner, key, value)) return;
+    if (parse_esdf_key(config.runner, key, value)) return;
     if (parse_airsim_object_binding_key(config.providers, key, value)) return;
     if (parse_airsim_pattern_binding_key(config.providers, key, value)) return;
     if (key == "frame_source") config.providers.frame_source = value;

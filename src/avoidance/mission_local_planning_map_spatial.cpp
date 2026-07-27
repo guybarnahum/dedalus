@@ -75,9 +75,10 @@ void MissionLocalPlanningMap::evict_far_cells(const Vec3& centre,
 
 // ─── load_window_from_db ─────────────────────────────────────────────────────
 
-void MissionLocalPlanningMap::load_window_from_db(const Vec3& centre) {
+std::vector<Vec3> MissionLocalPlanningMap::load_window_from_db(const Vec3& centre) {
+    std::vector<Vec3> newly_loaded;
     if (!db_) {
-        return;
+        return newly_loaded;
     }
     sqlite3* db = as_db(db_);
 
@@ -111,7 +112,7 @@ void MissionLocalPlanningMap::load_window_from_db(const Vec3& centre) {
 
     sqlite3_stmt* stmt = nullptr;
     if (sqlite3_prepare_v2(db, sql, -1, &stmt, nullptr) != SQLITE_OK) {
-        return;
+        return newly_loaded;
     }
     sqlite3_bind_int(stmt,    1, xi_lo);
     sqlite3_bind_int(stmt,    2, xi_hi);
@@ -146,16 +147,18 @@ void MissionLocalPlanningMap::load_window_from_db(const Vec3& centre) {
 
         cells_.push_back(StoredCell{key, cell});
         cell_index_.emplace(key, cells_.size() - 1U);
+        newly_loaded.push_back(cell.center_map);
     }
     sqlite3_finalize(stmt);
+    return newly_loaded;
 }
 
 // ─── slide_window ────────────────────────────────────────────────────────────
 
-bool MissionLocalPlanningMap::slide_window(const Vec3& drone_pos) {
+SlideWindowResult MissionLocalPlanningMap::slide_window(const Vec3& drone_pos) {
     // No DB → evicted cells can't be reloaded; don't slide.
     if (!db_) {
-        return false;
+        return {};
     }
 
     const double slide_threshold_m = config_.horizon_m / 4.0;
@@ -163,7 +166,7 @@ bool MissionLocalPlanningMap::slide_window(const Vec3& drone_pos) {
     if (slide_initialized_) {
         const double dist = std::sqrt(dist3_sq(drone_pos, last_slide_pos_));
         if (dist < slide_threshold_m) {
-            return false;  // not moved enough
+            return {};  // not moved enough
         }
     }
 
@@ -171,8 +174,10 @@ bool MissionLocalPlanningMap::slide_window(const Vec3& drone_pos) {
     slide_initialized_ = true;
 
     evict_far_cells(drone_pos, 2.0 * config_.horizon_m);
-    load_window_from_db(drone_pos);
-    return true;
+    SlideWindowResult result;
+    result.slid = true;
+    result.newly_loaded_positions = load_window_from_db(drone_pos);
+    return result;
 }
 
 }  // namespace dedalus

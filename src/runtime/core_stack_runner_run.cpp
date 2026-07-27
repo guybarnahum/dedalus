@@ -203,7 +203,7 @@ bool CoreStackRunner::run_once() {
         if (esdf_map_publisher_ && esdf_map_.cell_count() > 0U) {
             LocalESDFMapFrame esdf_frame;
             esdf_frame.timestamp_ns      = 0U;
-            esdf_frame.snapshot          = esdf_map_.snapshot(Vec3{0.0, 0.0, 0.0}, 1.0);
+            esdf_frame.snapshot          = esdf_map_.snapshot(Vec3{0.0, 0.0, 0.0});
             esdf_frame.snapshot.seq      = ++esdf_seq_;
             esdf_frame.snapshot.is_delta = false;
             esdf_map_publisher_->publish(esdf_frame);
@@ -788,8 +788,20 @@ bool CoreStackRunner::run_once() {
 
     // Slide the L2 in-memory window to follow the drone.
     // No-op when no DB is open or the drone has not moved > horizon_m/4.
-    mission_local_planning_map_.slide_window(
-        snapshot_for_annotation.ego.local_T_body.position);
+    // Cells this loads from DB carry their original (old) write_seq, so they
+    // never show up in a value-delta snapshot(since_seq) query — queue them
+    // separately so L3's catch-up step (below) still eventually sees them.
+    if (esdf_map_publisher_) {
+        auto slide_result = mission_local_planning_map_.slide_window(
+            snapshot_for_annotation.ego.local_T_body.position);
+        if (!slide_result.newly_loaded_positions.empty()) {
+            esdf_pending_residency_batches_.push_back(
+                std::move(slide_result.newly_loaded_positions));
+        }
+    } else {
+        mission_local_planning_map_.slide_window(
+            snapshot_for_annotation.ego.local_T_body.position);
+    }
 
     // When the assimilator drained at least one obstacle-map snapshot this tick:
     //  1. Rebuild the Level 2 planning map from the fresh Level 1 snapshot.
@@ -925,13 +937,85 @@ bool CoreStackRunner::run_once() {
                     }
                 }
 
-                // L3/ESDF is NOT recomputed here. It's not needed in real time —
-                // it exists to help plan a future mission's trajectory, not to
-                // steer this one — so it's computed exactly once, at startup,
-                // from whatever L2 state existed when this mission began (see
-                // the esdf_seq_==0U block near the top of run_once()). SSE
-                // clients connecting mid-mission still get that snapshot via the
-                // stream server's replay-to-new-clients cache.
+                // ── Level 3 ESDF publish (piggybacks on L1/L2 throttle) ─────
+                // The catch-up step below keeps esdf_map_ itself up to date
+                // every tick; publishing (snapshot + serialize + send) only
+                // happens here, at the same throttled cadence as L1/L2, so a
+                // fast-changing map doesn't turn into a fast-repeating publish.
+                if (esdf_map_publisher_ && esdf_dirty_since_publish_ &&
+                    esdf_map_.cell_count() > 0U) {
+                    start = SteadyClock::now();
+                    const Vec3& drone_pos =
+                        snapshot_for_annotation.ego.local_T_body.position;
+                    LocalESDFMapFrame esdf_frame;
+                    esdf_frame.timestamp_ns      = trav_frame.timestamp_ns;
+                    esdf_frame.snapshot          = esdf_map_.snapshot(drone_pos);
+                    esdf_frame.snapshot.seq      = ++esdf_seq_;
+                    esdf_frame.snapshot.is_delta = false;
+                    esdf_map_publisher_->publish(esdf_frame);
+                    esdf_dirty_since_publish_ = false;
+                    if (timing_writer_) {
+                        timing_writer_->record_stage("esdf.publish", duration_us(start));
+                        timing_writer_->record_stage("esdf.cell_count",
+                            esdf_map_.cell_count(), /*is_count=*/true);
+                    }
+                }
+            }
+        }
+    }
+
+    // ── Level 3 ESDF catch-up (bounded, every tick, independent of the L1/L2
+    // throttle above) ────────────────────────────────────────────────────────
+    // L3 is purely a cache of L2: every L2 change — value or residency — must
+    // eventually reach it, but the rate can lag. Spend up to
+    // esdf_catchup_budget_us_ (default 20ms; esdf.catchup_budget_us,
+    // CoreStackRunnerConfig::esdf_catchup_budget_us) per tick draining
+    // whatever's pending via update_incremental(). Anything that doesn't fit
+    // stays queued/unconsumed and is retried next tick — never dropped, only
+    // deferred. Residency batches (from slide_window(), queued above) go
+    // first since they're bounded, discrete work items; value changes are
+    // pulled as one coalesced delta since the last seq actually applied, so
+    // falling behind a few ticks costs no more than catching up in one shot
+    // would. Deliberately not gated on esdf_map_.cell_count() > 0U —
+    // update_incremental() works fine starting from an empty map (e.g. a
+    // fresh site with no prior-mission history), building L3 up from scratch
+    // as L2 grows instead of staying empty for the whole mission.
+    if (esdf_map_publisher_) {
+        const auto catchup_start = SteadyClock::now();
+        bool applied_this_tick = false;
+
+        while (!esdf_pending_residency_batches_.empty() &&
+               duration_us(catchup_start) < esdf_catchup_budget_us_) {
+            auto batch = std::move(esdf_pending_residency_batches_.front());
+            esdf_pending_residency_batches_.pop_front();
+            esdf_map_.update_incremental(mission_local_planning_map_, batch, kESDFD0M);
+            applied_this_tick = true;
+        }
+
+        const std::uint64_t cur_l2_seq = mission_local_planning_map_.current_seq();
+        if (duration_us(catchup_start) < esdf_catchup_budget_us_ &&
+            cur_l2_seq != esdf_last_l2_seq_) {
+            auto delta = mission_local_planning_map_.snapshot(esdf_last_l2_seq_);
+            if (!delta.cells.empty()) {
+                std::vector<Vec3> dirty;
+                dirty.reserve(delta.cells.size());
+                for (const auto& c : delta.cells) {
+                    dirty.push_back(c.center_map);
+                }
+                esdf_map_.update_incremental(mission_local_planning_map_, dirty, kESDFD0M);
+                applied_this_tick = true;
+            }
+            esdf_last_l2_seq_ = cur_l2_seq;
+        }
+
+        if (applied_this_tick) {
+            esdf_dirty_since_publish_ = true;
+            if (timing_writer_) {
+                timing_writer_->record_stage("esdf.catchup_us", duration_us(catchup_start));
+                timing_writer_->record_stage(
+                    "esdf.pending_residency_batches",
+                    static_cast<std::int64_t>(esdf_pending_residency_batches_.size()),
+                    /*is_count=*/true);
             }
         }
     }
