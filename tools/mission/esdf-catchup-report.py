@@ -11,13 +11,17 @@ stderr.
 
 Stages read (all optional -- absent unless the catch-up step actually did
 something that tick):
-  esdf.catchup_us                 time spent draining catch-up work this tick
-  esdf.pending_residency_batches  queue depth after this tick's drain
-  esdf.publish                    time spent serializing + sending to SSE
-  esdf.cell_count                 L3 cell count, sampled only on esdf.publish
-                                   ticks (throttled to the same ~2s cadence
-                                   as L1/L2) -- expect mostly blank rows in
-                                   the per-frame table below; that's normal.
+  esdf.catchup_us       time spent draining catch-up work this tick
+  esdf.pending_batches  queue depth after this tick's drain -- newly-loaded
+                        residency cells (from slide_window()) plus tiled L2
+                        value-delta chunks (a single tick's own delta can
+                        span the whole sensing footprint, so it's split into
+                        spatially-compact tiles before queuing)
+  esdf.publish          time spent serializing + sending to SSE
+  esdf.cell_count       L3 cell count, sampled only on esdf.publish ticks
+                        (throttled to the same ~2s cadence as L1/L2) --
+                        expect mostly blank rows in the per-frame table
+                        below; that's normal.
 
 Usage:
   python3 tools/mission/esdf-catchup-report.py out/circle_airsim_gt/profile/pipeline_*.jsonl
@@ -82,24 +86,24 @@ def main() -> int:
 
     catchup_us = [v for f in frames if (v := stage(f, "esdf.catchup_us")) is not None]
     if catchup_us:
-        print(f"esdf.catchup_us                 n={len(catchup_us)}/{n} frames applied something  "
+        print(f"esdf.catchup_us       n={len(catchup_us)}/{n} frames applied something  "
               f"mean={statistics.mean(catchup_us):.1f}us  "
               f"p50={statistics.median(catchup_us):.1f}us  "
               f"max={max(catchup_us):.1f}us")
     else:
-        print("esdf.catchup_us                 never recorded -- catch-up step never applied "
+        print("esdf.catchup_us       never recorded -- catch-up step never applied "
               "anything (no L2 changes seen, or esdf_map_publisher_ not configured)")
 
-    pending = [v for f in frames if (v := stage(f, "esdf.pending_residency_batches")) is not None]
+    pending = [v for f in frames if (v := stage(f, "esdf.pending_batches")) is not None]
     if pending:
         trend = "draining/stable" if pending[-1] <= max(pending) / 2 or max(pending) <= 1 else "GROWING"
-        print(f"esdf.pending_residency_batches  max={max(pending):.0f}  end={pending[-1]:.0f}  "
+        print(f"esdf.pending_batches  max={max(pending):.0f}  end={pending[-1]:.0f}  "
               f"({trend} -- a backlog that keeps growing means esdf_catchup_budget_us is too small "
-              "for how fast slide_window() is loading new cells)")
+              "for how fast tiles are being queued, or kESDFTileSizeM needs to be smaller)")
 
     publish_us = [v for f in frames if (v := stage(f, "esdf.publish")) is not None]
     if publish_us:
-        print(f"esdf.publish                    n={len(publish_us)} publishes over {n} frames  "
+        print(f"esdf.publish          n={len(publish_us)} publishes over {n} frames  "
               f"mean={statistics.mean(publish_us):.1f}us  max={max(publish_us):.1f}us")
 
     print(f"\nDoes L3 track L1/L2 growth over the mission? (blank esdf_cells = no publish this row,\n"
@@ -119,7 +123,7 @@ def main() -> int:
         l2 = stage(f, "planning_map.cell_count")
         esdf_cells = stage(f, "esdf.cell_count")
         c_us = stage(f, "esdf.catchup_us")
-        pend = stage(f, "esdf.pending_residency_batches")
+        pend = stage(f, "esdf.pending_batches")
         print(f"{i:>6}  {fmt(l1):>9}  {fmt(l2):>9}  {fmt(esdf_cells):>10}  {fmt(c_us):>10}  {fmt(pend):>7}")
 
     return 0

@@ -173,16 +173,24 @@ private:
     LocalESDFMap      esdf_map_;
     std::uint64_t     esdf_seq_{0U};
     // L3 catch-up state (see the "Level 3 ESDF catch-up" step in run_once()):
-    //   esdf_last_l2_seq_          — how far the L2 *value*-delta catch-up has
-    //                                progressed; only advances once its delta
-    //                                has actually been applied.
-    //   esdf_pending_residency_    — FIFO of newly-loaded-from-DB position
-    //                                batches (from slide_window()) not yet
-    //                                applied; new batches append, only ever
-    //                                popped after being applied — never
-    //                                dropped, only deferred to a later tick.
+    //   esdf_last_l2_seq_    — how far the L2 *value*-delta catch-up has been
+    //                          pulled; advances as soon as a delta is pulled
+    //                          and tiled into esdf_pending_batches_, not when
+    //                          it's actually applied (pulling+tiling is cheap
+    //                          bookkeeping; applying via update_incremental()
+    //                          is the expensive, budget-limited part).
+    //   esdf_pending_batches_ — FIFO of position batches awaiting
+    //                          update_incremental(): newly-loaded-from-DB
+    //                          cells (from slide_window()) plus tiled L2
+    //                          value-delta chunks (tile_positions() in
+    //                          core_stack_runner_run.cpp — a single tick's
+    //                          own delta can span the whole sensing
+    //                          footprint, so it's split into
+    //                          spatially-compact tiles rather than applied as
+    //                          one call). Entries only ever pop after being
+    //                          applied — never dropped, only deferred.
     std::uint64_t     esdf_last_l2_seq_{0U};
-    std::deque<std::vector<Vec3>> esdf_pending_residency_batches_;
+    std::deque<std::vector<Vec3>> esdf_pending_batches_;
     // Set when the per-tick catch-up step applies any update to esdf_map_;
     // cleared once that update has actually been published. Decouples "keep
     // esdf_map_ caught up" (every tick, cheap) from "tell SSE clients" (only
