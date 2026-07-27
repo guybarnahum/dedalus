@@ -110,6 +110,14 @@ private:
     std::thread thread_;
     std::exception_ptr loop_exception_;
     std::size_t tick_count_{0U};
+    // Time this tick spent blocked inside dispatch_command()'s sink_->send()
+    // call. Reset at the start of each tick_once(); loop() subtracts it from
+    // tick_us before comparing against budget_us. Arm/Takeoff/Land/Disarm
+    // commands block waiting for the vehicle/simulator to actually complete
+    // the manoeuvre (seconds, bounded by physics, not by anything this loop
+    // controls) — same rationale as excluding frame_source_wall_wait from the
+    // pipeline profiler's [PipelineSlow] compute gate.
+    std::int64_t tick_command_wait_us_{0};
     MissionLifecycleState last_state_{MissionLifecycleState::Idle};
     FlightControlStateTracker flight_control_tracker_;
     std::optional<FlightCommandResult> last_command_result_;

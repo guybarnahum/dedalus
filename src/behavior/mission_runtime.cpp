@@ -2,6 +2,7 @@
 
 #include "dedalus/core/json_utils.hpp"
 
+#include <algorithm>
 #include <chrono>
 #include <iostream>
 #include <sstream>
@@ -198,17 +199,31 @@ void MissionRuntime::loop() {
         }
         const auto tick_us = std::chrono::duration_cast<std::chrono::microseconds>(
             std::chrono::steady_clock::now() - tick_start).count();
-        if (tick_us >= budget_us) {
+        // Exclude time spent blocked in dispatch_command()'s sink_->send() —
+        // e.g. waiting for the vehicle/simulator to confirm an Arm/Takeoff/Land
+        // manoeuvre — from the overrun/slow-tick gate. That wait is bounded by
+        // the vehicle's own physics, not by anything this loop controls, so
+        // counting it here just produces multi-second false alarms during
+        // Prepare/Takeoff/Land without telling us anything about our own tick
+        // cost. Same rationale as [PipelineSlow] excluding frame_source_wall_wait.
+        const auto compute_us = std::max<std::int64_t>(0, tick_us - tick_command_wait_us_);
+        if (compute_us >= budget_us) {
             write_event("\"event\":\"tick_overrun\""
                         ",\"tick\":" + std::to_string(tick_count_) +
+                        ",\"compute_us\":" + std::to_string(compute_us) +
                         ",\"tick_us\":" + std::to_string(tick_us) +
+                        ",\"command_wait_us\":" + std::to_string(tick_command_wait_us_) +
                         ",\"budget_us\":" + std::to_string(budget_us));
             std::cerr << "dedalus_mission: tick_overrun tick=" << tick_count_
-                      << " tick_us=" << tick_us
+                      << " compute_us=" << compute_us
+                      << " (tick_us=" << tick_us
+                      << " wait_us=" << tick_command_wait_us_ << ")"
                       << " budget_us=" << budget_us << "\n";
-        } else if (tick_us >= warn_us && config_.verbosity >= 2) {
+        } else if (compute_us >= warn_us && config_.verbosity >= 2) {
             std::cerr << "dedalus_mission: tick_slow tick=" << tick_count_
-                      << " tick_us=" << tick_us
+                      << " compute_us=" << compute_us
+                      << " (tick_us=" << tick_us
+                      << " wait_us=" << tick_command_wait_us_ << ")"
                       << " budget_us=" << budget_us << "\n";
         }
 
@@ -218,7 +233,7 @@ void MissionRuntime::loop() {
         const bool inflight =
             (last_state_ == MissionLifecycleState::ExecuteMission ||
              last_state_ == MissionLifecycleState::GoHome);
-        if (tick_us >= budget_us && inflight) {
+        if (compute_us >= budget_us && inflight) {
             ++consecutive_inflight_overruns_;
             if (config_.max_consecutive_inflight_overruns > 0 &&
                 consecutive_inflight_overruns_ >= config_.max_consecutive_inflight_overruns &&
@@ -227,6 +242,7 @@ void MissionRuntime::loop() {
                     "\"event\":\"inflight_overrun_abort\""
                     ",\"tick\":" + std::to_string(tick_count_) +
                     ",\"consecutive_overruns\":" + std::to_string(consecutive_inflight_overruns_) +
+                    ",\"compute_us\":" + std::to_string(compute_us) +
                     ",\"tick_us\":" + std::to_string(tick_us) +
                     ",\"budget_us\":" + std::to_string(budget_us) +
                     ",\"state\":" + q(to_string(last_state_)));

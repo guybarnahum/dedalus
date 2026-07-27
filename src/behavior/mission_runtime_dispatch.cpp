@@ -131,6 +131,7 @@ std::string trajectory_safety_event_fields(const TrajectorySafetyResult& safety)
 }  // namespace
 
 bool MissionRuntime::tick_once() {
+    tick_command_wait_us_ = 0;
     const auto snapshot = snapshots_->latest();
     if (!snapshot) {
         if (config_.verbosity >= 3 && tick_count_ == 0U) {
@@ -343,6 +344,13 @@ void MissionRuntime::dispatch_command(
                   << " yaw_rate=" << output.command->yaw_rate_radps
                   << "\n";
     }
+    // sink_->send() blocks for Arm/Takeoff/Land/Disarm until the vehicle (or
+    // simulator) actually confirms the manoeuvre — real wall-clock time bounded
+    // by the vehicle's own physics, not by anything this loop controls. Timed
+    // regardless of outcome (including the exception path below) so loop()
+    // can exclude it from tick_overrun's compute-time accounting the same way
+    // the pipeline profiler excludes frame_source_wall_wait.
+    const auto send_start = std::chrono::steady_clock::now();
     try {
         last_command_result_ = sink_->send(*output.command);
         if (last_command_result_->success) {
@@ -368,6 +376,8 @@ void MissionRuntime::dispatch_command(
         std::cerr << "dedalus_mission: command_exception kind=" << to_string(output.command->kind)
                   << " status=" << ex.what() << "\n";
     }
+    tick_command_wait_us_ += std::chrono::duration_cast<std::chrono::microseconds>(
+        std::chrono::steady_clock::now() - send_start).count();
     write_event(
         "\"event\":\"command_result\",\"tick\":" + std::to_string(tick_count_) +
         ",\"state\":" + q(to_string(output.state)) +
