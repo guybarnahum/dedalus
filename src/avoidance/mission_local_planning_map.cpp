@@ -16,6 +16,22 @@ inline float sigmoid(const float x) noexcept {
     return 1.0F / (1.0F + std::exp(-x));
 }
 
+// Bucket span, in L2 cells, on each axis — chosen so a bucket covers roughly
+// a 10 m cube at the default 1 m XY / 2 m Z cell size regardless of the two
+// resolutions differing. See MissionLocalPlanningMap::BucketKey.
+constexpr int kBucketSpanCellsXY = 10;
+constexpr int kBucketSpanCellsZ  = 5;
+
+// Floor division for b > 0 (bucket spans are always positive constants).
+// Plain integer division truncates toward zero, which is wrong for negative
+// a (e.g. -3/10 == 0, but floor(-3.0/10.0) == -1) — CellKey coordinates are
+// signed and routinely negative relative to the mission origin.
+inline int floor_div_pos(const int a, const int b) noexcept {
+    const int q = a / b;
+    const int r = a % b;
+    return (r != 0 && r < 0) ? q - 1 : q;
+}
+
 }  // namespace
 
 MissionLocalPlanningMap::MissionLocalPlanningMap(MissionLocalPlanningMapConfig config)
@@ -43,6 +59,47 @@ std::size_t MissionLocalPlanningMap::CellKeyHash::operator()(const CellKey& key)
     mix(key.y);
     mix(key.z);
     return seed;
+}
+
+std::size_t MissionLocalPlanningMap::BucketKeyHash::operator()(const BucketKey& key) const noexcept {
+    std::size_t seed = 0U;
+    const auto mix = [&seed](const int value) {
+        seed ^= std::hash<int>{}(value) + 0x9e3779b9U + (seed << 6U) + (seed >> 2U);
+    };
+    mix(key.x);
+    mix(key.y);
+    mix(key.z);
+    return seed;
+}
+
+MissionLocalPlanningMap::BucketKey MissionLocalPlanningMap::bucket_for_cell_key(
+    const CellKey& key) const noexcept {
+    return BucketKey{
+        floor_div_pos(key.x, kBucketSpanCellsXY),
+        floor_div_pos(key.y, kBucketSpanCellsXY),
+        floor_div_pos(key.z, kBucketSpanCellsZ),
+    };
+}
+
+void MissionLocalPlanningMap::bucket_insert(const CellKey& key) {
+    spatial_buckets_[bucket_for_cell_key(key)].push_back(key);
+}
+
+void MissionLocalPlanningMap::bucket_remove(const CellKey& key) {
+    const auto it = spatial_buckets_.find(bucket_for_cell_key(key));
+    if (it == spatial_buckets_.end()) {
+        return;
+    }
+    auto& members = it->second;
+    const auto pos = std::find(members.begin(), members.end(), key);
+    if (pos == members.end()) {
+        return;
+    }
+    *pos = members.back();
+    members.pop_back();
+    if (members.empty()) {
+        spatial_buckets_.erase(it);  // don't accumulate empty buckets over a long mission
+    }
 }
 
 MissionLocalPlanningMap::CellKey MissionLocalPlanningMap::key_for_point(
@@ -123,6 +180,7 @@ void MissionLocalPlanningMap::update_from_traversability(
                 cell.last_updated_ns = now_ns;
                 cells_.push_back(StoredCell{key, cell, map_seq_});  // Stage 5
                 cell_index_.emplace(key, cells_.size() - 1U);
+                bucket_insert(key);
             }
             // Capture the updated cell value at mark-time so the flush thread
             // never needs to read cells_ directly.
@@ -196,6 +254,7 @@ void MissionLocalPlanningMap::remove_cell_by_key(const CellKey& key) {
     }
     cells_.pop_back();
     cell_index_.erase(key);
+    bucket_remove(key);
 }
 
 MissionLocalPlanningMapSnapshot MissionLocalPlanningMap::snapshot(std::uint64_t since_seq) const {
@@ -217,6 +276,7 @@ MissionLocalPlanningMapSnapshot MissionLocalPlanningMap::snapshot(std::uint64_t 
 void MissionLocalPlanningMap::reset() {
     cells_.clear();
     cell_index_.clear();
+    spatial_buckets_.clear();
     last_update_stats_ = MissionLocalPlanningMapUpdateStats{};
     map_seq_ = 0U;
 }
@@ -300,6 +360,7 @@ bool MissionLocalPlanningMap::load_from_file(const std::filesystem::path& path) 
         cell.source_cell_count = count;
         cells_.push_back(StoredCell{key, cell});
         cell_index_.emplace(key, cells_.size() - 1U);
+        bucket_insert(key);
     }
 
     return true;

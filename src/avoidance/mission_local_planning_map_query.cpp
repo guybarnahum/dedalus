@@ -14,12 +14,19 @@
 // advances the voxel index on that axis, and checks cell_index_ for occupancy.
 // Handles non-unit direction vectors and negative world coordinates correctly.
 //
-// query_occupied_in_box
-// ──────────────────────
-// Iterates the occupied cell index (O(N_cells)) and checks each cell's
-// world-frame centre against the bbox.  This is O(N_cells) regardless of
-// box size — far better than key enumeration for the typical case where the
-// map is sparse relative to the query window.
+// query_occupied_in_box / query_occupied_ts_in_box
+// ──────────────────────────────────────────────────
+// Both delegate to occupied_cells_in_box(), which walks spatial_buckets_ —
+// a coarse (~10 m) grouping of cell_index_'s keys, maintained incrementally
+// at every insert/remove site (see MissionLocalPlanningMap::bucket_insert/
+// bucket_remove) — visiting only the buckets that overlap bbox instead of
+// scanning every cell in the map. Cost scales with local density near the
+// query plus the (small, bounded) number of buckets touched, not with L2's
+// total size — unlike enumerating every fine grid cell in the box directly,
+// which for a sparse map (few cells over a wide horizon_m) can cost more
+// probes than L2 even has cells. Each candidate still gets the exact score
+// + bbox containment check below; buckets are a locality filter, not a
+// substitute for it.
 
 #include "dedalus/avoidance/mission_local_planning_map.hpp"
 
@@ -114,23 +121,50 @@ std::optional<Vec3> MissionLocalPlanningMap::ray_cast(
     return std::nullopt;
 }
 
+// ─── occupied_cells_in_box ───────────────────────────────────────────────────
+
+std::vector<const MissionLocalPlanningMap::StoredCell*>
+MissionLocalPlanningMap::occupied_cells_in_box(const Bounds3& bbox) const {
+    const float min_score = static_cast<float>(config_.min_occupied_score);
+
+    const auto bucket_min = bucket_for_cell_key(key_for_point(bbox.min));
+    const auto bucket_max = bucket_for_cell_key(key_for_point(bbox.max));
+
+    std::vector<const StoredCell*> result;
+    for (int bx = bucket_min.x; bx <= bucket_max.x; ++bx) {
+        for (int by = bucket_min.y; by <= bucket_max.y; ++by) {
+            for (int bz = bucket_min.z; bz <= bucket_max.z; ++bz) {
+                const auto bucket_it = spatial_buckets_.find(BucketKey{bx, by, bz});
+                if (bucket_it == spatial_buckets_.end()) {
+                    continue;
+                }
+                for (const auto& key : bucket_it->second) {
+                    const auto cell_it = cell_index_.find(key);
+                    if (cell_it == cell_index_.end()) {
+                        continue;  // shouldn't happen if the two indexes stay in sync
+                    }
+                    const auto& entry = cells_[cell_it->second];
+                    if (entry.cell.occupied_score < min_score) continue;
+                    const Vec3& p = entry.cell.center_map;
+                    if (p.x >= bbox.min.x && p.x <= bbox.max.x &&
+                        p.y >= bbox.min.y && p.y <= bbox.max.y &&
+                        p.z >= bbox.min.z && p.z <= bbox.max.z) {
+                        result.push_back(&entry);
+                    }
+                }
+            }
+        }
+    }
+    return result;
+}
+
 // ─── query_occupied_in_box ───────────────────────────────────────────────────
 
 std::vector<Vec3> MissionLocalPlanningMap::query_occupied_in_box(
     const Bounds3& bbox) const {
-
-    const float min_score = static_cast<float>(config_.min_occupied_score);
-
     std::vector<Vec3> result;
-    for (const auto& [key, idx] : cell_index_) {
-        const auto& entry = cells_[idx];
-        if (entry.cell.occupied_score < min_score) continue;
-        const Vec3& p = entry.cell.center_map;
-        if (p.x >= bbox.min.x && p.x <= bbox.max.x &&
-            p.y >= bbox.min.y && p.y <= bbox.max.y &&
-            p.z >= bbox.min.z && p.z <= bbox.max.z) {
-            result.push_back(p);
-        }
+    for (const auto* entry : occupied_cells_in_box(bbox)) {
+        result.push_back(entry->cell.center_map);
     }
     return result;
 }
@@ -139,19 +173,9 @@ std::vector<Vec3> MissionLocalPlanningMap::query_occupied_in_box(
 
 std::vector<std::pair<Vec3, std::int64_t>>
 MissionLocalPlanningMap::query_occupied_ts_in_box(const Bounds3& bbox) const {
-
-    const float min_score = static_cast<float>(config_.min_occupied_score);
-
     std::vector<std::pair<Vec3, std::int64_t>> result;
-    for (const auto& [key, idx] : cell_index_) {
-        const auto& entry = cells_[idx];
-        if (entry.cell.occupied_score < min_score) continue;
-        const Vec3& p = entry.cell.center_map;
-        if (p.x >= bbox.min.x && p.x <= bbox.max.x &&
-            p.y >= bbox.min.y && p.y <= bbox.max.y &&
-            p.z >= bbox.min.z && p.z <= bbox.max.z) {
-            result.emplace_back(p, entry.cell.last_updated_ns);
-        }
+    for (const auto* entry : occupied_cells_in_box(bbox)) {
+        result.emplace_back(entry->cell.center_map, entry->cell.last_updated_ns);
     }
     return result;
 }

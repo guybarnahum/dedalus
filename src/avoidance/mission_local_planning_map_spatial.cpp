@@ -147,6 +147,7 @@ std::vector<Vec3> MissionLocalPlanningMap::load_window_from_db(const Vec3& centr
 
         cells_.push_back(StoredCell{key, cell});
         cell_index_.emplace(key, cells_.size() - 1U);
+        bucket_insert(key);
         newly_loaded.push_back(cell.center_map);
     }
     sqlite3_finalize(stmt);

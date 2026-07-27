@@ -257,6 +257,24 @@ private:
         std::size_t operator()(const CellKey& key) const noexcept;
     };
 
+    // Coarse spatial index over cell_index_ (see spatial_buckets_): groups
+    // CellKeys into buckets of kBucketSpanCellsXY × kBucketSpanCellsXY ×
+    // kBucketSpanCellsZ cells (~10 m cubes at the default 1 m XY / 2 m Z
+    // resolution), so a windowed query only has to visit the handful of
+    // buckets overlapping the box instead of scanning every cell in the map.
+    struct BucketKey {
+        int x{0};
+        int y{0};
+        int z{0};
+        bool operator==(const BucketKey& other) const noexcept {
+            return x == other.x && y == other.y && z == other.z;
+        }
+    };
+
+    struct BucketKeyHash {
+        std::size_t operator()(const BucketKey& key) const noexcept;
+    };
+
     struct StoredCell {
         CellKey key;
         MissionLocalPlanningCell cell;
@@ -291,11 +309,33 @@ private:
     // exactly the cells inserted (i.e. genuinely new to memory this call).
     std::vector<Vec3> load_window_from_db(const Vec3& centre);
 
+    // spatial_buckets_ maintenance — call at every cell_index_ insertion/
+    // removal site so the two indexes never drift out of sync. bucket_insert()
+    // must be called exactly once per new key (never for a key already
+    // present); bucket_remove() is safe to call unconditionally (no-op if the
+    // key isn't present).
+    BucketKey bucket_for_cell_key(const CellKey& key) const noexcept;
+    void bucket_insert(const CellKey& key);
+    void bucket_remove(const CellKey& key);
+
+    // Shared core of query_occupied_in_box()/query_occupied_ts_in_box()
+    // (mission_local_planning_map_query.cpp): walks only the spatial_buckets_
+    // entries overlapping bbox, then applies the exact score + bbox check per
+    // candidate — see spatial_buckets_ for why this beats scanning all of
+    // cell_index_.
+    [[nodiscard]] std::vector<const StoredCell*> occupied_cells_in_box(
+        const Bounds3& bbox) const;
+
     MissionLocalPlanningMapConfig config_;
     MissionLocalPlanningMapUpdateStats last_update_stats_{};
 
     std::vector<StoredCell> cells_;
     std::unordered_map<CellKey, std::size_t, CellKeyHash> cell_index_;
+    // Coarse spatial index over cell_index_'s keys — see BucketKey. Every key
+    // present in cell_index_ must appear in exactly one bucket here, and vice
+    // versa; bucket_insert()/bucket_remove() are the only code allowed to
+    // touch this outside that invariant.
+    std::unordered_map<BucketKey, std::vector<CellKey>, BucketKeyHash> spatial_buckets_;
 
     // SQLite persistence — opaque sqlite3* stored as void* so sqlite3.h stays
     // out of this header.  Null when no DB is open.

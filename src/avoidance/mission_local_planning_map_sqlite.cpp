@@ -281,6 +281,7 @@ END;)");
         cell.occupied_score    = sigmoid(cell.log_odds);
         cells_.push_back(StoredCell{key, cell});
         cell_index_.emplace(key, cells_.size() - 1U);
+        bucket_insert(key);
     }
     sqlite3_finalize(sel);
 
