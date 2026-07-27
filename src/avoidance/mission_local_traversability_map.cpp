@@ -670,7 +670,7 @@ void MissionLocalTraversabilityMap::refresh_summary() {
 }
 
 MissionLocalTraversabilityMapSnapshot MissionLocalTraversabilityMap::snapshot(
-    const std::size_t max_cells) const {
+    const std::size_t max_cells, const bool sort_by_cost) const {
     MissionLocalTraversabilityMapSnapshot result;
     result.config = config_;
     result.summary = summary_;
@@ -680,21 +680,27 @@ MissionLocalTraversabilityMapSnapshot MissionLocalTraversabilityMap::snapshot(
         result.cells.push_back(stored.cell);
     }
 
-    std::sort(
-        result.cells.begin(),
-        result.cells.end(),
-        [](const MissionLocalTraversabilityCell& lhs, const MissionLocalTraversabilityCell& rhs) {
-            if (lhs.total_traversability_cost == rhs.total_traversability_cost) {
-                if (lhs.center_map.x == rhs.center_map.x) {
-                    if (lhs.center_map.y == rhs.center_map.y) {
-                        return lhs.center_map.z < rhs.center_map.z;
+    // Sorting only matters so a subsequent max_cells truncation below keeps the
+    // highest-cost cells rather than an arbitrary prefix. Skippable when the
+    // caller never truncates — it's an O(N log N) pass over the whole map for
+    // nothing in that case.
+    if (sort_by_cost) {
+        std::sort(
+            result.cells.begin(),
+            result.cells.end(),
+            [](const MissionLocalTraversabilityCell& lhs, const MissionLocalTraversabilityCell& rhs) {
+                if (lhs.total_traversability_cost == rhs.total_traversability_cost) {
+                    if (lhs.center_map.x == rhs.center_map.x) {
+                        if (lhs.center_map.y == rhs.center_map.y) {
+                            return lhs.center_map.z < rhs.center_map.z;
+                        }
+                        return lhs.center_map.y < rhs.center_map.y;
                     }
-                    return lhs.center_map.y < rhs.center_map.y;
+                    return lhs.center_map.x < rhs.center_map.x;
                 }
-                return lhs.center_map.x < rhs.center_map.x;
-            }
-            return lhs.total_traversability_cost > rhs.total_traversability_cost;
-        });
+                return lhs.total_traversability_cost > rhs.total_traversability_cost;
+            });
+    }
 
     if (max_cells > 0U && result.cells.size() > max_cells) {
         result.cells.resize(max_cells);

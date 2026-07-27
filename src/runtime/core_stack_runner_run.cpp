@@ -884,10 +884,16 @@ bool CoreStackRunner::run_once() {
                 (now_ns - last_trav_publish_ns_) < kTravPublishMinIntervalNs;
             if (!throttled) {
                 start = SteadyClock::now();
-                // Full sorted snapshot for SSE viewer — fires at most once per 2 s,
-                // so the O(N log N) sort cost is amortised across many frames.
+                // Full, unsorted snapshot for SSE viewers — fires at most once per
+                // 2s, but this is never truncated (no max_cells here), so sorting
+                // by cost would buy nothing: viewers already sort/filter
+                // client-side for rendering (confirmed across all three viewer
+                // tools). Skipping the O(N log N) sort removes real cost as the
+                // map grows, since it scaled with total cell count regardless of
+                // the 2s throttle.
                 auto trav_snapshot_sse =
-                    mission_map_assimilator_.traversability_map().snapshot();
+                    mission_map_assimilator_.traversability_map().snapshot(
+                        /*max_cells=*/0U, /*sort_by_cost=*/false);
                 MissionLocalTraversabilityMapFrame trav_frame;
                 trav_frame.timestamp_ns =
                     trav_snapshot_sse.summary.last_update_timestamp_ns != 0U

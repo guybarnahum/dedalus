@@ -235,7 +235,13 @@ public:
         TimePoint now,
         bool include_clearance = true);
 
-    MissionLocalTraversabilityMapSnapshot snapshot(std::size_t max_cells = 0U) const;
+    // sort_by_cost: only needed when max_cells > 0 truncates the result, so the
+    // kept cells are the highest-cost ones rather than an arbitrary prefix.
+    // Callers that never truncate (e.g. the SSE publish path, which streams the
+    // full map to viewers that already sort/filter client-side) should pass
+    // false to skip the O(N log N) sort — it buys nothing when nothing gets cut.
+    MissionLocalTraversabilityMapSnapshot snapshot(
+        std::size_t max_cells = 0U, bool sort_by_cost = true) const;
 
     // Cells touched (inserted or updated by the merge loop, endpoint spread,
     // Stage 2, or Stage 2b) since the last call to this method (or
