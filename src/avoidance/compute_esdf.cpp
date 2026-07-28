@@ -12,12 +12,25 @@
 //
 // Anisotropic voxels (sx ≠ sz) are handled by scaling the parabola step per phase.
 //
+// Resolution: the dense grid (and hence Nx/Ny/Nz, the dominant O(N) cost) is
+// sized at max(l2.config().cell_size_m, sample_spacing_m) in XY, not at L2's
+// raw fine resolution — computing densely at the fine resolution and only
+// subsampling the *output* afterward (the previous design) never actually
+// made the expensive part cheaper, regardless of how coarse the stored
+// result was. Occupancy is snapped to this coarser grid before the EDT
+// runs, so the distance field is accurate to ~sample_spacing_m near
+// obstacle boundaries rather than ~cell_size_m — acceptable since L3 is an
+// intentionally-lagging, approximate cache of L2 (see CoreStackRunner's
+// ESDF catch-up step), not a real-time collision surface.
+// LocalESDFMap::repulsion() already interpolates smoothly between stored
+// cells, so no smoothing is lost by not computing at the finer resolution.
+//
 // Only shell cells (|d| < d0_m or occupied) are stored in the output LocalESDFMap.
 // Gradient ∇d is computed by central finite differences on g3 (squared distances);
 // sqrt is called only for the shell cells that pass the g < d0² filter.
 //
-// Window alignment: the grid origin is snapped to the nearest L2 cell boundary so
-// ESDF keys are identical to L2 keys in world coordinates.
+// Window alignment: the grid origin is snapped to the nearest coarse-grid
+// boundary so repeated calls at the same resolution produce identical keys.
 
 #include "dedalus/avoidance/local_esdf_map.hpp"
 #include "dedalus/avoidance/mission_local_planning_map.hpp"
@@ -86,14 +99,18 @@ LocalESDFMap compute_esdf(const MissionLocalPlanningMap& l2,
                            double d0_m,
                            double sample_spacing_m) {
     const auto& l2cfg = l2.config();
-    const double sx = l2cfg.cell_size_m;
-    const double sy = l2cfg.cell_size_m;
-    const double sz = l2cfg.vertical_cell_size_m;
+    // >= cell_size_m per LocalESDFConfig::sample_spacing_m's contract — this
+    // guard used to live only at the output-sampling stage; moving it here
+    // means it now also governs the dense grid the EDT actually pays for.
+    const double sx = std::max(l2cfg.cell_size_m, sample_spacing_m);
+    const double sy = sx;
+    const double sz = l2cfg.vertical_cell_size_m;  // already coarse; unchanged
 
     LocalESDFConfig cfg;
     cfg.cell_size_m          = sx;
     cfg.vertical_cell_size_m = sz;
     cfg.d0_m                 = d0_m;
+    cfg.sample_spacing_m     = sx;
 
     LocalESDFMap esdf(cfg);
 
@@ -153,8 +170,11 @@ LocalESDFMap compute_esdf(const MissionLocalPlanningMap& l2,
             int gi, gj, gk;
             if (world_to_idx(c, &gi, &gj, &gk)) {
                 const auto idx = static_cast<std::size_t>(gi * Nyz + gj * Nz + gk);
-                occ[idx]     = 1U;
-                ts_grid[idx] = ts;
+                occ[idx] = 1U;
+                // Multiple fine L2 cells can land in the same coarse voxel
+                // now that sx/sy may be coarser than l2cfg.cell_size_m; keep
+                // the most recent of them.
+                ts_grid[idx] = std::max(ts_grid[idx], ts);
             }
         }
     }
@@ -228,14 +248,16 @@ LocalESDFMap compute_esdf(const MissionLocalPlanningMap& l2,
         }
     }
 
-    // ── Coarse APF sampling ───────────────────────────────────────────────────
-    // The EDT ran at fine L2 resolution (sx,sz); output cells are stored every
-    // sample_spacing_m metres so the map is ~(spacing/cell_size)^2 times sparser.
-    const float d0f   = static_cast<float>(d0_m);
-    const float d0_sq = d0f * d0f;
-    const float sxf   = static_cast<float>(sx);
-    const float syf   = static_cast<float>(sy);
-    const float szf   = static_cast<float>(sz);
+    // ── Store shell cells ─────────────────────────────────────────────────────
+    // g3 is already at the target (coarse) resolution now, so every grid
+    // cell IS an output cell — no striding and no gather-from-finer-cells
+    // pass needed (there's nothing finer left to gather from). Gradients
+    // come directly from central differences on g3 — previously the
+    // "gather window was empty" fallback path; now the only path.
+    const float d0f = static_cast<float>(d0_m);
+    const float sxf  = static_cast<float>(sx);
+    const float syf  = static_cast<float>(sy);
+    const float szf  = static_cast<float>(sz);
 
     auto g3_at = [&](int i, int j, int k) -> float {
         i = std::max(0, std::min(Nx - 1, i));
@@ -244,135 +266,68 @@ LocalESDFMap compute_esdf(const MissionLocalPlanningMap& l2,
         return g3[static_cast<std::size_t>(i * Nyz + j * Nz + k)];
     };
 
-    const double spc_xy = std::max(sx, sample_spacing_m);  // >= fine cell size
-    const double spc_z  = sz;                               // keep Z at L2 resolution
+    for (int i = 0; i < Nx; ++i) {
+        for (int j = 0; j < Ny; ++j) {
+            for (int k = 0; k < Nz; ++k) {
+                const std::size_t idx = static_cast<std::size_t>(i * Nyz + j * Nz + k);
+                const Vec3 cc = cell_centre(i, j, k);
+                const LocalESDFMap::CellKey key{
+                    static_cast<int>(std::floor(cc.x / sx)),
+                    static_cast<int>(std::floor(cc.y / sy)),
+                    static_cast<int>(std::floor(cc.z / sz)),
+                };
 
-    // step_x/step_z: coarse stride in fine-grid cell units
-    const int step_x = std::max(1, static_cast<int>(std::round(spc_xy / sx)));
-    const int step_z = std::max(1, static_cast<int>(std::round(spc_z  / sz)));
-
-    // Gaussian sigma = spc_xy / 2 (so the 2-sigma radius matches one coarse step)
-    const double sigma_xy    = spc_xy * 0.5;
-    const double sigma_z     = spc_z  * 0.5;
-    const double inv2sig2_xy = 1.0 / (2.0 * sigma_xy * sigma_xy);
-    const double inv2sig2_z  = 1.0 / (2.0 * sigma_z  * sigma_z);
-
-    // Gather radius in fine-grid cell units (±1 coarse step)
-    const int rx = step_x;
-    const int rz = step_z;
-
-    // Update output config so key_for_point() uses coarse resolution.
-    esdf.config_.cell_size_m          = spc_xy;
-    esdf.config_.vertical_cell_size_m = spc_z;
-    esdf.config_.sample_spacing_m     = spc_xy;
-
-    // Iterate coarse grid centres (every step_x/step_z fine cells).
-    // For each, store the exact EDT distance at the coarse centre and a
-    // Gaussian-weighted APF gradient from nearby fine shell cells.
-    for (int ci = step_x / 2; ci < Nx; ci += step_x) {
-        for (int cj = step_x / 2; cj < Ny; cj += step_x) {
-            for (int ck = step_z / 2; ck < Nz; ck += step_z) {
-
-                const Vec3 cc = cell_centre(ci, cj, ck);
-                const int cki = static_cast<int>(std::floor(cc.x / spc_xy));
-                const int ckj = static_cast<int>(std::floor(cc.y / spc_xy));
-                const int ckk = static_cast<int>(std::floor(cc.z / spc_z));
-
-                const std::size_t ci_idx =
-                    static_cast<std::size_t>(ci * Nyz + cj * Nz + ck);
-
-                // Occupied coarse cell: store clamped interior value (d = −0.5 m).
-                if (occ[ci_idx]) {
+                if (occ[idx]) {
                     LocalESDFCell cell;
                     cell.centre          = cc;
-                    cell.d               = -0.5f;
-                    cell.last_updated_ns = ts_grid[ci_idx];
-                    esdf.cells_[LocalESDFMap::CellKey{cki, ckj, ckk}] = cell;
+                    cell.d               = -0.5f;  // clamped interior value
+                    cell.last_updated_ns = ts_grid[idx];
+                    esdf.cells_[key] = cell;
                     continue;
                 }
 
-                // Distance at this coarse cell centre from the EDT.
-                const float d_at_centre = std::sqrt(g3[ci_idx]);
-                if (d_at_centre >= d0f) continue;  // outside shell — skip
+                const float d = std::sqrt(g3[idx]);
+                if (d >= d0f) continue;  // outside shell — skip
 
-                // Gather Gaussian-weighted APF gradient from nearby fine cells.
-                double ax = 0.0, ay = 0.0, az = 0.0;
-                double w_sum = 0.0;
-                std::int64_t max_ts = 0;
+                const float gx = (g3_at(i+1,j,k) - g3_at(i-1,j,k)) / sxf;
+                const float gy = (g3_at(i,j+1,k) - g3_at(i,j-1,k)) / syf;
+                const float gz = (g3_at(i,j,k+1) - g3_at(i,j,k-1)) / szf;
+                const float glen = std::sqrt(gx*gx + gy*gy + gz*gz);
+                Vec3 dir{};
+                if (glen > 1.0e-6f) {
+                    dir = {gx / glen, gy / glen, gz / glen};
+                }
 
-                for (int di = -rx; di <= rx; ++di) {
-                    const int ni = ci + di;
+                // This cell has no last_updated_ns of its own (it isn't
+                // occupied) — take the freshest timestamp among directly
+                // adjacent occupied cells. Fixed ±1 radius, plain array
+                // indexing: O(1) per neighbour, not a scan, and the same
+                // real-world radius the old fine-grid gather used.
+                std::int64_t nearest_ts = 0;
+                for (int di = -1; di <= 1; ++di) {
+                    const int ni = i + di;
                     if (ni < 0 || ni >= Nx) continue;
-                    for (int dj = -rx; dj <= rx; ++dj) {
-                        const int nj = cj + dj;
+                    for (int dj = -1; dj <= 1; ++dj) {
+                        const int nj = j + dj;
                         if (nj < 0 || nj >= Ny) continue;
-                        for (int dk = -rz; dk <= rz; ++dk) {
-                            const int nk = ck + dk;
+                        for (int dk = -1; dk <= 1; ++dk) {
+                            const int nk = k + dk;
                             if (nk < 0 || nk >= Nz) continue;
-
-                            const std::size_t idx =
-                                static_cast<std::size_t>(ni * Nyz + nj * Nz + nk);
-                            if (occ[idx]) {
-                                if (ts_grid[idx] > max_ts) max_ts = ts_grid[idx];
-                                continue;
+                            const auto nidx = static_cast<std::size_t>(ni * Nyz + nj * Nz + nk);
+                            if (occ[nidx]) {
+                                nearest_ts = std::max(nearest_ts, ts_grid[nidx]);
                             }
-                            const float g_val = g3[idx];
-                            if (g_val >= d0_sq) continue;  // outside shell
-
-                            const float d_i = std::sqrt(g_val);
-
-                            // Gradient from g3 central differences (normalised)
-                            const float gx_r = (g3_at(ni+1,nj,nk) - g3_at(ni-1,nj,nk)) / sxf;
-                            const float gy_r = (g3_at(ni,nj+1,nk) - g3_at(ni,nj-1,nk)) / syf;
-                            const float gz_r = (g3_at(ni,nj,nk+1) - g3_at(ni,nj,nk-1)) / szf;
-                            const float glen =
-                                std::sqrt(gx_r*gx_r + gy_r*gy_r + gz_r*gz_r);
-                            if (glen < 1.0e-6f) continue;
-
-                            // Spatial Gaussian weight
-                            const double ex = di * sx;
-                            const double ey = dj * sy;
-                            const double ez = dk * sz;
-                            const double w  =
-                                std::exp(-(ex*ex + ey*ey) * inv2sig2_xy
-                                         - ez*ez          * inv2sig2_z);
-
-                            // APF magnitude for this fine cell
-                            const double apf_i =
-                                (1.0 / static_cast<double>(d_i) - 1.0 / d0_m)
-                                / static_cast<double>(d_i);
-
-                            ax    += w * apf_i * static_cast<double>(gx_r / glen);
-                            ay    += w * apf_i * static_cast<double>(gy_r / glen);
-                            az    += w * apf_i * static_cast<double>(gz_r / glen);
-                            w_sum += w;
                         }
                     }
                 }
 
-                // Gradient direction: APF-weighted if gather window has data,
-                // otherwise fall back to fine-grid gradient at the coarse centre.
-                Vec3 dir{};
-                const double alen = std::sqrt(ax*ax + ay*ay + az*az);
-                if (w_sum > 1.0e-10 && alen > 1.0e-10) {
-                    dir = {ax / alen, ay / alen, az / alen};
-                } else {
-                    const float gx_r = (g3_at(ci+1,cj,ck) - g3_at(ci-1,cj,ck)) / sxf;
-                    const float gy_r = (g3_at(ci,cj+1,ck) - g3_at(ci,cj-1,ck)) / syf;
-                    const float gz_r = (g3_at(ci,cj,ck+1) - g3_at(ci,cj,ck-1)) / szf;
-                    const float glen = std::sqrt(gx_r*gx_r + gy_r*gy_r + gz_r*gz_r);
-                    if (glen > 1.0e-6f)
-                        dir = {gx_r / glen, gy_r / glen, gz_r / glen};
-                }
-
                 LocalESDFCell cell;
                 cell.centre          = cc;
-                cell.d               = d_at_centre;  // exact EDT distance at this centre
+                cell.d               = d;
                 cell.grad            = dir;
                 cell.sgrad           = dir;
-                cell.last_updated_ns = max_ts;
-
-                esdf.cells_[LocalESDFMap::CellKey{cki, ckj, ckk}] = cell;
+                cell.last_updated_ns = nearest_ts;
+                esdf.cells_[key] = cell;
             }
         }
     }

@@ -149,10 +149,12 @@ void test_is_clear() {
 
 // ─── test 5: perf < 5 ms for 80×80×20 m window ───────────────────────────────
 //
-// With L2 cell_size_m=1, vertical_cell_size_m=2:
-//   horiz_half=40 → Nx=Ny=80
-//   vert_half=10  → Nz=10
-//   N = 80×80×10 = 64 000 voxels
+// compute_esdf runs its dense grid at max(cell_size_m, sample_spacing_m), not
+// cell_size_m directly. With L2 cell_size_m=1, vertical_cell_size_m=2, and
+// the default sample_spacing_m=2:
+//   horiz_half=40 → Nx=Ny=40  (sx = max(1,2) = 2)
+//   vert_half=10  → Nz=10     (sz = vertical_cell_size_m = 2, unchanged)
+//   N = 40×40×10 = 16 000 voxels
 
 void test_perf() {
     MissionLocalPlanningMap l2;
