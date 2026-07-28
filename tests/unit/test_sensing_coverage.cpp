@@ -153,6 +153,77 @@ bool validate_mount_yaw_offset() {
     return true;
 }
 
+// Reproduces the circling-target scenario: the body yaws to face the target
+// (object_behavior_yaw_mode: target) while camera_pointing_intent separately
+// reports the same bearing as an absolute yaw. No camera-pointing sink ever
+// actuates yaw (MavlinkGimbalPointingSink sends NaN; the AirSim RPC bridge
+// hardcodes yaw=0), so the camera's real yaw tracks the body only — folding
+// pointing_state.yaw_rad in on top would double the body's own yaw-to-target.
+bool validate_pointing_yaw_never_applied() {
+    const auto cfg = config("front_center");
+
+    auto body_yawed = ego();
+    body_yawed.local_T_body.rotation_rpy.z = kPi / 2.0;
+
+    dedalus::CameraPointingState pointing;
+    pointing.camera_id = dedalus::CameraId{"front_center"};
+    pointing.camera_name = "front_center";
+    pointing.timestamp = dedalus::TimePoint{1000000000};
+    pointing.yaw_rad = kPi / 2.0;  // same absolute bearing the body already tracks
+    pointing.valid = true;
+    pointing.source = "camera_pointing_intent";
+
+    dedalus::SensingCoverageProvider provider{{cfg}};
+    const auto volume = provider.volume_for_frame(frame("front_center"), body_yawed, {pointing});
+
+    // Correct: camera yaw tracks the body only -> forward axis rotates to +Y.
+    // Buggy (double-counted): body yaw (+90) + pointing yaw (+90) = +180,
+    // which would flip the forward axis to -X (facing back the way it came).
+    if (!near_vec(volume.forward_axis_local, dedalus::Vec3{0.0, 1.0, 0.0})) {
+        std::cerr << "camera_pointing_intent yaw must not be folded into the sensing volume forward axis "
+                      "(got forward_axis_local != body-yaw-only direction, likely double-counted)\n";
+        return false;
+    }
+    if (!near(volume.body_T_camera_current.rotation_rpy.z, 0.0)) {
+        std::cerr << "body_T_camera_current yaw must stay at the static mount yaw, not the pointing intent\n";
+        return false;
+    }
+
+    return true;
+}
+
+// Same scenario but with a real (pitch) gimbal deflection also active, to
+// confirm the yaw fix doesn't disturb pitch's separate, correctly-composed
+// body-relative contribution.
+bool validate_pointing_pitch_still_composes_with_yawed_body() {
+    const auto cfg = config("front_center");
+
+    auto body_yawed = ego();
+    body_yawed.local_T_body.rotation_rpy.z = kPi / 2.0;
+
+    dedalus::CameraPointingState pointing;
+    pointing.camera_id = dedalus::CameraId{"front_center"};
+    pointing.camera_name = "front_center";
+    pointing.timestamp = dedalus::TimePoint{1000000000};
+    pointing.pitch_rad = kPi / 4.0;
+    pointing.yaw_rad = kPi / 2.0;  // still present in the intent; must still be ignored
+    pointing.valid = true;
+    pointing.source = "camera_pointing_intent";
+
+    dedalus::SensingCoverageProvider provider{{cfg}};
+    const auto volume = provider.volume_for_frame(frame("front_center"), body_yawed, {pointing});
+
+    // Expected: Rz(+90 deg body yaw) applied to the pitched-down forward axis
+    // (sqrt(0.5), 0, -sqrt(0.5)) from validate_downward_pitch() -> (0, sqrt(0.5), -sqrt(0.5)).
+    if (!near_vec(volume.forward_axis_local, dedalus::Vec3{0.0, std::sqrt(0.5), -std::sqrt(0.5)})) {
+        std::cerr << "pitch should still compose body-relative under a yawed body, "
+                      "with pointing yaw ignored\n";
+        return false;
+    }
+
+    return true;
+}
+
 bool validate_multiple_cameras_and_export() {
     auto front = config("front_center");
     auto downward = config("downward");
@@ -199,6 +270,8 @@ int main() {
     if (!validate_neutral_camera_volume()) return 1;
     if (!validate_downward_pitch()) return 1;
     if (!validate_mount_yaw_offset()) return 1;
+    if (!validate_pointing_yaw_never_applied()) return 1;
+    if (!validate_pointing_pitch_still_composes_with_yawed_body()) return 1;
     if (!validate_multiple_cameras_and_export()) return 1;
     return 0;
 }

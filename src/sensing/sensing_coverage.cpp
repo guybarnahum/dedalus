@@ -154,9 +154,19 @@ CameraSensingVolume SensingCoverageProvider::volume_for_frame(
         pointing_state.timestamp = frame.timestamp.timestamp_ns != 0 ? frame.timestamp : ego.timestamp;
     }
 
+    // pointing_state.yaw_rad is camera_pointing_command_to_point()'s absolute
+    // map-frame bearing to the target, not a mount-relative deflection — and no
+    // camera-pointing sink ever actuates camera yaw: MavlinkGimbalPointingSink
+    // sends yaw=NaN (mavlink_gimbal_pointing_sink.cpp), and the AirSim RPC
+    // bridge (airsim-camera-pointing-bridge.py) hardcodes yaw=0 in the pose it
+    // applies via simSetCameraPose. The camera's real yaw always tracks the
+    // body only, via map_R_body below — composing pointing_state.yaw_rad here
+    // would double-count the body's own yaw-to-target and rotate the sensing
+    // volume (and the depth evidence projected through it) off the true camera
+    // view, worst when body yaw sweeps furthest from 0 (e.g. circling a target).
     const Mat3 map_R_body = rotation_from_rpy(ego.local_T_body.rotation_rpy);
     const Mat3 body_R_mount = rotation_from_rpy(config.body_T_camera_rpy_rad);
-    const Mat3 mount_R_pointing = rotation_from_rpy(Vec3{pointing_state.roll_rad, pointing_state.pitch_rad, pointing_state.yaw_rad});
+    const Mat3 mount_R_pointing = rotation_from_rpy(Vec3{pointing_state.roll_rad, pointing_state.pitch_rad, 0.0});
     const Mat3 body_R_camera = multiply(body_R_mount, mount_R_pointing);
     const Mat3 map_R_camera = multiply(map_R_body, body_R_camera);
 
@@ -177,7 +187,7 @@ CameraSensingVolume SensingCoverageProvider::volume_for_frame(
     volume.body_T_camera_current.rotation_rpy = Vec3{
         config.body_T_camera_rpy_rad.x + pointing_state.roll_rad,
         config.body_T_camera_rpy_rad.y + pointing_state.pitch_rad,
-        config.body_T_camera_rpy_rad.z + pointing_state.yaw_rad};
+        config.body_T_camera_rpy_rad.z};
     volume.map_T_camera_current.position = camera_origin_map;
     volume.map_T_camera_current.rotation_rpy = Vec3{
         ego.local_T_body.rotation_rpy.x + volume.body_T_camera_current.rotation_rpy.x,
