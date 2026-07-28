@@ -82,7 +82,7 @@ MissionLocalPlanningMap::BucketKey MissionLocalPlanningMap::bucket_for_cell_key(
 }
 
 void MissionLocalPlanningMap::bucket_insert(const CellKey& key) {
-    spatial_buckets_[bucket_for_cell_key(key)].push_back(key);
+    spatial_buckets_[bucket_for_cell_key(key)].insert(key);
 }
 
 void MissionLocalPlanningMap::bucket_remove(const CellKey& key) {
@@ -90,14 +90,8 @@ void MissionLocalPlanningMap::bucket_remove(const CellKey& key) {
     if (it == spatial_buckets_.end()) {
         return;
     }
-    auto& members = it->second;
-    const auto pos = std::find(members.begin(), members.end(), key);
-    if (pos == members.end()) {
-        return;
-    }
-    *pos = members.back();
-    members.pop_back();
-    if (members.empty()) {
+    it->second.erase(key);
+    if (it->second.empty()) {
         spatial_buckets_.erase(it);  // don't accumulate empty buckets over a long mission
     }
 }

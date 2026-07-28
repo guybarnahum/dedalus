@@ -334,8 +334,11 @@ private:
     // Coarse spatial index over cell_index_'s keys — see BucketKey. Every key
     // present in cell_index_ must appear in exactly one bucket here, and vice
     // versa; bucket_insert()/bucket_remove() are the only code allowed to
-    // touch this outside that invariant.
-    std::unordered_map<BucketKey, std::vector<CellKey>, BucketKeyHash> spatial_buckets_;
+    // touch this outside that invariant. unordered_set (not vector) so
+    // bucket_remove() is O(1) average — a bucket's members are looked up by
+    // key directly, never scanned to find the entry to erase.
+    std::unordered_map<BucketKey, std::unordered_set<CellKey, CellKeyHash>, BucketKeyHash>
+        spatial_buckets_;
 
     // SQLite persistence — opaque sqlite3* stored as void* so sqlite3.h stays
     // out of this header.  Null when no DB is open.
