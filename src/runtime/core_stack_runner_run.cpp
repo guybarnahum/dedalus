@@ -241,13 +241,13 @@ bool CoreStackRunner::run_once() {
         timing_writer_->record_stage("frame_source.next_frame_wait", frame_source_wait_duration_us);
         timing_writer_->record_stage("runtime.frame_source_wall_wait", frame_source_wait_duration_us);
         for (const auto& source_timing : frame->source_timings) {
-            timing_writer_->record_stage(source_timing.name, source_timing.duration_us, source_timing.is_count);
+            timing_writer_->record_stage(source_timing.name, source_timing.value, source_timing.unit);
             // Diagnostic fields (pixel counts, sample counts, depth range in
             // mm) aren't durations — folding them in here previously made
             // this "IO time" rollup report tens of seconds for a value that
             // was actually a depth-range-in-millimeters count.
-            if (!source_timing.is_count) {
-                frame_source_reported_io_us += source_timing.duration_us;
+            if (source_timing.unit == "us") {
+                frame_source_reported_io_us += source_timing.value;
             }
         }
         timing_writer_->record_stage("runtime.frame_source_reported_io", frame_source_reported_io_us);
@@ -746,17 +746,17 @@ bool CoreStackRunner::run_once() {
         timing_writer_->record_stage("mission_obstacle_map_delta_writer.append_if_due", duration_us(start));
         timing_writer_->record_stage(
             "mission_obstacle_map_delta_writer.published_live_batch",
-            mission_obstacle_map_delta_batch.has_value() ? 1 : 0);
+            mission_obstacle_map_delta_batch.has_value() ? 1 : 0, "bool");
     }
 
     if (timing_writer_) {
         timing_writer_->record_stage("mission_local_obstacle_map.update", l1_update_duration_us);
         timing_writer_->record_stage(
             "mission_local_obstacle_map.observed_cells",
-            mission_local_obstacle_map_snapshot.summary.observed_cell_count, /*is_count=*/true);
+            mission_local_obstacle_map_snapshot.summary.observed_cell_count, "cells");
         timing_writer_->record_stage(
             "mission_local_obstacle_map.occupied_cells",
-            mission_local_obstacle_map_snapshot.summary.occupied_cell_count, /*is_count=*/true);
+            mission_local_obstacle_map_snapshot.summary.occupied_cell_count, "cells");
         // Raw evidence accumulator has no eviction (only score decay) — its total
         // size, not just the observed subset, is what Stage 1 of
         // update_from_mission_obstacle_map() and this snapshot copy both iterate
@@ -764,7 +764,7 @@ bool CoreStackRunner::run_once() {
         // not marked observed.
         timing_writer_->record_stage(
             "mission_local_obstacle_map.total_cells",
-            static_cast<std::int64_t>(mission_local_obstacle_map_snapshot.cells.size()), /*is_count=*/true);
+            static_cast<std::int64_t>(mission_local_obstacle_map_snapshot.cells.size()), "cells");
     }
 
     // Background-assimilate this tick's new/changed obstacle-map cells into
@@ -792,10 +792,10 @@ bool CoreStackRunner::run_once() {
         timing_writer_->record_stage("mission_map_assimilator.tick", duration_us(start));
         timing_writer_->record_stage(
             "mission_map_assimilator.pending_snapshots",
-            mission_map_assimilator_.status().pending_snapshot_count, /*is_count=*/true);
+            mission_map_assimilator_.status().pending_snapshot_count, "snapshots");
         timing_writer_->record_stage(
             "mission_map_assimilator.drained_snapshots",
-            mission_map_assimilator_.status().drained_snapshot_count, /*is_count=*/true);
+            mission_map_assimilator_.status().drained_snapshot_count, "snapshots");
     }
 
     // Slide the L2 in-memory window to follow the drone.
@@ -835,23 +835,23 @@ bool CoreStackRunner::run_once() {
                 "mission_map_assimilator.traversability_snapshot", duration_us(start));
             timing_writer_->record_stage(
                 "mission_map_assimilator.l1_total_cells",
-                l1_summary.cell_count, /*is_count=*/true);
+                l1_summary.cell_count, "cells");
             timing_writer_->record_stage(
                 "mission_map_assimilator.l1_occupied_cells",
-                l1_summary.occupied_cell_count, /*is_count=*/true);
+                l1_summary.occupied_cell_count, "cells");
             // Previously computed every tick but never surfaced. Together these
             // show, per tick, how much of L1's total growth is genuinely new vs
             // re-touching existing cells, and how large the raw source snapshot
             // (from MissionLocalObstacleMap, which has no eviction) actually is.
             timing_writer_->record_stage(
                 "mission_map_assimilator.l1_new_cells",
-                l1_summary.new_cell_count, /*is_count=*/true);
+                l1_summary.new_cell_count, "cells");
             timing_writer_->record_stage(
                 "mission_map_assimilator.l1_updated_cells",
-                l1_summary.updated_cell_count, /*is_count=*/true);
+                l1_summary.updated_cell_count, "cells");
             timing_writer_->record_stage(
                 "mission_map_assimilator.l1_source_obstacle_cells",
-                l1_summary.source_obstacle_cell_count, /*is_count=*/true);
+                l1_summary.source_obstacle_cell_count, "cells");
 
             // Per-stage breakdown of the tick(s) drained above — attributes
             // mission_map_assimilator.tick's total to a specific pass instead of
@@ -864,14 +864,14 @@ bool CoreStackRunner::run_once() {
             timing_writer_->record_stage("mission_map_assimilator.l1_recompute_derived_fields", l1_stats.recompute_derived_fields_us);
             timing_writer_->record_stage(
                 "mission_map_assimilator.l1_spread_created_cells",
-                l1_stats.spread_created_cell_count, /*is_count=*/true);
+                l1_stats.spread_created_cell_count, "cells");
             // Bounded cost driver that replaced the old full-cells_ scan — compare
             // against l1_total_cells over a mission to see the two diverge: total
             // keeps growing, this stays roughly flat (touched-this-tick + the fixed
             // background sweep budget).
             timing_writer_->record_stage(
                 "mission_map_assimilator.l1_recompute_set_size",
-                l1_stats.recompute_set_size, /*is_count=*/true);
+                l1_stats.recompute_set_size, "cells");
         }
 
         // ── Level 2: rebuild planning map ───────────────────────────────────
@@ -883,19 +883,19 @@ bool CoreStackRunner::run_once() {
                 "planning_map.update_from_traversability", duration_us(start));
             timing_writer_->record_stage(
                 "planning_map.l1_input_cells",
-                pm_stats.l1_input_cells, /*is_count=*/true);
+                pm_stats.l1_input_cells, "cells");
             timing_writer_->record_stage(
                 "planning_map.l1_occupied_merged",
-                pm_stats.l1_occupied_merged, /*is_count=*/true);
+                pm_stats.l1_occupied_merged, "cells");
             timing_writer_->record_stage(
                 "planning_map.l1_free_applied",
-                pm_stats.l1_free_applied, /*is_count=*/true);
+                pm_stats.l1_free_applied, "cells");
             timing_writer_->record_stage(
                 "planning_map.cells_evicted",
-                pm_stats.cells_evicted, /*is_count=*/true);
+                pm_stats.cells_evicted, "cells");
             timing_writer_->record_stage(
                 "planning_map.cell_count",
-                mission_local_planning_map_.cell_count(), /*is_count=*/true);
+                mission_local_planning_map_.cell_count(), "cells");
         }
 
         // ── Level 1 SSE publish (throttled) ─────────────────────────────────
@@ -969,7 +969,7 @@ bool CoreStackRunner::run_once() {
                     if (timing_writer_) {
                         timing_writer_->record_stage("esdf.publish", duration_us(start));
                         timing_writer_->record_stage("esdf.cell_count",
-                            esdf_map_.cell_count(), /*is_count=*/true);
+                            esdf_map_.cell_count(), "cells");
                     }
                 }
             }
@@ -1044,7 +1044,7 @@ bool CoreStackRunner::run_once() {
                 timing_writer_->record_stage(
                     "esdf.pending_residency_batches",
                     static_cast<std::int64_t>(esdf_pending_residency_batches_.size()),
-                    /*is_count=*/true);
+                    "batches");
             }
         }
     }

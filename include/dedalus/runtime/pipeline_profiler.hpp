@@ -14,13 +14,16 @@ namespace dedalus {
 
 struct PipelineStageTiming {
     std::string name;
-    std::int64_t duration_us{0};
-    // true when duration_us is actually a repurposed dimensionless count (e.g. a
-    // cell count) rather than a microsecond duration. record_stage() callers pass
-    // this explicitly; the printer uses it to avoid dividing by 1000 and appending
-    // "ms" to a count, which silently misrepresents the value (e.g. a raw count of
-    // 254 vs a duration of 254ms look identical in the default stderr output).
-    bool is_count{false};
+    std::int64_t value{0};
+    // Unit of `value`, set by the record_stage() caller — never inferred or
+    // guessed downstream. "us" (the default) means value is a real elapsed-time
+    // measurement in microseconds; any other unit (e.g. "cells", "mm", "batches")
+    // means value is a repurposed non-duration reading. The printer and JSONL
+    // writer use this to avoid dividing by 1000 and appending "ms" to a count,
+    // which silently misrepresents the value (e.g. a raw count of 254 vs a
+    // duration of 254ms look identical in the default stderr output), and to let
+    // any future unit pass through without new code here.
+    std::string unit{"us"};
 };
 
 struct PipelineFrameProfile {
@@ -42,10 +45,12 @@ public:
     ~PipelineProfiler();
 
     void begin_frame(const FramePacket& frame);
+    // Convenience overload for the common case: a real microsecond duration.
     void record_stage(std::string name, std::int64_t duration_us);
-    // is_count=true: value is a raw count (e.g. cell_count), not a microsecond
-    // duration. Printed and summarized without unit conversion.
-    void record_stage(std::string name, std::int64_t value, bool is_count);
+    // unit: caller-supplied unit of `value` (e.g. "us", "cells", "mm", "batches").
+    // Anything other than "us" is printed and summarized without unit conversion
+    // or being folded into the frame's accounted time budget.
+    void record_stage(std::string name, std::int64_t value, std::string unit);
     void set_measured_total(std::int64_t duration_us);
     // Portion of measured_total_us spent blocked waiting on an external,
     // out-of-process frame source (e.g. AirSim rendering + network transfer)

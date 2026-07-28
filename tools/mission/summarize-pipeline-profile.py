@@ -2,8 +2,16 @@
 """Summarize Dedalus pipeline profiler JSONL output.
 
 The profiler writes one JSON object per processed frame with a `stages` object
-mapping stage names to microsecond durations. This tool aggregates those stage
-samples so profiling baselines can be compared before and after runtime changes.
+mapping stage names to raw integer values, plus a sibling `units` object
+mapping the same stage names to whatever unit string the recording call site
+supplied — "us" for a real microsecond duration (the default), or any other
+unit describing a non-duration reading (e.g. "cells", "mm", "batches", "px").
+This tool never hardcodes the set of possible units: only "us" gets special
+handling (ms-scaled display, summed into frame timing accounting); every other
+unit is displayed as-is, labeled with whatever string arrives in `units`. This
+tool aggregates stage samples so profiling baselines can be compared before and
+after runtime changes. Profiles written before the `units` field existed are
+treated as all-"us".
 
 Some stages are aggregate/overlap stages, for example `runtime.post_frame_compute`
 or `runtime.frame_source_reported_io`. These are useful for diagnosis, but they
@@ -111,6 +119,19 @@ def ms(us: float) -> str:
     return f"{us / 1000.0:6.1f}ms"
 
 
+def fmt_scaled(value: float, unit: str) -> str:
+    """Right-aligned numeric column: ms-scaled for a "us" duration, raw
+    otherwise. The unit itself (whatever string the C++ side recorded —
+    "cells", "mm", "batches", or anything invented later) is never
+    hardcoded here; it's shown separately via display_unit()."""
+    return f"{value / 1000.0:8.1f}" if unit == "us" else f"{value:8.1f}"
+
+
+def display_unit(unit: str) -> str:
+    """Column label for a stage's unit: "us" displays as "ms" since fmt_scaled converts it."""
+    return "ms" if unit == "us" else unit
+
+
 def pct_of(part: float, whole: float) -> str:
     if whole <= 0:
         return "  -  "
@@ -136,6 +157,7 @@ def print_friendly(
     path: Path,
     profiles: list[dict[str, Any]],
     stages: dict[str, list[int]],
+    stage_units: dict[str, str],
     totals: list[int],
 ) -> None:
     W = 72  # line width
@@ -235,7 +257,7 @@ def print_friendly(
     group_order = [g for g, _ in STAGE_GROUPS] + ["Other"]
 
     col_name = 42
-    print(f"  {'STAGE':<{col_name}}{'p50':>8}  {'p95':>8}  {'max':>8}  {'n':>5}")
+    print(f"  {'STAGE':<{col_name}}{'p50':>8}  {'p95':>8}  {'max':>8}  {'n':>5}  {'unit':<8}")
 
     for group_label in group_order:
         rows = grouped.get(group_label)
@@ -247,16 +269,17 @@ def print_friendly(
         for _, name, samples, agg in rows:
             tag = "†" if agg else " "
             n = len(samples)
+            unit = stage_units.get(name, "us")
             med = statistics.median(samples)
             p95v = percentile(samples, 95)
             mx = max(samples)
-            # For count-only stages (e.g. evidence_count whose values are counts not durations),
-            # the numbers are already small integers; still format the same way.
             freq = ""
             if n < len(profiles):
                 freq = f"  every ~{len(profiles)//n} frames"
             print(
-                f"  {tag}{name:<{col_name}}{ms(med):>8}  {ms(p95v):>8}  {ms(mx):>8}  {n:>5}{freq}"
+                f"  {tag}{name:<{col_name}}{fmt_scaled(med, unit):>8}  "
+                f"{fmt_scaled(p95v, unit):>8}  {fmt_scaled(mx, unit):>8}  {n:>5}  "
+                f"{display_unit(unit):<8}{freq}"
             )
 
     # Runtime aggregates at the end (they overlap leaf stages — for reference only)
@@ -270,9 +293,11 @@ def print_friendly(
         print(f"\n  ── Runtime aggregates (overlap leaf stages — reference only) {'─'*4}")
         for _, name, samples, _ in runtime_rows:
             n = len(samples)
+            unit = stage_units.get(name, "us")
             print(
-                f"  †{name:<{col_name}}{ms(statistics.median(samples)):>8}"
-                f"  {ms(percentile(samples, 95)):>8}  {ms(max(samples)):>8}  {n:>5}"
+                f"  †{name:<{col_name}}{fmt_scaled(statistics.median(samples), unit):>8}"
+                f"  {fmt_scaled(percentile(samples, 95), unit):>8}  {fmt_scaled(max(samples), unit):>8}  {n:>5}  "
+                f"{display_unit(unit):<8}"
             )
 
     print()
@@ -302,17 +327,22 @@ def summarize(
         if isinstance(profile.get("accounting_delta_us"), int)
     ]
     stages: dict[str, list[int]] = {}
+    stage_units: dict[str, str] = {}
     leaf_accounting_deltas: list[int] = []
     aggregate_accounting_deltas: list[int] = []
     for profile in profiles:
         raw_stages = profile.get("stages")
         if not isinstance(raw_stages, dict):
             continue
+        raw_units = profile.get("units")
         leaf_sum = 0
         aggregate_sum = 0
         for name, value in raw_stages.items():
             if isinstance(name, str) and isinstance(value, int):
                 stages.setdefault(name, []).append(value)
+                if name not in stage_units:
+                    unit = raw_units.get(name) if isinstance(raw_units, dict) else None
+                    stage_units[name] = unit if isinstance(unit, str) else "us"
                 if is_aggregate_stage(name):
                     aggregate_sum += value
                 else:
@@ -323,7 +353,7 @@ def summarize(
             aggregate_accounting_deltas.append(total - leaf_sum - aggregate_sum)
 
     if friendly:
-        print_friendly(path, profiles, stages, totals)
+        print_friendly(path, profiles, stages, stage_units, totals)
         return 0
 
     # ── Legacy raw format ─────────────────────────────────────────────────────
@@ -352,8 +382,9 @@ def summarize(
     print("  stages:")
     for _, name, samples, aggregate in rows[:top]:
         tag = " aggregate" if aggregate else ""
+        unit = stage_units.get(name, "us")
         print(
-            f"    {name}{tag}: "
+            f"    {name}{tag} [{unit}]: "
             f"n={len(samples)} min={min(samples)} median={statistics.median(samples):.1f} "
             f"p95={percentile(samples, 95):.1f} max={max(samples)}"
         )

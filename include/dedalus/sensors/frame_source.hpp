@@ -21,14 +21,14 @@ struct ImageView {
 
 struct FrameSourceTiming {
     std::string name;
-    std::int64_t duration_us{0};
-    // true when duration_us is actually a repurposed diagnostic value (pixel
-    // count, sample count, depth range in mm) rather than a microsecond
-    // duration — mirrors PipelineStageTiming::is_count. Must be set for any
-    // entry that isn't a real elapsed-time measurement, so profilers summing
-    // these into an I/O-time rollup don't fold e.g. a depth range in mm into
-    // a "duration".
-    bool is_count{false};
+    std::int64_t value{0};
+    // Unit of `value`, set by whoever records this entry — mirrors
+    // PipelineStageTiming::unit. "us" (the default) means value is a real
+    // elapsed-time measurement in microseconds; any other unit (e.g.
+    // "px", "mm", "samples") means value is a repurposed diagnostic
+    // reading, so profilers summing these into an I/O-time rollup don't
+    // fold e.g. a depth range in mm into a "duration".
+    std::string unit{"us"};
 };
 
 struct CameraIntrinsics {

@@ -100,15 +100,15 @@ void PipelineProfiler::begin_frame(const FramePacket& frame) {
 }
 
 void PipelineProfiler::record_stage(std::string name, const std::int64_t duration_us) {
-    record_stage(std::move(name), duration_us, /*is_count=*/false);
+    record_stage(std::move(name), duration_us, "us");
 }
 
-void PipelineProfiler::record_stage(std::string name, const std::int64_t value, const bool is_count) {
+void PipelineProfiler::record_stage(std::string name, const std::int64_t value, std::string unit) {
     if (!frame_open_) {
         return;
     }
 
-    current_frame_.stages.push_back(PipelineStageTiming{std::move(name), value, is_count});
+    current_frame_.stages.push_back(PipelineStageTiming{std::move(name), value, std::move(unit)});
 }
 
 void PipelineProfiler::set_measured_total(const std::int64_t duration_us) {
@@ -134,12 +134,13 @@ void PipelineProfiler::end_frame() {
 
     std::int64_t accounted_total_us = 0;
     for (const auto& stage : current_frame_.stages) {
-        // Count-type stages (cell counts, etc.) are not microsecond durations and
-        // must not be summed into the frame's accounted time budget — doing so
-        // previously inflated accounted_total_us / accounting_delta_us by whatever
-        // raw count (e.g. a six-figure cell count) happened to be recorded that tick.
-        if (!stage.is_count && !is_attribution_only_stage(stage.name)) {
-            accounted_total_us += stage.duration_us;
+        // Non-"us" stages (cell counts, mm, etc.) are not microsecond durations
+        // and must not be summed into the frame's accounted time budget — doing
+        // so previously inflated accounted_total_us / accounting_delta_us by
+        // whatever raw value (e.g. a six-figure cell count) happened to be
+        // recorded that tick.
+        if (stage.unit == "us" && !is_attribution_only_stage(stage.name)) {
+            accounted_total_us += stage.value;
         }
     }
 
@@ -161,7 +162,22 @@ void PipelineProfiler::end_frame() {
         if (i > 0U) {
             output_ << ',';
         }
-        output_ << '"' << escape_json_string(stage.name) << "\":" << stage.duration_us;
+        output_ << '"' << escape_json_string(stage.name) << "\":" << stage.value;
+    }
+
+    output_ << "},\"units\":{";
+
+    // Explicit per-stage unit, verbatim from whoever called record_stage(), so
+    // downstream tools never have to guess from a stage's name or magnitude
+    // alone what its raw "stages" value means — nor does this writer need to
+    // know the full set of units that exist; it just passes each one through.
+    for (std::size_t i = 0; i < current_frame_.stages.size(); ++i) {
+        const auto& stage = current_frame_.stages[i];
+        if (i > 0U) {
+            output_ << ',';
+        }
+        output_ << '"' << escape_json_string(stage.name) << "\":\""
+                 << escape_json_string(stage.unit) << '"';
     }
 
     output_ << "}}\n";
@@ -194,7 +210,7 @@ void PipelineProfiler::end_frame() {
             }
         }
         std::sort(order.begin(), order.end(), [&](std::size_t a, std::size_t b) {
-            return current_frame_.stages[a].duration_us > current_frame_.stages[b].duration_us;
+            return current_frame_.stages[a].value > current_frame_.stages[b].value;
         });
 
         std::fprintf(stderr, "[PipelineSlow] frame=%s compute=%ldms (total=%ldms wait=%ldms)",
@@ -204,17 +220,18 @@ void PipelineProfiler::end_frame() {
             static_cast<long>(external_wait_us_ / 1000LL));
         for (const auto i : order) {
             const auto& s = current_frame_.stages[i];
-            if (s.is_count) {
-                // Raw count (e.g. cell_count) — print as-is, no /1000, no "ms".
-                // Always shown regardless of magnitude: a count stage sorts by its
-                // own value among durations here only for ordering convenience, not
-                // because it competes for the frame time budget.
-                if (s.duration_us != 0LL) {
-                    std::fprintf(stderr, "  %s=%ld", s.name.c_str(), static_cast<long>(s.duration_us));
+            if (s.unit != "us") {
+                // Non-duration reading (cell count, mm, ...) — print as-is with its
+                // unit, no /1000, no "ms". Always shown regardless of magnitude: it
+                // sorts by its own raw value among durations here only for ordering
+                // convenience, not because it competes for the frame time budget.
+                if (s.value != 0LL) {
+                    std::fprintf(stderr, "  %s=%ld%s",
+                        s.name.c_str(), static_cast<long>(s.value), s.unit.c_str());
                 }
-            } else if (s.duration_us >= 1'000LL) {
+            } else if (s.value >= 1'000LL) {
                 std::fprintf(stderr, "  %s=%ldms",
-                    s.name.c_str(), static_cast<long>(s.duration_us / 1000LL));
+                    s.name.c_str(), static_cast<long>(s.value / 1000LL));
             }
         }
         std::fprintf(stderr, "\n");
