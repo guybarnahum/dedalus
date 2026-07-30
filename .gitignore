@@ -189,3 +189,4 @@ simulation/airsim/colosseum_environments/
 *.tsv
 *.csv
 depth_provider_report.html
+MEMORY.md
