@@ -259,6 +259,7 @@ h3 { font-size: 12px; margin: 10px 0 6px; color: #c0c4d0; text-transform: upperc
         </div>
       </div>
       <div class="metric"><span>L1 trav cells</span><b id="m-trav-cells">0</b></div>
+      <div class="metric"><span>L1 shown (rendered)</span><b id="m-trav-shown">all</b></div>
       <div class="metric"><span>Trav ext. faces</span><b id="m-trav-faces">0</b></div>
       <div class="metric"><span>Raw evidence cells</span><b id="m-obs-cells">0</b></div>
       <div class="metric"><span>Ghost detections</span><b id="m-ghosts">0</b></div>
@@ -1683,8 +1684,15 @@ function buildTravFaces() {
     if (e.occ > 0) coarseOccKeys.add(k);
   }
 
-  // Decimate if too many occupied voxels (prefer closest to ego)
+  // Decimate if too many occupied voxels (prefer closest to ego). L1 itself
+  // has no eviction and the server streams its full, never-truncated history
+  // (see mission_local_traversability_map_publisher.cpp) -- this cap exists
+  // purely so the browser doesn't choke rendering a mission-long map, and it
+  // can silently make L1 look like a small region around the drone rather
+  // than the full accumulated history it actually is. Surface it in the UI
+  // (m-trav-shown) instead of leaving that mismatch invisible.
   let occEntries = [...coarseGrid.entries()].filter(([,e]) => e.occ > 0);
+  const travVoxelTotal = occEntries.length;
   if (occEntries.length > MAX_TRAV_DISPLAY) {
     if (state.ego) {
       const {x:ex, y:ey, z:ez} = state.ego;
@@ -1692,6 +1700,12 @@ function buildTravFaces() {
         Math.hypot(a.cx-ex, a.cy-ey, a.cz-ez) - Math.hypot(b.cx-ex, b.cy-ey, b.cz-ez));
     }
     occEntries = occEntries.slice(0, MAX_TRAV_DISPLAY);
+  }
+  const travShownEl = el("m-trav-shown");
+  if (travShownEl) {
+    travShownEl.textContent = occEntries.length < travVoxelTotal
+      ? `${occEntries.length} of ${travVoxelTotal} (nearest to drone)`
+      : "all";
   }
 
   // ── Step 3: exterior-face extraction with per-face shading ───────────────────
