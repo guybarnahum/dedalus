@@ -31,8 +31,13 @@ import json
 import math
 import sqlite3
 import sys
+import time
 from pathlib import Path
 from typing import Any
+
+
+def progress(message: str) -> None:
+    print(f"[{time.strftime('%H:%M:%S')}] {message}", file=sys.stderr, flush=True)
 
 DEFAULT_CELL_SIZE_M = 0.5
 DEFAULT_OCCUPIED_THRESHOLD = 1.0
@@ -76,6 +81,7 @@ def load_scene_inventory(path: Path, exclude_classes: set[str]) -> list[dict[str
         candidates.append({
             "name": str(obj.get("name", "")),
             "canonical_class": canonical_class,
+            "thin_obstacle": bool(obj.get("thin_obstacle", False)),
             "position_ned_m": tuple(float(v) for v in position),
             "recommended_size_m": tuple(float(v) for v in size),
         })
@@ -187,6 +193,53 @@ def distance(a: tuple[float, float, float], b: tuple[float, float, float]) -> fl
     return math.sqrt(sum((a[i] - b[i]) ** 2 for i in range(3)))
 
 
+def voxelize_objects(
+    objects: list[dict[str, Any]],
+    offset: tuple[float, float, float],
+    cell_size_m: float,
+    vertical_cell_size_m: float,
+) -> set[tuple[int, int, int]]:
+    voxels: set[tuple[int, int, int]] = set()
+    for obj in objects:
+        corrected_position = tuple(p + o for p, o in zip(obj["position_ned_m"], offset))
+        voxels |= voxelize_box(corrected_position, obj["recommended_size_m"], cell_size_m, vertical_cell_size_m)
+    return voxels
+
+
+def build_cell_buckets(
+    cells: list[tuple[float, float, float]],
+    bucket_size_m: float,
+) -> dict[tuple[int, int, int], list[tuple[float, float, float]]]:
+    buckets: dict[tuple[int, int, int], list[tuple[float, float, float]]] = {}
+    for cell in cells:
+        key = tuple(math.floor(c / bucket_size_m) for c in cell)
+        buckets.setdefault(key, []).append(cell)
+    return buckets
+
+
+def nearby_cells(
+    buckets: dict[tuple[int, int, int], list[tuple[float, float, float]]],
+    bucket_size_m: float,
+    position: tuple[float, float, float],
+    radius_m: float,
+) -> list[tuple[float, float, float]]:
+    """Cells within radius_m of position, found via a 3x3x3 (or larger, if
+    radius_m > bucket_size_m) bucket neighborhood instead of scanning every
+    cell -- turns the per-candidate lookup from O(all cells) into O(cells
+    actually near this one candidate), the same bucket-index technique used
+    for MissionLocalPlanningMap's box queries in the C++ side of this map."""
+    bx, by, bz = (math.floor(p / bucket_size_m) for p in position)
+    span = math.ceil(radius_m / bucket_size_m)
+    candidates: list[tuple[float, float, float]] = []
+    for dx in range(-span, span + 1):
+        for dy in range(-span, span + 1):
+            for dz in range(-span, span + 1):
+                bucket = buckets.get((bx + dx, by + dy, bz + dz))
+                if bucket:
+                    candidates.extend(bucket)
+    return [c for c in candidates if distance(c, position) <= radius_m]
+
+
 def find_anchor_offset(
     candidates: list[dict[str, Any]],
     real_cells: list[tuple[float, float, float]],
@@ -208,10 +261,12 @@ def find_anchor_offset(
         if not pool:
             return None
 
+    buckets = build_cell_buckets(real_cells, search_radius_m)
+
     best: dict[str, Any] | None = None
     for obj in pool:
         raw_position = obj["position_ned_m"]
-        nearby = [cell for cell in real_cells if distance(cell, raw_position) <= search_radius_m]
+        nearby = nearby_cells(buckets, search_radius_m, raw_position, search_radius_m)
         if not nearby:
             continue
         centroid = tuple(sum(c[i] for c in nearby) / len(nearby) for i in range(3))
@@ -254,14 +309,72 @@ def compute_metrics(
     }
 
 
-def print_report(l0: dict[str, Any], l1: dict[str, Any], ground_truth_voxel_count: int) -> None:
-    print(f"Ground-truth occupied voxels: {ground_truth_voxel_count}")
+def print_report(l0: dict[str, Any], l1: dict[str, Any], l0_ground_truth_voxel_count: int, l1_ground_truth_voxel_count: int) -> None:
+    if l0_ground_truth_voxel_count == l1_ground_truth_voxel_count:
+        print(f"Ground-truth occupied voxels: {l0_ground_truth_voxel_count}")
+    else:
+        print(f"Ground-truth occupied voxels: L0 grid={l0_ground_truth_voxel_count}  L1 grid={l1_ground_truth_voxel_count}")
     print(f"{'metric':<12}{'L0':>10}{'L1':>10}{'L1 - L0':>10}")
     for key in ("occupied_cell_count", "true_positive", "false_positive", "false_negative"):
         print(f"{key:<12}{l0[key]:>10}{l1[key]:>10}{l1[key] - l0[key]:>10}")
     for key in ("precision", "recall", "f1"):
         delta = l1[key] - l0[key]
         print(f"{key:<12}{l0[key]:>10.3f}{l1[key]:>10.3f}{delta:>+10.3f}")
+
+
+def print_class_breakdown(
+    in_range: list[dict[str, Any]],
+    offset: tuple[float, float, float],
+    l0_occupied: list[tuple[float, float, float]],
+    l1_occupied: list[tuple[float, float, float]],
+    l0_cell_size_m: float,
+    l0_vertical_cell_size_m: float,
+    l1_cell_size_m: float,
+    l1_vertical_cell_size_m: float,
+) -> None:
+    """Per-class recall, grouped by thin_obstacle -- answers "does L1 lose thin
+    structures (cable/pole/tree, per the scene-inventory's own geometry_class
+    taxonomy) more than solid ones (wall/fence/rock/...)?" directly, rather
+    than burying it in one aggregate number."""
+    by_class: dict[str, list[dict[str, Any]]] = {}
+    for obj in in_range:
+        by_class.setdefault(obj["canonical_class"], []).append(obj)
+
+    print()
+    print("Per-class recall (thin structures grouped first):")
+    print(f"{'class':<18}{'thin':<6}{'objects':>8}{'gt_vox':>8}{'L0 recall':>11}{'L1 recall':>11}{'delta':>9}")
+
+    rows: list[tuple[bool, str, dict[str, Any]]] = []
+    for class_name, objs in by_class.items():
+        thin = objs[0]["thin_obstacle"]
+        l0_voxels = voxelize_objects(objs, offset, l0_cell_size_m, l0_vertical_cell_size_m)
+        l1_voxels = voxelize_objects(objs, offset, l1_cell_size_m, l1_vertical_cell_size_m)
+        l0_m = compute_metrics(l0_occupied, l0_voxels, l0_cell_size_m, l0_vertical_cell_size_m)
+        l1_m = compute_metrics(l1_occupied, l1_voxels, l1_cell_size_m, l1_vertical_cell_size_m)
+        rows.append((thin, class_name, {
+            "objects": len(objs), "gt_voxels": len(l0_voxels),
+            "l0_recall": l0_m["recall"], "l1_recall": l1_m["recall"],
+        }))
+
+    for thin, class_name, row in sorted(rows, key=lambda r: (not r[0], r[1])):
+        delta = row["l1_recall"] - row["l0_recall"]
+        print(f"{class_name:<18}{'yes' if thin else 'no':<6}{row['objects']:>8}{row['gt_voxels']:>8}"
+              f"{row['l0_recall']:>11.3f}{row['l1_recall']:>11.3f}{delta:>+9.3f}")
+
+    thin_objects = [obj for obj in in_range if obj["thin_obstacle"]]
+    solid_objects = [obj for obj in in_range if not obj["thin_obstacle"]]
+    print()
+    print(f"{'group':<18}{'':<6}{'objects':>8}{'gt_vox':>8}{'L0 recall':>11}{'L1 recall':>11}{'delta':>9}")
+    for label, objs in (("thin (cable/pole/tree)", thin_objects), ("solid (wall/fence/...)", solid_objects)):
+        if not objs:
+            continue
+        l0_voxels = voxelize_objects(objs, offset, l0_cell_size_m, l0_vertical_cell_size_m)
+        l1_voxels = voxelize_objects(objs, offset, l1_cell_size_m, l1_vertical_cell_size_m)
+        l0_m = compute_metrics(l0_occupied, l0_voxels, l0_cell_size_m, l0_vertical_cell_size_m)
+        l1_m = compute_metrics(l1_occupied, l1_voxels, l1_cell_size_m, l1_vertical_cell_size_m)
+        delta = l1_m["recall"] - l0_m["recall"]
+        print(f"{label:<18}{'':<6}{len(objs):>8}{len(l0_voxels):>8}"
+              f"{l0_m['recall']:>11.3f}{l1_m['recall']:>11.3f}{delta:>+9.3f}")
 
 
 def check_regression(baseline: dict[str, Any], current: dict[str, Any], tolerance_ppt: float) -> list[str]:
@@ -306,18 +419,27 @@ def main() -> int:
             return 2
 
     exclude_classes = set(args.exclude_class)
+    progress(f"loading scene inventory: {args.scene_inventory}")
     candidates = load_scene_inventory(args.scene_inventory, exclude_classes)
     if not candidates:
         print(f"ERROR: no usable ground-truth objects in {args.scene_inventory} "
               f"(after excluding classes {sorted(exclude_classes)})", file=sys.stderr)
         return 2
+    progress(f"scene inventory: {len(candidates)} candidate object(s) after excluding {sorted(exclude_classes)}")
 
+    progress(f"loading L0 cells: {l0_sqlite}")
     l0_occupied = load_l0_cells(l0_sqlite, args.occupied_threshold)
+    progress(f"L0: {len(l0_occupied)} occupied cell(s)")
+
+    progress(f"loading L1 cells: {l1_json}")
     l1_occupied, l1_cell_size_m, l1_vertical_cell_size_m, l1_capped = load_l1_cells(l1_json)
+    progress(f"L1: {len(l1_occupied)} occupied cell(s)")
     if l1_capped:
         print("WARNING: L1 artifact is debug-capped (export_summary.source_cells_are_debug_capped=true); "
               "metrics below undercount L1's true occupied set.", file=sys.stderr)
 
+    progress(f"running frame sanity check against {len(candidates)} candidate(s) "
+             f"x {len(l0_occupied) + len(l1_occupied)} cell(s) (bucketed, not a full scan)")
     anchor_result = find_anchor_offset(candidates, l0_occupied + l1_occupied, args.anchor_search_radius_m, args.anchor_object)
     if anchor_result is None:
         print("ERROR: frame sanity check failed -- no scene-inventory object has any real occupied "
@@ -335,7 +457,9 @@ def main() -> int:
           f"nearby_cells={anchor_info['nearby_count']} offset={tuple(round(v, 2) for v in offset)}m "
           f"magnitude={anchor_info['offset_magnitude_m']:.2f}m")
 
+    progress(f"loading ego trajectory: {args.run_dir}")
     ego_trajectory = load_ego_trajectory(args.run_dir)
+    progress(f"ego trajectory: {len(ego_trajectory)} sample(s); filtering candidates by --max-range-m {args.max_range_m}")
     in_range = [
         obj for obj in candidates
         if any(distance(tuple(p + o for p, o in zip(obj["position_ned_m"], offset)), ego) <= args.max_range_m
@@ -344,17 +468,25 @@ def main() -> int:
     if not in_range:
         print("ERROR: no ground-truth objects fell within --max-range-m of the recorded ego trajectory", file=sys.stderr)
         return 2
+    progress(f"{len(in_range)}/{len(candidates)} candidate(s) within range; voxelizing ground truth")
 
-    ground_truth_voxels: set[tuple[int, int, int]] = set()
-    for obj in in_range:
-        corrected_position = tuple(p + o for p, o in zip(obj["position_ned_m"], offset))
-        ground_truth_voxels |= voxelize_box(corrected_position, obj["recommended_size_m"], args.cell_size_m, args.cell_size_m)
+    # Voxelize ground truth once per layer's own grid resolution -- L1's cell
+    # size is read from its own artifact and isn't guaranteed to match
+    # --cell-size-m, so reusing one voxel set for both comparisons would
+    # silently misalign the grids if they ever differ.
+    l0_ground_truth_voxels = voxelize_objects(in_range, offset, args.cell_size_m, args.cell_size_m)
+    l1_ground_truth_voxels = voxelize_objects(in_range, offset, l1_cell_size_m, l1_vertical_cell_size_m)
 
-    l0_metrics = compute_metrics(l0_occupied, ground_truth_voxels, args.cell_size_m, args.cell_size_m)
-    l1_metrics = compute_metrics(l1_occupied, ground_truth_voxels, l1_cell_size_m, l1_vertical_cell_size_m)
-    print_report(l0_metrics, l1_metrics, len(ground_truth_voxels))
+    progress(f"ground truth: {len(l0_ground_truth_voxels)} voxel(s); computing L0/L1 metrics")
+    l0_metrics = compute_metrics(l0_occupied, l0_ground_truth_voxels, args.cell_size_m, args.cell_size_m)
+    l1_metrics = compute_metrics(l1_occupied, l1_ground_truth_voxels, l1_cell_size_m, l1_vertical_cell_size_m)
+    print_report(l0_metrics, l1_metrics, len(l0_ground_truth_voxels), len(l1_ground_truth_voxels))
+    print_class_breakdown(
+        in_range, offset, l0_occupied, l1_occupied,
+        args.cell_size_m, args.cell_size_m, l1_cell_size_m, l1_vertical_cell_size_m,
+    )
 
-    current = {"l0": l0_metrics, "l1": l1_metrics, "ground_truth_voxel_count": len(ground_truth_voxels)}
+    current = {"l0": l0_metrics, "l1": l1_metrics, "ground_truth_voxel_count": len(l0_ground_truth_voxels)}
 
     exit_code = 0
     if args.baseline is not None:
