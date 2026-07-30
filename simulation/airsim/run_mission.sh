@@ -87,6 +87,11 @@ VALIDATION_COMPLETE_REASON="orbit_count_elapsed"
 VALIDATION_EXPECT_SEQUENCE=0
 VALIDATION_SEQUENCE_STEPS="approach,circle"
 VALIDATION_SEQUENCE_STEP_MODES=""
+WITH_GROUND_TRUTH_CHECK=1
+GROUND_TRUTH_MAX_RANGE_M="25.0"
+GROUND_TRUTH_BASELINE=""
+GROUND_TRUTH_SAVE_BASELINE=""
+GROUND_TRUTH_WAIT_SECONDS="${DEDALUS_GROUND_TRUTH_WAIT_SECONDS:-60}"
 ATTACH=0
 TAIL=0
 EXIT_ON_COMPLETE=1
@@ -191,6 +196,12 @@ Options:
   --expect-sequence-steps CSV  Sequence step order. Default: approach,circle
   --expect-sequence-step-modes CSV
                                 Step policy modes, e.g. approach:target:target,circle:target:target
+  --no-ground-truth-check     Skip the post-run L0/L1 vs. scene-inventory ground-truth check
+                                (runs only when scene inventory is enabled; best-effort, non-fatal)
+  --ground-truth-max-range-m M  Ignore ground-truth objects never approached within M meters. Default: 25.0
+  --ground-truth-baseline PATH Diff this run's ground-truth metrics against a prior baseline (non-fatal)
+  --ground-truth-save-baseline PATH
+                                Save this run's ground-truth metrics as a new baseline
   --no-progress               Do not pass --progress to mission-loop
   --output-mp4 PATH           After mission completes, encode depth-annotation PPMs to H.264 MP4.
                                 Requires ffmpeg on PATH.  The annotation frame directory is taken
@@ -442,6 +453,10 @@ while [[ $# -gt 0 ]]; do
         --expect-sequence) VALIDATION_EXPECT_SEQUENCE=1; shift ;;
         --expect-sequence-steps) VALIDATION_SEQUENCE_STEPS="$2"; shift 2 ;;
         --expect-sequence-step-modes) VALIDATION_SEQUENCE_STEP_MODES="$2"; shift 2 ;;
+        --no-ground-truth-check) WITH_GROUND_TRUTH_CHECK=0; shift ;;
+        --ground-truth-max-range-m) GROUND_TRUTH_MAX_RANGE_M="$2"; shift 2 ;;
+        --ground-truth-baseline) GROUND_TRUTH_BASELINE="$(abs_path "$2")"; shift 2 ;;
+        --ground-truth-save-baseline) GROUND_TRUTH_SAVE_BASELINE="$(creatable_abs_path "$2")"; shift 2 ;;
         --no-progress) PROGRESS_FLAG=""; shift ;;
         --output-mp4) OUTPUT_MP4="$(creatable_abs_path "$2")"; shift 2 ;;
         --annotation-dir) ANNOTATION_DIR="$(abs_path "$2")"; shift 2 ;;
@@ -509,6 +524,11 @@ fi
 if [[ -z "$OBSTACLE_MEMORY_MANIFEST_PATH" ]]; then
     OBSTACLE_MEMORY_MANIFEST_PATH="$OUTPUT_DIR/obstacle_memory_manifest.json"
 fi
+# Written once, at mission end, by CoreStackRunner's destructor -- default path
+# is never overridden by this script (no DEDALUS_MISSION_TRAVERSABILITY_MAP_*
+# env var is set below), so this must match mission_traversability_map_artifact_writer_env.cpp's
+# default_traversability_output_path() exactly: a sibling of the delta JSONL path.
+GROUND_TRUTH_TRAVERSABILITY_MAP_PATH="$OUTPUT_DIR/mission_traversability_map_full.json"
 if [[ "$MERGE_OBSTACLE_MAP" -eq 1 && "$OBSTACLE_MEMORY_MANIFEST_WAIT_SECONDS" == "0" ]]; then
     OBSTACLE_MEMORY_MANIFEST_WAIT_SECONDS=360
 fi
@@ -823,10 +843,63 @@ if [[ -f "\$OBSTACLE_MEMORY_MANIFEST_PATH" ]]; then
 else
   echo "validation: obstacle memory manifest not present after wait; skipping manifest validation"
 fi
-
-echo "validation: PASS"
 EOF
 )
+if [[ "$WITH_GROUND_TRUTH_CHECK" -eq 1 && "$WITH_SCENE_INVENTORY" -eq 1 ]]; then
+    VALIDATION_SHELL+=$'\n'
+    VALIDATION_SHELL+=$(cat <<EOF
+GROUND_TRUTH_L0_SQLITE=$(printf '%q' "$MISSION_OBSTACLE_MAP_DELTAS_SQLITE_PATH")
+GROUND_TRUTH_L1_JSON=$(printf '%q' "$GROUND_TRUTH_TRAVERSABILITY_MAP_PATH")
+GROUND_TRUTH_WAIT_SECONDS=$(printf '%q' "$GROUND_TRUTH_WAIT_SECONDS")
+# The L0 sqlite is produced by the concurrent "post-mission" tmux window (its
+# own independent wait-for-runtime_stop, then a separate merge step) -- there
+# is no ordering guarantee between that window and this one, so wait for it
+# here rather than assume it already exists once we reach this point.
+if [[ ! -f "\$GROUND_TRUTH_L0_SQLITE" || ! -f "\$GROUND_TRUTH_L1_JSON" ]]; then
+  echo "validation: waiting up to \${GROUND_TRUTH_WAIT_SECONDS}s for ground-truth check inputs"
+  for ((i = 0; i < GROUND_TRUTH_WAIT_SECONDS; i++)); do
+    if [[ -f "\$GROUND_TRUTH_L0_SQLITE" && -f "\$GROUND_TRUTH_L1_JSON" ]]; then
+      break
+    fi
+    sleep 1
+  done
+fi
+if [[ -f "\$GROUND_TRUTH_L0_SQLITE" && -f "\$GROUND_TRUTH_L1_JSON" ]]; then
+  GROUND_TRUTH_CMD=(python3 tools/mission/validate-obstacle-map-ground-truth.py $(printf '%q' "$OUTPUT_DIR") --scene-inventory $(printf '%q' "$SCENE_INVENTORY_PATH") --l0-sqlite "\$GROUND_TRUTH_L0_SQLITE" --l1-json "\$GROUND_TRUTH_L1_JSON" --max-range-m $(printf '%q' "$GROUND_TRUTH_MAX_RANGE_M"))
+EOF
+)
+    if [[ -n "$GROUND_TRUTH_BASELINE" ]]; then
+        VALIDATION_SHELL+=$'\n'
+        VALIDATION_SHELL+="  GROUND_TRUTH_CMD+=(--baseline $(printf '%q' "$GROUND_TRUTH_BASELINE"))"
+    fi
+    if [[ -n "$GROUND_TRUTH_SAVE_BASELINE" ]]; then
+        VALIDATION_SHELL+=$'\n'
+        VALIDATION_SHELL+="  GROUND_TRUTH_CMD+=(--save-baseline $(printf '%q' "$GROUND_TRUTH_SAVE_BASELINE"))"
+    fi
+    VALIDATION_SHELL+=$'\n'
+    VALIDATION_SHELL+=$(cat <<'EOF'
+  echo "validation: running ground-truth check: ${GROUND_TRUTH_CMD[*]}"
+  GROUND_TRUTH_STATUS=0
+  "${GROUND_TRUTH_CMD[@]}" || GROUND_TRUTH_STATUS=$?
+  # Best-effort, like the obstacle-memory-manifest check above: this metric is
+  # newer and more exploratory than the lifecycle/trajectory gates, so it must
+  # not be able to turn an otherwise-healthy mission run into a failed one --
+  # report its status distinctly instead of letting `set -e` abort the script.
+  if [[ "$GROUND_TRUTH_STATUS" -eq 0 ]]; then
+    echo "validation: ground-truth check PASS"
+  elif [[ "$GROUND_TRUTH_STATUS" -eq 1 ]]; then
+    echo "validation: ground-truth check REGRESSION (non-fatal; see log above for details)"
+  else
+    echo "validation: ground-truth check ERROR (exit=$GROUND_TRUTH_STATUS, non-fatal; see log above for details)"
+  fi
+else
+  echo "validation: ground-truth check inputs not present after wait; skipping"
+fi
+EOF
+)
+fi
+VALIDATION_SHELL+=$'\n'
+VALIDATION_SHELL+='echo "validation: PASS"'
 
 printf '%s\n' "$VALIDATION_SHELL" > "$VALIDATION_SCRIPT"
 chmod +x "$VALIDATION_SCRIPT"
@@ -1315,6 +1388,16 @@ if [[ "$WITH_VALIDATION" -eq 1 ]]; then
     echo "  validators: mission-events-summary, validate-mission-artifacts, validate-circle-trajectory"
     echo "  complete reason: $VALIDATION_COMPLETE_REASON"
     echo "  min occupied cells: $VALIDATION_MIN_OCCUPIED_CELLS"
+    if [[ "$WITH_GROUND_TRUTH_CHECK" -eq 1 && "$WITH_SCENE_INVENTORY" -eq 1 ]]; then
+        echo "  ground truth check: enabled (L0/L1 vs. scene inventory, non-fatal)"
+        echo "    max range: ${GROUND_TRUTH_MAX_RANGE_M}m"
+        [[ -n "$GROUND_TRUTH_BASELINE" ]] && echo "    baseline: $GROUND_TRUTH_BASELINE"
+        [[ -n "$GROUND_TRUTH_SAVE_BASELINE" ]] && echo "    save baseline: $GROUND_TRUTH_SAVE_BASELINE"
+    elif [[ "$WITH_GROUND_TRUTH_CHECK" -eq 1 ]]; then
+        echo "  ground truth check: skipped (requires scene inventory; pass without --no-scene-inventory)"
+    else
+        echo "  ground truth check: disabled (--no-ground-truth-check)"
+    fi
     echo ""
 fi
 if [[ "$MERGE_OBSTACLE_MAP" -eq 1 ]]; then
