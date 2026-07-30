@@ -59,6 +59,16 @@ std::string class_label_event_string(ClassLabel label) {
             return "river";
         case ClassLabel::Terrain:
             return "terrain";
+        case ClassLabel::Pole:
+            return "pole";
+        case ClassLabel::Wall:
+            return "wall";
+        case ClassLabel::Fence:
+            return "fence";
+        case ClassLabel::Cable:
+            return "cable";
+        case ClassLabel::Obstacle:
+            return "obstacle";
         case ClassLabel::Unknown:
         default:
             return "unknown";

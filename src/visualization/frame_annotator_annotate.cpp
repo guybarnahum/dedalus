@@ -31,6 +31,11 @@ std::string class_label_to_string(const ClassLabel label) {
         case ClassLabel::Road: return "road";
         case ClassLabel::River: return "river";
         case ClassLabel::Terrain: return "terrain";
+        case ClassLabel::Pole: return "pole";
+        case ClassLabel::Wall: return "wall";
+        case ClassLabel::Fence: return "fence";
+        case ClassLabel::Cable: return "cable";
+        case ClassLabel::Obstacle: return "obstacle";
         case ClassLabel::Unknown:
         default: return "unknown";
     }
@@ -48,6 +53,7 @@ std::string occupancy_state_to_string(const OccupancyCellState state) {
 std::string occupancy_source_to_string(const OccupancySourceKind source) {
     switch (source) {
         case OccupancySourceKind::AirSimGroundTruth: return "airsim_gt";
+        case OccupancySourceKind::AirSimGroundTruthVisualEmulation: return "airsim_gt_vd";
         case OccupancySourceKind::VisualObstacleDetector: return "visual_det";
         case OccupancySourceKind::DepthProvider: return "depth";
         case OccupancySourceKind::Fused: return "fused";
